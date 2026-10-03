@@ -378,3 +378,660 @@ it.skipIf(isWindows)(
   // take well over the default 5s.
   120_000,
 );
+
+describe.concurrent("Node 24 package configuration validation", () => {
+  async function run(files: Record<string, string>, source: string) {
+    using dir = tempDir("package-config", { "package.json": "{}", ...files, "driver.mjs": source });
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "driver.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout: stdout.trim().replaceAll(String(dir), "<root>"), stderr, exitCode }).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  it.each(["import", "require"])("defers selected malformed package metadata for %s", async mode => {
+    await run(
+      {
+        "pkg/package.json": JSON.stringify({ imports: { "#selected": { node: "bad", default: "good" } } }),
+        "pkg/node_modules/bad/package.json": "invalid JSON",
+        "pkg/node_modules/bad/index.cjs": "module.exports = 42;",
+        "pkg/node_modules/good/package.json": '{"main":"index.cjs"}',
+        "pkg/node_modules/good/index.cjs": "module.exports = 7;",
+        "pkg/entry.mjs": "export const read = () => import('#selected');",
+        "pkg/entry.cjs": "exports.read = () => require('#selected');",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const entry = ${mode === "import" ? "await import('./pkg/entry.mjs')" : "createRequire(import.meta.url)('./pkg/entry.cjs')"};
+       await assert.rejects(async () => entry.read(), {
+         name: 'Error', code: 'ERR_INVALID_PACKAGE_CONFIG',
+         message: 'Invalid package config ' + join(process.cwd(), 'pkg/node_modules/bad/package.json') +
+           ' while importing "bad" from ' + join(process.cwd(), 'pkg/package.json') + '.',
+       });
+       console.log('ok');`,
+    );
+  });
+
+  it.each([
+    "",
+    " \n",
+    "{",
+    "null",
+    "[]",
+    "42",
+    '{"type":null}',
+    '{"name":42}',
+    '{"type":null,"type":"commonjs"}',
+    '{"type":"module","type":null}',
+  ])("validates a selected scope without poisoning explicit extensions or nested scopes: %j", async contents => {
+    await run(
+      {
+        "bad/package.json": contents,
+        "bad/value.js": "module.exports = 42;",
+        "bad/value.cjs": "module.exports = 42;",
+        "bad/value.mjs": "export default 42;",
+        "bad/nested/package.json": "{}",
+        "bad/nested/value.js": "module.exports = 42;",
+      },
+      `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         import {join} from 'node:path';
+         const require = createRequire(import.meta.url);
+         const expected = {name:'Error', code:'ERR_INVALID_PACKAGE_CONFIG', message:'Invalid package config ' + join(process.cwd(),'bad/package.json') + '.'};
+         await assert.rejects(import('./bad/value.js'), expected);
+         assert.throws(() => require('./bad/value.js'), expected);
+         for (const file of ['./bad/value.cjs','./bad/value.mjs','./bad/nested/value.js']) {
+           assert.equal((await import(file)).default, 42);
+           const value = require(file);
+           assert.equal(typeof value === 'number' ? value : value.default, 42);
+         }
+         console.log('ok');`,
+    );
+  });
+
+  it("validates existing ESM resolve-only scopes while deferring require.resolve", async () => {
+    await run(
+      {
+        "bad/package.json": "invalid JSON",
+        "bad/value": "",
+        "bad/.hidden": "",
+        "bad/value.js": "",
+        "bad/value.ts": "",
+        "bad/value.mjs": "",
+        "bad/value.cjs": "",
+        "bad/value.mts": "",
+        "bad/value.cts": "",
+        "bad/value.jsx": "",
+        "bad/value.tsx": "",
+        "bad/value.json": "{}",
+        "bad/value.wasm": "",
+        "bad/value.css": "",
+        "bad/nested/package.json": "{}",
+        "bad/nested/value.js": "",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       import {pathToFileURL} from 'node:url';
+       const require = createRequire(import.meta.url);
+       const expected = {code:'ERR_INVALID_PACKAGE_CONFIG',message:'Invalid package config '+join(process.cwd(),'bad/package.json')+'.'};
+       for(const invalid of ['./bad/value.js','./bad/value.ts','./bad/value','./bad/.hidden']) {
+         assert.throws(() => import.meta.resolve(invalid), expected);
+         assert.throws(() => import.meta.resolve(pathToFileURL(join(process.cwd(),invalid)).href), expected);
+         assert.equal(require.resolve(invalid),join(process.cwd(),invalid));
+         await assert.rejects(import(invalid), expected);
+       }
+       assert.deepEqual(Object.keys(require('./bad/value')),[]);
+       for(const file of ['./bad/value.mjs','./bad/value.cjs','./bad/value.mts','./bad/value.cts','./bad/value.jsx','./bad/value.tsx','./bad/value.json','./bad/value.wasm','./bad/value.css','./bad/nested/value.js','./bad/missing.js']) {
+         assert.equal(import.meta.resolve(file),pathToFileURL(join(process.cwd(),file)).href);
+       }
+       console.log('ok');`,
+    );
+  });
+
+  // Creating file symlinks requires additional privileges on Windows.
+  it.skipIf(isWindows)("validates the real scope of a resolve-only symlink", async () => {
+    await run(
+      { "bad/package.json": "invalid JSON", "bad/value.js": "", "good.js": "" },
+      `import assert from 'node:assert/strict';
+       import {symlinkSync} from 'node:fs';
+       import {join} from 'node:path';
+       symlinkSync('bad/value.js','link.js');
+       symlinkSync('../good.js','bad/good-link.js');
+       assert.throws(() => import.meta.resolve('./link.js'), {
+         code:'ERR_INVALID_PACKAGE_CONFIG',message:'Invalid package config '+join(process.cwd(),'bad/package.json')+'.',
+       });
+       assert.equal(typeof import.meta.resolve('./bad/good-link.js'),'string');
+       console.log('ok');`,
+    );
+  });
+
+  it("reports the last malformed scope before reaching valid parent metadata", async () => {
+    await run(
+      {
+        "outer/package.json": "invalid JSON",
+        "outer/inner/package.json": "invalid JSON",
+        "outer/inner/value.js": "module.exports=42;",
+        "outer/inner/entry.mjs": "export const read=()=>import('missing-package');",
+        "outer/inner/entry.cjs": "exports.read=()=>require('missing-package');",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const require=createRequire(import.meta.url);
+       const expected={code:'ERR_INVALID_PACKAGE_CONFIG',message:'Invalid package config '+join(process.cwd(),'outer/package.json')+'.'};
+       const file='./outer/inner/value.js';
+       assert.throws(()=>import.meta.resolve(file),expected);
+       await assert.rejects(import(file),expected);
+       assert.throws(()=>require(file),expected);
+       const esm=await import('./outer/inner/entry.mjs');
+       const cjs=require('./outer/inner/entry.cjs');
+       await assert.rejects(esm.read(),expected);
+       assert.throws(()=>cjs.read(),expected);
+       console.log('ok');`,
+    );
+  });
+
+  it.each([
+    "{}",
+    "\ufeff{}",
+    '{"main":42}',
+    '{"type":"unknown"}',
+    '{"exports":true}',
+    '{"exports":42}',
+    '{"imports":42}',
+    '{"main":"index.js","unknown":undefined}',
+    '{"main":"index.js","unknown":{"value":tru}}',
+    '{"main":"index.js","unknown":"\\q"}',
+    "{}{}",
+    '{"main":"index.js","unknown":foo/bar}',
+    '{"main":"index.js","unknown":{/* skipped */ "value":tru}}',
+    '{"main":"index.js","t\\u0079pe":null}',
+  ])("accepts metadata Node ignores: %j", async contents => {
+    await run(
+      { "node_modules/pkg/package.json": contents, "node_modules/pkg/index.js": "module.exports = 42;" },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const name = 'pkg';
+       assert.equal((await import(name)).default, 42);
+       assert.equal(createRequire(import.meta.url)(name), 42);
+       console.log('ok');`,
+    );
+  });
+
+  it.each(["import", "require"])(
+    "validates exports only when selected by %s, including self references",
+    async mode => {
+      await run(
+        {
+          "pkg/package.json": '{"name":"pkg","exports":{"0":"./value.cjs","default":"./value.cjs"}}',
+          "pkg/value.cjs": "module.exports = 42;",
+          "pkg/entry.mjs": "export const read = () => import('pkg');",
+          "pkg/entry.cjs": "exports.read = () => require('pkg');",
+        },
+        `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       import {pathToFileURL} from 'node:url';
+       assert.equal((await import('./pkg/value.cjs')).default,42);
+       const file = './pkg/entry.${mode === "import" ? "mjs" : "cjs"}';
+       const entry = ${mode === "import" ? "await import(file)" : "createRequire(import.meta.url)(file)"};
+       await assert.rejects(async () => entry.read(), {
+         name:'Error', code:'ERR_INVALID_PACKAGE_CONFIG',
+         message:'Invalid package config ' + join(process.cwd(),'pkg/package.json') + ' while importing ' + pathToFileURL(join(process.cwd(),file)).href + '. "exports" cannot contain numeric property keys.',
+       });
+       console.log('ok');`,
+      );
+    },
+  );
+
+  it.each(["0", "1.5", "1e-7", "0.000001", "4294967294.5"])(
+    "rejects Node's canonical numeric conditions in exports and imports: %s",
+    async key => {
+      const target = { [key]: "./unused.cjs", default: "./value.cjs" };
+      await run(
+        { "package.json": JSON.stringify({ name: "pkg", exports: target, imports: { "#selected": target } }) },
+        `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         import {join} from 'node:path';
+         const require = createRequire(import.meta.url);
+         const expected = {code:'ERR_INVALID_PACKAGE_CONFIG',message:'Invalid package config '+join(process.cwd(),'package.json')+' while importing '+import.meta.url+'. "exports" cannot contain numeric property keys.'};
+         for(const name of ['pkg','#selected']) {
+           await assert.rejects(import(name),expected);
+           assert.throws(() => require(name),expected);
+         }
+         console.log('ok');`,
+      );
+    },
+  );
+
+  it.each(["01", "1.0", "1e+0", "-0", "-1", "4294967295", "Infinity", "NaN"])(
+    "accepts numeric-looking conditions that Node ignores: %s",
+    async key => {
+      const target = { [key]: "./unused.cjs", default: "./value.cjs" };
+      await run(
+        {
+          "package.json": JSON.stringify({ name: "pkg", exports: target, imports: { "#selected": target } }),
+          "value.cjs": "module.exports=42;",
+        },
+        `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         const require = createRequire(import.meta.url);
+         for(const name of ['pkg','#selected']) {
+           assert.equal((await import(name)).default,42);
+           assert.equal(require(name),42);
+         }
+         console.log('ok');`,
+      );
+    },
+  );
+
+  it("ignores invalid conditional targets until their condition is selected", async () => {
+    await run(
+      {
+        "node_modules/pkg/package.json": '{"exports":{"unused":{"0":"./value.cjs"},"default":"./value.cjs"}}',
+        "node_modules/pkg/value.cjs": "module.exports = 42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const name = 'pkg';
+       assert.equal((await import(name)).default,42);
+       assert.equal(createRequire(import.meta.url)(name),42);
+       console.log('ok');`,
+    );
+  });
+
+  it("continues past invalid array targets and retains the final target error", async () => {
+    await run(
+      {
+        "node_modules/pkg/package.json": '{"exports":["bad","./value.cjs"]}',
+        "node_modules/pkg/value.cjs": "module.exports = 42;",
+        "node_modules/invalid/package.json": '{"exports":["bad","worse"]}',
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const require = createRequire(import.meta.url);
+       const name = 'pkg';
+       assert.equal((await import(name)).default,42);
+       assert.equal(require(name),42);
+       const invalid = 'invalid';
+       const head = 'Invalid "exports" main target "worse" defined in the package config ' + join(process.cwd(),'node_modules/invalid/package.json');
+       const tail = '; targets must start with "./"';
+       await assert.rejects(import(invalid), {code:'ERR_INVALID_PACKAGE_TARGET', message:head+' imported from '+join(process.cwd(),'driver.mjs')+tail});
+       assert.throws(() => require(invalid), {code:'ERR_INVALID_PACKAGE_TARGET',message:head+tail});
+       console.log('ok');`,
+    );
+  });
+
+  it("continues after a URL imports target in an array", async () => {
+    await run(
+      {
+        "package.json": '{"imports":{"#selected":["https://example.invalid/value","./value.cjs"]}}',
+        "value.cjs": "module.exports = 42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const name = '#selected';
+       assert.equal((await import(name)).default,42);
+       assert.equal(createRequire(import.meta.url)(name),42);
+       console.log('ok');`,
+    );
+  });
+
+  it.each([42, false, 1e21, -0])("preserves the final primitive array target: %j", async target => {
+    await run(
+      { "node_modules/pkg/package.json": JSON.stringify({ exports: ["bad", target] }) },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const name = 'pkg';
+       const head = ${JSON.stringify(`Invalid "exports" main target ${JSON.stringify(String(target))} defined in the package config `)} + join(process.cwd(),'node_modules/pkg/package.json');
+       const tail = '; targets must start with "./"';
+       await assert.rejects(import(name), {code:'ERR_INVALID_PACKAGE_TARGET',message:head+' imported from '+join(process.cwd(),'driver.mjs')+tail});
+       assert.throws(() => createRequire(import.meta.url)(name), {code:'ERR_INVALID_PACKAGE_TARGET',message:head+tail});
+       console.log('ok');`,
+    );
+  });
+
+  it("leaves numeric conditions accepted by the bundler", async () => {
+    using dir = tempDir("package-config-bundle", {
+      "package.json": "{}",
+      "entry.js": "import value from 'pkg'; console.log(value);",
+      "node_modules/pkg/package.json": '{"exports":{"0":"./unused.js","default":"./value.js"}}',
+      "node_modules/pkg/value.js": "export default 42;",
+    });
+    const result = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")], target: "bun", throw: false });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+  });
+
+  it("keeps escaped package fields in the bundler's metadata view", async () => {
+    using dir = tempDir("package-config-bundler-fields", {
+      "package.json": "{}",
+      "entry.js": "import value from 'pkg'; console.log(value);",
+      "node_modules/pkg/package.json": '{"ma\\u0069n":"value.js"}',
+      "node_modules/pkg/value.js": "export default 42;",
+    });
+    const result = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")], target: "bun", throw: false });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    '{"main":"index.cjs","type":"module","type":"unknown"}',
+    '{"main":"index.cjs","type":"module","type":"commonjs","type":""}',
+    '{"main":"index.cjs","type":"unknown","type":"m\\u006fdule","type":"unknown"}',
+  ])("accepts repeated recognized and ignored type strings: %s", async contents => {
+    await run(
+      {
+        "node_modules/pkg/package.json": contents,
+        "node_modules/pkg/index.cjs": "module.exports = 42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const name='pkg';
+       assert.equal((await import(name)).default,42);
+       assert.equal(createRequire(import.meta.url)(name),42);
+       console.log('ok');`,
+    );
+  });
+
+  // POSIX mode bits do not deny reads to root and do not model Windows ACLs.
+  it.skipIf(isWindows || process.getuid?.() === 0).each(["file", "directory"])(
+    "uses Node 24.21's unreadable package policy (%s)",
+    async target => {
+      await run(
+        {
+          "node_modules/pkg/package.json": '{"main":"main.cjs"}',
+          "node_modules/pkg/main.cjs": "module.exports = 'selected';",
+          "node_modules/pkg/index.js": "module.exports = 'fallback';",
+        },
+        `import assert from 'node:assert/strict';
+       import {chmodSync} from 'node:fs';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const file = join(process.cwd(),'node_modules/pkg/package.json');
+       const protectedPath = ${target === "file" ? "file" : "join(process.cwd(),'node_modules/pkg')"};
+       chmodSync(protectedPath,0);
+       try {
+         const expected = {name:'Error',code:'ERR_INVALID_PACKAGE_CONFIG',message:'Cannot read package config ' + file + ': permission denied.'};
+         const name = 'pkg';
+         await assert.rejects(import(name),expected);
+         assert.throws(() => createRequire(import.meta.url)(name),expected);
+       } finally { chmodSync(protectedPath,0o700); }
+       console.log('ok');`,
+      );
+    },
+  );
+
+  // POSIX search permission can allow file access while denying a directory listing.
+  it.skipIf(isWindows || process.getuid?.() === 0).each(["unreadable", "malformed", "missing", "valid"])(
+    "checks scopes without directory enumeration (%s)",
+    async kind => {
+      await run(
+        {
+          "scope/package.json": kind === "unreadable" || kind === "malformed" ? "{}" : "invalid JSON",
+          "scope/locked/value.js": "",
+          ...(kind === "missing" ? {} : { "scope/locked/package.json": kind === "malformed" ? "invalid JSON" : "{}" }),
+        },
+        `import assert from 'node:assert/strict';
+         import {chmodSync} from 'node:fs';
+         import {join} from 'node:path';
+         const directory = join(process.cwd(),'scope/locked');
+         const manifest = join(directory,'package.json');
+         chmodSync(directory,0o111);
+         try {
+           if (${JSON.stringify(kind)} === 'unreadable') chmodSync(manifest,0);
+           const selected = './scope/locked/value.js';
+           if (${JSON.stringify(kind)} === 'valid') {
+             assert.doesNotThrow(() => import.meta.resolve(selected));
+           } else {
+             const message = ${JSON.stringify(kind)} === 'unreadable'
+               ? 'Cannot read package config '+manifest+': permission denied.'
+               : 'Invalid package config '+(${JSON.stringify(kind)} === 'missing' ? join(process.cwd(),'scope/package.json') : manifest)+'.';
+             assert.throws(() => import.meta.resolve(selected), {code:'ERR_INVALID_PACKAGE_CONFIG',message});
+           }
+         } finally {
+           chmodSync(directory,0o700);
+           if (${JSON.stringify(kind)} !== 'missing') chmodSync(manifest,0o600);
+         }
+         console.log('ok');`,
+      );
+    },
+  );
+
+  it.each([
+    [
+      '{"abcdefgh\ud83d\udc38ijkl":tru,"other":false}',
+      'Unexpected token \',\', ..."\udc38ijkl":tru,"other":f"... is not valid JSON',
+    ],
+    ['{"x":tru}', 'Unexpected token \'}\', "{"x":tru}" is not valid JSON'],
+    ['{"x":trux}', 'Unexpected token \'x\', "{"x":trux}" is not valid JSON'],
+    ['{"x":truex}', "Expected ',' or '}' after property value in JSON at position 9 (line 1 column 10)"],
+    ['{"x":undefined}', 'Unexpected token \'u\', "{"x":undefined}" is not valid JSON'],
+    ['{"x":NaN}', 'Unexpected token \'N\', "{"x":NaN}" is not valid JSON'],
+    ['{"x":Infinity}', 'Unexpected token \'I\', "{"x":Infinity}" is not valid JSON'],
+    ['{"x":-Infinity}', "No number after minus sign in JSON at position 6 (line 1 column 7)"],
+    ['{"x":01}', "Unexpected number in JSON at position 6 (line 1 column 7)"],
+    ['{"x":.1}', 'Unexpected token \'.\', "{"x":.1}" is not valid JSON'],
+    ['{"x":1.}', "Unterminated fractional number in JSON at position 7 (line 1 column 8)"],
+    ['{"x":1e}', "Exponent part is missing a number in JSON at position 7 (line 1 column 8)"],
+    ['{"x":1e+}', "Exponent part is missing a number in JSON at position 8 (line 1 column 9)"],
+    ['{"x":"\\q"}', "Bad escaped character in JSON at position 7 (line 1 column 8)"],
+    ['{"x":"\\u00xz"}', "Bad Unicode escape in JSON at position 10 (line 1 column 11)"],
+    ['{"x":[true,]}', 'Unexpected token \']\', "{"x":[true,]}" is not valid JSON'],
+    ['{"x":{"a":1,}}', "Expected double-quoted property name in JSON at position 12 (line 1 column 13)"],
+    ['{"x":{a:1}}', "Expected property name or '}' in JSON at position 6 (line 1 column 7)"],
+    ['{"x":{"a" 1}}', "Expected ':' after property name in JSON at position 10 (line 1 column 11)"],
+    ['{"x":[1 2]}', "Expected ',' or ']' after array element in JSON at position 8 (line 1 column 9)"],
+    ['{"x":[1,,2]}', 'Unexpected token \',\', "{"x":[1,,2]}" is not valid JSON'],
+    ['{"x":{"a":}}', 'Unexpected token \'}\', "{"x":{"a":}}" is not valid JSON'],
+    ['{"x":/*c*/null}', 'Unexpected token \'/\', "{"x":/*c*/null}" is not valid JSON'],
+    ['{"x":null //c\n}', "Expected ',' or '}' after property value in JSON at position 10 (line 1 column 11)"],
+    ['{"x":{"a":tru},"y":false}', 'Unexpected token \'}\', ..."":{"a":tru},"y":fals"... is not valid JSON'],
+    [
+      '{"\ud83d\udc38\ud83d\udc38\ud83d\udc38\ud83d\udc38\ud83d\udc38":tru}',
+      'Unexpected token \'}\', "{"\ud83d\udc38\ud83d\udc38\ud83d\udc38\ud83d\udc38\ud83d\udc38":tru}" is not valid JSON',
+    ],
+    ['{"abcd\ud83d\udc38efghij":tru}', 'Unexpected token \'}\', "{"abcd\ud83d\udc38efghij":tru}" is not valid JSON'],
+    [
+      '{\r\n "\ud83d\udc38": [1 2]}',
+      "Expected ',' or ']' after array element in JSON at position 13 (line 2 column 11)",
+    ],
+    ["[object Object]", '"[object Object]" is not valid JSON'],
+    ["{", "Expected property name or '}' in JSON at position 1 (line 1 column 2)"],
+    ["[1", "Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)"],
+    ["[true 42]", "Expected ',' or ']' after array element in JSON at position 6 (line 1 column 7)"],
+    ["[fals1]", "Unexpected number in JSON at position 5 (line 1 column 6)"],
+    ['[tru"e"]', "Unexpected string in JSON at position 4 (line 1 column 5)"],
+    ["[true] []", "Unexpected non-whitespace character after JSON at position 7 (line 1 column 8)"],
+  ])("materializes both package maps with Node JSON diagnostics: %j", async (value, message) => {
+    for (const field of ["exports", "imports"]) {
+      await run(
+        {
+          "node_modules/pkg/package.json": JSON.stringify({
+            main: "value.cjs",
+            exports: "./value.cjs",
+            [field]: value,
+          }),
+          "node_modules/pkg/value.cjs": "module.exports=42;",
+          "node_modules/pkg/value.js": "module.exports=42;",
+        },
+        `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         const require=createRequire(import.meta.url);
+         assert.equal((await import('./node_modules/pkg/value.cjs')).default,42);
+         assert.equal(require('./node_modules/pkg/value.js'),42);
+         const check=error=>{assert.equal(error.name,'SyntaxError');assert.equal(error.code,undefined);assert.equal(error.message,${JSON.stringify(message)});return true;};
+         const name='pkg';
+         await assert.rejects(import(name),check);
+         assert.throws(()=>require(name),check);
+         console.log('ok');`,
+      );
+    }
+  });
+
+  it("materializes unused raw maps and gives exports JSON errors precedence", async () => {
+    const messages = [
+      ["pkg", 'Unexpected token \'}\', "{"x":tru}" is not valid JSON'],
+      ["both", "Unexpected token ']', \"[tru]\" is not valid JSON"],
+    ];
+    await run(
+      {
+        "node_modules/pkg/package.json": '{"exports":"./value.cjs","imports":{"x":tru}}',
+        "node_modules/pkg/value.cjs": "module.exports=42;",
+        "node_modules/both/package.json": JSON.stringify({ imports: '{"x":tru}', exports: "[tru]" }),
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const require=createRequire(import.meta.url);
+       for(const [name,message] of ${JSON.stringify(messages)}) {
+         await assert.rejects(import(name),{name:'SyntaxError',message});
+         assert.throws(()=>require(name),{name:'SyntaxError',message});
+       }
+       console.log('ok');`,
+    );
+  });
+
+  it("accepts JSON-encoded maps in string fields like Node", async () => {
+    await run(
+      {
+        "package.json": JSON.stringify({
+          name: "pkg",
+          exports: JSON.stringify(["./value.cjs"]),
+          imports: JSON.stringify({ "#value": "./value.cjs" }),
+        }),
+        "value.cjs": "module.exports=42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const require=createRequire(import.meta.url);
+       for(const name of ['pkg','#value']) {
+         assert.equal((await import(name)).default,42);
+         assert.equal(require(name),42);
+       }
+       console.log('ok');`,
+    );
+  });
+
+  it.each(["\ud800", "\udfff", "\u000b", "\u2028", "\u2029", "\ufeff", "\\uD800"])(
+    "uses JSON.stringify escaping in invalid target diagnostics: %j",
+    async target => {
+      await run(
+        { "node_modules/pkg/package.json": JSON.stringify({ exports: [target] }) },
+        `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         import {join} from 'node:path';
+         const require=createRequire(import.meta.url);
+         const name='pkg';
+         const head=${JSON.stringify(`Invalid "exports" main target ${JSON.stringify(target)} defined in the package config `)}+join(process.cwd(),'node_modules/pkg/package.json');
+         const tail='; targets must start with "./"';
+         await assert.rejects(import(name),{code:'ERR_INVALID_PACKAGE_TARGET',message:head+' imported from '+join(process.cwd(),'driver.mjs')+tail});
+         assert.throws(()=>require(name),{code:'ERR_INVALID_PACKAGE_TARGET',message:head+tail});
+         console.log('ok');`,
+      );
+    },
+  );
+
+  it.each([
+    {
+      "label": "self-unused-imports",
+      "metadata": { "name": "pkg", "exports": "./value.cjs", "imports": "[tru]" },
+      "specifier": "pkg",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": null,
+    },
+    {
+      "label": "external-unused-imports",
+      "metadata": { "name": "pkg", "exports": "./value.cjs", "imports": "[tru]" },
+      "specifier": "external",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": null,
+    },
+    {
+      "label": "imports-both-invalid",
+      "metadata": { "name": "pkg", "exports": "[tru]", "imports": '{"x":tru}' },
+      "specifier": "#selected",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": 'Unexpected token \'}\', "{"x":tru}" is not valid JSON',
+    },
+    {
+      "label": "imports-valid-exports-invalid",
+      "metadata": { "name": "pkg", "exports": "[tru]", "imports": { "#selected": "./value.cjs" } },
+      "specifier": "#selected",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": "Unexpected token ']', \"[tru]\" is not valid JSON",
+    },
+    {
+      "label": "external-exports-invalid",
+      "metadata": { "name": "pkg", "exports": "[tru]", "imports": '{"x":tru}' },
+      "specifier": "external",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": "Unexpected token ']', \"[tru]\" is not valid JSON",
+    },
+    {
+      "label": "nameless-exports-invalid",
+      "metadata": { "exports": "[tru]" },
+      "specifier": "external",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": "Unexpected token ']', \"[tru]\" is not valid JSON",
+    },
+    {
+      "label": "imports-absent-exports-invalid",
+      "metadata": { "name": "pkg", "exports": "[tru]" },
+      "specifier": "#selected",
+      "esm": "Unexpected token ']', \"[tru]\" is not valid JSON",
+      "cjs": "Unexpected token ']', \"[tru]\" is not valid JSON",
+    },
+  ])("preserves CommonJS map getter ordering: $label", async ({ metadata, specifier, esm, cjs }) => {
+    await run(
+      {
+        "package.json": JSON.stringify(metadata),
+        "value.cjs": "module.exports=42;",
+        "node_modules/external/package.json": '{"main":"index.cjs"}',
+        "node_modules/external/index.cjs": "module.exports=42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const require=createRequire(import.meta.url);
+       const name=${JSON.stringify(specifier)};
+       await assert.rejects(import(name),{name:'SyntaxError',message:${JSON.stringify(esm)}});
+       const message=${JSON.stringify(cjs)};
+       if(message===null) {
+         assert.equal(require(name),42);
+         assert.equal(typeof require.resolve(name),'string');
+       } else {
+         assert.throws(()=>require(name),{name:'SyntaxError',message});
+         assert.throws(()=>require.resolve(name),{name:'SyntaxError',message});
+       }
+       console.log('ok');`,
+    );
+  });
+
+  it("retains CommonJS parents in missing-package diagnostics", async () => {
+    await run(
+      { "entry.cjs": "exports.read = () => require('missing-package');" },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       import {join} from 'node:path';
+       const require = createRequire(import.meta.url);
+       const entry = require('./entry.cjs');
+       const stack = [join(process.cwd(),'entry.cjs'), join(process.cwd(),'driver.mjs')];
+       assert.throws(() => entry.read(), {
+         code:'MODULE_NOT_FOUND', requireStack:stack,
+         message:"Cannot find module 'missing-package'\\nRequire stack:\\n- " + stack.join('\\n- '),
+       });
+       console.log('ok');`,
+    );
+  });
+});

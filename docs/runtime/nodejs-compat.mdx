@@ -121,6 +121,14 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
+Runtime package resolution follows Node 24.21's `package.json` validation. Failures in the metadata reader, non-string `name` or `type` fields, and invalid exports condition objects throw `ERR_INVALID_PACKAGE_CONFIG` with the package path and Node's resolution context. Unselected metadata and explicit `.mjs`/`.cjs` formats remain deferred, and values Node ignores are not rejected.
+
+Reading a selected dependency package materializes both `exports` and `imports`. Invalid JSON in either map throws `SyntaxError` with Node's JSON diagnostic. CommonJS self-reference lookup reads only `exports`; CommonJS `#imports` reads `imports` before entering ESM scope resolution. Format-only scope lookups defer map errors. String fields beginning with `{` or `[` are parsed as JSON maps, matching Node's package reader.
+
+Unreadable selected package metadata also throws `ERR_INVALID_PACKAGE_CONFIG`, rather than falling through to an index file. This deliberately follows Node 24.21; Node 24.19 treated these read failures as absent metadata. Missing files, non-directory path components, and a `package.json` directory remain absence cases.
+
+`import.meta.resolve()` validates the package scope of existing `.js`, `.ts`, and extensionless files. Missing-file URLs and `require.resolve()` defer that scope validation. Loading an already-resolved CommonJS file through the ESM loader preserves the original resolution mode.
+
 🟡 Missing `Module#load()`, `registerHooks`, `findPackageJSON`, `stripTypeScriptTypes`, `getSourceMapsSupport`/`setSourceMapsSupport`. Overriding `require.cache`, `require.extensions` and `module._resolveFilename` is supported. `syncBuiltinESMExports`, `module._load`, `module._pathCache` and `module.register` are no-ops (we recommend [`Bun.plugin`](/runtime/plugins) instead). `findSourceMap` always returns `undefined`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)

@@ -487,6 +487,10 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
+    /// Runtime failure context; invalid selected package configuration is fatal.
+    pub node_module_error: Option<Box<crate::NodeModuleError>>,
+    pub validate_package_config: bool,
+
     pub watcher: Option<AnyResolveWatcher>,
 
     pub caches: CacheSet,
@@ -624,6 +628,8 @@ impl<'a> Resolver<'a> {
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
+            node_module_error: None,
+            validate_package_config: false,
             watcher: from.watcher,
             caches: CacheSet::init(),
             generation: from.generation,
@@ -924,6 +930,8 @@ impl<'a> Resolver<'a> {
             care_about_scripts: false,
             debug_logs: None,
             elapsed: 0,
+            node_module_error: None,
+            validate_package_config: false,
             watcher: None,
             generation: 0,
             package_manager: None,
@@ -1549,7 +1557,12 @@ impl<'a> Resolver<'a> {
 
             // Node reads "type" from the nearest package.json, named or not.
             if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-                if let Some(pkg) = dir.package_json_for_module_type {
+                let package_json = if self.validate_package_config {
+                    dir.package_json_for_node_scope()
+                } else {
+                    dir.package_json_for_module_type
+                };
+                if let Some(pkg) = package_json {
                     module_type = pkg.module_type;
                 }
             }
@@ -2085,7 +2098,7 @@ impl<'a> Resolver<'a> {
             let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
-                    let pkg = import_dir_info.package_json().unwrap();
+                    let pkg = self.package_json_for_resolution(&import_dir_info).unwrap();
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &import_dir_info,
@@ -2238,7 +2251,7 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
-                if let Some(package_json) = browser_scope.package_json() {
+                if let Some(package_json) = self.package_json_for_resolution(&browser_scope) {
                     if let Some(remapped) = self
                         .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
                             &browser_scope,
@@ -2498,6 +2511,12 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
+        let imports_referrer = if forbid_imports {
+            self.package_json_for_resolution(&_dir_info)
+                .map(|pkg| pkg.source.path.text)
+        } else {
+            None
+        };
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Searching for {} in \"node_modules\" directories starting from \"{}\"",
@@ -2546,7 +2565,11 @@ impl<'a> Resolver<'a> {
         // Find the parent directory with the "package.json" file
         let mut dir_info_package_json: Option<DirInfoRef> = Some(dir_info);
         while let Some(d) = dir_info_package_json {
-            if d.package_json.is_some() {
+            if self.validate_package_config && d.is_node_modules() {
+                dir_info_package_json = None;
+                break;
+            }
+            if self.package_json_for_resolution(&d).is_some() {
                 break;
             }
             dir_info_package_json = d.get_parent();
@@ -2554,9 +2577,61 @@ impl<'a> Resolver<'a> {
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
-            let package_json = _dir_info_package_json.package_json().unwrap();
+            let package_json = self
+                .package_json_for_resolution(&_dir_info_package_json)
+                .unwrap();
+            if self.validate_package_config {
+                if package_json.node_error.is_some() {
+                    if let Some(error) =
+                        self.node_package_scope_error_for_directory(_dir_info_package_json.abs_path)
+                    {
+                        self.capture_node_module_error(error);
+                        return MatchStatus::NotFound;
+                    }
+                }
+                // CJS self lookup reads exports lazily; #imports reads imports before the ESM scope reader.
+                let maps = if matches!(
+                    kind,
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve
+                ) {
+                    if !forbid_imports && import_path.starts_with(b"#") && package_json.node_imports
+                    {
+                        if self.capture_package_map_error(package_json, PackageMapRead::Imports) {
+                            return MatchStatus::NotFound;
+                        }
+                        PackageMapRead::Both
+                    } else {
+                        PackageMapRead::Exports
+                    }
+                } else {
+                    PackageMapRead::Both
+                };
+                if self.capture_package_map_error(package_json, maps) {
+                    return MatchStatus::NotFound;
+                }
+                if import_path.starts_with(b"#")
+                    && !forbid_imports
+                    && !package_json.node_imports
+                    && !matches!(
+                        kind,
+                        ast::ImportKind::Require | ast::ImportKind::RequireResolve
+                    )
+                {
+                    self.capture_node_module_error(
+                        crate::NodeModuleError::package_import_not_defined(
+                            import_path,
+                            package_json.source.path.text,
+                        ),
+                    );
+                    return MatchStatus::NotFound;
+                }
+            }
 
-            if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
+            if import_path.starts_with(b"#")
+                && !forbid_imports
+                && package_json.imports.is_some()
+                && (!self.validate_package_config || package_json.node_imports)
+            {
                 let r = self.load_package_imports(
                     import_path,
                     _dir_info_package_json,
@@ -2573,7 +2648,10 @@ impl<'a> Resolver<'a> {
             // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
             let package_name = crate::package_json::Package::parse_name(import_path);
             if let Some(_package_name) = package_name {
-                if _package_name == package_json.name.as_ref() && package_json.exports.is_some() {
+                if _package_name == package_json.name.as_ref()
+                    && package_json.exports.is_some()
+                    && (!self.validate_package_config || package_json.node_exports)
+                {
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "\"{}\" is a self-reference",
@@ -2633,7 +2711,18 @@ impl<'a> Resolver<'a> {
                                 .abs_buf(&parts, bufs!(esm_absolute_package_path))
                         };
 
-                        if let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path) {
+                        let pkg_dir_info = self.dir_info_cached(abs_package_path);
+                        if self.validate_package_config
+                            && !matches!(pkg_dir_info, Ok(Some(_)))
+                            && self.capture_unreadable_package(
+                                abs_package_path,
+                                import_path,
+                                imports_referrer,
+                            )
+                        {
+                            return MatchStatus::NotFound;
+                        }
+                        if let Ok(Some(pkg_dir_info)) = pkg_dir_info {
                             self.extension_order = match kind {
                                 ast::ImportKind::Url
                                 | ast::ImportKind::AtConditional
@@ -2641,8 +2730,42 @@ impl<'a> Resolver<'a> {
                                 _ => self.opts.extension_order.kind(kind, true),
                             };
 
-                            if let Some(package_json) = pkg_dir_info.package_json() {
-                                if let Some(exports_map) = package_json.exports.as_ref() {
+                            if let Some(package_json) =
+                                self.package_json_for_resolution(&pkg_dir_info)
+                            {
+                                if self.validate_package_config {
+                                    if let Some(reason) = package_json.node_error {
+                                        let error =
+                                            crate::NodeModuleError::package_config_for_import(
+                                                package_json.source.path.text,
+                                                reason,
+                                                import_path,
+                                                imports_referrer,
+                                            );
+                                        self.capture_node_module_error(error);
+                                        self.extension_order = prev_extension_order;
+                                        return MatchStatus::NotFound;
+                                    }
+                                    let maps = if is_self_reference
+                                        && matches!(
+                                            kind,
+                                            ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve
+                                        ) {
+                                        PackageMapRead::Exports
+                                    } else {
+                                        PackageMapRead::Both
+                                    };
+                                    if self.capture_package_map_error(package_json, maps) {
+                                        self.extension_order = prev_extension_order;
+                                        return MatchStatus::NotFound;
+                                    }
+                                }
+                                if let Some(exports_map) =
+                                    package_json.exports.as_ref().filter(|_| {
+                                        !self.validate_package_config || package_json.node_exports
+                                    })
+                                {
                                     // The condition set is determined by the kind of import
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
@@ -2657,6 +2780,7 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
+                                            validate_package_config: self.validate_package_config,
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
@@ -2680,6 +2804,8 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
+                                                is_self_reference,
                                                 out,
                                             )
                                             .is_success()
@@ -2712,6 +2838,7 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
+                                            validate_package_config: self.validate_package_config,
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
@@ -2737,6 +2864,8 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
+                                                is_self_reference,
                                                 out,
                                             )
                                             .is_success()
@@ -3139,8 +3268,32 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            if let Some(package_json) = pkg_dir_info.package_json() {
-                                if let Some(exports_map) = package_json.exports.as_ref() {
+                            if let Some(package_json) =
+                                self.package_json_for_resolution(&pkg_dir_info)
+                            {
+                                if self.validate_package_config {
+                                    if let Some(reason) = package_json.node_error {
+                                        self.capture_node_module_error(
+                                            crate::NodeModuleError::package_config_for_import(
+                                                package_json.source.path.text,
+                                                reason,
+                                                import_path,
+                                                imports_referrer,
+                                            ),
+                                        );
+                                        return MatchStatus::NotFound;
+                                    }
+                                }
+                                if self
+                                    .capture_package_map_error(package_json, PackageMapRead::Both)
+                                {
+                                    return MatchStatus::NotFound;
+                                }
+                                if let Some(exports_map) =
+                                    package_json.exports.as_ref().filter(|_| {
+                                        !self.validate_package_config || package_json.node_exports
+                                    })
+                                {
                                     // The condition set is determined by the kind of import
                                     // NOTE: reshaped for borrowck — see identical note above.
                                     // Resolve against the path "/", then join it with the absolute
@@ -3151,6 +3304,7 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
+                                            validate_package_config: self.validate_package_config,
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
@@ -3169,6 +3323,8 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
+                                                is_self_reference,
                                                 out,
                                             )
                                             .is_success()
@@ -3189,6 +3345,7 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
+                                            validate_package_config: self.validate_package_config,
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
@@ -3210,6 +3367,8 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
+                                                is_self_reference,
                                                 out,
                                             )
                                             .is_success()
@@ -3604,6 +3763,184 @@ impl<'a> Resolver<'a> {
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
+    pub fn node_package_scope_error(&mut self, path: &[u8]) -> Option<Box<crate::NodeModuleError>> {
+        if !matches!(bun_paths::extension(path), b"" | b".js" | b".ts") {
+            return None;
+        }
+        self.node_package_scope_error_for_directory(Fs::PathName::init(path).dir)
+    }
+
+    fn node_package_scope_error_for_directory(
+        &mut self,
+        directory: &[u8],
+    ) -> Option<Box<crate::NodeModuleError>> {
+        // Node continues after invalid metadata until a valid scope or boundary.
+        // https://github.com/nodejs/node/blob/v24.21.0/src/node_modules.cc#L310-L350
+        let mut error = None;
+        if let Ok(Some(dir)) = self.read_dir_info(directory) {
+            let mut current = Some(dir);
+            while let Some(dir) = current {
+                if dir.is_node_modules() {
+                    break;
+                }
+                if let Some(package) = dir.package_json().map(PackageJSON::for_node) {
+                    let Some(reason) = package.node_error else {
+                        return error;
+                    };
+                    error = Some(crate::NodeModuleError::package_config(
+                        package.source.path.text,
+                        reason,
+                    ));
+                }
+                current = dir.get_parent();
+            }
+            return error;
+        }
+        // Execute-only directories can expose files without allowing a listing.
+        let mut directory = bun_paths::string_paths::without_trailing_slash_windows_path(directory);
+        loop {
+            if bun_paths::basename(directory) == b"node_modules" {
+                return error;
+            }
+            let path = package_config_path(directory);
+            match check_node_package_config_file(&path) {
+                Ok(PackageConfigProbe::Present(_)) => return error,
+                Err(reason) => error = Some(crate::NodeModuleError::package_config(&path, reason)),
+                Ok(PackageConfigProbe::Absent) => {}
+            }
+            let Some(parent) = bun_paths::dirname(directory) else {
+                return error;
+            };
+            if parent == directory {
+                return error;
+            }
+            directory = parent;
+        }
+    }
+
+    fn package_json_for_resolution(&self, dir: &DirInfo::DirInfo) -> Option<&'static PackageJSON> {
+        let pkg = dir.package_json()?;
+        if self.validate_package_config {
+            Some(pkg.for_node())
+        } else {
+            pkg.has_bun_metadata().then_some(pkg)
+        }
+    }
+
+    fn capture_unreadable_package(
+        &mut self,
+        directory: &[u8],
+        specifier: &[u8],
+        imports_referrer: Option<&[u8]>,
+    ) -> bool {
+        // A failed directory listing must not hide Node 24.21's package read errors.
+        let path = package_config_path(directory);
+        let error = match check_node_package_config_file(&path) {
+            Err(reason) => crate::NodeModuleError::package_config_for_import(
+                &path,
+                reason,
+                specifier,
+                imports_referrer,
+            ),
+            Ok(PackageConfigProbe::Present(errors)) => {
+                let Some(message) = errors.into_iter().flatten().next() else {
+                    return false;
+                };
+                crate::NodeModuleError::invalid_json(&message)
+            }
+            _ => return false,
+        };
+        self.capture_node_module_error(error);
+        true
+    }
+
+    /// Set-if-empty: the first Node-shaped failure encountered during a
+    /// resolve wins (matching Node, which throws at the first failing step).
+    fn capture_node_module_error(&mut self, err: Box<crate::NodeModuleError>) {
+        if self.validate_package_config && self.node_module_error.is_none() {
+            self.node_module_error = Some(err);
+        }
+    }
+
+    fn capture_package_map_error(&mut self, package: &PackageJSON, maps: PackageMapRead) -> bool {
+        if self.validate_package_config {
+            let [exports, imports] = &package.node_json_errors;
+            let message = match maps {
+                PackageMapRead::Exports => exports.as_deref(),
+                PackageMapRead::Imports => imports.as_deref(),
+                PackageMapRead::Both => exports.as_deref().or(imports.as_deref()),
+            };
+            if let Some(message) = message {
+                self.capture_node_module_error(crate::NodeModuleError::invalid_json(message));
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Map a failed `exports`/`imports` `Resolution` to Node's error shape.
+    fn capture_esm_resolution_failure(
+        &mut self,
+        esm_resolution: &crate::package_json::Resolution,
+        package_json: &PackageJSON,
+        request: &[u8],
+        is_imports: bool,
+    ) {
+        use crate::NodeModuleError;
+        use crate::package_json::{ResolutionDetail, Status};
+        if !self.validate_package_config || self.node_module_error.is_some() {
+            return;
+        }
+        let pkg_json_path: &[u8] = package_json.source.path.text;
+        let err = match esm_resolution.status {
+            // Bun-only intermediate statuses all correspond to Node's
+            // "not exported" / "not defined" outcomes.
+            Status::PackagePathNotExported
+            | Status::PackagePathDisabled
+            | Status::Null
+            | Status::Undefined
+            | Status::UndefinedNoConditionsMatch => {
+                if is_imports {
+                    NodeModuleError::package_import_not_defined(request, pkg_json_path)
+                } else {
+                    NodeModuleError::package_path_not_exported(pkg_json_path, request)
+                }
+            }
+            Status::PackageImportNotDefined => {
+                NodeModuleError::package_import_not_defined(request, pkg_json_path)
+            }
+            Status::InvalidPackageTarget => {
+                let (key, target, bare) = match esm_resolution.detail.as_deref() {
+                    Some(ResolutionDetail::InvalidTarget {
+                        key,
+                        target,
+                        bare_string_target,
+                    }) => (key.as_deref(), target.as_deref(), *bare_string_target),
+                    _ => (None, None, false),
+                };
+                NodeModuleError::invalid_package_target(
+                    pkg_json_path,
+                    key,
+                    target,
+                    is_imports,
+                    bare,
+                )
+            }
+            Status::InvalidPackageConfiguration => {
+                let message = match esm_resolution.detail.as_deref() {
+                    Some(ResolutionDetail::ConfigMessage { message }) => Some(&**message),
+                    _ => None,
+                };
+                let mut error =
+                    NodeModuleError::invalid_package_config_structure(pkg_json_path, message);
+                error.referrer_in_require = is_imports;
+                error
+            }
+            _ => return,
+        };
+        self.node_module_error = Some(err);
+    }
+
     fn handle_esm_resolution(
         &mut self,
         esm_resolution_: crate::package_json::Resolution,
@@ -3611,6 +3948,8 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
+        is_imports: bool,
+        is_self_reference: bool,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut esm_resolution = esm_resolution_;
@@ -3621,6 +3960,17 @@ impl<'a> Resolver<'a> {
         )) && !esm_resolution.path.is_empty()
             && esm_resolution.path[0] == SEP)
         {
+            self.capture_esm_resolution_failure(
+                &esm_resolution,
+                package_json,
+                package_subpath,
+                is_imports,
+            );
+            if is_self_reference {
+                if let Some(error) = self.node_module_error.as_mut() {
+                    error.referrer_in_require = true;
+                }
+            }
             return MatchStatus::NotFound;
         }
 
@@ -3775,11 +4125,12 @@ impl<'a> Resolver<'a> {
                     }
                     entry_query.entry().abs_path.as_bytes()
                 };
-                let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
-                    pkg.module_type
-                } else {
-                    options::ModuleType::Unknown
-                };
+                let module_type =
+                    if let Some(pkg) = self.package_json_for_resolution(&resolved_dir_info) {
+                        pkg.module_type
+                    } else {
+                        options::ModuleType::Unknown
+                    };
 
                 *out = MatchResult {
                     path_pair: PathPair {
@@ -3791,8 +4142,7 @@ impl<'a> Resolver<'a> {
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
                     package_json: Some(
-                        resolved_dir_info
-                            .package_json()
+                        self.package_json_for_resolution(&resolved_dir_info)
                             .map(std::ptr::from_ref)
                             .unwrap_or_else(|| std::ptr::from_ref(package_json)),
                     ),
@@ -3944,7 +4294,7 @@ impl<'a> Resolver<'a> {
             }
             query.entry().abs_path.as_bytes()
         };
-        let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+        let module_type = if let Some(pkg) = self.package_json_for_resolution(&resolved_dir_info) {
             pkg.module_type
         } else {
             options::ModuleType::Unknown
@@ -3960,8 +4310,7 @@ impl<'a> Resolver<'a> {
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
             package_json: Some(
-                resolved_dir_info
-                    .package_json()
+                self.package_json_for_resolution(&resolved_dir_info)
                     .map(std::ptr::from_ref)
                     .unwrap_or_else(|| std::ptr::from_ref(package_json)),
             ),
@@ -4974,7 +5323,7 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let package_json = dir_info.package_json().unwrap();
+        let package_json = self.package_json_for_resolution(&dir_info).unwrap();
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
@@ -5001,6 +5350,7 @@ impl<'a> Resolver<'a> {
         // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
+            validate_package_config: self.validate_package_config,
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
                     &self.opts.conditions.require
@@ -5058,7 +5408,9 @@ impl<'a> Resolver<'a> {
             package_json.source.path.name().dir,
             kind,
             package_json,
-            b"",
+            import_path,
+            true,
+            false,
             out,
         )
     }
@@ -5068,7 +5420,7 @@ impl<'a> Resolver<'a> {
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
-        let package_json = dir_info.package_json()?;
+        let package_json = self.package_json_for_resolution(&dir_info)?;
         let browser_map = &package_json.browser_map;
 
         if browser_map.count() == 0 {
@@ -5195,7 +5547,7 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
-                if let Some(browser_json) = browser_scope.package_json() {
+                if let Some(browser_json) = self.package_json_for_resolution(&browser_scope) {
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
@@ -5230,7 +5582,7 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
-            if let Some(package_json) = dir_info.package_json() {
+            if let Some(package_json) = self.package_json_for_resolution(&dir_info) {
                 *out = MatchResult {
                     path_pair: PathPair {
                         primary: Fs::Path::init(result.path),
@@ -5381,7 +5733,7 @@ impl<'a> Resolver<'a> {
                         .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
                 }
 
-                if let Some(package_json) = dir_info.package_json() {
+                if let Some(package_json) = self.package_json_for_resolution(&dir_info) {
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Path::init(out_buf),
@@ -5444,7 +5796,7 @@ impl<'a> Resolver<'a> {
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
-                if let Some(browser_json) = browser_scope.package_json() {
+                if let Some(browser_json) = self.package_json_for_resolution(&browser_scope) {
                     let index_paths = [path, FIELD_REL_PATH];
                     let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
                     if let Some(remap) = self
@@ -5528,7 +5880,9 @@ impl<'a> Resolver<'a> {
                     if let Ok(Some(package_dir_info)) = self.dir_info_cached(
                         &file.path[0..node_modules_folder_offset + package_name_length as usize],
                     ) {
-                        if let Some(package_json) = package_dir_info.package_json() {
+                        if let Some(package_json) =
+                            self.package_json_for_resolution(&package_dir_info)
+                        {
                             *out = MatchResult {
                                 path_pair: PathPair {
                                     primary: Path::init(file.path),
@@ -5595,7 +5949,19 @@ impl<'a> Resolver<'a> {
         let mut package_json: Option<*const PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
-        if let Some(pkg_json) = dir_info.package_json() {
+        if let Some(pkg_json) = self.package_json_for_resolution(&dir_info) {
+            if self.validate_package_config {
+                if let Some(reason) = pkg_json.node_error {
+                    self.capture_node_module_error(crate::NodeModuleError::package_config(
+                        pkg_json.source.path.text,
+                        reason,
+                    ));
+                    dec_ret!(MatchStatus::NotFound);
+                }
+            }
+            if self.capture_package_map_error(pkg_json, PackageMapRead::Both) {
+                dec_ret!(MatchStatus::NotFound);
+            }
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
@@ -6233,7 +6599,9 @@ impl<'a> Resolver<'a> {
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if let Some(parent_package_json) = parent_.package_json() {
+            if let Some(parent_package_json) =
+                parent_.package_json().filter(|pkg| pkg.has_bun_metadata())
+            {
                 // https://github.com/oven-sh/bun/issues/229
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
@@ -6372,7 +6740,7 @@ impl<'a> Resolver<'a> {
                         .flatten()
                     };
 
-                    if let Some(pkg) = info.package_json() {
+                    if let Some(pkg) = info.package_json().filter(|pkg| pkg.has_bun_metadata()) {
                         if pkg.browser_map.count() > 0 {
                             info.enclosing_browser_scope = result.index;
                             info.package_json_for_browser_field = Some(pkg);
@@ -6404,6 +6772,7 @@ impl<'a> Resolver<'a> {
 
         info.package_json_for_module_type = info
             .package_json()
+            .filter(|pkg| pkg.has_bun_metadata())
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
@@ -6837,5 +7206,50 @@ impl Dirname {
         }
 
         &path[0..end_index + 1]
+    }
+}
+
+fn package_config_path(directory: &[u8]) -> Vec<u8> {
+    let mut path = directory.to_vec();
+    if !path.ends_with(&[SEP]) {
+        path.push(SEP);
+    }
+    path.extend_from_slice(b"package.json");
+    path
+}
+
+enum PackageConfigProbe {
+    Absent,
+    Present([Option<Box<[u16]>>; 2]),
+}
+
+enum PackageMapRead {
+    Exports,
+    Imports,
+    Both,
+}
+
+/// Native scope lookup ignores map syntax, while package reads materialize both maps.
+fn check_node_package_config_file(
+    path: &[u8],
+) -> core::result::Result<PackageConfigProbe, crate::package_json::PackageConfigError> {
+    use crate::package_json::PackageConfigError;
+    match bun_sys::File::read_from(FD::cwd(), path) {
+        Ok(bytes) => bun_parsers::node_package_json::NodePackageJson::parse(&bytes)
+            .map(|fields| PackageConfigProbe::Present(fields.json_errors))
+            .map_err(|_| PackageConfigError::Invalid),
+        Err(error) => {
+            let errno = error.to_zig_err();
+            if matches!(
+                errno,
+                bun_errno::SystemErrno::ENOENT
+                    | bun_errno::SystemErrno::ENOTDIR
+                    | bun_errno::SystemErrno::EISDIR
+            ) {
+                Ok(PackageConfigProbe::Absent)
+            } else {
+                Err(PackageConfigError::Read(errno))
+            }
+        }
     }
 }

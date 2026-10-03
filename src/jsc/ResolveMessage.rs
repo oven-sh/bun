@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
@@ -6,7 +6,9 @@ use bun_core::strings;
 
 use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{
+    CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
+};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -22,6 +24,7 @@ pub struct ResolveMessage {
     // (which is lifetime-parameterised over its backing buffer).
     pub(crate) referrer: Option<Box<[u8]>>,
     pub(crate) logged: Cell<bool>,
+    require_parents: RefCell<Vec<Box<[u8]>>>,
 }
 
 /// `ImportKind.label()` — the canonical table lives in
@@ -76,6 +79,31 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
 }
 
 impl ResolveMessage {
+    pub fn from_node_module_error(
+        global: &JSGlobalObject,
+        error: &bun_resolver::NodeModuleError,
+        is_esm: bool,
+        specifier: &[u8],
+        referrer: &[u8],
+    ) -> JSValue {
+        use bun_resolver::NodeModuleErrorKind as K;
+        let code = match error.kind {
+            K::InvalidPackageJson => {
+                return bun_core::EncodedSlice::utf16(&error.json_message)
+                    .to_syntax_error_instance(global);
+            }
+            K::InvalidPackageConfig | K::InvalidPackageConfigStructure => {
+                crate::ErrCode::ERR_INVALID_PACKAGE_CONFIG
+            }
+            K::PackagePathNotExported => crate::ErrCode::ERR_PACKAGE_PATH_NOT_EXPORTED,
+            K::PackageImportNotDefined => crate::ErrCode::ERR_PACKAGE_IMPORT_NOT_DEFINED,
+            K::InvalidPackageTarget => crate::ErrCode::ERR_INVALID_PACKAGE_TARGET,
+        };
+        let text = error.message(is_esm, specifier, referrer);
+        let message = bstr::BStr::new(&text);
+        global.err(code, format_args!("{message}")).to_js()
+    }
+
     // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
     pub fn constructor(
         global: &JSGlobalObject,
@@ -307,6 +335,7 @@ impl ResolveMessage {
             msg: msg.clone(),
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: Cell::new(false),
+            require_parents: RefCell::new(Vec::new()),
         };
         Ok(resolve_error.to_js(global))
     }
@@ -363,6 +392,9 @@ impl ResolveMessage {
                 let _ = write!(&mut out, "Cannot find module '{}'", BStr::new(specifier));
                 if let Some(referrer) = referrer {
                     let _ = write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer));
+                    for parent in self.require_parents.borrow().iter() {
+                        let _ = write!(&mut out, "\n- {}", BStr::new(parent));
+                    }
                 }
             }
             ImportKind::Stmt | ImportKind::Dynamic => {
@@ -396,8 +428,7 @@ impl ResolveMessage {
         bun_string_jsc::create_utf8_for_js(global, &this.msg.data.text)
     }
 
-    // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
-    // requiring files; Bun tracks only the direct referrer). CJS kinds only.
+    // Node: MODULE_NOT_FOUND errors carry the chain of requiring files.
     #[crate::host_fn(getter)]
     pub fn get_require_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let Some((kind, _, referrer)) = this.node_error_shape() else {
@@ -410,6 +441,8 @@ impl ResolveMessage {
         if let Some(r) = referrer {
             entries.push(r);
         }
+        let parents = this.require_parents.borrow();
+        entries.extend(parents.iter().map(Box::as_ref));
         JSValue::create_array_from_iter(global, entries.iter().copied(), |r| {
             bun_string_jsc::create_utf8_for_js(global, r)
         })
@@ -463,5 +496,20 @@ impl ResolveMessage {
         } else {
             JSValue::NULL
         })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ResolveMessage__appendRequireParent(error: JSValue, path: &bun_core::String) {
+    if let Some(error) = error.as_class_ref::<ResolveMessage>() {
+        if matches!(
+            error.node_error_shape(),
+            Some((ImportKind::Require | ImportKind::RequireResolve, _, _))
+        ) {
+            error
+                .require_parents
+                .borrow_mut()
+                .push(Box::from(path.to_utf8().slice()));
+        }
     }
 }

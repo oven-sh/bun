@@ -1161,6 +1161,23 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     Ok(JSPromise::resolved_promise_value(global_object, value))
 }
 
+fn resolve_with_parent(
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    mode: ResolveMode,
+    parent: JSValue,
+) -> JsResult<JSValue> {
+    match resolve_with_args::<true>(global, specifier, source, mode)? {
+        Resolved::Found(value) => Ok(value),
+        Resolved::NotFound(error) => {
+            let _protected = error.protected();
+            let error = jsc::cpp::Bun__appendRequireParents(global, error, parent)?;
+            Err(global.throw_value(error))
+        }
+    }
+}
+
 // HOST_EXPORT(Bun__resolveSync, c)
 pub(crate) fn bun_resolve_sync(
     global: &JSGlobalObject,
@@ -1168,6 +1185,7 @@ pub(crate) fn bun_resolve_sync(
     source: JSValue,
     is_esm: bool,
     is_user_require_resolve: bool,
+    parent: JSValue,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
@@ -1188,11 +1206,12 @@ pub(crate) fn bun_resolve_sync(
     };
 
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
+        resolve_with_parent(
             global,
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            parent,
         )
     })
 }
@@ -1212,6 +1231,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
     is_user_require_resolve: bool,
     paths_ptr: *const BunString,
     paths_len: usize,
+    parent: JSValue,
 ) -> JSValue {
     let paths: &[BunString] = if paths_len == 0 {
         &[]
@@ -1251,16 +1271,56 @@ pub(crate) fn bun_resolve_sync_with_paths(
     }
 
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
+        resolve_with_parent(
             global,
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            parent,
         )
     })
 }
 
 bun_output::declare_scope!(importMetaResolve, visible);
+
+// HOST_EXPORT(Bun__validateImportMetaPackageConfig, c)
+pub(crate) fn bun_validate_import_meta_package_config(
+    global: &JSGlobalObject,
+    path: &BunString,
+) -> JSValue {
+    jsc::to_js_host_call(global, || {
+        let path = path.to_utf8();
+        let path_z = bun_core::ZBox::from_bytes(path.slice());
+        // Missing files and directories still resolve to URLs without format lookup.
+        if !matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), &path_z),
+            Ok(bun_sys::ExistsAtType::File)
+        ) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let vm = global.bun_vm_ptr();
+        // SAFETY: the resolver belongs to the live VM on its JS thread.
+        let resolver = unsafe { &raw mut (*vm).transpiler.resolver };
+        let mut log = bun_ast::Log::default();
+        // SAFETY: the VM and local log outlive the guard; it drops before the log.
+        let _log_scope = unsafe {
+            bun_resolver::Resolver::scoped_log(resolver, std::ptr::NonNull::from(&mut log))
+        };
+        // SAFETY: the live VM resolver is exclusively used on its JS thread.
+        let resolver = unsafe { &mut *resolver };
+        let mut realpath_buffer = bun_paths::path_buffer_pool::get();
+        let selected_path = if resolver.opts.preserve_symlinks {
+            path.slice()
+        } else {
+            bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or(path.slice())
+        };
+        if let Some(error) = resolver.node_package_scope_error(selected_path) {
+            let error = jsc::ResolveMessage::from_node_module_error(global, &error, true, b"", b"");
+            return Err(global.throw_value(error));
+        }
+        Ok(JSValue::UNDEFINED)
+    })
+}
 
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
 pub(crate) fn bun_resolve_sync_with_strings(

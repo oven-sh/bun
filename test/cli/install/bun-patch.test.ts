@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { chmod, readdir, rm } from "fs/promises";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1232,5 +1233,98 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `bun patch` deletes the package's folder in node_modules and copies it again. `bun patch
+// --commit` moves the package's nested node_modules out of the way while it runs `git diff`.
+// Both used to do that first and to exit on a later failure, so the files were gone.
+describe("a step that fails leaves node_modules as it was", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
+  async function runBun(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function installedProject(dependencies: Record<string, string>) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": JSON.stringify({ name: "foo", dependencies }) },
+    });
+    const { stderr, exitCode } = await runBun(packageDir, ["install"]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return packageDir;
+  }
+
+  test.concurrent("bun patch when the package is not in the cache", async () => {
+    const packageDir = await installedProject({ "no-deps": "1.0.0" });
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+    const { stderr, exitCode } = await runBun(packageDir, ["patch", "no-deps"]);
+    expect(stderr).toContain("error: error overwriting folder in node_modules: ENOENT");
+    expect(await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // one-dep needs no-deps@1.0.1, so the hoisted linker nests it under one-dep.
+  async function commitWithPath(path: string) {
+    const packageDir = await installedProject({ "one-dep": "1.0.0", "no-deps": "2.0.0" });
+    const nested = Bun.file(join(packageDir, "node_modules", "one-dep", "node_modules", "no-deps", "package.json"));
+    expect(await nested.json()).toEqual({ name: "no-deps", version: "1.0.1" });
+
+    const env: Record<string, string | undefined> = { ...bunEnv };
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === "PATH") delete env[key];
+    }
+    env.PATH = path;
+
+    const { stderr, exitCode } = await runBun(packageDir, ["patch", "--commit", "node_modules/one-dep"], env);
+    return {
+      stderr,
+      exitCode,
+      nested: await nested.exists(),
+      rootNodeModules: (await readdir(join(packageDir, "node_modules"))).sort(),
+    };
+  }
+
+  test.concurrent("bun patch --commit when git is not installed", async () => {
+    using emptyPath = tempDir("bun-patch-no-git", {});
+
+    const { stderr, exitCode, ...nodeModules } = await commitWithPath(String(emptyPath));
+    expect(stderr).toContain("error: git must be installed to use `bun patch --commit`");
+    expect(nodeModules).toEqual({ nested: true, rootNodeModules: ["no-deps", "one-dep"] });
+    expect(exitCode).toBe(1);
+  });
+
+  // The git that fails is a shell script.
+  test.concurrent.skipIf(isWindows)("bun patch --commit when git diff fails", async () => {
+    using fakeGit = tempDir("bun-patch-fake-git", { "git": "#!/bin/sh\necho 'fatal: not today' >&2\nexit 128\n" });
+    await chmod(join(String(fakeGit), "git"), 0o755);
+
+    const { stderr, exitCode, ...nodeModules } = await commitWithPath(String(fakeGit));
+    expect(stderr).toContain("error: failed to make diff fatal: not today");
+    expect(nodeModules).toEqual({ nested: true, rootNodeModules: ["no-deps", "one-dep"] });
+    expect(exitCode).toBe(1);
   });
 });

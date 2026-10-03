@@ -3887,6 +3887,165 @@ describe("expect()", () => {
     }
   });
 
+  // The message of the error that `fn` throws, without ANSI colors. Bun prints the "not" of a failed `.not` in bold.
+  const failureMessage = (/** @type {() => void} */ fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return ANY(e).message.replaceAll(/\x1B\[[0-9;]*m/g, "");
+    }
+    return "did not throw";
+  };
+
+  // https://github.com/oven-sh/bun/issues/17074
+  describe("toBeEmpty() with a value that is not a string, object, or iterable", () => {
+    /** @type {{ label: string, value: any }[]} */
+    const values = [
+      { label: `undefined`, value: undefined },
+      { label: `null`, value: null },
+      { label: `0`, value: 0 },
+      { label: `5`, value: 5 },
+      { label: `NaN`, value: NaN },
+      { label: `true`, value: true },
+      { label: `false`, value: false },
+      { label: `10n`, value: 10n },
+      { label: `Symbol()`, value: Symbol() },
+      { label: `() => {}`, value: () => {} },
+      { label: `(a, b) => {}`, value: (/** @type {any} */ a, /** @type {any} */ b) => {} },
+      { label: `async () => {}`, value: async () => {} },
+      { label: `class A {}`, value: class A {} },
+      { label: `new Proxy(() => {}, {})`, value: new Proxy(() => {}, {}) },
+    ];
+    for (const { label, value } of values) {
+      test(label, () => {
+        // jest-extended fails toBeEmpty() for each of these too: with a TypeError for undefined and null,
+        // with "Expected value to be empty" for the rest. It passes not.toBeEmpty() for the rest.
+        expect(() => expect(value).toBeEmpty()).toThrow(
+          isBun ? "Expected value to be a string, object, or iterable" : undefined,
+        );
+        if (isBun) {
+          expect(() => expect(value).not.toBeEmpty()).toThrow("Expected value to be a string, object, or iterable");
+        }
+      });
+    }
+
+    if (isBun) {
+      test("the message has the matcher and the received value", () => {
+        expect(failureMessage(() => expect(undefined).toBeEmpty())).toBe(
+          "expect(received).toBeEmpty()\n\nExpected value to be a string, object, or iterable\n\nReceived: undefined\n",
+        );
+        expect(failureMessage(() => expect(5).not.toBeEmpty())).toBe(
+          "expect(received).not.toBeEmpty()\n\nExpected value to be a string, object, or iterable\n\nReceived: 5\n",
+        );
+      });
+    }
+  });
+
+  // jest-extended compares against `{}`, and Jest's equality first compares `Object.prototype.toString.call()` of both sides.
+  describe("toBeEmpty() with an object of another class than Object", () => {
+    /** @type {{ label: string, value: any }[]} */
+    const values = [
+      { label: `new Date(0)`, value: new Date(0) },
+      { label: `/x/`, value: /x/ },
+      { label: `new Error("boom")`, value: new Error("boom") },
+      { label: `new Number(5)`, value: new Number(5) },
+      { label: `new Boolean(false)`, value: new Boolean(false) },
+      { label: `Object(Symbol())`, value: Object(Symbol()) },
+      { label: `Promise.resolve()`, value: Promise.resolve() },
+      { label: `new WeakSet()`, value: new WeakSet() },
+      { label: `new DataView(new ArrayBuffer(8))`, value: new DataView(new ArrayBuffer(8)) },
+      { label: `Math`, value: Math },
+    ];
+    for (const { label, value } of values) {
+      test(label, () => {
+        expect(value).not.toBeEmpty();
+        expect(() => expect(value).toBeEmpty()).toThrow("Expected value to be empty");
+      });
+    }
+
+    test("a Proxy whose get trap throws for Symbol.toStringTag", () => {
+      const value = new Proxy(
+        {},
+        {
+          get(target, key, receiver) {
+            if (key === Symbol.toStringTag) throw new Error("from the trap");
+            return Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      expect(() => expect(value).toBeEmpty()).toThrow("from the trap");
+    });
+  });
+
+  // jest-extended fails these: Jest's equality compares the `Object.prototype.toString` string of a plain object too.
+  if (isBun) {
+    describe("toBeEmpty() with a plain object or module namespace that has a Symbol.toStringTag", () => {
+      class Tagged {
+        get [Symbol.toStringTag]() {
+          return "Tagged";
+        }
+      }
+      const throwingTag = {
+        get() {
+          throw new Error("from the getter");
+        },
+      };
+      /** @type {{ label: string, value: any }[]} */
+      const values = [
+        { label: `new URLSearchParams("").toJSON()`, value: ANY(new URLSearchParams("")).toJSON() },
+        { label: `an instance of a class with a Symbol.toStringTag getter`, value: new Tagged() },
+        { label: `an own Symbol.toStringTag`, value: Object.defineProperty({}, Symbol.toStringTag, { value: "Own" }) },
+        {
+          label: `a Symbol.toStringTag getter that throws`,
+          value: Object.defineProperty({}, Symbol.toStringTag, throwingTag),
+        },
+      ];
+      for (const { label, value } of values) {
+        test(label, () => {
+          expect(value).toBeEmpty();
+        });
+      }
+
+      test("a module namespace with no exports", async () => {
+        const emptyModule = "data:text/javascript,";
+        const namespace = await import(emptyModule);
+        expect(Object.prototype.toString.call(namespace)).toBe("[object Module]");
+        expect(namespace).toBeEmpty();
+      });
+
+      test(`new URLSearchParams("a=b").toJSON()`, () => {
+        const value = ANY(new URLSearchParams("a=b")).toJSON();
+        expect(value).not.toBeEmpty();
+        expect(() => expect(value).toBeEmpty()).toThrow("Expected value to be empty");
+      });
+    });
+  }
+
+  describe("toBeEmpty() with an object that has no enumerable properties", () => {
+    class Foo {}
+    /** @type {{ label: string, value: any }[]} */
+    const values = [
+      { label: `new Foo()`, value: new Foo() },
+      { label: `Object.create(null)`, value: Object.create(null) },
+      { label: `new Proxy({}, {})`, value: new Proxy({}, {}) },
+      { label: `Object.defineProperty({}, "a", { value: 1 })`, value: Object.defineProperty({}, "a", { value: 1 }) },
+    ];
+    for (const { label, value } of values) {
+      test(label, () => {
+        expect(value).toBeEmpty();
+        expect(failureMessage(() => expect(value).not.toBeEmpty())).toContain(
+          isBun ? "Expected value not to be empty" : "Expected value to not be empty",
+        );
+      });
+    }
+
+    test(`""`, () => {
+      expect(failureMessage(() => expect("").not.toBeEmpty())).toContain(
+        isBun ? "Expected value not to be empty" : "Expected value to not be empty",
+      );
+    });
+  });
+
   test("toBeEmptyObject()", () => {
     // Map and Set are not considered as object in jest-extended
     // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26

@@ -1577,9 +1577,19 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
+    /// `Err` is `self.err`, which a second call does not clear.
+    #[inline]
+    pub fn link(&mut self, global: bool) -> Result<(), Error> {
+        self.link_bins(global);
+        match self.err {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     // target: what the symlink points to
     // destination: where the symlink exists on disk
-    pub fn link(&mut self, global: bool) {
+    fn link_bins(&mut self, global: bool) {
         let (Some(package_dir_len), Some(mut dest_off)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
@@ -1799,7 +1809,15 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
-                    while let Some(entry) = iter.next().unwrap_or(None) {
+                    loop {
+                        let entry = match iter.next() {
+                            Ok(Some(entry)) => entry,
+                            Ok(None) => break,
+                            Err(err) => {
+                                self.err = Some(err.into());
+                                return;
+                            }
+                        };
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
@@ -1844,18 +1862,19 @@ impl<'a> Linker<'a> {
         }
     }
 
-    pub fn unlink(&mut self, global: bool) {
+    /// `Err` means that a link of this package can be left behind. A path that does not fit the
+    /// buffer is not an error here: `link` refuses it, so there is no link to remove.
+    pub fn unlink(&mut self, global: bool) -> Result<(), Error> {
         let (Some(package_dir_len), Some(mut dest_off)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
         ) else {
-            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-            return;
+            return Ok(());
         };
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // see `link()` — detach abs_target_buf borrow via raw ptr.
+        // see `link_bins()` — detach abs_target_buf borrow via raw ptr.
         let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
         // SAFETY: abs_target_buf is not written between here and use.
         let package_dir = unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
@@ -1870,8 +1889,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
+                        return Ok(());
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
@@ -1886,12 +1904,10 @@ impl<'a> Linker<'a> {
                     let named = self.bin.value.named_file;
                     let name = named[0].slice(self.string_buf);
                     let normalized_name = normalized_bin_name(name);
-                    if normalized_name.is_empty() {
-                        return;
-                    }
-                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
+                    if normalized_name.is_empty()
+                        || normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        return Ok(());
                     }
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
@@ -1912,16 +1928,12 @@ impl<'a> Linker<'a> {
                     while i < end {
                         let bin_dest = self.extern_string_buf[i as usize].slice(self.string_buf);
                         let normalized_bin_dest = normalized_bin_name(bin_dest);
-                        if normalized_bin_dest.is_empty() {
+                        if normalized_bin_dest.is_empty()
+                            || normalized_bin_dest.len()
+                                >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                        {
                             i += 2;
                             continue;
-                        }
-                        if normalized_bin_dest.len()
-                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
-                        {
-                            self.err =
-                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                            return;
                         }
 
                         dest_off = abs_dest_dir_end;
@@ -1941,7 +1953,7 @@ impl<'a> Linker<'a> {
                     let dir = self.bin.value.dir;
                     let target = dir.slice(self.string_buf);
                     if target.is_empty() {
-                        return;
+                        return Ok(());
                     }
 
                     let abs_target_dir =
@@ -1950,8 +1962,13 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.into());
-                            return;
+                            return match err.get_errno() {
+                                // No folder is at this path, so `link` made no link from it.
+                                sys::Errno::ENOENT
+                                | sys::Errno::ENOTDIR
+                                | sys::Errno::ENAMETOOLONG => Ok(()),
+                                _ => Err(err.into()),
+                            };
                         }
                     };
                     let _close = scopeguard::guard(target_dir, |fd| {
@@ -1961,17 +1978,14 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
-                    while let Some(entry) = iter.next().unwrap_or(None) {
+                    while let Some(entry) = iter.next()? {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
-                                    ));
-                                    return;
+                                    continue;
                                 }
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
@@ -1989,5 +2003,6 @@ impl<'a> Linker<'a> {
                 }
             }
         }
+        Ok(())
     }
 }

@@ -213,7 +213,16 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                 err: None,
                 skipped_due_to_missing_bin: false,
             };
-            bin_linker.unlink(true);
+            // Checked before the package is unregistered, so that `bun unlink` can run again.
+            if let Err(e) = bin_linker.unlink(true) {
+                if manager.options.log_level != LogLevel::Silent {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> failed to unlink bin due to error {}",
+                        e.name(),
+                    );
+                }
+                Global::crash();
+            }
         }
 
         // delete it if it exists

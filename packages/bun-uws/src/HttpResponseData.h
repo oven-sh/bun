@@ -170,7 +170,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
         /* node:http socket.end(): half-close when the queued outgoing bytes have flushed, also when the response in flight never ends. With none queued, the FIN leaves at once.
-         * It stays set behind that FIN: the connection still reads. With no response in flight at the flush, the connection closes there. */
+         * It stays set behind that FIN: the connection still reads, and the peer's FIN closes it. */
         HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 25,
 
         /* Bits that describe the connection rather than the response in flight.
@@ -267,6 +267,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * peer would read whatever we send as more body. */
     bool isDrainingBeforeClose() const {
         return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+    }
+
+    /* node:http socket.end() half-closes when its bytes are out, and the peer's FIN closes the connection.
+     * destroySoon() closes there, and so does a server that closes its idle connections. */
+    bool halfClosesAtDrain() const {
+        return (state & (HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_CLOSE_WHEN_IDLE)) == HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
     }
 };
 

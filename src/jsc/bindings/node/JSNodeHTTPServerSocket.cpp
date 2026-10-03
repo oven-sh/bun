@@ -128,9 +128,6 @@ template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket);
 
 template<bool SSL>
-static void endFloodPreventionPause(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData);
-
-template<bool SSL>
 static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 {
     auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
@@ -363,16 +360,13 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     if (!bodyStillParsing && asyncSocket->getBufferedAmount() == 0) {
-        if (destroySoon) {
-            return false;
-        }
-        if (asyncSocket->hasFullyDrained()) {
+        /* destroySoon() closes the socket at once. For end(), TLS can still hold ciphertext of the last write: us_socket_shutdown() would park the FIN behind it and tell no one when it leaves, so that FIN waits below. */
+        if (destroySoon || asyncSocket->hasFullyDrained()) {
             /* Nothing to wait for: the caller sends the FIN now. The connection reads behind it like behind the one that waits, and onEnd sees the peer's. */
             httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
             socket->end_after_shutdown = 1;
             return false;
         }
-        /* TLS still holds ciphertext of the last write. us_socket_shutdown() would park the FIN behind it and tell no one when it leaves, so the FIN waits below. */
     }
     /* uWS shuts down after the parse and the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
@@ -380,12 +374,8 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
         /* And closes it there, even if the response never ends. */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
     } else {
-        /* The FIN follows them there. With a response still in flight, the socket then stays for the peer's FIN. */
+        /* The FIN follows them there, and the socket stays for the peer's FIN (HttpResponse::finishMarkedConnection). */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
-    }
-    if (httpResponseData->isDrainingBeforeClose()) {
-        /* Every read is dropped from here on, so none may wait. Bytes that a paused read leaves in the kernel make the close a reset, and a reset discards the response bytes that the kernel still holds. */
-        endFloodPreventionPause<SSL>(socket, reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(httpResponseData));
     }
     return true;
 }

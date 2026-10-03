@@ -92,18 +92,35 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
-    /* Shutdown+close when the connection is marked to close (Connection:
+    /* The end of a connection that is marked to close, when every outgoing byte has been flushed. Returns true
+     * when the socket was closed.
+     * node:http socket.end() only half-closes here (HttpResponseData::halfClosesAtDrain), as in Node.js: the peer can
+     * still send, and a close over bytes that nothing has read is a reset, which discards the response bytes that
+     * the kernel has not sent yet. The peer's FIN closes that connection. */
+    bool finishMarkedConnection(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->halfClosesAtDrain()) {
+            if (!us_socket_is_shut_down((us_socket_t *) this)) {
+                /* onData still parses behind this FIN, so onEnd has to see the peer's. */
+                ((us_socket_t *) this)->end_after_shutdown = 1;
+                Bun__NodeHTTP__halfCloseAfterDrain(SSL, (us_socket_t *) this);
+            }
+            return us_socket_is_closed((us_socket_t *) this);
+        }
+        ((AsyncSocket<SSL> *) this)->shutdown();
+        /* We need to force close after sending FIN since we want to hinder
+         * clients from keeping to send their huge data */
+        ((AsyncSocket<SSL> *) this)->close();
+        return true;
+    }
+
+    /* finishMarkedConnection() when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
      * outgoing byte has been flushed. Returns true when the socket was closed. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                    ((AsyncSocket<SSL> *) this)->shutdown();
-                    /* We need to force close after sending FIN since we want to hinder
-                     * clients from keeping to send their huge data */
-                    ((AsyncSocket<SSL> *) this)->close();
-                    return true;
+                    return finishMarkedConnection(httpResponseData);
                 }
             }
         }
@@ -992,17 +1009,7 @@ public:
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) this)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                        * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) this)->close();
-                    }
-                }
-            }
+            closeIfDoneAndMarked(getHttpResponseData());
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

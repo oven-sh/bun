@@ -251,7 +251,7 @@ private:
         return (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) != 0;
     }
 
-    /* Behind that FIN the request in flight still gets the body that a handler takes. No other request is read (stopReadsBehindOwnFin). */
+    /* Behind that FIN, and while it waits, the request in flight still gets the body that a handler takes. Behind it no other request is read (stopReadsBehindOwnFin). */
     static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
         return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)) == HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN
             && httpResponseData->inStream != nullptr;
@@ -414,8 +414,9 @@ private:
                 return s;
             }
             /* Same for bytes that arrive behind a finished response that closes the
-             * connection while its body is still draining (onWritable closes then). */
-            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
+             * connection while its body is still draining (onWritable closes then).
+             * Not the request body that a reader still takes after socket.end(): that connection stays open for it. */
+            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest && !readsBodyBehindOwnFin(httpResponseData)) [[unlikely]] {
                 us_socket_unref(s);
                 return s;
             }
@@ -862,16 +863,7 @@ private:
             }
 
             /* We need to check if we should close this socket here now */
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) s)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                         * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) s)->close();
-                    }
-                }
-            }
+            ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
             return (us_socket_t *) returnedData;
         }
 
@@ -1035,24 +1027,15 @@ private:
                 }
                 /* socket.end() issued while bytes were queued: Node half-closes
                  * once they are out, whether or not the response in flight
-                 * ever ends. With no response pending, the close sites for a
-                 * connection marked to close own that state. */
-                if (!responseDone
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)
-                    && httpResponseData->onWritable == nullptr
-                    && !us_socket_is_shut_down(s)
-                    && asyncSocket->hasFullyDrained()) {
-                    /* onData still parses behind this FIN, so onEnd has to see the peer's. */
-                    s->end_after_shutdown = 1;
-                    Bun__NodeHTTP__halfCloseAfterDrain(SSL, s);
-                    return s;
+                 * ever ends. */
+                if (httpResponseData->halfClosesAtDrain() && httpResponseData->onWritable == nullptr) {
+                    responseDone = true;
                 }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
-                asyncSocket->shutdown();
-                /* We need to force close after sending FIN since we want to hinder
-                 * clients from keeping to send their huge data */
-                asyncSocket->close();
+                /* Closed, or behind its own FIN now: no timeout below. */
+                reinterpret_cast<HttpResponse<SSL> *>(s)->finishMarkedConnection(httpResponseData);
+                return s;
             }
         }
 

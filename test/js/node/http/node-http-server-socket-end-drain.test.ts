@@ -628,18 +628,21 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       }
     });
 
-    // No response is in flight when these bytes have left, so the connection closes behind the
-    // FIN, as every connection that is marked to close does. Node keeps the socket until the client ends.
-    test.concurrent("socket.end(data) with no request closes the connection behind the FIN", async () => {
+    // No request is in flight when these bytes have left. The socket still waits for the FIN of the client, as in
+    // Node: a close behind the FIN is a reset when the client has sent bytes that nothing read.
+    test.concurrent("socket.end(data) with no request keeps the connection until the client ends", async () => {
       const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
-      await using server = createServer({}, () => {});
-      server.on(protocol === "https" ? "secureConnection" : "connection", (socket: net.Socket) => {
+      let serverSocket: net.Socket | undefined;
+      await using server = createServer({}, (req, res) => void res.end("pong"));
+      server.once(protocol === "https" ? "secureConnection" : "connection", (socket: net.Socket) => {
+        serverSocket = socket;
         socket.on("close", onServerSocketClose);
         socket.write(Buffer.alloc(TOTAL / 2, "a"));
         socket.end(Buffer.alloc(TOTAL / 2, "a"));
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = connect((server.address() as net.AddressInfo).port);
+      const { port } = server.address() as net.AddressInfo;
+      const client = connect(port);
       try {
         let received = 0;
         const ended = new Promise<void>((resolve, reject) => {
@@ -647,8 +650,14 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
           client.on("end", resolve);
           client.on("error", reject);
         });
-        await Promise.all([ended, serverSocketClosed]);
-        expect({ received, clientEnded: client.writableEnded }).toEqual({ received: TOTAL, clientEnded: false });
+        await ended;
+        // Two requests on connections of their own. A server that closes behind its FIN has closed by now.
+        await roundTrip(port);
+        await roundTrip(port);
+        const openBehindFin = !serverSocket!.destroyed;
+        client.end();
+        await serverSocketClosed;
+        expect({ received, openBehindFin }).toEqual({ received: TOTAL, openBehindFin: true });
       } finally {
         client.destroy();
         server.closeAllConnections();

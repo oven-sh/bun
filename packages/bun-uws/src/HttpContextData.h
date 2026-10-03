@@ -89,7 +89,8 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
-    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
+    /* Header fields a request may carry, never 0. node:http sets it from server.maxHeadersCount: UINT32_MAX is no limit, and a connection takes its copy when it opens. Only the node:http parser takes a limit above the default. */
+    uint32_t maxHeadersCount = HttpParser::DEFAULT_MAX_HEADER_FIELDS;
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via

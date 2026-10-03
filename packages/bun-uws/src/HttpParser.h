@@ -17,6 +17,7 @@
 
 #pragma once
 
+/* The header slots inside HttpRequest: the request line, the fields and an end sentinel. Bun.serve takes the fields that fit. node:http has its own limit, and parses a head with more fields into a request with more slots. */
 #ifndef UWS_HTTP_MAX_HEADERS_COUNT
 #define UWS_HTTP_MAX_HEADERS_COUNT 200
 #endif
@@ -26,8 +27,12 @@
 /* The HTTP parser is an independent module subject to unit testing / fuzz testing */
 
 #include <string>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <memory>
+#include <new>
 #include <chrono>
 #include <climits>
 #include <string_view>
@@ -193,7 +198,10 @@ struct HttpResponseData;
         struct Header
         {
             std::string_view key, value;
-        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
+        /* The request line, INLINE_HEADER_FIELDS fields and the end sentinel. */
+        static constexpr unsigned int INLINE_HEADER_SLOTS = UWS_HTTP_MAX_HEADERS_COUNT;
+        static constexpr unsigned int INLINE_HEADER_FIELDS = INLINE_HEADER_SLOTS - 2;
         bool ancientHttp;
         bool didYield;
         /* Written right before the request handler runs; see getHasTransferEncoding(). */
@@ -201,8 +209,32 @@ struct HttpResponseData;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
+        /* For HttpParser, node:http only: the offset in the read of a head that got a 431 because it has more fields
+         * than this request has slots for. HEAD_FITS when no head did. */
+        static constexpr unsigned int HEAD_FITS = UINT_MAX;
+        unsigned int unfitHead;
+
+#if ASSERT_ENABLED
+        /* A read of a slot that the parser did not write faults. */
+        static void poison(Header *slots, size_t count) {
+            const std::string_view unwritten(reinterpret_cast<const char *>(uintptr_t(1)), 1);
+            std::fill_n(slots, count, Header{unwritten, unwritten});
+        }
+#endif
 
     public:
+        HttpRequest() {
+#if ASSERT_ENABLED
+            /* HttpParser::requestWithSlotsFor() continues the slots behind the request. */
+            ASSERT(reinterpret_cast<char *>(headers + INLINE_HEADER_SLOTS) == reinterpret_cast<char *>(this) + sizeof(HttpRequest));
+            poison(headers, INLINE_HEADER_SLOTS);
+#endif
+        }
+
+        /* A request can have more slots behind it than its type says: see HttpParser::requestWithSlotsFor(). */
+        HttpRequest(const HttpRequest &) = delete;
+        HttpRequest &operator=(const HttpRequest &) = delete;
+
         /* Any data pipelined after the HTTP headers (before response).
          * Used for Node.js compatibility: 'connect' and 'upgrade' events
          * pass this as the 'head' Buffer parameter.
@@ -564,6 +596,13 @@ struct HttpResponseData;
                 return currentParameters.second[index];
             }
         }
+    private:
+        /* Slot 0 is the request line, and an end sentinel follows the last field. A union member gets no
+         * constructor call, so a socket read does not zero-fill the slots: the parser writes the slots of a head up
+         * to its end sentinel, and every read stops there. The last member: a request on the heap continues them. */
+        union {
+            Header headers[INLINE_HEADER_SLOTS];
+        };
     };
 
     struct HttpParser
@@ -591,31 +630,26 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
-        /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
-        static constexpr unsigned MAX_HEADER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 2;
-        static_assert(MAX_HEADER_FIELDS + 2 <= std::extent_v<decltype(HttpRequest::headers)>);
-
-        /* Maximum number of trailer fields surfaced to JS (the section size cap
-         * already bounds memory; this matches the regular-header count cap). */
-        static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;
+        /* The header field limit of a server that sets none (Bun.serve): the fields that the request in the frame of consumePostPadded has slots for. */
+        static constexpr uint32_t DEFAULT_MAX_HEADER_FIELDS = HttpRequest::INLINE_HEADER_FIELDS;
 
         /* Parse a complete trailer section (the bytes between the 0-size chunk and the
-         * final CRLF, as captured into nodeHttpRequestTrailers) into key/value pairs,
-         * reusing the same consumeFieldName / tryConsumeFieldValue / OWS-trim primitives
-         * that getHeaders uses for the main request header block. Wire casing of
-         * field names is preserved (req.rawTrailers). Returns the number of fields
-         * written to out[]. The captured section is raw wire bytes (the chunk
-         * iterator only size-caps it), so this is also the only gate on NUL /
-         * bare-CR/LF in a trailer line: any malformed line makes the call return 0
-         * and no trailer is surfaced, where Node's llhttp rejects the message.
-         * Consumes the section: it is post-padded in place and the returned
-         * string_views point into it, so it must outlive their use.
+         * final CRLF, as captured into nodeHttpRequestTrailers), reusing the same
+         * consumeFieldName / tryConsumeFieldValue / OWS-trim primitives that getHeaders
+         * uses for the main request header block, and hand each field to
+         * sink(name, value). The sink returns the HttpParserError to stop with. Wire
+         * casing of field names is preserved (req.rawTrailers). The captured section is
+         * raw wire bytes (the chunk iterator only size-caps it), so this is also the only
+         * gate on NUL / bare-CR/LF in a trailer line: a malformed line is
+         * HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN. A field after maxFields fields is
+         * HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE once its name is read, where Node
+         * counts it.
+         * Consumes the section: it is post-padded in place and the string_views of the
+         * fields point into it, so it must outlive their use.
          * KEEP IN LOCKSTEP with getHeaders' field-line loop below (same
          * consumeFieldName → tryConsumeFieldValue → CRLF/OWS sequence). */
-        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS) {
-            if (section.size() < 4) {
-                return 0;
-            }
+        template <typename Sink>
+        static HttpParserError parseTrailerFields(std::string &section, bool useInsecureHTTPParser, uint32_t maxFields, Sink &&sink) {
             /* tryConsumeFieldValue stops at the 8-byte word CONTAINING the value's
              * '\r', not at it, so its last load can reach 3 bytes past the final
              * CRLF CRLF without this padding (the NULs stay past `end`). */
@@ -623,17 +657,19 @@ struct HttpResponseData;
             section.append(MINIMUM_HTTP_POST_PADDING, '\0');
             char *p = section.data();
             char *end = p + length;
-            unsigned count = 0;
-            while (count < outCapacity) {
+            for (uint32_t count = 0; ; count++) {
                 /* Empty line (the section's terminating CRLF) - done. */
                 if (p[0] == '\r') {
-                    return (p + 1 < end && p[1] == '\n') ? count : 0;
+                    return (p + 1 < end && p[1] == '\n') ? HTTP_PARSER_ERROR_NONE : HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
                 }
                 char *keyStart = p;
                 p = consumeFieldName(p);
                 std::string_view key(keyStart, (size_t)(p - keyStart));
                 if (p[0] != ':' || key.empty()) {
-                    return 0;
+                    return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
+                }
+                if (count == maxFields) {
+                    return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
                 }
                 p++;
                 char *valueStart = p;
@@ -646,7 +682,7 @@ struct HttpResponseData;
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {
-                    return 0;
+                    return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
                 }
                 std::string_view value(valueStart, (size_t)(p - valueStart));
                 p += 2;
@@ -656,10 +692,10 @@ struct HttpResponseData;
                 while (value.length() && isHTTPHeaderValueWhitespace(value.front())) {
                     value.remove_prefix(1);
                 }
-                out[count] = { key, value };
-                count++;
+                if (HttpParserError error = sink(key, value)) {
+                    return error;
+                }
             }
-            return count;
         }
 
         /* node:http compat: validate a captured, complete trailer section before the
@@ -672,29 +708,15 @@ struct HttpResponseData;
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
          * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING, which "relaxed" does not set). An empty
          * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
-         * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
-         *
-         * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
-         * more valid fields than that followed by a malformed line is accepted where node
-         * still errors; reaching it requires a deliberately padded (but size-capped)
-         * section, and rejecting it would need a second scanning mode. */
+         * zero against the connection's header field limit (maxHeadersCount here). */
         static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
             if (!section || section->size() <= 2) {
                 return HTTP_PARSER_ERROR_NONE;
             }
             /* parseTrailerFields consumes (post-pads) its input, so validate a copy. */
             std::string copy(*section);
-            std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(copy, scratch, useInsecureHTTPParser);
-            if (count == 0) {
-                return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
-            }
-            if (maxHeadersCount && count > maxHeadersCount) {
-                return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
-            }
-            if (!useLenientTransferEncoding) {
-                for (unsigned i = 0; i < count; i++) {
-                    std::string_view name = scratch[i].first;
+            return parseTrailerFields(copy, useInsecureHTTPParser, maxHeadersCount, [useLenientTransferEncoding](std::string_view name, std::string_view) {
+                if (!useLenientTransferEncoding) {
                     if (name.length() == 14 && !strncasecmp(name.data(), "content-length", 14)) {
                         return HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
                     }
@@ -702,8 +724,8 @@ struct HttpResponseData;
                         return HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
                     }
                 }
-            }
-            return HTTP_PARSER_ERROR_NONE;
+                return HTTP_PARSER_ERROR_NONE;
+            });
         }
 
     private:
@@ -723,11 +745,13 @@ struct HttpResponseData;
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
         /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
          * (method, " HTTP/1.1\r\n", ": ", "\r\n"). Raw bounds get that framing as slack so
-         * we don't reject requests Node accepts. Finite: ≤UWS_HTTP_MAX_HEADERS_COUNT*4 + 64. */
-        static constexpr size_t MAX_HEADER_FRAMING_SLACK = UWS_HTTP_MAX_HEADERS_COUNT * 4 + 64;
-        /* The raw bound for a non-zero maxHeaderSize. Saturates: node:http passes UINT64_MAX for "no limit". */
-        static constexpr uint64_t maxRawHeaderSize(uint64_t maxHeaderSize) {
-            return maxHeaderSize > UINT64_MAX - MAX_HEADER_FRAMING_SLACK ? UINT64_MAX : maxHeaderSize + MAX_HEADER_FRAMING_SLACK;
+         * we don't reject requests Node accepts: 4 bytes for each field the request may
+         * carry. That is the field limit, or maxHeaderSize when it is lower, because a
+         * field counts for at least one byte of it. Never less than for the inline slots.
+         * Saturates: node:http passes UINT64_MAX for "no limit". */
+        static constexpr uint64_t maxRawHeaderSize(uint64_t maxHeaderSize, uint32_t maxHeaderFields) {
+            const uint64_t slack = 4 * std::max<uint64_t>(HttpRequest::INLINE_HEADER_SLOTS, std::min<uint64_t>(maxHeaderFields, maxHeaderSize)) + 64;
+            return maxHeaderSize > UINT64_MAX - slack ? UINT64_MAX : maxHeaderSize + slack;
         }
 
         /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
@@ -1025,7 +1049,7 @@ struct HttpResponseData;
             }
         }
 
-        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields must not exceed MAX_HEADER_FIELDS: it bounds the writes to headers. */
+        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields bounds the writes to headers: the caller has two slots more, for the request line and the end sentinel. */
         static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
@@ -1203,15 +1227,44 @@ struct HttpResponseData;
             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
-    /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
+        struct FreeRequest {
+            void operator()(HttpRequest *request) const {
+                free(request);
+            }
+        };
+        using LargerRequest = std::unique_ptr<HttpRequest, FreeRequest>;
+
+        /* A request on the heap with slots for `fields` fields, more than HttpRequest::INLINE_HEADER_FIELDS: the
+         * slots are the last member of a request, and the block has the rest of them behind it. It takes the `head`
+         * of `from`, which consumePostPadded sets before it parses. nullptr when there is no memory for it. */
+        static HttpRequest *requestWithSlotsFor(size_t fields, const HttpRequest &from) {
+            void *block = malloc(sizeof(HttpRequest) + (fields - HttpRequest::INLINE_HEADER_FIELDS) * sizeof(HttpRequest::Header));
+            if (!block) {
+                return nullptr;
+            }
+            HttpRequest *request = new (block) HttpRequest;
+            request->head = from.head;
+#if ASSERT_ENABLED
+            HttpRequest::poison(request->headers, fields + 2);
+#endif
+            return request;
+        }
+
+    /* This is the only caller of getHeaders and is thus the deepest part of the parser. requestFields is the number of
+     * fields that req has slots for. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint64_t maxBufferedHeaderSize, uint32_t maxHeadersCount, unsigned int requestFields, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
 
-        /* maxHeadersCount (node:http server.maxHeadersCount, 0 = not set) can only lower the field limit. */
-        const unsigned int maxHeaderFields = maxHeadersCount && maxHeadersCount < MAX_HEADER_FIELDS ? maxHeadersCount : MAX_HEADER_FIELDS;
+        /* The fields getHeaders may write: maxHeadersCount, the header field limit, or what the request has slots for when that is less. */
+        const unsigned int headerFieldBound = std::min<uint32_t>(maxHeadersCount, requestFields);
+        if constexpr (IsNodeHttp) {
+            /* For the 431 of getHeaders below. */
+            (req->headers + headerFieldBound)->value = {};
+            req->unfitHead = HttpRequest::HEAD_FITS;
+        }
 
         /* Fence two bytes past end of our buffer (buffer has post padded margins).
          * This is to always catch scan for \r but not for \r\n. */
@@ -1258,8 +1311,19 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, headerFieldBound);
             if(result.isError()) {
+                if constexpr (IsNodeHttp) {
+                    /* getHeaders has one 431 for a byte limit and for a field past headerFieldBound. It stores the
+                     * value of a field before it looks for the next one, so a value in the slot of the last field,
+                     * cleared above, says that the 431 can be for a field past the slots of the request. When the
+                     * limit allows more fields than those, the request gets the offset of this head:
+                     * consumePostPadded parses from there again, with a larger request. A caller that does not
+                     * has the 431. Only node:http sets such a limit. */
+                    if (result.parserError == HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE && headerFieldBound < maxHeadersCount && (req->headers + headerFieldBound)->value.data()) [[unlikely]] {
+                        req->unfitHead = consumedTotal;
+                    }
+                }
                 return result;
             }
             auto consumed = result.consumedBytes();
@@ -1272,7 +1336,6 @@ struct HttpResponseData;
             consumedTotal += consumed;
 
             /* Even if we could parse it, check for length here as well */
-            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
             if (consumed > maxBufferedHeaderSize) {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
@@ -1581,6 +1644,29 @@ struct HttpResponseData;
         return HttpParserResult::success(consumedTotal, user);
     }
 
+    /* For the 431 of fenceAndConsumePostPadded on a head with more fields than `request` has slots for (see the 431
+     * of getHeaders there). A request with slots for every field that the bytes from that head on can hold takes
+     * its place. A field line is at least 4 bytes and counts for at least one byte of maxHeaderSize, so that request
+     * does not run out of slots below the limit. This frame owns it, like consumePostPadded owns the bytes of a
+     * split head: the handler can destroy this parser. */
+    template <bool ConsumeMinimally>
+    NEVER_INLINE HttpParserResult consumeWithLargerRequest(const HttpRequest &request, uint64_t maxHeaderSize, uint64_t maxBufferedHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+        const unsigned int consumed = request.unfitHead;
+        data += consumed;
+        length -= consumed;
+        const uint64_t fields = std::min<uint64_t>({maxHeadersCount, length / 4, maxHeaderSize ? maxHeaderSize : UINT64_MAX});
+        const LargerRequest larger(fields > HttpRequest::INLINE_HEADER_FIELDS ? requestWithSlotsFor(fields, request) : nullptr);
+        if (!larger) {
+            return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+        }
+        HttpParserResult result = fenceAndConsumePostPadded<ConsumeMinimally, true>(maxHeaderSize, maxBufferedHeaderSize, maxHeadersCount, (unsigned int) fields, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, larger.get(), requestHandler, dataHandler);
+        /* The count of the result is from the start of the read. */
+        if (!result.isError() && result.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+            result.errorStatusCodeOrConsumedBytes += consumed;
+        }
+        return result;
+    }
+
 public:
     /* When requestHandler returns something other than user (it upgraded or closed
      * the socket), parsing stops and consumedBytes() of the result is the offset in
@@ -1590,9 +1676,9 @@ public:
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
-        /* The fallback buffer may not exceed the configured per-request header
-         * limit (per-server maxHeaderSize can raise it above the default). */
-        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
+        /* Neither the fallback buffer nor a head that is complete may exceed the configured
+         * per-request header limit (per-server maxHeaderSize can raise it above the default). */
+        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize, maxHeadersCount) : MAX_FALLBACK_SIZE;
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
@@ -1682,16 +1768,24 @@ public:
             }
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxFallbackSize, maxHeadersCount, HttpRequest::INLINE_HEADER_FIELDS, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error.
              * The parser can be gone by then: no member is touched before this return. */
             if (consumed.returnedData != user) {
-                /* The count is in bytes of the buffer, and the first `had` of them came from
-                 * earlier reads. The head ends past them: those reads did not complete it. */
-                if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
-                    consumed.errorStatusCodeOrConsumedBytes -= had;
+                if constexpr (IsNodeHttp) {
+                    /* A 431 for a head with more fields than req has slots for. No handler ran for it: the parser is there. */
+                    if (consumed.parserError == HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE && req.unfitHead != HttpRequest::HEAD_FITS) {
+                        consumed = consumeWithLargerRequest<true>(req, maxHeaderSize, maxFallbackSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, requestHandler, dataHandler);
+                    }
                 }
-                return consumed;
+                if (consumed.returnedData != user) {
+                    /* The count is in bytes of the buffer, and the first `had` of them came from
+                     * earlier reads. The head ends past them: those reads did not complete it. */
+                    if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+                        consumed.errorStatusCodeOrConsumedBytes -= had;
+                    }
+                    return consumed;
+                }
             }
             /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
             auto consumedBytes = consumed.consumedBytes();
@@ -1784,14 +1878,22 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxFallbackSize, maxHeadersCount, HttpRequest::INLINE_HEADER_FIELDS, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
-            /* A body or a fallback head ahead of this request moved data forward. */
-            if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
-                consumed.errorStatusCodeOrConsumedBytes += (unsigned int) (data - readStart);
+            if constexpr (IsNodeHttp) {
+                /* A 431 for a head with more fields than req has slots for. No handler ran for it: the parser is there. */
+                if (consumed.parserError == HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE && req.unfitHead != HttpRequest::HEAD_FITS) {
+                    consumed = consumeWithLargerRequest<false>(req, maxHeaderSize, maxFallbackSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, requestHandler, dataHandler);
+                }
             }
-            return consumed;
+            if (consumed.returnedData != user) {
+                /* A body or a fallback head ahead of this request moved data forward. */
+                if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+                    consumed.errorStatusCodeOrConsumedBytes += (unsigned int) (data - readStart);
+                }
+                return consumed;
+            }
         }
         /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
         auto consumedBytes = consumed.consumedBytes();

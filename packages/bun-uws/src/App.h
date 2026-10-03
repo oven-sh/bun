@@ -803,8 +803,9 @@ public:
         return std::move(*this);
     }
 
+    /* 0 is the default of the parser. */
     TemplatedApp &&setMaxHeadersCount(uint32_t maxHeadersCount) {
-        httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
+        httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount ? maxHeadersCount : HttpParser::DEFAULT_MAX_HEADER_FIELDS;
         return std::move(*this);
     }
 

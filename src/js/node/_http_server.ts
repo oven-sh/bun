@@ -1203,18 +1203,20 @@ function defineHttpAllowHalfOpen(server: Server) {
   });
 }
 
-// Node's int32 `maxHeadersCount << 1`, as a field count; 0 is no limit: https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
+// The header field limit of a new connection, from Node's int32 `parser.maxHeaderPairs = maxHeadersCount << 1`: https://github.com/nodejs/node/blob/v26.10.0/lib/_http_server.js#L805-L806
+// A pair count that is not positive is no limit, 0xffffffff for the native parser. A value that is not a number is 0 here:
+// the native parser keeps its default of 198 fields, where Node's parsers start with MAX_HEADER_PAIRS (1000 fields).
 function nativeMaxHeadersCount(maxHeadersCount) {
   if (typeof maxHeadersCount !== "number") return 0;
   const maxHeaderPairs = maxHeadersCount << 1;
-  return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : 0;
+  return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : 0xffffffff;
 }
 
 function maxHeadersCountGet(this: Server) {
   return this[kMaxHeadersCount];
 }
 
-// Node reads `server.maxHeadersCount` for every new connection, so a value assigned after listen() goes to the native parser.
+// Node reads `server.maxHeadersCount` for every new connection, so a value assigned after listen() goes to the native listener. A connection that is open keeps its limit.
 function maxHeadersCountSet(this: Server, value) {
   this[kMaxHeadersCount] = value;
   const handle = this[serverSymbol];

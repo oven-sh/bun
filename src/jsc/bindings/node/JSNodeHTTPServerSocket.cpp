@@ -272,35 +272,30 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
     std::string section(data, length);
 
     /* Parse with the same field-line primitives the request-header parser uses
-     * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
-    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
-    if (count == 0) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, count * 2);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    unsigned index = 0;
-    for (unsigned i = 0; i < count; i++) {
+     * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). The
+     * parser already held the section to the connection's header field limit. */
+    JSC::MarkedArgumentBuffer fields;
+    auto error = uWS::HttpParser::parseTrailerFields(section, useInsecureHTTPParser, UINT32_MAX, [&](std::string_view name, std::string_view value) {
         // HTTP/1.1 obs-text bytes (0x80-0xFF) are valid header content (RFC 9110 §5.5); preserve
         // them 1:1 as Latin-1 like Node's req.rawTrailers (OneByteString) and like NodeHTTP.cpp's
         // rawHeaders construction. UTF-8 decoding would corrupt them to U+FFFD.
-        std::span<Latin1Character> nameData;
-        auto nameString = WTF::String::createUninitialized(fields[i].first.size(), nameData);
-        if (!fields[i].first.empty())
-            memcpy(nameData.data(), fields[i].first.data(), fields[i].first.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, nameString));
-        RETURN_IF_EXCEPTION(scope, {});
-        std::span<Latin1Character> valueData;
-        auto valueString = WTF::String::createUninitialized(fields[i].second.size(), valueData);
-        if (!fields[i].second.empty())
-            memcpy(valueData.data(), fields[i].second.data(), fields[i].second.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, valueString));
-        RETURN_IF_EXCEPTION(scope, {});
+        for (std::string_view bytes : { name, value }) {
+            std::span<Latin1Character> characters;
+            auto string = WTF::String::createUninitialized(bytes.size(), characters);
+            if (!bytes.empty())
+                memcpy(characters.data(), bytes.data(), bytes.size());
+            fields.append(JSC::jsString(vm, string));
+        }
+        return uWS::HTTP_PARSER_ERROR_NONE;
+    });
+    if (error != uWS::HTTP_PARSER_ERROR_NONE || fields.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    return JSC::JSValue::encode(array);
+    if (fields.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), fields)));
 }
 
 template<bool SSL>

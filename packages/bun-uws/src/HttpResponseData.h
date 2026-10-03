@@ -301,7 +301,15 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* The header field limit of the listener when this connection opened. Node copies
+     * server.maxHeadersCount into the connection's parser at that point, so a later
+     * assignment applies to later connections only. Heads, trailers and the raw size
+     * bound of a buffered head all use this value. */
+    uint32_t maxHeadersCount = HttpParser::DEFAULT_MAX_HEADER_FIELDS;
 };
+
+/* maxHeadersCount is in the padding behind the two flags: it adds no bytes to a connection. */
+static_assert(sizeof(HttpResponseData<false, true>) == sizeof(HttpResponseData<false, false>) + sizeof(uint64_t) + 2 * sizeof(std::string) + sizeof(uint64_t));
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http
  * bindings). */

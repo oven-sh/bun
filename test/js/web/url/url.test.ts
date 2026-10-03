@@ -463,6 +463,48 @@ describe("url", () => {
   });
 });
 
+// Like node's, both hooks pass `{ ...options }` to the inspect call they make for their
+// contents. util.inspect forwards unknown user options to the hooks as they are.
+describe("URL and URLSearchParams [nodejs.util.inspect.custom] options", () => {
+  const oneLineUrl =
+    "URL { href: 'https://example.com/?a=1', origin: 'https://example.com', protocol: 'https:', username: '', password: '', host: 'example.com', hostname: 'example.com', port: '', pathname: '/', search: '?a=1', searchParams: URLSearchParams { 'a' => '1' }, hash: '' }";
+
+  // The native copy of the options used to fail an assertion on an index key. The URL
+  // case reaches the URLSearchParams hook a second time, through the nested inspect call.
+  test("accepts a user option whose key is an array index", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { inspect } = require("node:util");
+         console.log(inspect(new URLSearchParams("a=1&b=2"), { 0: 1 }));
+         console.log(inspect(new URL("https://example.com/?a=1"), { 0: 1, breakLength: Infinity }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `URLSearchParams { 'a' => '1', 'b' => '2' }\n${oneLineUrl}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("copies the own enumerable options and not the inherited ones", () => {
+    const params = new URLSearchParams("a=1");
+    expect(params[util.inspect.custom](2, { colors: true })).toBe(
+      "URLSearchParams { \u001b[32m'a'\u001b[39m => \u001b[32m'1'\u001b[39m }",
+    );
+    expect(params[util.inspect.custom](2, Object.create({ colors: true }))).toBe("URLSearchParams { 'a' => '1' }");
+
+    const url = new URL("https://example.com/?a=1");
+    expect(url[util.inspect.custom](2, { breakLength: Infinity })).toBe(oneLineUrl);
+    expect(url[util.inspect.custom](2, Object.create({ breakLength: Infinity }))).toBe(util.inspect(url));
+  });
+});
+
 describe("url.searchParams lazy href sync", () => {
   // The URLSearchParams update steps are applied lazily to the associated
   // URL's serialized string: each getter below must observe the change without

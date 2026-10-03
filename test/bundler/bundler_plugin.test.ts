@@ -1893,4 +1893,256 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  // The builtins in BundlerPlugin.ts read properties off a private plugin object by name. An
+  // accessor planted on Object.prototype under one of those names used to run with that object as
+  // its receiver, which handed it to user code. Its native methods then read any receiver as a
+  // plugin.
+  test.concurrent("plugin/the private plugin object is not reachable from Object.prototype", async () => {
+    using dir = tempDir("plugin-private-object", {
+      "entry.js": `export default 1;`,
+      "probe-fixture.mjs": /* js */ `
+        const names = ["promises", "onEndCallbacks", "onLoad", "onResolve"];
+        const leaked = [];
+        let plugin;
+        function record(name, receiver) {
+          if (!Object.prototype.hasOwnProperty.call(receiver, "addFilter")) return;
+          plugin ??= receiver;
+          if (!leaked.includes(name)) leaked.push(name);
+        }
+        for (const name of names) {
+          Object.defineProperty(Object.prototype, name, {
+            configurable: true,
+            get() {
+              record(name, this);
+              return undefined;
+            },
+            // Define an own property, so the build still behaves as it does without the accessor.
+            set(value) {
+              record(name, this);
+              Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
+            },
+          });
+        }
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              setup(build) {
+                build.onResolve({ filter: /entry/ }, () => undefined);
+                build.onLoad({ filter: /entry/ }, () => undefined);
+                build.onStart(() => {});
+                build.onEnd(() => {});
+              },
+            },
+          ],
+        });
+        for (const name of names) delete Object.prototype[name];
+        console.log(JSON.stringify({ success: result.success, leaked, plugin: plugin === undefined }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({ success: true, leaked: [], plugin: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // The private plugin object is a gcProtect'ed cell, so bun:jsc.getProtectedObjects() returns it.
+  const findPluginSource = /* js */ `
+    import { getProtectedObjects } from "bun:jsc";
+    const hasOwn = Object.prototype.hasOwnProperty;
+    function findPlugin() {
+      for (const object of getProtectedObjects()) {
+        // The list holds raw protected cells. Some of them are internal and reject a property
+        // lookup, so skip whatever throws.
+        try {
+          if (object && typeof object === "object" && hasOwn.call(object, "addFilter") && hasOwn.call(object, "generateDeferPromise")) {
+            return object;
+          }
+        } catch {}
+      }
+      return undefined;
+    }
+  `;
+
+  // The plugin object's native methods read C++ fields off the receiver. They used to cast any
+  // receiver to a plugin, which segfaults at 0x132 on a release build.
+  test.concurrent("plugin/the private plugin object refuses a receiver that is not a plugin", async () => {
+    using dir = tempDir("plugin-foreign-receiver", {
+      "entry.js": `export default 1;`,
+      "receiver-fixture.mjs": /* js */ `
+        ${findPluginSource}
+        let plugin;
+        await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              setup(build) {
+                build.onLoad({ filter: /entry/ }, () => undefined);
+                plugin ??= findPlugin();
+              },
+            },
+          ],
+        });
+        plugin ??= findPlugin();
+        if (!plugin) {
+          console.log(JSON.stringify({ found: false }));
+          process.exit(0);
+        }
+        const calls = {
+          addFilter: [/x/, "a", 1],
+          addError: [0, new Error("x")],
+          onLoadAsync: [0, null, null],
+          onResolveAsync: [0, null, null, null],
+          onBeforeParse: [/x/, "a", {}, "symbol"],
+          generateDeferPromise: [0],
+        };
+        const outcomes = {};
+        for (const [name, args] of Object.entries(calls)) {
+          try {
+            plugin[name].apply(undefined, args);
+            outcomes[name] = "accepted";
+          } catch (e) {
+            outcomes[name] = e.code ?? e.name;
+          }
+        }
+        console.log(JSON.stringify({ found: true, prototype: Object.getPrototypeOf(plugin), outcomes }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      found: true,
+      prototype: null,
+      outcomes: {
+        addFilter: "ERR_INVALID_THIS",
+        addError: "ERR_INVALID_THIS",
+        onLoadAsync: "ERR_INVALID_THIS",
+        onResolveAsync: "ERR_INVALID_THIS",
+        onBeforeParse: "ERR_INVALID_THIS",
+        generateDeferPromise: "ERR_INVALID_THIS",
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Once a build is on the bundle thread, that thread reads the filter lists with no lock. A late
+  // addFilter with the genuine plugin as the receiver used to append to them anyway, which
+  // segfaults the bundle thread under load.
+  test.concurrent("plugin/the private plugin object refuses a new filter once the build runs", async () => {
+    using dir = tempDir("plugin-late-filter", {
+      "entry.js": `export default 1;`,
+      "late-filter-fixture.mjs": /* js */ `
+        ${findPluginSource}
+        let plugin;
+        function addFilter() {
+          try {
+            plugin.addFilter(/never-matches/, "probe", 1);
+            return "accepted";
+          } catch (e) {
+            return e.code ?? e.name;
+          }
+        }
+        const outcomes = {};
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              setup(build) {
+                plugin = findPlugin();
+                outcomes.duringSetup = addFilter();
+                build.onLoad({ filter: /entry/ }, () => {
+                  outcomes.duringBuild = addFilter();
+                  return undefined;
+                });
+              },
+            },
+          ],
+        });
+        console.log(JSON.stringify({ success: result.success, outcomes }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "late-filter-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // setup() is any callable, and a callable Proxy is not a JSFunction. Reading it as one gave the
+  // setup call a garbage global object, which aborts an assert build.
+  test.concurrent("plugin/setup can be a callable that is not a plain function", async () => {
+    using dir = tempDir("plugin-callable-setup", {
+      "entry.js": `export default 1;`,
+      "setup-fixture.mjs": /* js */ `
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "proxy-setup",
+              setup: new Proxy(
+                build => {
+                  build.onLoad({ filter: /entry/ }, () => ({ contents: "export default 2;" }));
+                },
+                {},
+              ),
+            },
+          ],
+        });
+        console.log(JSON.stringify({ success: result.success, output: await result.outputs[0].text() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "setup-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      output: "// entry.js\nvar entry_default = 2;\nexport {\n  entry_default as default\n};\n",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

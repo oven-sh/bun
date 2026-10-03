@@ -170,6 +170,8 @@ public:
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
     void* config { nullptr };
     bool tombstoned { false };
+    // Set on the JS thread before a bundle pass takes this plugin: other threads then read the filter lists unlocked.
+    bool filtersFrozen { false };
 
 private:
     WTF::HashMap<void*, RequestKind> held;

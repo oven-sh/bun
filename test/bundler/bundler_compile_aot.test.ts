@@ -1465,10 +1465,37 @@ describe("--compile-aot optimizations", () => {
     out.push(JSON.stringify([spreadsAfterProperty({ a: 2 }), takesTheRest({ a: 1, b: 2, c: 3 }), takesTheRestByName({ a: 1, b: 2 }, "a"), spreadsFirst({ a: 4 })]));
     out.push(readsNamedAndAdds.call({ a: 1 }, "a"), returnsModuleVariablePlusOne(), readsA(forwarding), readsA(exporting), (moduleVariable = 6, readsA(exporting)));
 
+    type Flagged = { flags: number; more: number };
+    function mixes(x: number) { return ((((x | 0) + 1) * 3 - 2) ^ 5) + ((x | 0) >> 1) - ((x | 0) & 3) + ((x | 0) % 7) * 2 - ((x | 0) << 1) + ((x | 0) >>> 2); }
+    function onlyReads(o: Flagged) { return mixes(o.more) + mixes(o.more + 1) + mixes(o.more + 2) + mixes(o.more + 3); }
+    function storesFlags(o: Flagged, v: number) { o.flags = v; return mixes(v) + mixes(v + 1) + mixes(v + 2) + mixes(v + 3); }
+    function readsFlagsTwice(o: Flagged) { return o.flags & 1 ? 1 : o.flags & 2 ? 2 : 0; }
+    function readsFlagsAroundGiven(o: Flagged, f: () => void) { const before = o.flags; f(); return before * 10 + o.flags; }
+    function readsFlagsAroundOnlyReads(o: Flagged) { const before = o.flags; const r = onlyReads(o); return before * 10 + o.flags + r - r; }
+    function readsFlagsAroundStoresFlags(o: Flagged) { const before = o.flags; const r = storesFlags(o, 7); return before * 10 + o.flags + r - r; }
+    function alsoCallsStoresFlags(o: Flagged) { return storesFlags(o, 8) + 1; }
+    function Made(this: { first: number; second: number; third: number }, v: number) { this.first = v; this.second = v + 1; this.third = v + 2; }
+    function readsThird(o: { third: number }) { return o.third; }
+    function readsWhatNothingWrites(o: { nothingWritesThis?: number }) { return o.nothingWritesThis; }
+    function firstMatch<T, U>(array: readonly T[], callback: (x: T, i: number) => U | undefined): U | undefined {
+      for (let i = 0; i < array.length; i++) {
+        const result = callback(array[i], i);
+        if (result) return result;
+      }
+      return undefined;
+    }
+    const isLarge = (x: number) => (x > 2 ? x : undefined);
+    function findsWithFunctionExpression(array: number[], limit: number) { return firstMatch(array, x => (x > limit ? x : undefined)); }
+    function findsWithVariable(array: number[]) { return firstMatch(array, isLarge); }
+    const flagged = { flags: 2, more: 1 };
+    out.push(readsFlagsTwice(flagged), readsFlagsAroundGiven(flagged, () => { flagged.flags = 3; }), readsFlagsAroundOnlyReads(flagged), readsFlagsAroundStoresFlags(flagged));
+    out.push(typeof alsoCallsStoresFlags({ flags: 0, more: 0 }));
+    out.push(readsThird(new (Made as any)(1)), readsThird({ third: 9 }), readsWhatNothingWrites({}), findsWithFunctionExpression([1, 5, 9], 4), findsWithVariable([1, 2, 3]));
+
     console.log(out.join());
   `;
   const expectedOutput =
-    '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600\n';
+    '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600,2,23,33,37,number,3,9,,5,3\n';
   const withoutLoopOptions = "useAOTLoopSplitting=0,useAOTInlineFastPathsInLoops=0";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1534,6 +1561,10 @@ describe("--compile-aot optimizations", () => {
     ["cached-call", ["callsEither", "callsReassigned"], ["inlinesSmall", "callsRecursive", "callsManyArguments", "constructsGiven"]],
     ["cached-instanceof", ["testsInstance"], ["testsType"]],
     ["copies-data-properties", ["spreadsAfterProperty", "takesTheRest"], ["takesTheRestByName", "spreadsFirst"]],
+    ["reuses-property-read", ["readsFlagsTwice", "readsFlagsAroundOnlyReads"], ["readsFlagsAroundGiven", "readsFlagsAroundStoresFlags"]],
+    ["call-keeps-property-reads", ["readsFlagsAroundOnlyReads"], ["readsFlagsAroundGiven"]],
+    ["looks-in-likely-slots", ["readsThird"], ["readsWhatNothingWrites"]],
+    ["inlined-call-with-callback", ["findsWithFunctionExpression"], ["findsWithVariable"]],
     ["get-by-val-on-this", ["readsNamed"], ["readsNamedAndAdds"]],
     ["returns-scope-variable", ["returnsModuleVariable"], ["returnsModuleVariablePlusOne"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],

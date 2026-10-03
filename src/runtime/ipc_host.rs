@@ -402,6 +402,35 @@ pub(crate) struct IPCInstance {
 static CHANNEL: core::cell::Cell<Option<core::ptr::NonNull<IPCInstance>>> =
     core::cell::Cell::new(None);
 
+/// Whether `process` has a listener that a read of the channel serves. The channel is not read without one.
+#[thread_local]
+static PROCESS_READS_WANTED: core::cell::Cell<bool> = core::cell::Cell::new(false);
+
+// HOST_EXPORT(Bun__setProcessIPCReading, c)
+pub(crate) fn set_process_ipc_reading(reading: bool) {
+    PROCESS_READS_WANTED.set(reading);
+    if let Some(inst) = CHANNEL.get() {
+        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+        unsafe { inst.as_ref() }.data().set_reads_wanted(reading);
+    }
+}
+
+/// `node:child_process` tells here whether a ChildProcess has a listener that a read of its channel serves.
+#[bun_jsc::host_fn]
+pub(crate) fn set_subprocess_reading(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [subprocess, reading] = callframe.arguments_as_array::<2>();
+    if let Some(ipc) = subprocess
+        .as_class_ref::<Subprocess<'_>>()
+        .and_then(|subprocess| subprocess.ipc())
+    {
+        ipc.set_reads_wanted(reading.to_boolean());
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 impl IPCInstance {
     pub(crate) fn new(v: IPCInstance) -> *mut IPCInstance {
         bun_core::heap::into_raw(Box::new(v))
@@ -576,6 +605,12 @@ pub(crate) fn get_ipc_instance(
 
     // SAFETY: `instance` is the live boxed IPCInstance.
     unsafe { (*instance).data().write_version_packet(vm.global()) };
+    // SAFETY: as above.
+    unsafe {
+        (*instance)
+            .data()
+            .set_reads_wanted(PROCESS_READS_WANTED.get())
+    };
 
     Some(instance)
 }

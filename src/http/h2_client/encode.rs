@@ -455,11 +455,7 @@ impl SendQueue {
                 turn as usize
             };
             let before = session.conn_send_window;
-            let drain = if stream.send_window <= 0 && !stream.local_closed() {
-                Drain::Yield
-            } else {
-                drain_send_body(session, stream, cap)
-            };
+            let drain = drain_send_body(session, stream, cap);
             let sent = u32::try_from(before - session.conn_send_window).expect("int cast");
             if sent != 0 {
                 stalled = 0;

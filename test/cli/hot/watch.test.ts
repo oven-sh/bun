@@ -292,69 +292,85 @@ describe.skipIf(isWindows)("file watch", () => {
   // The shim makes every directory watch fail with ENOSPC, which is what
   // inotify returns when fs.inotify.max_user_watches is used up.
   const cc = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
-  test.skipIf(!isLinux || !cc)("a failed parent-directory watch does not cost the file watch", async () => {
-    await using dir = tempDir("watch-dir-watch-fails", {
-      "shim.c": `
-        #define _GNU_SOURCE
-        #include <dlfcn.h>
-        #include <errno.h>
-        #include <stdint.h>
-        #include <sys/inotify.h>
+  describe.skipIf(!isLinux || !cc)("when no directory can be watched", () => {
+    async function startWithoutDirectoryWatches() {
+      const dir = tempDir("watch-dir-watch-fails", {
+        "shim.c": `
+          #define _GNU_SOURCE
+          #include <dlfcn.h>
+          #include <errno.h>
+          #include <stdint.h>
+          #include <sys/inotify.h>
 
-        int inotify_add_watch(int fd, const char *path, uint32_t mask) {
-          static int (*real)(int, const char *, uint32_t);
-          if (mask & IN_ONLYDIR) {
-            errno = ENOSPC;
-            return -1;
+          int inotify_add_watch(int fd, const char *path, uint32_t mask) {
+            static int (*real)(int, const char *, uint32_t);
+            if (mask & IN_ONLYDIR) {
+              errno = ENOSPC;
+              return -1;
+            }
+            if (!real) real = (int (*)(int, const char *, uint32_t))dlsym(RTLD_NEXT, "inotify_add_watch");
+            return real(fd, path, mask);
           }
-          if (!real) real = (int (*)(int, const char *, uint32_t))dlsym(RTLD_NEXT, "inotify_add_watch");
-          return real(fd, path, mask);
-        }
-      `,
-      "app/entry.ts": `import "./a.ts";\nimport "./b.ts";\nimport "./c.ts";\n` + counterEntry("./dep.ts"),
-      "app/a.ts": `export {};\n`,
-      "app/b.ts": `export {};\n`,
-      "app/c.ts": `export {};\n`,
-      "app/dep.ts": `export const sh = "V0";\n`,
-    });
-    const appDir = realpathSync(join(String(dir), "app"));
-    const shim = join(String(dir), "shim.so");
-    {
-      await using build = spawn({
-        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        `,
+        "app/entry.ts": `import "./a.ts";\nimport "./b.ts";\nimport "./c.ts";\n` + counterEntry("./dep.ts"),
+        "app/a.ts": `export {};\n`,
+        "app/b.ts": `export {};\n`,
+        "app/c.ts": `export {};\n`,
+        "app/dep.ts": `export const sh = "V0";\n`,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      if (exitCode !== 0) throw new Error(`the shim did not compile:\n${stdout}${stderr}`);
+      const appDir = realpathSync(join(String(dir), "app"));
+      const shim = join(String(dir), "shim.so");
+      {
+        await using build = spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        if (exitCode !== 0) throw new Error(`the shim did not compile:\n${stdout}${stderr}`);
+      }
+
+      const proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+        cwd: appDir,
+        env: { ...bunEnv, LD_PRELOAD: shim },
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const out = forEachLine(proc.stdout);
+      return {
+        appDir,
+        proc,
+        out,
+        async [Symbol.asyncDispose]() {
+          proc.kill("SIGKILL");
+          await proc.exited;
+          dir[Symbol.dispose]();
+        },
+      };
     }
 
-    await using proc = spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
-      cwd: appDir,
-      env: { ...bunEnv, LD_PRELOAD: shim },
-      stdio: ["ignore", "pipe", "inherit"],
+    test.concurrent("a file is still watched", async () => {
+      await using run = await startWithoutDirectoryWatches();
+      expect(await nextEval(run.out)).toBe("EVAL g=1 shared=V0");
+
+      await writeFile(join(run.appDir, "dep.ts"), `export const sh = "V1";\n`);
+      expect(await nextEval(run.out)).toBe("EVAL g=2 shared=V1");
     });
-    const out = forEachLine(proc.stdout);
 
-    expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
+    // Each of the five modules asks for the directory watch.
+    test.concurrent("no attempt leaves its descriptor of the directory open", async () => {
+      await using run = await startWithoutDirectoryWatches();
+      expect(await nextEval(run.out)).toBe("EVAL g=1 shared=V0");
 
-    // Each of the five modules asked for the directory watch. No attempt may
-    // leave its descriptor of the directory open.
-    const fds = `/proc/${proc.pid}/fd`;
-    const openOnAppDir = readdirSync(fds).filter(fd => {
-      try {
-        return readlinkSync(join(fds, fd)) === appDir;
-      } catch {
-        return false;
-      }
+      const fds = `/proc/${run.proc.pid}/fd`;
+      const openOnAppDir = readdirSync(fds).filter(fd => {
+        try {
+          return readlinkSync(join(fds, fd)) === run.appDir;
+        } catch {
+          return false;
+        }
+      });
+      expect(openOnAppDir.length).toBeLessThanOrEqual(1);
     });
-    expect(openOnAppDir.length).toBeLessThanOrEqual(1);
-
-    await writeFile(join(appDir, "dep.ts"), `export const sh = "V1";\n`);
-    expect(await nextEval(out)).toBe("EVAL g=2 shared=V1");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
   });
 });

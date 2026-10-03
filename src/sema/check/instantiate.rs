@@ -2,13 +2,14 @@
 
 use super::alias::NewAlias;
 use super::*;
+use smallvec::SmallVec;
 
 /// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
 /// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
 #[derive(Default)]
 pub(super) struct Recent {
-    /// The two key numbers and the result. Initially empty, then a power of two of entries.
-    places: Vec<[u32; 3]>,
+    /// The two key numbers, the result and a tag. Initially empty, then a power of two of entries.
+    places: Vec<[u32; 4]>,
     /// A hash shifted right by this amount is a slot index.
     shift: u32,
     /// Number of entries inserted since the table last grew.
@@ -27,34 +28,91 @@ impl Recent {
     #[inline]
     pub(super) fn get(&self, a: u32, b: u32) -> Option<u32> {
         match self.places.get(self.place(a, b)) {
-            Some(&[x, y, answer]) if x == a && y == b => Some(answer),
+            Some(&[x, y, answer, _]) if x == a && y == b => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// The result, and the tag for the caller to read and replace.
+    #[inline]
+    fn get_tagged(&mut self, a: u32, b: u32) -> Option<(u32, &mut u32)> {
+        let place = self.place(a, b);
+        match self.places.get_mut(place) {
+            Some([x, y, answer, tag]) if *x == a && *y == b => Some((*answer, tag)),
             _ => None,
         }
     }
 
     #[inline]
     pub(super) fn put(&mut self, a: u32, b: u32, answer: u32) {
+        self.put_tagged(a, b, answer, 0);
+    }
+
+    #[inline]
+    fn put_tagged(&mut self, a: u32, b: u32, answer: u32, tag: u32) {
         if self.added == self.places.len() && self.added < Self::MOST_PLACES {
             self.grow();
         }
         self.added += 1;
         let place = self.place(a, b);
-        self.places[place] = [a, b, answer];
+        self.places[place] = [a, b, answer, tag];
     }
 
     /// Most files need few slots, and the few that need many dominate the time.
     #[cold]
     fn grow(&mut self) {
         let len = (self.places.len() * 4).max(64);
-        let old = std::mem::replace(&mut self.places, vec![[0; 3]; len]);
+        let old = std::mem::replace(&mut self.places, vec![[0; 4]; len]);
         self.shift = 64 - len.trailing_zeros();
         self.added = 0;
-        for [a, b, answer] in old {
+        for entry @ [a, b, ..] in old {
             if (a, b) != (0, 0) {
                 let place = self.place(a, b);
-                self.places[place] = [a, b, answer];
+                self.places[place] = entry;
             }
         }
+    }
+}
+
+/// `activeMappers`. tsgo caches the instantiations under a mapper for as long as an instantiation
+/// with that mapper is in progress (`activeTypeMappersCaches`), and a hit in that cache does not
+/// add to `instantiationCount`. The results are cached elsewhere here. This records what that
+/// cache would hold, for the count.
+#[derive(Default)]
+pub(super) struct ActiveMappers {
+    mappers: Vec<MapperId>,
+    activations: Vec<Activation>,
+    pushed: u32,
+}
+
+struct Activation {
+    /// Unique, and never 0. The tag of an entry of `recent_instantiations` made under it.
+    serial: u32,
+    /// The type parameters instantiated under it.
+    params: SmallVec<[TypeId; 4]>,
+}
+
+impl ActiveMappers {
+    /// `findActiveMapper`
+    #[inline]
+    fn find(&self, mapper: MapperId) -> Option<usize> {
+        self.mappers.iter().rposition(|&m| m == mapper)
+    }
+
+    /// `pushActiveMapper`
+    fn push(&mut self, mapper: MapperId) {
+        self.pushed = self.pushed.wrapping_add(1).max(1);
+        self.mappers.push(mapper);
+        self.activations.push(Activation {
+            serial: self.pushed,
+            params: SmallVec::new(),
+        });
+    }
+
+    /// `popActiveMapper`
+    fn pop(&mut self) {
+        self.mappers.pop();
+        self.activations.pop();
     }
 }
 
@@ -232,58 +290,92 @@ impl<'p> Checker<'p> {
         if !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES) {
             return ty;
         }
+        // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter
+        // too.
+        if self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000 {
+            return self.instantiation_too_deep();
+        }
+        let active = self.active_mappers.find(mapper);
         if let TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) = data {
+            match active.map(|at| &mut self.active_mappers.activations[at].params) {
+                Some(seen) if seen.contains(&ty) => {}
+                Some(seen) => {
+                    seen.push(ty);
+                    self.instantiation_count += 1;
+                }
+                None => self.instantiation_count += 1,
+            }
             return self.types().map(mapper, ty).unwrap_or(ty);
         }
-        if let Some(known) = self.recent_instantiations.get(ty.0, mapper.0) {
+        let serial = active.map_or(0, |at| self.active_mappers.activations[at].serial);
+        if let Some((known, tag)) = self.recent_instantiations.get_tagged(ty.0, mapper.0) {
+            if serial == 0 || *tag != serial {
+                *tag = serial;
+                self.instantiation_count += 1;
+            }
             return TypeId(known);
         }
-        self.instantiate_cached(ty, mapper)
+        self.instantiation_count += 1;
+        self.instantiate_cached(ty, mapper, serial)
     }
 
     /// `instantiate` for a type that mentions type parameters, is not one itself and is not in the
     /// cache of recent results.
+    /// `serial`: of the activation of `mapper`, or 0 if it is not active.
     #[inline(never)]
-    fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+    fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId, serial: u32) -> TypeId {
         if let Some(known) = self.p.instantiations.get(&mut self.task, &(ty, mapper)) {
-            self.recent_instantiations.put(ty.0, mapper.0, known.0);
+            self.recent_instantiations
+                .put_tagged(ty.0, mapper.0, known.0, serial);
             return known;
         }
-        let outermost = self.frames.first().map_or(0, |frame| frame.serial);
-        if self.limits != 0
-            && let Some(&(under, known)) = self.instantiations_up_to_a_limit.get(&(ty, mapper))
-            && under == outermost
+        if serial != 0
+            && self.instantiation_limit_hits != 0
+            && let Some(&(under, known, is_tainted)) =
+                self.instantiations_up_to_a_limit.get(&(ty, mapper))
+            && under == serial
         {
             // A cache hit records the same marks as recomputing it would.
-            self.note_limit();
-            self.mark_tainted_from(0);
+            self.instantiation_limit_hits += 1;
+            if is_tainted {
+                self.note_limit();
+                self.mark_tainted_from(0);
+            }
             return known;
         }
-        // `instantiationDepth == 100 || instantiationCount >= 5_000_000`: report TS2589 and return the error type.
-        if self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000 {
-            return self.instantiation_too_deep();
-        }
-        self.instantiation_count += 1;
+        let (hits_before, limits_before) = (self.instantiation_limit_hits, self.limits);
         self.instantiation_depth += 1;
+        if serial == 0 {
+            self.active_mappers.push(mapper);
+        }
         let cycles_before = self.cycles;
         let scope = self.begin_scope();
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
+        if serial == 0 {
+            self.active_mappers.pop();
+        }
         self.instantiation_depth -= 1;
+        // tsgo has no cache of instantiations but that of the active mappers. So a result with the
+        // error type of the limit in it is computed again by a caller that has more depth left.
+        let hit_the_limit = self.instantiation_limit_hits != hits_before;
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => {
+            Ok(stored) if !hit_the_limit => {
                 let kept =
                     (self.p.instantiations).insert(&mut self.task, (ty, mapper), result, stored);
                 // The table stores nothing task-local under a shared key.
                 if ty.is_local() || mapper.is_local() || !result.is_local() {
-                    self.recent_instantiations.put(ty.0, mapper.0, kept.0);
+                    self.recent_instantiations
+                        .put_tagged(ty.0, mapper.0, kept.0, serial);
                 }
                 kept
             }
-            Err(_) => {
-                if self.cycles == cycles_before {
+            _ => {
+                // `cache[key] = result`, which `popActiveMapper` clears.
+                if self.cycles == cycles_before && hit_the_limit && serial != 0 {
+                    let is_tainted = self.limits != limits_before;
                     self.instantiations_up_to_a_limit
-                        .insert((ty, mapper), (outermost, result));
+                        .insert((ty, mapper), (serial, result, is_tainted));
                 }
                 result
             }

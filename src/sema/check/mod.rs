@@ -534,7 +534,9 @@ impl Program {
             instantiation_depth: 0,
             instantiation_count: 0,
             recent_instantiations: Default::default(),
+            active_mappers: Default::default(),
             limits: 0,
+            instantiation_limit_hits: 0,
             instantiations_up_to_a_limit: FxHashMap::default(),
             relations_cut_short: FxHashMap::default(),
             generic_relation_entries_not_published: 0,
@@ -946,13 +948,17 @@ pub struct Checker<'p> {
     instantiation_count: u32,
     /// The entries most recently read from or written to `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
+    active_mappers: instantiate::ActiveMappers,
     /// How many times `error_at_current_node` had nothing to report since `check_file` began: the
     /// computation in progress is not cached.
     limits: u64,
+    /// How many times `instantiate` returned the error type at a limit since `check_file` began.
+    instantiation_limit_hits: u64,
     /// The results withheld from `Program::instantiations` for that reason, with the serial number
-    /// of the outermost query in progress. While that query is open no path to the limit is taken
-    /// twice. The next caller hits the limit itself.
-    instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u64, TypeId)>,
+    /// of the activation of the mapper, and whether `limits` moved. While the mapper is active no
+    /// path to the limit is taken twice (`activeTypeMappersCaches`). The next caller hits the limit
+    /// itself.
+    instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
     /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` moved.
     relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
     /// Entries of `relations` under a generic key whose hash included a task-local id. They are not
@@ -1800,6 +1806,7 @@ impl<'p> Checker<'p> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
     /// too: `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
+        self.instantiation_limit_hits += 1;
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
         }

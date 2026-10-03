@@ -128,6 +128,7 @@ impl Checker<'_> {
         self.refused_expressions.clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
+        self.instantiation_limit_hits = 0;
         self.instantiations_up_to_a_limit.clear();
         self.relations_cut_short.clear();
         self.variances_cut_short.clear();

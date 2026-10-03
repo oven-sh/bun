@@ -9,6 +9,79 @@ type Place = (bool, FileId, u32);
 /// The members of a union under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
+/// The pattern literal types of a union by the text they start with. A string literal only matches
+/// a template literal type whose first text it starts with: that is the first test of
+/// `inferFromLiteralPartsToTemplateLiteral`. With thousands of literals and of patterns, testing
+/// every pair dominates the time of the check.
+struct PatternsByPrefix<'p> {
+    /// The first text and the index of each template literal type, sorted.
+    sorted: Vec<(&'p [u8], u32)>,
+    /// For each entry of `sorted`, the nearest earlier entry whose text is a prefix of its text.
+    parent: Vec<u32>,
+    /// The indices of the other patterns, which are string mappings.
+    others: Vec<u32>,
+}
+
+impl<'p> PatternsByPrefix<'p> {
+    const WORTHWHILE: usize = 16;
+    const NONE: u32 = u32::MAX;
+
+    fn new(c: &Checker<'p>, patterns: &[TypeId]) -> Self {
+        let atoms = c.atoms();
+        let (mut sorted, mut others) = (Vec::with_capacity(patterns.len()), Vec::new());
+        for (at, &pattern) in patterns.iter().enumerate() {
+            match c.data(pattern) {
+                TypeData::Template { texts, .. } => sorted.push((atoms.bytes(texts[0]), at as u32)),
+                _ => others.push(at as u32),
+            }
+        }
+        Self::from_texts(sorted, others)
+    }
+
+    fn from_texts(mut sorted: Vec<(&'p [u8], u32)>, others: Vec<u32>) -> Self {
+        sorted.sort_unstable();
+        let mut parent = Vec::with_capacity(sorted.len());
+        let mut prefixes: Vec<u32> = Vec::new();
+        for (at, &(text, _)) in sorted.iter().enumerate() {
+            while prefixes
+                .last()
+                .is_some_and(|&top| !text.starts_with(sorted[top as usize].0))
+            {
+                prefixes.pop();
+            }
+            parent.push(prefixes.last().copied().unwrap_or(Self::NONE));
+            prefixes.push(at as u32);
+        }
+        Self {
+            sorted,
+            parent,
+            others,
+        }
+    }
+
+    /// The indices of the patterns that `value` may match, ascending.
+    fn candidates(&self, value: &[u8], into: &mut Vec<u32>) {
+        into.clear();
+        into.extend_from_slice(&self.others);
+        // A text that `value` starts with sorts before `value`, and every text between the two
+        // starts with it too. So it is the last text that sorts before `value`, or a prefix of it.
+        let after = self.sorted.partition_point(|&(text, _)| text <= value);
+        if let Some(last) = after.checked_sub(1) {
+            let text = self.sorted[last].0;
+            let common = text.iter().zip(value).take_while(|(a, b)| a == b).count();
+            let mut at = last as u32;
+            while at != Self::NONE {
+                let (text, pattern) = self.sorted[at as usize];
+                if text.len() <= common {
+                    into.push(pattern);
+                }
+                at = self.parent[at as usize];
+            }
+        }
+        into.sort_unstable();
+    }
+}
+
 // `create_union` relies on these id values.
 const _: () = assert!(
     TypeId::UNRESOLVED.0 == 0
@@ -371,6 +444,9 @@ impl<'p> Checker<'p> {
         if patterns.is_empty() {
             return;
         }
+        let by_prefix = (patterns.len() >= PatternsByPrefix::WORTHWHILE)
+            .then(|| PatternsByPrefix::new(self, &patterns));
+        let mut candidates: Vec<u32> = Vec::new();
         for m in std::mem::take(members) {
             // For a type with `TypeFlagsStringLiteral`: the value, and whether it is the plain
             // string literal type of that value.
@@ -386,15 +462,23 @@ impl<'p> Checker<'p> {
                 }
             };
             let literal = self.string_literal(value, false);
+            let text = self.atoms().bytes(value);
             // `isTypeMatchedByTemplateLiteralOrStringMapping`: a template literal type matches by
             // value. `isMemberOfStringMapping` requires that applying the mapping to the type
             // yields the type itself, and the mapping yields the plain literal.
-            let matched = patterns.iter().any(|&pattern| match self.data(pattern) {
+            let mut is_matched_by = |pattern: TypeId| match self.data(pattern) {
                 TypeData::Template { texts, types } => {
                     self.is_type_matched_by_template_literal_type(literal, texts, types)
                 }
                 _ => is_plain && self.is_assignable(m, pattern),
-            });
+            };
+            let matched = match &by_prefix {
+                Some(index) => {
+                    index.candidates(text, &mut candidates);
+                    (candidates.iter()).any(|&at| is_matched_by(patterns[at as usize]))
+                }
+                None => patterns.iter().any(|&pattern| is_matched_by(pattern)),
+            };
             if !matched {
                 members.push(m);
             }
@@ -1839,5 +1923,53 @@ impl<'p> Checker<'p> {
         types
             .binary_search_by(|&member| self.compare_types(member, t))
             .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PatternsByPrefix;
+
+    /// Every string over `ab` of at most `len` bytes.
+    fn strings(len: usize) -> Vec<Vec<u8>> {
+        let mut all = vec![Vec::new()];
+        let mut from = 0;
+        for _ in 0..len {
+            let until = all.len();
+            for at in from..until {
+                for byte in *b"ab" {
+                    let mut longer = all[at].clone();
+                    longer.push(byte);
+                    all.push(longer);
+                }
+            }
+            from = until;
+        }
+        all
+    }
+
+    #[test]
+    fn candidates_are_the_patterns_whose_first_text_is_a_prefix() {
+        let (texts, values) = (strings(4), strings(6));
+        // Every third text is left out, every fifth is there twice, and two patterns have no text.
+        let mut patterns: Vec<(&[u8], u32)> = Vec::new();
+        for (at, text) in texts.iter().enumerate().filter(|(at, _)| at % 3 != 0) {
+            for _ in 0..1 + usize::from(at % 5 == 0) {
+                patterns.push((text, patterns.len() as u32 + 2));
+            }
+        }
+        let index = PatternsByPrefix::from_texts(patterns.clone(), vec![0, 1]);
+        let mut found = Vec::new();
+        for value in &values {
+            index.candidates(value, &mut found);
+            let mut expected = vec![0, 1];
+            expected.extend(
+                patterns
+                    .iter()
+                    .filter(|p| value.starts_with(p.0))
+                    .map(|p| p.1),
+            );
+            assert_eq!(found, expected, "{:?}", String::from_utf8_lossy(value));
+        }
     }
 }

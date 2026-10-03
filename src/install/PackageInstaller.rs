@@ -1414,6 +1414,7 @@ impl<'a> PackageInstaller<'a> {
                     pkg_name.slice(string_buf!()),
                     resolution.npm().version,
                     patch_contents_hash,
+                    resolution.npm().url.slice(string_buf!()),
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }

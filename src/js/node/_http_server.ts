@@ -1049,7 +1049,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             hasBody,
             handle,
             (dispatchBits & DISPATCH_READ_HAS_MORE) !== 0 &&
-              !socket.destroyed &&
               http_req.readableFlowing !== true &&
               http_req.listenerCount("readable") === 0,
           );

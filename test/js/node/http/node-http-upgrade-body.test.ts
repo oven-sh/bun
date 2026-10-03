@@ -236,6 +236,7 @@ describe("the 'upgrade' event of a request with a body", () => {
       req => void process.nextTick(() => req.socket.destroy()),
       { request: false, socket: true, writable: false },
     ],
+    ["ends the socket", req => void req.socket.end(), { request: false, socket: false, writable: false }],
     [
       "ends the socket in a tick",
       req => void process.nextTick(() => req.socket.end()),

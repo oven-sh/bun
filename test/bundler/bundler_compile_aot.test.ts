@@ -1152,6 +1152,99 @@ describe("--compile-aot across threads", () => {
   });
 });
 
+describe("--compile-aot at run time", () => {
+  async function run(source: string, env: Record<string, string> = {}) {
+    using dir = tempDir("compile-aot-run-time", { "entry.ts": source });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "out")],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("implicit constructors need no bytecode", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      /* ts */ `
+        class ImplicitBase { kind() { return "base"; } }
+        class ImplicitDerived extends ImplicitBase { kind() { return "derived of " + super.kind(); } }
+        class ImplicitTwice extends ImplicitDerived {}
+        class WithFields { a = 1; #b = 2; sum() { return this.a + this.#b; } }
+        class DerivedWithFields extends WithFields { c = 3; total() { return this.sum() + this.c; } }
+        class Takes { constructor(public x: number, public y = 5) {} }
+        class Forwards extends Takes {}
+        class ImplicitError extends Error {}
+        class ImplicitArray extends Array<number> {}
+        class ImplicitMap extends Map<string, number> {}
+        class Observes { target = new.target === undefined; }
+        const made = (() => class extends Takes {})();
+        const out: unknown[] = [];
+        for (let i = 0; i < 3; i++) {
+          out.length = 0;
+          out.push(new ImplicitBase().kind(), new ImplicitDerived().kind(), new ImplicitTwice().kind());
+          out.push(new WithFields().sum(), new DerivedWithFields().total());
+          out.push(new Forwards(1).x, new Forwards(1).y, new Forwards(1, 2).y, new made(7).x);
+          const error = new ImplicitError("message");
+          out.push(error.message, error instanceof ImplicitError, error instanceof Error, error.name);
+          out.push(new ImplicitArray(3).length, ImplicitArray.of(1, 2).length, new ImplicitMap([["k", 1]]).get("k"));
+          out.push(new Observes().target, ImplicitBase.name, ImplicitDerived.length, made.name);
+          out.push(Reflect.construct(ImplicitDerived, [], ImplicitTwice) instanceof ImplicitTwice);
+          for (const C of [ImplicitBase, ImplicitDerived, Forwards]) {
+            try {
+              (C as unknown as () => void)();
+              out.push("called");
+            } catch (e) {
+              out.push((e as Error).constructor.name);
+            }
+          }
+        }
+        console.log(out.join());
+      `,
+      { BUN_JSC_dumpGeneratedBytecodes: "1" },
+    );
+    expect(stdout.split("\n").filter(line => !line.includes("#") && line.includes(","))).toEqual([
+      "base,derived of base,derived of base,3,6,1,5,2,7,message,true,true,Error,3,2,1,true,ImplicitBase,0,,true,TypeError,TypeError,TypeError",
+    ]);
+    expect((stdout + stderr).match(/^\S*(Implicit|WithFields|Forwards|Observes)\S*#\w+:\[/gm)).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["equal literals share a string", (i: number) => "a literal that is repeated", 100],
+    ["different literals do not", (i: number) => "a literal that is not repeated " + i, 3000],
+  ] as const)("%s", async (_, literal, atLeast) => {
+    const rows = Array.from({ length: 3000 }, (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`);
+    const { stdout, stderr, exitCode } = await run(`
+      import { heapStats } from "bun:jsc";
+      const rows = [
+      ${rows.join("\n")}
+      ];
+      Bun.gc(true);
+      const strings = heapStats().objectTypeCounts.string;
+      console.log(JSON.stringify([rows.length, rows[0].kind, rows[2999].kind, rows[2999].list.join(), new Set(rows.map(row => row.kind)).size]));
+      console.log(strings);
+    `);
+    const [first, second] = stdout.trim().split("\n");
+    expect([JSON.parse(first), stderr, exitCode]).toEqual([
+      [3000, literal(0), literal(2999), literal(2999) + ",x3y", atLeast === 100 ? 1 : 3000],
+      "",
+      0,
+    ]);
+    if (atLeast === 100) expect(Number(second)).toBeLessThan(3000);
+    else expect(Number(second)).toBeGreaterThanOrEqual(3000);
+  });
+});
+
 describe("--compile-aot optimizations", () => {
   const program = /* ts */ `
     const out: unknown[] = [];

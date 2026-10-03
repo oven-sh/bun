@@ -1046,7 +1046,7 @@ test("a settled query does not keep its connection alive", async () => {
 
   for (let round = 0; round < rounds; round++) {
     await using server = await backend();
-    const sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+    await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
     const resolved = sql`select 'a'`.execute();
     await resolved;
     server.autoReply = false;
@@ -1071,7 +1071,6 @@ test("a settled query does not keep its connection alive", async () => {
       "ERR_POSTGRES_QUERY_CANCELLED",
     ]);
     kept.push(resolved, ...cancelled);
-    await sql.close();
   }
 
   // Each round made a session and a cancel connection. GC finalizes them over a few cycles.

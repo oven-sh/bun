@@ -1312,7 +1312,7 @@ pub(crate) fn bun_validate_import_meta_package_config(
         let selected_path = if resolver.opts.preserve_symlinks {
             path.slice()
         } else {
-            bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or(path.slice())
+            bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or_else(|_| path.slice())
         };
         if let Some(error) = resolver.node_package_scope_error(selected_path) {
             let error = jsc::ResolveMessage::from_node_module_error(global, &error, true, b"", b"");

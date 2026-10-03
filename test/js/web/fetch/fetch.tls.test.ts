@@ -1593,7 +1593,7 @@ describe.concurrent("fetch-tls", () => {
       expect(await proc.exited).toBe(1);
       const stderr = await proc.stderr.text();
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
-      expect(stderr).toContain("ignoring extra certs");
+      expect(stderr).toContain("Warning: Ignoring extra certs from");
     }
   });
 });

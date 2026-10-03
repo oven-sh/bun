@@ -2732,11 +2732,8 @@ fn polar_to_rectangular(l: f32, c: f32, h: f32) -> LabComponents {
     LabComponents { l, a, b }
 }
 
-const D50: [f32; 3] = [
-    (0.3457f64 / 0.3585f64) as f32,
-    1.00000,
-    ((1.0f64 - 0.3457f64 - 0.3585f64) / 0.3585f64) as f32,
-];
+// Must stay bit-identical to lightningcss's D50, so this is evaluated in f32 like upstream.
+const D50: [f32; 3] = [0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585];
 
 // ──────────────────────────────────────────────────────────────────────────
 // Handwritten conversions.
@@ -2782,8 +2779,8 @@ impl From<LAB> for LCH {
 impl From<LAB> for XYZd50 {
     fn from(lab_: LAB) -> XYZd50 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L352
-        const K: f32 = (24389.0f64 / 27.0f64) as f32; // 29^3/3^3
-        const E: f32 = (216.0f64 / 24389.0f64) as f32; // 6^3/29^3
+        const K: f32 = 24389.0 / 27.0; // 29^3/3^3
+        const E: f32 = 216.0 / 24389.0; // 6^3/29^3
 
         let lab = lab_.resolve_missing();
         let l = lab.l * 100.0;

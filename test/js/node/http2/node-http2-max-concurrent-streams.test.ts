@@ -444,25 +444,29 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
 
   describe("a slot is free again", () => {
     test("after both sides ended the stream", async () => {
-      assert.deepStrictEqual(await withLimit(one, finish, (client, served) => oneAtATime(client, served, 5)), 
+      assert.deepStrictEqual(
+        await withLimit(one, finish, (client, served) => oneAtATime(client, served, 5)),
         allServed(odd(5)),
       );
     });
 
     test("after a response that is only HEADERS", async () => {
-      assert.deepStrictEqual(await withLimit(one, headersOnly, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withLimit(one, headersOnly, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
 
     test("after sendTrailers()", async () => {
-      assert.deepStrictEqual(await withLimit(one, respondThenTrailers, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withLimit(one, respondThenTrailers, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
 
     test("after res.end() of the compatibility API", async () => {
-      assert.deepStrictEqual(await withCompat(one, endResponse, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withCompat(one, endResponse, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
@@ -566,24 +570,30 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
       });
       // The destroy that follows close() can write the RST_STREAM a second time.
       const resets = [...new Set(result.resets.map(([streamId, rstCode]) => `${streamId}:${rstCode}`))];
-      assert.deepStrictEqual({ ...result, resets }, {
-        ...allServed(odd(4)),
-        resets: odd(4).map(streamId => `${streamId}:${code}`),
-      });
+      assert.deepStrictEqual(
+        { ...result, resets },
+        {
+          ...allServed(odd(4)),
+          resets: odd(4).map(streamId => `${streamId}:${code}`),
+        },
+      );
     });
 
     // Bun only: these calls fail in Bun and the stream emits 'error'. Node accepts the first two,
     // throws for the third and resets the stream for the fourth.
-    each([
-      ["a weight out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { weight: 0 })],
-      ["a parent out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { parent: -1 })],
-      ["options that are not an object", {}, (stream: any) => stream.respond({ ":status": 200 }, 1)],
+    each(
       [
-        "a header block over maxSendHeaderBlockLength",
-        { maxSendHeaderBlockLength: 100 },
-        (stream: any) => stream.respond({ ":status": 200, "x-large": Buffer.alloc(400, "a").toString() }),
+        ["a weight out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { weight: 0 })],
+        ["a parent out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { parent: -1 })],
+        ["options that are not an object", {}, (stream: any) => stream.respond({ ":status": 200 }, 1)],
+        [
+          "a header block over maxSendHeaderBlockLength",
+          { maxSendHeaderBlockLength: 100 },
+          (stream: any) => stream.respond({ ":status": 200, "x-large": Buffer.alloc(400, "a").toString() }),
+        ],
       ],
-    ], bunOnly)("after respond() failed for %s", async (_, options, failingRespond) => {
+      bunOnly,
+    )("after respond() failed for %s", async (_, options, failingRespond) => {
       const failFirst: OnStream = (stream, headers) => {
         if (stream.id === 1) failingRespond(stream);
         else hold(stream, headers);
@@ -744,14 +754,17 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
       );
       return outcome(client, served);
     });
-    assert.deepStrictEqual({ ...result, fields }, {
-      handlers: [1, 5],
-      answered: [1, 5],
-      resets: refused([3]),
-      goaways: [],
-      sessionError: undefined,
-      fields: [undefined, "1"],
-    });
+    assert.deepStrictEqual(
+      { ...result, fields },
+      {
+        handlers: [1, 5],
+        answered: [1, 5],
+        resets: refused([3]),
+        goaways: [],
+        sessionError: undefined,
+        fields: [undefined, "1"],
+      },
+    );
   });
 
   // A client that has not read the refusal keeps sending on the stream. A refused stream has

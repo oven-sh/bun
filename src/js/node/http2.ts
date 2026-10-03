@@ -3078,7 +3078,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options, true);
+      this[kRespond](headers, options, false);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3097,7 +3097,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options, true);
+        this[kRespond](headers, options, false);
         this.destroy(err);
       }
       return;
@@ -3154,7 +3154,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
-    this.respond(headers, options, true);
+    this[kRespond](headers, options, false);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
@@ -3215,6 +3215,7 @@ function onFileStreamError(this: Http2Stream) {
   if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
 }
 const kFileResponseFinal = Symbol("fileResponseFinal");
+const kRespond = Symbol("respond");
 // node processRespondWithFD: a file response closes the user-facing writable side
 // (`self._final = null; self.end()`), so a stream.end() issued by the user afterwards cannot cut
 // the transfer short. Returns the original _final, which the file sink runs once the whole file
@@ -3621,7 +3622,12 @@ class ServerHttp2Stream extends Http2Stream {
 
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
-  respond(headers?: HeadersObject | any[] | null, options?: any, forFileResponse?: boolean) {
+  respond(headers?: HeadersObject | any[] | null, options?: any) {
+    this[kRespond](headers, options, true);
+  }
+  // respondWithFile() and respondWithFD() refresh the idle timer when they run, and send their
+  // headers here with `refresh` false.
+  [kRespond](headers: HeadersObject | any[] | null | undefined, options: any, refresh: boolean) {
     if (this.destroyed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
@@ -3632,9 +3638,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
-    // respondWithFile() and respondWithFD() refresh when they run, and send their headers here.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3010
-    if (session[kTimeout] && forFileResponse !== true) session[kTimeout].refresh();
+    if (refresh && session[kTimeout]) session[kTimeout].refresh();
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -4857,8 +4862,6 @@ class ServerHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1229
-      this.removeAllListeners("timeout");
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
       if (typeof error === "number") {
@@ -5982,8 +5985,6 @@ class ClientHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1229
-      this.removeAllListeners("timeout");
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
       if (error === undefined) {

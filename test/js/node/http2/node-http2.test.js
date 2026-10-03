@@ -6802,24 +6802,20 @@ describe.concurrent("http2 session idle timer", () => {
   };
 
   for (const transport of transports) {
-    it(
-      `refreshes the timers as often as node for each call and frame (${transport})`,
-      async () => {
-        const server = createServer(transport);
-        try {
-          const counts = await countTimerRefreshes(server, await dialer(server, transport));
-          // node sets up a session on a stream that has connected already inside connect(). The
-          // client has no timer at that time, so node counts no refresh for the connect.
-          const connect = transport === "duplexPair" ? { client: 0, server: 0 } : refreshesInNode.connect;
-          expect(counts).toEqual({ ...refreshesInNode, connect });
-        } finally {
-          server.close();
-        }
-      },
-      // The fixture has 31 steps. A debug build on a busy machine needs 1 to 5 s for them. Every
-      // other build keeps the default.
-      isDebug ? 30_000 : undefined,
-    );
+    // The fixture takes 31 steps on the one JS thread. Each run has the thread to itself, so
+    // that it stays far from the default time limit in a debug build.
+    it.serial(`refreshes the timers as often as node for each call and frame (${transport})`, async () => {
+      const server = createServer(transport);
+      try {
+        const counts = await countTimerRefreshes(server, await dialer(server, transport));
+        // node sets up a session on a stream that has connected already inside connect(). The
+        // client has no timer at that time, so node counts no refresh for the connect.
+        const connect = transport === "duplexPair" ? { client: 0, server: 0 } : refreshesInNode.connect;
+        expect(counts).toEqual({ ...refreshesInNode, connect });
+      } finally {
+        server.close();
+      }
+    });
   }
 
   it.skipIf(!nodeExe())("node gives the refresh counts that the tests above expect", async () => {
@@ -6870,20 +6866,6 @@ describe.concurrent("http2 session idle timer", () => {
       } finally {
         clearTimeout(reference);
       }
-    } finally {
-      client.destroy();
-      server.close();
-    }
-  });
-
-  it("removes the 'timeout' listeners when the session is destroyed", async () => {
-    const server = http2.createServer();
-    const client = await connectTo(server);
-    try {
-      client.setTimeout(never, () => {});
-      expect(client.listenerCount("timeout")).toBe(1);
-      client.destroy();
-      expect(client.listenerCount("timeout")).toBe(0);
     } finally {
       client.destroy();
       server.close();

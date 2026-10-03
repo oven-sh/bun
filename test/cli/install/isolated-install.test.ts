@@ -3682,8 +3682,8 @@ test("store build timings are printed by --verbose only", async () => {
 });
 
 describe("hoist", () => {
-  // `node_modules/.bun/node_modules` holds a symlink to every installed
-  // package and sits on the upward resolution path of every store entry, so
+  // `node_modules/.bun/node_modules` holds a symlink for every dependency
+  // name and sits on the upward resolution path of every store entry, so
   // by default a store package can resolve dependencies it never declared.
   // `install.hoist = false` (pnpm's `hoist=false`) skips that fallback
   // directory without touching the rest of the layout.
@@ -3832,6 +3832,434 @@ describe("hoist", () => {
     await runBunInstall(bunEnv, packageDir);
 
     expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  // A fallback link carries the name of a dependency, as `node_modules/<name>`
+  // does in the package that declares it. The real name of a package and an
+  // `npm:` alias of it are two names, so they are two links, and one store
+  // entry writes each (#40355).
+  async function fallbackLinks(packageDir: string): Promise<Record<string, string>> {
+    const dir = join(packageDir, "node_modules", ".bun", "node_modules");
+    const links: Record<string, string> = {};
+    for (const name of await readdirSorted(dir)) {
+      if (name.startsWith("@")) {
+        for (const scoped of await readdirSorted(join(dir, name))) {
+          links[`${name}/${scoped}`] = readlinkSync(join(dir, name, scoped));
+        }
+      } else {
+        links[name] = readlinkSync(join(dir, name));
+      }
+    }
+    return links;
+  }
+  const inStore = (entry: string, name: string) => join("..", entry, "node_modules", name);
+  const requireFrom = (packageDir: string, entry: string, name: string) =>
+    createRequire(join(packageDir, "node_modules", ".bun", entry, "node_modules", name, "package.json"));
+
+  test.each(["an-alias", "z-alias"])(
+    "the real name of a package and the npm: alias %s are separate fallback links",
+    async alias => {
+      const { packageJson, packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "hoist-alias-and-real-name",
+          dependencies: {
+            [alias]: "npm:no-deps@2.0.0",
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+
+      // the second install finds `node_modules/.bun` and checks the links
+      // that are already there
+      for (const savesLockfile of [true, false]) {
+        await runBunInstall(bunEnv, packageDir, { savesLockfile });
+
+        expect(await fallbackLinks(packageDir)).toEqual({
+          // mirrors node_modules/no-deps
+          "no-deps": inStore("no-deps@1.0.0", "no-deps"),
+          [alias]: inStore("no-deps@2.0.0", "no-deps"),
+        });
+      }
+    },
+  );
+
+  test("the real name keeps its fallback link when it shares a store entry with an alias", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-alias-dedupe",
+        dependencies: {
+          // same version as the real name, so the real name joins the store
+          // entry the alias created
+          "an-alias": "npm:no-deps@1.0.0",
+          "no-deps": "1.0.0",
+          // depends on no-deps@2.0.0, which must not take the `no-deps` link
+          "one-fixed-dep": "2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@1.0.0", "no-deps"),
+      "no-deps": inStore("no-deps@1.0.0", "no-deps"),
+      "one-fixed-dep": inStore("one-fixed-dep@2.0.0", "one-fixed-dep"),
+    });
+  });
+
+  test("a package installed under aliases only has no fallback link under its own name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-alias-only",
+        dependencies: {
+          // two names for one store entry
+          "an-alias": "npm:no-deps@1.0.0",
+          "@scoped/alias": "npm:no-deps@1.0.0",
+          "types-alias": "npm:@types/is-number@1.0.0",
+          // not a package name, and `.bun/node_modules/.bin` is on the PATH
+          // of every store package's scripts
+          ".bin": "npm:a-dep@1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@1.0.0", "no-deps"),
+      "@scoped/alias": join("..", inStore("no-deps@1.0.0", "no-deps")),
+      "types-alias": inStore("@types+is-number@1.0.0", join("@types", "is-number")),
+    });
+
+    // a store package that declares nothing does not find the name the package gave itself
+    const fromTypes = requireFrom(packageDir, "@types+is-number@1.0.0", join("@types", "is-number"));
+    expect(() => fromTypes.resolve("no-deps/package.json")).toThrow(
+      expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+    );
+  });
+
+  // A dependency name that is not a package name takes a path the linker
+  // needs. `.bin` is on the `PATH` of every store package's scripts, and a
+  // bare scope takes the directory that holds `<scope>/<name>`, so the link
+  // for `<scope>/<name>` would be written inside the package the bare scope
+  // points at.
+  test("a dependency name that is a bare scope gets no fallback link", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "carrier/package.json": JSON.stringify({
+          name: "carrier",
+          version: "1.0.0",
+          dependencies: { "@types": "npm:no-deps@1.0.0" },
+        }),
+      },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-bare-scope-key",
+        dependencies: {
+          carrier: "file:./carrier",
+          "@types/is-number": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "@types/is-number": join("..", inStore("@types+is-number@1.0.0", join("@types", "is-number"))),
+    });
+
+    // the store entry the bare scope resolves to holds its own files only
+    expect(
+      await readdirSorted(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps")),
+    ).toEqual(["index.js", "package.json"]);
+  });
+
+  // A store entry is the only thing linked into the fallback directory, so a
+  // workspace, `file:` or `link:` entry must not take a fallback name when a
+  // dependency joins it: a store package reached under that name deeper in
+  // the tree needs it.
+  test("a name a workspace package is reached under stays free for a store package", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "packages/lib/package.json": JSON.stringify({ name: "no-deps", version: "5.0.0" }),
+        "packages/one/package.json": JSON.stringify({
+          name: "one",
+          version: "1.0.0",
+          // uses-a-dep-3 depends on the registry's a-dep@1.0.3
+          dependencies: { "no-deps": "workspace:*", "uses-a-dep-3": "1.0.0", "basic-1": "1.0.0" },
+        }),
+        "packages/two/package.json": JSON.stringify({
+          name: "two",
+          version: "1.0.0",
+          // reaches the workspace package under a second name
+          dependencies: { "a-dep": "npm:no-deps@*" },
+        }),
+      },
+    });
+
+    await write(packageJson, JSON.stringify({ name: "hoist-workspace-name", workspaces: ["packages/*"] }));
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      // the workspace package gets no link, and leaves `a-dep` to the store package
+      "a-dep": inStore("a-dep@1.0.3", "a-dep"),
+      "basic-1": inStore("basic-1@1.0.0", "basic-1"),
+      "uses-a-dep-3": inStore("uses-a-dep-3@1.0.0", "uses-a-dep-3"),
+    });
+
+    // basic-1 declares nothing and the project root links no a-dep, so this goes through the fallback link
+    expect(requireFrom(packageDir, "basic-1@1.0.0", "basic-1").resolve("a-dep/package.json")).toEndWith(
+      join(".bun", "a-dep@1.0.3", "node_modules", "a-dep", "package.json"),
+    );
+  });
+
+  test("a package installed under another package's name holds the fallback link for that name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-replaced-by-name",
+        dependencies: {
+          // the project replaces no-deps
+          "no-deps": "npm:a-dep@1.0.1",
+          // depends on the real no-deps@2.0.0
+          "one-fixed-dep": "2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      // mirrors node_modules/no-deps
+      "no-deps": inStore("a-dep@1.0.1", "a-dep"),
+      "one-fixed-dep": inStore("one-fixed-dep@2.0.0", "one-fixed-dep"),
+    });
+
+    // the fallback directory comes before the root node_modules, so a link to the real no-deps there would win
+    expect(requireFrom(packageDir, "a-dep@1.0.1", "a-dep").resolve("no-deps/package.json")).toEndWith(
+      join(".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
+    );
+    // the package that declares no-deps gets the real one
+    expect(requireFrom(packageDir, "one-fixed-dep@2.0.0", "one-fixed-dep").resolve("no-deps/package.json")).toEndWith(
+      join(".bun", "no-deps@2.0.0", "node_modules", "no-deps", "package.json"),
+    );
+  });
+
+  test("hoistPattern matches the dependency name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoistPattern: ["an-alias", "a-dep"] },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-pattern-alias",
+        dependencies: {
+          "an-alias": "npm:no-deps@2.0.0",
+          // the package name matches, the dependency name does not
+          "other-name": "npm:a-dep@1.0.1",
+          "basic-1": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+    });
+  });
+
+  test("removes the fallback link an older version left under the package name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-upgraded-tree",
+        dependencies: {
+          "an-alias": "npm:no-deps@2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // older versions named the link after the package
+    await symlink(
+      inStore("no-deps@2.0.0", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      "dir",
+    );
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+    });
+  });
+
+  test("removes the package-name link an older version left for an entry that holds no fallback name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-upgraded-tree-unhoisted",
+        dependencies: {
+          // claims the fallback name `alias1`
+          "alias1": "npm:a-dep@1.0.1",
+          // declares `alias1: npm:alias-loop-2`, so alias-loop-2's store entry
+          // is created under a name that is taken and holds no fallback name
+          "alias-loop-1": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = {
+      "alias-loop-1": inStore("alias-loop-1@1.0.0", "alias-loop-1"),
+      "alias1": inStore("a-dep@1.0.1", "a-dep"),
+      // alias-loop-2 declares `alias2: npm:alias-loop-1`, which joins alias-loop-1's entry
+      "alias2": inStore("alias-loop-1@1.0.0", "alias-loop-1"),
+    };
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // an older version that hoisted this entry named its link after the package
+    await symlink(
+      inStore("alias-loop-2@1.0.0", "alias-loop-2"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "alias-loop-2"),
+      "dir",
+    );
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+  });
+
+  test("removes the package-name link an older version left for another version of the package", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    const manifest = (version: string) =>
+      JSON.stringify({
+        name: "hoist-upgraded-tree-bump",
+        dependencies: { "an-alias": `npm:no-deps@${version}` },
+      });
+
+    await write(packageJson, manifest("1.0.0"));
+    await runBunInstall(bunEnv, packageDir);
+
+    // older versions named the link after the package
+    await symlink(
+      inStore("no-deps@1.0.0", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      "dir",
+    );
+
+    // the alias moves to another version in the install that finds the old link
+    await write(packageJson, manifest("2.0.0"));
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+    });
+  });
+
+  test("removes the package-name link an older version left for a name hoistPattern leaves out", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoistPattern: "an-*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-upgraded-tree-pattern",
+        dependencies: {
+          "an-alias": "npm:no-deps@2.0.0",
+          // a dependency holds this name, and the pattern gives it no link
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = { "an-alias": inStore("no-deps@2.0.0", "no-deps") };
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // older versions matched the pattern on `an-alias` and named the link after the package
+    await symlink(
+      inStore("no-deps@2.0.0", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      "dir",
+    );
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+  });
+
+  test("an install of one workspace keeps the fallback link another workspace holds", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "packages/one/package.json": JSON.stringify({
+          name: "one",
+          version: "1.0.0",
+          dependencies: { "an-alias": "npm:no-deps@2.0.0" },
+        }),
+        "packages/two/package.json": JSON.stringify({
+          name: "two",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+
+    await write(packageJson, JSON.stringify({ name: "hoist-filtered-install", workspaces: ["packages/*"] }));
+
+    const links = {
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+      "no-deps": inStore("no-deps@1.0.0", "no-deps"),
+    };
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // `two` is left out of this install, and the name it holds keeps its link
+    await runBunInstall(bunEnv, packageDir, { packages: ["--filter", "one"], savesLockfile: false });
+    expect(await fallbackLinks(packageDir)).toEqual(links);
   });
 
   test("npmrc hoist=false", async () => {

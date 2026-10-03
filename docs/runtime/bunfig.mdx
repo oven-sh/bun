@@ -692,7 +692,7 @@ publicHoistPattern = ["*eslint*", "*prettier*"]
 
 ### `install.hoistPattern`
 
-When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. Similar to pnpm's `hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. A pattern is matched against the dependency name, which for an `npm:` alias is the alias, and the link in the fallback directory has that name. Similar to pnpm's `hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -701,7 +701,7 @@ hoistPattern = ["*"]
 
 ### `install.hoist`
 
-When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink to every installed package, or only to the packages matching `install.hoistPattern` when one is set. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
+When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink for every dependency name, or only for the names matching `install.hoistPattern` when one is set. A package installed through an `npm:` alias is linked under the alias, as it is in the `node_modules` of the package that declares it. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
 
 This setting only applies to the `"isolated"` linker. Hoisted installs are unaffected: there the flat `node_modules` tree is the layout itself, not something this switch controls.
 

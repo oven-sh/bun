@@ -869,7 +869,6 @@ impl Task {
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_scripts = entries.items_scripts();
-        let entry_hoisted = entries.items_hoisted();
 
         let nodes = &installer.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
@@ -1539,27 +1538,8 @@ impl Task {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
 
-                    match pkg_res.tag {
-                        ResolutionTag::Uninitialized
-                        | ResolutionTag::Root
-                        | ResolutionTag::Workspace
-                        | ResolutionTag::Folder
-                        | ResolutionTag::Symlink
-                        | ResolutionTag::SingleFileModule => {}
-
-                        ResolutionTag::Npm
-                        | ResolutionTag::Git
-                        | ResolutionTag::Github
-                        | ResolutionTag::LocalTarball
-                        | ResolutionTag::RemoteTarball => {
-                            if !entry_hoisted[self.entry_id.get() as usize] {
-                                step = self.next_step(current_step);
-                                continue;
-                            }
-                            installer.link_to_hidden_node_modules(self.entry_id);
-                        }
-
-                        _ => {}
+                    if super::links_into_hidden_node_modules(pkg_res.tag) {
+                        installer.link_to_hidden_node_modules(self.entry_id);
                     }
 
                     step = self.next_step(current_step);
@@ -2121,7 +2101,49 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
+    /// Links the entry into `node_modules/.bun/node_modules` under every dependency name it holds.
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        let dependencies = &self.lockfile().buffers.dependencies;
+
+        // symlinks won't exist if node_modules/.bun is new
+        let link_strategy: symlinker::Strategy = if self.is_new_bun_modules {
+            symlinker::Strategy::ExpectMissing
+        } else {
+            symlinker::Strategy::ExpectExisting
+        };
+
+        if self.store.entries.items_hoisted()[entry_id.get() as usize] {
+            let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+            let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+            let dep_name = dependencies[dep_id as usize].name.slice(string_buf);
+            let _ = self
+                .hidden_node_modules_link(entry_id, dep_name)
+                .ensure_symlink(link_strategy);
+        }
+
+        for key in self.store.hidden_hoist_keys_of(entry_id) {
+            let dep_name = dependencies[key.dep_id as usize].name.slice(string_buf);
+            let _ = self
+                .hidden_node_modules_link(entry_id, dep_name)
+                .ensure_symlink(link_strategy);
+        }
+    }
+
+    /// Removes the link an older version left under the package's name. The caller checks that nothing is linked under that name now.
+    pub(crate) fn unlink_package_name_from_hidden_node_modules(&self, entry_id: StoreEntryId) {
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize].slice(string_buf);
+
+        self.hidden_node_modules_link(entry_id, pkg_name)
+            .unlink_if_links_to_package(pkg_name);
+    }
+
+    /// `node_modules/.bun/node_modules/<name>` as a link to the entry's package directory.
+    fn hidden_node_modules_link(&self, entry_id: StoreEntryId, name: &[u8]) -> Symlinker {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
@@ -2142,12 +2164,12 @@ impl<'a> Installer<'a> {
             )
             .as_bytes(),
         );
-        let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: fire-and-forget
+        let _ = hidden_hoisted_node_modules.append(name); // OOM/capacity: fire-and-forget
 
         let mut target = AutoRelPath::init();
 
         let _ = target.append(b".."); // OOM/capacity: fire-and-forget
-        if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
+        if strings::index_of_char(name, b'/').is_some() {
             let _ = target.append(b".."); // OOM/capacity: fire-and-forget
         }
 
@@ -2163,21 +2185,12 @@ impl<'a> Installer<'a> {
         #[cfg(windows)]
         self.append_store_path(&mut full_target, entry_id);
 
-        let mut symlinker = Symlinker {
+        Symlinker {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
             #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
-        };
-
-        // symlinks won't exist if node_modules/.bun is new
-        let link_strategy: symlinker::Strategy = if self.is_new_bun_modules {
-            symlinker::Strategy::ExpectMissing
-        } else {
-            symlinker::Strategy::ExpectExisting
-        };
-
-        let _ = symlinker.ensure_symlink(link_strategy);
+        }
     }
 
     fn maybe_replace_node_modules_path(

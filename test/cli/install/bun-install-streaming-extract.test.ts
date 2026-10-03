@@ -953,6 +953,41 @@ test("streaming extract skips a damaged header block and extracts the entries af
   expect(exitCode).toBe(0);
 });
 
+// The buffered extractor reports the errno of a write that fails, as the
+// streaming extractor does. `ulimit -f` makes a write fail without a full
+// disk. Its unit is 512 or 1024 bytes, depending on the shell. The entry is
+// larger than both limits.
+test.skipIf(isWindows)("buffered extract reports the errno of a write that fails", async () => {
+  const { tgz, shasum, integrity } = buildTarball([
+    { path: "package.json", body: Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n") },
+    { path: "big.bin", body: Buffer.alloc(128 * 1024, "x") },
+  ]);
+  await using reg = await makeRegistry(tgz, shasum, integrity, 4096);
+  using dir = tempDir("buffered-extract-file-size-limit", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -f 64 && exec "$@"', "sh", bunExe(), "install", "--verbose"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("error: EFBIG extracting tarball from stream-pkg");
+  // The failure is the write, so libarchive has no message for it.
+  expect(stderr).not.toContain("libarchive error");
+  expect(existsSync(join(String(dir), "node_modules", "stream-pkg"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
 // Unlike registry tarballs, a `github:` tarball has its directory entries
 // created, with the mode libarchive reports for them. A GNU base-256 mode
 // field can set bits far above the twelve mode bits; both extractors must

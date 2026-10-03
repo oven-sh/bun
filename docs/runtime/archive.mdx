@@ -227,6 +227,17 @@ try {
 }
 ```
 
+When `extract()` rejects because a file system call failed, the error describes the call:
+
+- `code` - The error code, such as `"EACCES"` or `"ENOSPC"`
+- `errno` - The error number
+- `syscall` - The name of the call, such as `"open"`
+- `path` - The path the call failed on: the target directory, or the path of an entry inside it
+
+`code` is the code of the call that failed, which is not always the first problem. If Bun cannot create the parent directory of an entry, the `open` of the entry fails next, and the error has the code `"ENOENT"`.
+
+When libarchive cannot read the archive, `extract()` rejects with an error that has the message from libarchive and no `code`.
+
 Common error scenarios:
 
 - **Corrupted/truncated archives** - `new Bun.Archive()` loads the archive data; Bun may defer errors until read/extract operations

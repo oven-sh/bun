@@ -705,15 +705,25 @@ impl<C: TaskContext> AsyncTask<C> {
 // Task Contexts
 // ============================================================================
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ExtractError {
-    #[error("ReadError")]
-    ReadError,
-}
-
 pub(crate) enum ExtractResult {
     Success(u32),
-    Err(ExtractError),
+    /// A syscall on the destination failed.
+    SysErr(bun_sys::Error),
+    /// libarchive could not read the archive. The bytes are its message.
+    LibarchiveErr(Box<[u8]>),
+    /// A failure that has a name only.
+    Err(&'static str),
+}
+
+impl ExtractResult {
+    /// A read that libarchive failed. `message` is its `error_string()`.
+    fn read_error(message: &[u8]) -> ExtractResult {
+        if message.is_empty() {
+            ExtractResult::Err("ReadError")
+        } else {
+            ExtractResult::LibarchiveErr(Box::from(message))
+        }
+    }
 }
 
 pub(crate) struct ExtractContext {
@@ -733,9 +743,13 @@ impl TaskContext for ExtractContext {
             ExtractResult::Success(count) => {
                 PromiseResult::Resolve(JSValue::js_number(*count as f64))
             }
-            ExtractResult::Err(e) => PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
-            ),
+            ExtractResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
+            ExtractResult::LibarchiveErr(message) => {
+                PromiseResult::Reject(EncodedSlice::utf8(message).to_error_instance(global))
+            }
+            ExtractResult::Err(name) => {
+                PromiseResult::Reject(global.create_error_instance(format_args!("{name}")))
+            }
         })
     }
 }
@@ -744,15 +758,33 @@ impl ExtractContext {
     fn do_run(&mut self) -> ExtractResult {
         // If we have glob patterns, use filtered extraction
         if self.glob_patterns.is_some() {
-            let count = match extract_to_disk_filtered(
-                self.store.shared_view(),
-                &self.path,
-                self.glob_patterns.as_deref(),
-            ) {
-                Ok(c) => c,
-                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+            use libarchive::lib;
+            let archive = lib::ReadArchive::new();
+            configure_archive_reader(&archive);
+
+            if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
+                return ExtractResult::read_error(archive.error_string());
+            }
+
+            // Open/create target directory using bun.sys
+            let root: &[u8] = &self.path;
+            let cwd = Fd::cwd();
+            let _ = cwd.make_path(root);
+            let opened = if bun_paths::is_absolute(root) {
+                bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)
+            } else {
+                bun_sys::openat_a(cwd, root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)
             };
-            return ExtractResult::Success(count);
+            let dir_fd = match opened {
+                Ok(fd) => fd,
+                Err(err) => return ExtractResult::SysErr(err.with_path(root)),
+            };
+            let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
+
+            return match extract_to_disk_filtered(&archive, dir_fd, self.glob_patterns.as_deref()) {
+                Ok(count) => ExtractResult::Success(count),
+                Err(err) => ExtractResult::Err(err.name()),
+            };
         }
 
         // Otherwise use the fast path without filtering
@@ -769,9 +801,25 @@ impl ExtractContext {
             },
         ) {
             Ok(c) => c,
-            Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+            Err(failure) => return self.failure(failure),
         };
         ExtractResult::Success(count)
+    }
+
+    fn failure(&self, failure: libarchive::ExtractFailure) -> ExtractResult {
+        use libarchive::ExtractFailure;
+        match failure {
+            ExtractFailure::Destination(error) => {
+                ExtractResult::SysErr(error.with_path(&self.path))
+            }
+            ExtractFailure::Entry { error, path } => {
+                // Not a path buffer: the destination and the entry can each fill one.
+                let full = bun_paths::join_sep_maybe_z::<false>(&[&self.path[..], &path[..]]);
+                ExtractResult::SysErr(error.with_path(&full))
+            }
+            ExtractFailure::Archive(message) => ExtractResult::read_error(&message),
+            ExtractFailure::Other(error) => ExtractResult::Err(error.name()),
+        }
     }
 }
 
@@ -795,7 +843,7 @@ fn start_extract_task(
             store,
             path: path_copy,
             glob_patterns,
-            result: ExtractResult::Err(ExtractError::ReadError),
+            result: ExtractResult::Err("ReadError"),
         },
     ))
 }
@@ -1285,43 +1333,14 @@ pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bo
     !has_positive_patterns || matches_positive
 }
 
-/// Extract archive to disk with glob pattern filtering.
+/// Extract the entries of `archive` into `dir_fd` with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extract_to_disk_filtered(
-    file_buffer: &[u8],
-    root: &[u8],
+    archive: &libarchive::lib::Archive,
+    dir_fd: Fd,
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> crate::Result<u32> {
     use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
-    }
-
-    // Open/create target directory using bun.sys
-    let cwd = Fd::cwd();
-    let _ = cwd.make_path(root);
-    let dir_fd: Fd = 'brk: {
-        if bun_paths::is_absolute(root) {
-            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        } else {
-            break 'brk match bun_sys::openat_a(
-                cwd,
-                root,
-                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
-                0,
-            ) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        }
-    };
-    let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
@@ -1412,7 +1431,10 @@ fn extract_to_disk_filtered(
                 };
 
                 let write_success = size == 0
-                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
+                    || matches!(
+                        archive.read_data_into_fd(file_fd, &mut write_strategy),
+                        Ok(lib::Result::Ok)
+                    );
                 let _ = file_fd.close();
 
                 if write_success {

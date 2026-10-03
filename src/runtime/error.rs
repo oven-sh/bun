@@ -124,10 +124,6 @@ pub enum Error {
     InvalidHeaderName,
     #[error("FormatError")]
     FormatError,
-    #[error("ReadError")]
-    ReadError,
-    #[error("OpenError")]
-    OpenError,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
@@ -292,6 +288,12 @@ impl From<bun_libarchive::Error> for Error {
     }
 }
 
+impl From<bun_libarchive::ExtractFailure> for Error {
+    fn from(failure: bun_libarchive::ExtractFailure) -> Self {
+        bun_libarchive::Error::from(failure).into()
+    }
+}
+
 impl From<Error> for bun_bundler::Error {
     fn from(e: Error) -> Self {
         match e {
@@ -408,8 +410,6 @@ impl Error {
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
-            Self::ReadError => "ReadError",
-            Self::OpenError => "OpenError",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",

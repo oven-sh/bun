@@ -10293,7 +10293,10 @@ declare module "bun" {
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
-     * @returns A promise that resolves with the number of entries extracted (files, directories, and symlinks)
+     * @returns A promise that resolves with the number of entries extracted (files, directories, and symlinks).
+     * When the promise rejects because a file system call failed, the error is a {@link SystemError}: its `code`
+     * (such as `"EACCES"` or `"ENOSPC"`), `errno`, `syscall`, and `path` describe the call. When libarchive cannot
+     * read the archive, the error has the message from libarchive and no `code`.
      *
      * @example
      * **Extract all entries:**

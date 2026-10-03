@@ -408,6 +408,12 @@ impl From<bun_libarchive::Error> for Error {
     }
 }
 
+impl From<bun_libarchive::ExtractFailure> for Error {
+    fn from(failure: bun_libarchive::ExtractFailure) -> Self {
+        bun_libarchive::Error::from(failure).into()
+    }
+}
+
 impl From<std::io::Error> for Error {
     fn from(_: std::io::Error) -> Self {
         Self::WriteFailed

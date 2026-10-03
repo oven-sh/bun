@@ -878,13 +878,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
     }
 
-    if constexpr (!checkPrototypes) {
-        // Set and Map entries arrive with addToStack=false in these modes, and a cycle can run through such entries alone.
-        if (!addToStack) {
-            uint8_t leftType = v1.asCell()->type();
-            addToStack = leftType == JSSetType || leftType == JSMapType;
-        }
-    }
     if (addToStack) {
         gcBuffer.append(v1);
         gcBuffer.append(v2);
@@ -1970,6 +1963,36 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
+// Outside node's modes the entries of a Set or a Map are compared with addToStack=false, and a cycle can run through such entries alone. So the pair itself stays on the cycle stack while its entries are compared.
+class UnorderedPairOnCycleStack {
+public:
+    UnorderedPairOnCycleStack(MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSCell* left, JSCell* right)
+        : m_gcBuffer(gcBuffer)
+        , m_stack(stack)
+        , m_pushed(stack.isEmpty() || stack.last().first != JSValue(left) || stack.last().second != JSValue(right))
+    {
+        if (!m_pushed)
+            return;
+        gcBuffer.append(left);
+        gcBuffer.append(right);
+        stack.append({ left, right });
+    }
+
+    ~UnorderedPairOnCycleStack()
+    {
+        if (!m_pushed)
+            return;
+        m_stack.removeLast();
+        m_gcBuffer.removeLast();
+        m_gcBuffer.removeLast();
+    }
+
+private:
+    MarkedArgumentBuffer& m_gcBuffer;
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& m_stack;
+    bool m_pushed;
+};
+
 // JSMap::get() answers undefined for an absent key and for a key that holds undefined. This answers an empty value for an absent key, in one lookup.
 static ALWAYS_INLINE JSValue mapValueOrEmpty(JSC::JSGlobalObject* globalObject, JSMap* map, JSValue key)
 {
@@ -2239,6 +2262,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        UnorderedPairOnCycleStack onCycleStack(gcBuffer, stack, c1, c2);
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
@@ -2277,6 +2301,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        UnorderedPairOnCycleStack onCycleStack(gcBuffer, stack, c1, c2);
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {

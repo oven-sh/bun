@@ -160,9 +160,11 @@ impl GitEnv {
     }
 
     fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
-        // No prompts by default: the install's own output would hide them.
         let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+        // Every git the install spawns names its repository (`-C` or the clone target).
+        map.remove_git_repository_vars();
 
+        // No prompts by default: the install's own output would hide them.
         if map.get(b"GIT_ASKPASS").is_none() {
             let config = SloppyGlobalGitConfig::get();
             if !config.has_askpass {

@@ -867,7 +867,7 @@ fn literals(list: &[&'static [u8]]) -> Vec<Cow<'static, [u8]>> {
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Cow<'static, [u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        Ok(res) => Some(super::resolved_path(res.path_const().unwrap().text)),
+        Ok(res) => res.path_const().map(|path| super::resolved_path(path.text)),
         Err(_) => {
             r.log_mut().reset();
             None

@@ -451,7 +451,7 @@ impl DeferredPromise {
 }
 
 /// DevServer is stored on the heap, storing its allocator.
-pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+pub(crate) fn init(mut options: Options) -> JsResult<Box<DevServer>> {
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -506,8 +506,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -517,9 +515,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
-            (*addr_of_mut!((*p).framework))
-                .file_system_router_types
-                .is_empty()
+            options.framework.file_system_router_types.is_empty()
         );
         w!(client_graph, IncrementalGraph::default());
         w!(server_graph, IncrementalGraph::default());
@@ -629,8 +625,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `log` was written above; reborrowing it via `addr_of_mut!` is sound
+    // because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -643,9 +639,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // accessed below were each written above and are reborrowed disjointly via
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
-        let framework = &mut *addr_of_mut!((*p).framework);
+        // Still in `options`, so that an early return drops them.
+        let framework = &mut options.framework;
         let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
             arena,
@@ -698,6 +695,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bundler_framework_views, bundler_framework_views);
+        w!(framework, options.framework);
+        w!(bundler_options, options.bundler_options);
     }
 
     // ── every field is now written ───────────────────────────────────────────

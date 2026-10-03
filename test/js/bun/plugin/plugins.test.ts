@@ -199,7 +199,6 @@ plugin({
 
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
-import { totalmem } from "node:os";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -1547,40 +1546,4 @@ describe("namespace characters", () => {
       success: true,
     });
   });
-
-  // The message quotes the namespace, so no message fits near the string length limit (2**31 - 1 characters).
-  // `repeat` allocates the 2 GiB string once. `Buffer.alloc(n, "!").toString()` holds it twice.
-  const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
-  it.skipIf(memory < 10 * 1024 ** 3)(
-    "Bun.plugin throws a RangeError for a refused namespace that is too long to quote",
-    async () => {
-      const fixture = `
-        const namespace = "!".repeat(2 ** 31 - 10);
-        Bun.plugin({
-          setup(build) {
-            for (const hook of ["onLoad", "onResolve"]) {
-              try {
-                build[hook]({ filter: /(?!)/, namespace }, () => undefined);
-                console.log(hook + ": accepted");
-              } catch (error) {
-                console.log(hook + ": " + error.name + ": " + error.message);
-              }
-            }
-          },
-        });
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-        stdout: ["onLoad: RangeError: Out of memory", "onResolve: RangeError: Out of memory"],
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
 });

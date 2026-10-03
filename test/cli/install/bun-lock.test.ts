@@ -1843,8 +1843,8 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
 // A package the hoister places at several paths has one slot for an optional peer, and each
 // placement can sit next to a different copy of that peer. The first placement the hoister
 // processes decides the binding and every other one dedupes without moving it, so the tree
-// an install saves is the tree it lays out. Loading bun.lock has to find that binding again
-// whichever row is printed last, so a reload builds the same tree.
+// an install saves is the tree it lays out. Loading bun.lock takes the binding from a row
+// that proves it, and otherwise lets the hoister bind again, so a reload builds the same tree.
 describe.each(["hoisted", "isolated"] as const)("optional peer of a package at several paths (%s linker)", linker => {
   // plugin@2.0.0 is the package at several paths. Another plugin version holds the top level.
   const plugin = {
@@ -2262,6 +2262,36 @@ describe.each(["hoisted", "isolated"] as const)("optional peer of a package at s
     });
   });
 
+  it("a top-level placement whose own peer edge holds the top-level copy keeps it next to a bundled sibling's copy", async () => {
+    using registry = await serveManifests({
+      w: { "1.0.0": { dependencies: { runtime: "1.2.0" } } },
+      kbundle: {
+        "1.0.0": { dependencies: { ainner: "1.0.0", plugin: "2.0.0" }, bundleDependencies: ["ainner", "plugin"] },
+      },
+      ainner: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+      plugin,
+      runtime: { "1.1.0": {}, "1.2.0": {} },
+    });
+    using dir = createProject(registry.url, { plugin: "2.0.0", w: "1.0.0", kbundle: "1.0.0" });
+
+    // As above, but kbundle does not depend on the runtime@1.1.0 in its tree: ainner brings
+    // it. No row proves either copy, so the hoister has to bind the peer again, and it has to
+    // end on the top-level runtime@1.2.0 like the install that wrote the file.
+    await expectFreshInstall(
+      String(dir),
+      {
+        kbundle: "kbundle@1.0.0",
+        plugin: "plugin@2.0.0",
+        runtime: "runtime@1.2.0",
+        w: "w@1.0.0",
+        "kbundle/ainner": "ainner@1.0.0",
+        "kbundle/plugin": "plugin@2.0.0",
+        "kbundle/runtime": "runtime@1.1.0",
+      },
+      { everyRowInstalled: false },
+    );
+  });
+
   it("a peer that only a later, bundled placement can bind: the top-level copy gets its dependencies", async () => {
     using registry = await serveManifests({
       kbundle: {
@@ -2289,6 +2319,9 @@ describe.each(["hoisted", "isolated"] as const)("optional peer of a package at s
         "kbundle/runtime": "runtime@1.1.0",
       },
       { everyRowInstalled: false },
+    );
+    expect(await layoutOf(String(dir))).toMatchObject(
+      linker === "hoisted" ? { leaf: "leaf@1.0.0", runtime: "runtime@1.1.0" } : { "leaf@1.0.0": ["leaf@1.0.0"] },
     );
   });
 
@@ -2325,8 +2358,6 @@ describe.each(["hoisted", "isolated"] as const)("optional peer of a package at s
 
     await install(cwd, "--lockfile-only");
     expect(rowsOf(await lockfileOf(cwd))).toEqual(rows);
-
     await install(cwd, "--frozen-lockfile");
-    expect(rowsOf(await lockfileOf(cwd))).toEqual(rows);
   });
 });

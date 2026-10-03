@@ -826,14 +826,14 @@ describe.concurrent("bun add --catalog", () => {
   });
 
   describe("literals other than a bare name", () => {
-    test("alias@npm:pkg is written verbatim, like plain add", async () => {
+    test("alias@npm:pkg gets the resolved range, like plain add", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));
 
       expectOk(await dir.add(dir.pkg1Dir, "foo@npm:no-deps", "--catalog"));
 
       expect((await dir.pkg1()).dependencies).toStrictEqual({ foo: "catalog:" });
-      expect((await dir.root()).workspaces.catalog).toStrictEqual({ foo: "npm:no-deps" });
-      expect((await dir.lock()).catalog).toStrictEqual({ foo: "npm:no-deps" });
+      expect((await dir.root()).workspaces.catalog).toStrictEqual({ foo: "npm:no-deps@^2.0.0" });
+      expect((await dir.lock()).catalog).toStrictEqual({ foo: "npm:no-deps@^2.0.0" });
       expect(await dir.installed("foo")).toMatchObject({ name: "no-deps", version: "2.0.0" });
 
       const { err } = await dir.install({ savesLockfile: false });

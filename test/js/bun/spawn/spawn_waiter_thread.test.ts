@@ -14,6 +14,9 @@ async function run(withWaiterThread: boolean) {
     stderr: "inherit",
     stdout: "inherit",
     stdin: "ignore",
+    // The fixture leads a process group of its own, so that the child it
+    // spawns can be killed below.
+    detached: !isWindows,
     cmd: [bunExe(), join(__dirname, "spawn_waiter_thread-fixture.js")],
   });
 
@@ -25,6 +28,16 @@ async function run(withWaiterThread: boolean) {
   ).unref();
 
   await proc.exited;
+
+  // SIGKILL gave the fixture no chance to stop the child that it spawned, and
+  // that child sleeps for days. It is what is left of the fixture's process
+  // group. On Windows it dies with the fixture: libuv puts it in a
+  // kill-on-close job.
+  if (!isWindows) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {}
+  }
 
   const resourceUsage = proc.resourceUsage();
 

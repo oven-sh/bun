@@ -1784,6 +1784,8 @@ pub(crate) mod command {
         let mut positionals: [&[u8]; 2] = [b"", b""];
         let mut positional_i: usize = 0;
         let mut dash_dash_bun = false;
+        let mut dash_dash_verbose = false;
+        let mut dash_dash_silent = false;
         let mut print_help = false;
 
         if args.len() > 2 {
@@ -1802,6 +1804,10 @@ pub(crate) mod command {
                     if slice[0] == b'-' {
                         if slice == b"--bun" {
                             dash_dash_bun = true;
+                        } else if slice == b"--verbose" {
+                            dash_dash_verbose = true;
+                        } else if slice == b"--silent" {
+                            dash_dash_silent = true;
                         } else if slice == b"--help" || slice == b"-h" {
                             print_help = true;
                         }
@@ -1856,11 +1862,22 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+            let mut bunx_args: Vec<&ZStr> = Vec::with_capacity(
+                2 + args.len() - template_name_start
+                    + (dash_dash_bun as usize)
+                    + (dash_dash_verbose as usize)
+                    + (dash_dash_silent as usize),
+            );
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
+            }
+            // bunx passes these two on to the install it runs.
+            if dash_dash_verbose {
+                bunx_args.push(bun_core::zstr!("--verbose"));
+            }
+            if dash_dash_silent {
+                bunx_args.push(bun_core::zstr!("--silent"));
             }
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so

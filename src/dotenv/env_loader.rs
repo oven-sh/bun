@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::ffi::c_char;
+use core::ffi::{CStr, c_char};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -1289,6 +1289,19 @@ pub struct Map {
     pub map: HashTable,
 }
 
+/// One `K=V\0` envp entry.
+#[inline]
+fn env_entry(key: &[u8], value: &[u8]) -> Box<[u8]> {
+    let klen = key.len();
+    let vlen = value.len();
+    let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
+    env_buf[..klen].copy_from_slice(key);
+    env_buf[klen] = b'=';
+    env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(value);
+    // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
+    env_buf
+}
+
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
@@ -1299,18 +1312,40 @@ impl Map {
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
+                let env_buf = env_entry(pair.key_ptr, &pair.value_ptr.value);
                 envp_buf.push(env_buf.as_ptr().cast::<c_char>());
                 storage.push(env_buf);
             }
             debug_assert!(envp_buf.len() == envp_count);
         }
+        envp_buf.push(core::ptr::null()); // sentinel
+        Ok(NullDelimitedEnvMap {
+            _storage: storage,
+            envp: envp_buf.into_boxed_slice(),
+        })
+    }
+
+    /// [`create_null_delimited_env_map`](Self::create_null_delimited_env_map) without the
+    /// `omit` keys, followed by the `extra` entries (`KEY=VALUE`). For a child process that
+    /// must not see all of this environment.
+    pub fn create_null_delimited_env_map_omitting<const N: usize>(
+        &self,
+        omit: [&[u8]; N],
+        extra: &[&'static CStr],
+    ) -> Result<NullDelimitedEnvMap, AllocError> {
+        let omitted = omit.map(|key| self.map.get_index(key));
+        let envp_count = self.map.count() - omitted.iter().flatten().count();
+        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
+        let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + extra.len() + 1);
+        for (i, (key, value)) in self.map.keys().iter().zip(self.map.values()).enumerate() {
+            if omitted.contains(&Some(i)) {
+                continue;
+            }
+            let env_buf = env_entry(key, &value.value);
+            envp_buf.push(env_buf.as_ptr().cast::<c_char>());
+            storage.push(env_buf);
+        }
+        envp_buf.extend(extra.iter().map(|entry| entry.as_ptr()));
         envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap {
             _storage: storage,
@@ -1458,6 +1493,7 @@ impl Map {
 
 /// Owns the `K=V\0` strings backing a NULL-terminated envp array.
 /// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
+/// Entries that are not in `_storage` are `'static`.
 ///
 /// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
 /// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
@@ -1484,10 +1520,13 @@ impl NullDelimitedEnvMap {
         self.envp.as_ptr()
     }
     /// The `KEY=VALUE` entries as C strings.
-    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
-        self._storage.iter().map(|s| {
-            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
-        })
+    pub fn iter(&self) -> impl Iterator<Item = &CStr> {
+        self.envp
+            .iter()
+            .take_while(|entry| !entry.is_null())
+            // SAFETY: every pointer before the sentinel is a NUL-terminated string that
+            // `_storage` owns or that is `'static`.
+            .map(|&entry| unsafe { CStr::from_ptr(entry) })
     }
 }
 

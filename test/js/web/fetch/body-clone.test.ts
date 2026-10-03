@@ -1502,7 +1502,6 @@ describe("new Request(input) transfers the input body", () => {
         "Cannot construct a Request with a Request object that has already been used.",
       );
       expect(() => new Request(input, { method: "PUT" })).toThrow(TypeError);
-      expect(() => new Request(input, { body: null })).toThrow(TypeError);
     });
 
     test("after the transfer, input.body is a locked stream that cannot be read", () => {
@@ -1523,9 +1522,10 @@ describe("new Request(input) transfers the input body", () => {
       const copy = construct(input);
       expect({
         observedLocked: observed.locked,
+        inputBodyIsObserved: input.body === observed,
         copyBodyIsObserved: copy.body === observed,
         copyBodyLocked: copy.body!.locked,
-      }).toEqual({ observedLocked: true, copyBodyIsObserved: false, copyBodyLocked: false });
+      }).toEqual({ observedLocked: true, inputBodyIsObserved: true, copyBodyIsObserved: false, copyBodyLocked: false });
       expect(() => observed.getReader()).toThrow(TypeError);
       expect(await copy.text()).toBe(expected);
     });
@@ -1538,14 +1538,13 @@ describe("new Request(input) transfers the input body", () => {
       expect(await copy.text()).toBe("override");
     });
 
-    test("new Request(input, { body: null }) still consumes the input", async () => {
+    // Unchanged here: a null init body still counts as the init body, for
+    // `new Request(input, init)` and for `fetch(input, init)` alike.
+    test("new Request(input, { body: null }) gives the copy no body and leaves the input intact", async () => {
       const input = factory();
       const copy = new Request(input, { body: null });
-      expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
-        inputUsed: true,
-        copyUsed: false,
-      });
-      expect(await copy.text()).toBe(expected);
+      expect({ inputUsed: input.bodyUsed, copyBody: copy.body }).toEqual({ inputUsed: false, copyBody: null });
+      expect(await input.text()).toBe(expected);
     });
   });
 
@@ -1600,15 +1599,31 @@ describe("new Request(input) transfers the input body", () => {
     expect(await input.text()).toBe("survivor");
   });
 
-  // Fetch step 36 comes before the transfer. Without it the input lost its
-  // body to a GET/HEAD copy that cannot carry one.
+  // Unchanged here: when init makes the copy GET or HEAD, the body is copied
+  // and not moved, so the input does not lose its body to a request that the
+  // spec says cannot carry one.
   describe.each(["GET", "HEAD"])("new Request(inputWithBody, { method: %p })", method => {
-    test("throws and leaves the input body intact", async () => {
+    test("copies the body and leaves the input intact", async () => {
       const input = make("survivor");
-      expect(() => new Request(input, { method })).toThrow("Request with GET/HEAD method cannot have body.");
-      expect(input.bodyUsed).toBe(false);
-      expect(await input.text()).toBe("survivor");
+      const copy = new Request(input, { method });
+      expect({ method: copy.method, inputUsed: input.bodyUsed }).toEqual({ method, inputUsed: false });
+      expect(await Promise.all([input.text(), copy.text()])).toEqual(["survivor", "survivor"]);
     });
+  });
+
+  // An init-like object with no method does not make a POST input throw.
+  test.each([
+    ["URLSearchParams", () => new URLSearchParams("a=1")],
+    ["Headers", () => new Headers({ a: "1" })],
+    ["FormData", () => new FormData()],
+    ["Response with a null body", () => new Response(null)],
+  ] as const)("new Request(inputWithBody, %s) does not throw and leaves the input intact", async (_, init) => {
+    const input = make("survivor");
+    // @ts-expect-error not a RequestInit
+    const copy = new Request(input, init());
+    expect(copy).toBeInstanceOf(Request);
+    expect(input.bodyUsed).toBe(false);
+    expect(await input.text()).toBe("survivor");
   });
 
   test("the user's own ReadableStream passed as the input body is locked by the transfer", async () => {
@@ -1620,10 +1635,11 @@ describe("new Request(input) transfers the input body", () => {
     });
     const input = make(userStream);
     const copy = new Request(input);
-    expect({ userStreamLocked: userStream.locked, copyBodyIsUserStream: copy.body === userStream }).toEqual({
-      userStreamLocked: true,
-      copyBodyIsUserStream: false,
-    });
+    expect({
+      userStreamLocked: userStream.locked,
+      inputBodyIsUserStream: input.body === userStream,
+      copyBodyIsUserStream: copy.body === userStream,
+    }).toEqual({ userStreamLocked: true, inputBodyIsUserStream: true, copyBodyIsUserStream: false });
     expect(() => userStream.getReader()).toThrow(TypeError);
     expect(await copy.text()).toBe("mine");
   });
@@ -1841,9 +1857,26 @@ describe("new Request(input) transfers the input body", () => {
     });
   });
 
-  // The two-arg constructor reads `url` from the input after its usability
-  // check. A getter that touches the body in between must make the constructor
-  // throw, not reach the transfer with a locked or disturbed stream.
+  // Given as init, a subclass instance is an ordinary init object: the
+  // constructor reads it through its getters, as on main and in Node.
+  test("new Request(url, subclassAsInit) reads the init through its getters", () => {
+    class Sub extends Request {
+      get method() {
+        return "PUT";
+      }
+      get headers() {
+        return new Headers({ "x-from": "getter" });
+      }
+    }
+    const init = new Sub("http://example.com/", { method: "POST", headers: { "x-from": "slot" }, body: "hello" });
+    // @ts-expect-error Bun accepts a Request as init
+    const copy = new Request("http://example.com/other", init);
+    expect({ method: copy.method, from: copy.headers.get("x-from") }).toEqual({ method: "PUT", from: "getter" });
+  });
+
+  // The two-arg constructor reads `url` from the input before the transfer
+  // checks usability. A getter that touches the body first must make the
+  // constructor throw, not reach the transfer with a locked or disturbed stream.
   describe.each([
     ["locks the body", (body: ReadableStream) => void body.getReader()],
     [

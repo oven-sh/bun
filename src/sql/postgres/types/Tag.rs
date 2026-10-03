@@ -190,10 +190,10 @@ impl Tag {
             | Tag::float4_array
             | Tag::int4
             | Tag::float8
-            | Tag::float4
             | Tag::bytea
             | Tag::numeric => true,
-
+            // float4 is read as text so the value is the server's own shortest
+            // round-trip rendering (`0.1`, not the f32 widened to f64).
             _ => false,
         }
     }

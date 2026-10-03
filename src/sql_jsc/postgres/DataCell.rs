@@ -8,6 +8,7 @@ use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::AnyPostgresError;
 use bun_sql::shared::data::Data;
+use bun_sql::shared::float4;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
@@ -816,7 +817,7 @@ fn from_bytes(
         }
         T::float4 => {
             if binary && bytes.len() == 4 {
-                Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
+                Ok(SQLDataCell::float8(float4::to_f64(parse_binary_float4(bytes)?)))
             } else {
                 Ok(SQLDataCell::float8(
                     bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),

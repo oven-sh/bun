@@ -4121,7 +4121,10 @@ mod windows_impl {
     /// link there keeps ENOENT, as a dangling symlink does on POSIX.
     #[cold]
     fn not_dir_if_parent_is_file(dir: Fd, prefix: &[u8], root_end: usize, err: Error) -> Error {
-        let Some(sep) = bun_core::strings::last_index_of_char(&prefix[root_end..], b'\\') else {
+        let Some(sep) = prefix
+            .get(root_end..)
+            .and_then(|components| bun_core::strings::last_index_of_char(components, b'\\'))
+        else {
             return err;
         };
         let mut wbuf = bun_paths::w_path_buffer_pool::get();

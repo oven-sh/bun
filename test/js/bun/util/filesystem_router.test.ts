@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -425,6 +426,29 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+it("the constructor and reload() create no allocator heap", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+  // `heaps.total` counts `mi_heap_new()` calls. A thread that starts adds to `theaps`, not to `heaps`.
+  const heapsCreatedBy = (fn: () => void) => {
+    const before = heapStats().mimalloc.heaps.total;
+    for (let i = 0; i < 50; i++) fn();
+    return heapStats().mimalloc.heaps.total - before;
+  };
+
+  for (const fileExtensions of [undefined, [".tsx", ".ts"]]) {
+    const create = () => new FileSystemRouter({ dir, style: "nextjs", fileExtensions });
+    // The first router fills the resolver's directory cache.
+    const router = create();
+    router.reload();
+
+    expect({
+      create: heapsCreatedBy(create),
+      reload: heapsCreatedBy(() => router.reload()),
+    }).toEqual({ create: 0, reload: 0 });
+    expect(Object.keys(router.routes).sort()).toEqual(["/", "/posts/[id]"]);
+  }
 });
 
 it(".query works with dynamic routes, including params", () => {

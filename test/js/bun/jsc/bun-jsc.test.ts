@@ -686,3 +686,44 @@ describe("JsRef::Weak liveness", () => {
     expect(kept.keep).toBe(true);
   });
 });
+
+describe("conservative roots", () => {
+  // The storage of a Set or a Map is a JSCellButterfly. The conservative scan let a pointer to the start of one such
+  // cell also mark the cell on its left, as if it were a butterfly pointer past the end of that cell
+  // (oven-sh/WebKit#636). The storage on the left then kept its keys alive, and the table that replaced it, and so on.
+  it("a stack reference to a Set's storage does not keep the storage allocated before it alive", () => {
+    class Key {}
+    // A Set allocates its storage on the first add. Consecutive allocations are neighbors in a MarkedBlock. Every
+    // second Set is dropped at once, so that no array ever references a dropped Set.
+    //
+    // A WeakRef tracks each dropped key. A raw cell address cannot: when a collection runs during this loop, the heap
+    // sweeps the keys dropped so far and gives their cells to later keys, and half of those belong to a kept Set.
+    const kept: Set<Key>[] = [];
+    const droppedKeys: WeakRef<Key>[] = [];
+    function allocate(keep: boolean) {
+      const key = new Key();
+      const set = new Set([key]);
+      if (keep) kept.push(set);
+      else droppedKeys.push(new WeakRef(key));
+    }
+    for (let i = 0; i < 200; i++) allocate(i % 2 === 1);
+    // A new WeakRef holds its target until the current job ends.
+    releaseWeakRefs();
+
+    // forEach keeps the storage of the Set it iterates in a stack slot. At the deepest call the stack references
+    // every kept storage. Nothing references a dropped storage.
+    let stillLive = -1;
+    (function iterateAll(i: number) {
+      if (i === kept.length) {
+        fullGC();
+        stillLive = droppedKeys.filter(ref => ref.deref() !== undefined).length;
+        return;
+      }
+      kept[i].forEach(() => iterateAll(i + 1));
+    })(0);
+
+    // A few may survive through an unrelated stack word. Every dropped key but one survived before.
+    expect(stillLive).toBeLessThan(droppedKeys.length / 5);
+    expect(kept.every(set => set.size === 1)).toBe(true);
+  });
+});

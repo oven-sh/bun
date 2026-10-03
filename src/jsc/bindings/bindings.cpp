@@ -134,6 +134,7 @@
 #include "FetchHeaders.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "PendingEntries.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -1398,9 +1399,7 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
-// The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
-// and take the mode at runtime; only the dispatch and the plain-object tail in
-// `specialObjectsDequal` below stay specialised per mode.
+// The per-type comparisons (Date, typed arrays, ...) are compiled once and take the mode at runtime; the dispatch, the Map/Set probe loops and the plain-object tail stay specialised per mode.
 static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     uint8_t c1Type = c1->type();
@@ -1980,6 +1979,284 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
+// Outside node's modes the entries of a Set or a Map are compared with addToStack=false, and a cycle can run through such entries alone. So the pair itself stays on the cycle stack while its entries are compared.
+class UnorderedPairOnCycleStack {
+public:
+    UnorderedPairOnCycleStack(MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSCell* left, JSCell* right)
+        : m_gcBuffer(gcBuffer)
+        , m_stack(stack)
+        , m_pushed(stack.isEmpty() || stack.last().first != JSValue(left) || stack.last().second != JSValue(right))
+    {
+        if (!m_pushed)
+            return;
+        gcBuffer.append(left);
+        gcBuffer.append(right);
+        stack.append({ left, right });
+    }
+
+    ~UnorderedPairOnCycleStack()
+    {
+        if (!m_pushed)
+            return;
+        m_stack.removeLast();
+        m_gcBuffer.removeLast();
+        m_gcBuffer.removeLast();
+    }
+
+private:
+    MarkedArgumentBuffer& m_gcBuffer;
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& m_stack;
+    bool m_pushed;
+};
+
+// JSMap::get() answers undefined for an absent key and for a key that holds undefined. This answers an empty value for an absent key, in one lookup.
+static ALWAYS_INLINE JSValue mapValueOrEmpty(JSC::JSGlobalObject* globalObject, JSMap* map, JSValue key)
+{
+    return map->getImpl(globalObject, [&](JSMap::Storage& storage) ALWAYS_INLINE_LAMBDA {
+        return JSMap::Helper::find(globalObject, storage, key);
+    });
+}
+
+// The Set members or Map entries the probe loops in `specialObjectsDequal` could not settle, compared once for every mode.
+struct UnorderedLeftovers {
+    const DeepEqualsMode& mode;
+    JSC::JSGlobalObject* globalObject;
+    MarkedArgumentBuffer& gcBuffer;
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack;
+    ThrowScope& scope;
+    JSCell* left;
+    JSCell* right;
+    JSCell* leftIterator;
+    bool isMap;
+
+    // node's `typeof value === "object" && value !== null`: any other value equals only an identical one there.
+    static bool isTypeofObject(JSValue value) { return value.isObject() && !value.isCallable(); }
+
+    JSCell* iterate(JSCell* collection) const
+    {
+        VM& vm = globalObject->vm();
+        if (isMap)
+            return JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(collection), IterationKind::Entries);
+        return JSSetIterator::create(vm, globalObject->setIteratorStructure(), uncheckedDowncast<JSSet>(collection), IterationKind::Keys);
+    }
+
+    // A Set member arrives as `key`, and `value` stays as it was.
+    bool next(JSCell* iterator, JSValue& key, JSValue& value) const
+    {
+        if (isMap)
+            return uncheckedDowncast<JSMapIterator>(iterator)->nextKeyValue(globalObject, key, value);
+        return uncheckedDowncast<JSSetIterator>(iterator)->next(globalObject, key);
+    }
+
+    bool holds(JSCell* collection, JSValue key) const
+    {
+        if (isMap)
+            return uncheckedDowncast<JSMap>(collection)->has(globalObject, key);
+        return uncheckedDowncast<JSSet>(collection)->has(globalObject, key);
+    }
+
+    // Entries are copied flat: the member of a Set, or the key and then the value of a Map entry.
+    size_t width() const { return isMap ? 2 : 1; }
+
+    void append(MarkedArgumentBuffer& entries, JSValue key, JSValue value) const
+    {
+        entries.appendWithCrashOnOverflow(key);
+        if (isMap)
+            entries.appendWithCrashOnOverflow(value);
+    }
+
+    JSValue valueAt(const MarkedArgumentBuffer& entries, size_t keySlot) const { return isMap ? entries.at(keySlot + 1) : JSValue(); }
+
+    bool entriesEqual(JSValue key1, JSValue value1, JSValue key2, JSValue value2) const
+    {
+        // The probe has ruled on one key that holds two values and on two primitives. Without matchers a primitive equals only itself.
+        if (key1 == key2 || (key2.isPrimitive() && (!mode.enableAsymmetricMatchers || key1.isPrimitive())))
+            return false;
+        bool equal = mode.deepEquals(globalObject, key1, key2, gcBuffer, stack, scope, mode.checkPrototypes);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal || !isMap)
+            return equal;
+        equal = mode.deepEquals(globalObject, value1, value2, gcBuffer, stack, scope, mode.checkPrototypes);
+        RETURN_IF_EXCEPTION(scope, false);
+        return equal;
+    }
+
+    // Walks `left` on to its next entry the probe cannot settle. False once the walk is over.
+    bool nextLeftover(JSValue& key, JSValue& value, bool& keyHeld) const
+    {
+        while (next(leftIterator, key, value)) {
+            if (!isMap) {
+                keyHeld = holds(right, key);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!keyHeld)
+                    return true;
+                continue;
+            }
+            JSValue rightValue = mapValueOrEmpty(globalObject, uncheckedDowncast<JSMap>(right), key);
+            RETURN_IF_EXCEPTION(scope, false);
+            keyHeld = !rightValue.isEmpty();
+            if (!keyHeld)
+                return true;
+            bool valuesEqual = mode.deepEquals(globalObject, value, rightValue, gcBuffer, stack, scope, mode.checkPrototypes);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!valuesEqual)
+                return true;
+        }
+        return false;
+    }
+
+    // node's setEquiv / mapEquiv: every leftover claims a right entry of its own, probed in node's order.
+    NEVER_INLINE bool pairOff(JSValue key, JSValue value, bool keyHeld) const
+    {
+        MarkedArgumentBuffer leftovers;
+        // Map keys that both sides hold with unequal values. node pairs those entries like any other.
+        WTF::HashSet<JSCell*> unsettledKeys;
+        for (bool more = true; more;) {
+            if (!isTypeofObject(key))
+                return false;
+            if (keyHeld)
+                unsettledKeys.add(key.asCell());
+            append(leftovers, key, value);
+            more = nextLeftover(key, value, keyHeld);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+
+        MarkedArgumentBuffer candidates;
+        Bun::PendingEntries<size_t>::Queue open;
+        JSCell* rightIterator = iterate(right);
+        while (next(rightIterator, key, value)) {
+            bool held = holds(left, key);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (held && !(key.isCell() && unsettledKeys.contains(key.asCell())))
+                continue;
+            if (!isTypeofObject(key))
+                return false;
+            open.append(candidates.size());
+            append(candidates, key, value);
+        }
+        if (open.size() * width() != leftovers.size())
+            return false;
+
+        Bun::PendingEntries<size_t> pending(WTF::move(open));
+        for (size_t slot = 0; slot < leftovers.size(); slot += width()) {
+            key = leftovers.at(slot);
+            value = valueAt(leftovers, slot);
+            Bun::Claim claim = pending.claimWith(scope, [&](size_t candidate) -> bool {
+                return entriesEqual(key, value, candidates.at(candidate), valueAt(candidates, candidate));
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            if (claim == Bun::Claim::Missed)
+                return false;
+        }
+        return true;
+    }
+
+    // Walks `right` itself for an equal of a left entry. `heldOnly` passes over the entries whose key `left` lacks.
+    bool foundLive(JSValue key, JSValue value, bool heldOnly, size_t& position) const
+    {
+        JSCell* rightIterator = iterate(right);
+        JSValue rightKey, rightValue;
+        for (position = 0; next(rightIterator, rightKey, rightValue); position++) {
+            if (heldOnly) {
+                bool held = holds(left, rightKey);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!held)
+                    continue;
+            }
+            bool equal = entriesEqual(key, value, rightKey, rightValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (equal)
+                return true;
+        }
+        return false;
+    }
+
+    // Jest's rule: every leftover needs some equal right entry, and a matched entry stays available to the next leftover.
+    bool matchAny(JSValue key, JSValue value) const
+    {
+        // Without matchers a primitive equals only itself, and the probe found no such entry.
+        if (!mode.enableAsymmetricMatchers && key.isPrimitive())
+            return false;
+        // Most comparisons that get here have one leftover, so the first one walks `right` without a copy.
+        size_t firstHitPosition = 0;
+        bool found = foundLive(key, value, false, firstHitPosition);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!found)
+            return false;
+        bool keyHeld = false;
+        bool more = nextLeftover(key, value, keyHeld);
+        RETURN_IF_EXCEPTION(scope, false);
+        return !more || matchAnyFromCopy(key, value, firstHitPosition);
+    }
+
+    NEVER_INLINE bool matchAnyFromCopy(JSValue key, JSValue value, size_t firstHitPosition) const
+    {
+        // The right entries whose key `left` lacks. `lastHit` starts at the entry the first leftover matched.
+        MarkedArgumentBuffer unheld;
+        ptrdiff_t lastHit = -1;
+        JSCell* rightIterator = iterate(right);
+        JSValue rightKey, rightValue;
+        for (size_t position = 0; next(rightIterator, rightKey, rightValue); position++) {
+            bool held = holds(left, rightKey);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (held)
+                continue;
+            if (position == firstHitPosition)
+                lastHit = static_cast<ptrdiff_t>(unheld.size() / width());
+            append(unheld, rightKey, rightValue);
+        }
+        const ptrdiff_t count = static_cast<ptrdiff_t>(unheld.size() / width());
+
+        ptrdiff_t step = 1;
+        for (bool more = true; more;) {
+            if (!mode.enableAsymmetricMatchers && key.isPrimitive())
+                return false;
+
+            // Beside the last hit first, where same-order and reversed inputs have their partner, then the rest from the head.
+            const ptrdiff_t ahead = lastHit + step;
+            const ptrdiff_t behind = lastHit - step;
+            ptrdiff_t hit = -1;
+            for (ptrdiff_t attempt = 0; attempt < count + 2 && hit < 0; attempt++) {
+                ptrdiff_t candidate = attempt - 2;
+                if (attempt < 2)
+                    candidate = attempt ? behind : ahead;
+                if (candidate < 0 || candidate >= count || (attempt >= 2 && (candidate == ahead || candidate == behind)))
+                    continue;
+                bool equal = entriesEqual(key, value, unheld.at(candidate * width()), valueAt(unheld, candidate * width()));
+                RETURN_IF_EXCEPTION(scope, false);
+                if (equal)
+                    hit = candidate;
+            }
+            if (hit >= 0) {
+                if (hit == behind)
+                    step = -step;
+                else if (hit != ahead)
+                    step = 1;
+                lastHit = hit;
+            } else {
+                // Last, the entries `left` holds too: one can duplicate a leftover, or satisfy a matcher.
+                size_t position = 0;
+                bool found = foundLive(key, value, true, position);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!found)
+                    return false;
+            }
+
+            bool keyHeld = false;
+            more = nextLeftover(key, value, keyHeld);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        return true;
+    }
+};
+
+// `key` / `value` is the first entry of `left` the probe could not settle, and `leftIterator` stands just past it.
+static NEVER_INLINE bool unorderedLeftoversEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* left, JSCell* right, JSCell* leftIterator, JSValue key, JSValue value, bool keyHeld)
+{
+    UnorderedLeftovers leftovers { mode, globalObject, gcBuffer, stack, scope, left, right, leftIterator, left->type() == JSMapType };
+    return mode.checkPrototypes ? leftovers.pairOff(key, value, keyHeld) : leftovers.matchAny(key, value);
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -1988,8 +2265,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     uint8_t c2Type = c2->type();
 
     switch (c1Type) {
-    // Map/Set stay specialised: expect(...).toEqual on collections is hot enough
-    // that the per-entry recursion should be a direct call.
+    // The Map/Set probe loops stay specialised: expect(...).toEqual on collections is hot enough that the per-entry recursion should be a direct call.
     case JSSetType: {
         if (c2Type != JSSetType) {
             return false;
@@ -2002,6 +2278,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        UnorderedPairOnCycleStack onCycleStack(gcBuffer, stack, c1, c2);
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
@@ -2011,28 +2288,19 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 continue;
             }
 
-            // We couldn't find the key in the second set. This may be a false positive due to how
-            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
-            JSValue key2;
-            bool foundMatchingKey = false;
-            while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (equal) {
-                    foundMatchingKey = true;
-                    break;
-                }
-            }
-
-            if (!foundMatchingKey) {
+            bool restEqual = unorderedLeftoversEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2, iter1, key1, JSValue(), false);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!restEqual) {
                 return false;
             }
+            break;
         }
 
         if constexpr (checkPrototypes) {
             // node also compares own enumerable properties of Sets.
-            break;
+            if (hasExtraOwnProperties(set1->structure()) || hasExtraOwnProperties(set2->structure())) {
+                break;
+            }
         }
         return true;
     }
@@ -2049,44 +2317,34 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        UnorderedPairOnCycleStack onCycleStack(gcBuffer, stack, c1, c2);
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
-            JSValue value2 = map2->get(globalObject, key1);
+            JSValue value2 = mapValueOrEmpty(globalObject, map2, key1);
             RETURN_IF_EXCEPTION(scope, {});
-            if (value2.isUndefined()) {
-                // We couldn't find the key in the second map. This may be a false positive due to
-                // how JSValues are represented in JSC, so we need to fall back to a linear search
-                // to be sure.
-                auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
-                JSValue key2;
-                bool foundMatchingKey = false;
-                while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (keysEqual) {
-                        foundMatchingKey = true;
-                        break;
-                    }
+            bool keyHeld = !value2.isEmpty();
+            if (keyHeld) {
+                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, checkPrototypes);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (valuesEqual) {
+                    continue;
                 }
-
-                if (!foundMatchingKey) {
-                    return false;
-                }
-
-                // Compare both values below.
             }
 
-            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+            bool restEqual = unorderedLeftoversEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map1, map2, iter1, key1, value1, keyHeld);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!valuesEqual) {
+            if (!restEqual) {
                 return false;
             }
+            break;
         }
 
         if constexpr (checkPrototypes) {
             // node also compares own enumerable properties of Maps.
-            break;
+            if (hasExtraOwnProperties(map1->structure()) || hasExtraOwnProperties(map2->structure())) {
+                break;
+            }
         }
         return true;
     }

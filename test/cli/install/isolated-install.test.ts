@@ -2007,10 +2007,6 @@ test("same resolution, different dependency name", async () => {
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
 });
 
-// The name of a store entry carries the package's version, and a later install
-// reuses the entry without reading the package.json in it (one access() per
-// entry). So a package.json that something else put there stays until --force.
-// docs/pm/isolated-installs.mdx says so; the hoisted linker reads the file.
 test("a store entry is reused without reading its package.json, and --force rebuilds it", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -2055,69 +2051,64 @@ test("a store entry is reused without reading its package.json, and --force rebu
   expect(exitCode).toBe(0);
 });
 
-// The registry writes the row that bun.lock records. The author writes the
-// package.json in the tarball. The two can disagree, and an install of that
-// tarball is complete all the same. A check that compared the store
-// package.json with the lockfile would install such a package on every run.
-describe.concurrent("a package whose own package.json disagrees with its registry row is installed once", () => {
-  const ownPackageJson: Record<string, object> = {
-    "another version": { name: "dep", version: "1.0.0-beta.1" },
-    "no version": { name: "dep" },
-    "another name": { name: "dep-renamed", version: "1.0.0" },
-    "another case of the name": { name: "DEP", version: "1.0.0" },
-  };
-
-  for (const [shape, packageJson] of Object.entries(ownPackageJson)) {
-    test(shape, async () => {
-      const tarball = await new Bun.Archive(
-        { "package/package.json": JSON.stringify(packageJson), "package/index.js": "module.exports = 1;\n" },
-        { compress: "gzip" },
-      ).bytes();
-      await using server = Bun.serve({
-        port: 0,
-        fetch(request) {
-          const { origin, pathname } = new URL(request.url);
-          if (pathname === "/dep-1.0.0.tgz") return new Response(tarball);
-          if (pathname !== "/dep") return new Response("not found", { status: 404 });
-          const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
-          return Response.json({
-            name: "dep",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": { name: "dep", version: "1.0.0", dist: { tarball: `${origin}/dep-1.0.0.tgz`, integrity } },
-            },
-          });
-        },
-      });
-      using dir = tempDir("own-package-json-disagrees", {
-        "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "1.0.0" } }),
-        "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href, linker: "isolated" } }),
-      });
-      const cwd = String(dir);
-      const tmp = join(cwd, ".bun-tmp");
-
-      const runs = [
-        { args: [], summary: "1 package installed" },
-        { args: [], summary: "(no changes)" },
-        { args: ["--frozen-lockfile"], summary: "(no changes)" },
-      ];
-      for (const { args, summary } of runs) {
-        await using proc = spawn({
-          cmd: [bunExe(), "install", ...args],
-          cwd,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp },
+// The author writes the package.json in a tarball, the registry writes the row that bun.lock records, and the two can differ.
+const ownPackageJsonCases: [description: string, packageJson: object][] = [
+  ["another version", { name: "dep", version: "1.0.0-beta.1" }],
+  ["no version", { name: "dep" }],
+  ["another name", { name: "dep-renamed", version: "1.0.0" }],
+  ["another case of the name", { name: "DEP", version: "1.0.0" }],
+];
+test.concurrent.each(ownPackageJsonCases)(
+  "a package whose own package.json disagrees with its registry row is installed once (%s)",
+  async (_, packageJson) => {
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify(packageJson), "package/index.js": "module.exports = 1;\n" },
+      { compress: "gzip" },
+    ).bytes();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === "/dep-1.0.0.tgz") return new Response(tarball);
+        if (pathname !== "/dep") return new Response("not found", { status: 404 });
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+        return Response.json({
+          name: "dep",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name: "dep", version: "1.0.0", dist: { tarball: `${origin}/dep-1.0.0.tgz`, integrity } },
+          },
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).not.toContain("error:");
-        expect(stdout).toContain(summary);
-        expect(exitCode).toBe(0);
-      }
-      expect(await file(join(cwd, "node_modules", "dep", "package.json")).json()).toEqual(packageJson);
+      },
     });
-  }
-});
+    using dir = tempDir("own-package-json-disagrees", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href, linker: "isolated" } }),
+    });
+    const cwd = String(dir);
+    const tmp = join(cwd, ".bun-tmp");
+
+    const runs = [
+      { args: [], summary: "1 package installed" },
+      { args: [], summary: "(no changes)" },
+      { args: ["--frozen-lockfile"], summary: "(no changes)" },
+    ];
+    for (const { args, summary } of runs) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(summary);
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(join(cwd, "node_modules", "dep", "package.json")).json()).toEqual(packageJson);
+  },
+);
 
 test("successfully removes and corrects symlinks", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

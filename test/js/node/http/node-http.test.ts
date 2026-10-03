@@ -4694,6 +4694,286 @@ it("statusCode = 204 with an empty first write still discards the body", async (
   }
 });
 
+describe("res.statusCode when write() or end() starts the response", () => {
+  // Without a writeHead() call, Node's write() and end() call writeHead(this.statusCode):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L403-L430
+  // Every expected value here is what Node v26.3.0 gives.
+  const invalidStatusCode = (text: string) => ({
+    name: "RangeError",
+    code: "ERR_HTTP_INVALID_STATUS_CODE",
+    message: `Invalid status code: ${text}`,
+  });
+
+  function thrownBy(call: () => unknown) {
+    try {
+      call();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+    return "no throw";
+  }
+
+  async function listening(server: Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return (server.address() as AddressInfo).port;
+  }
+
+  // Resolves with everything the server sent, when the connection closes.
+  function rawRequest(port: number, request: string) {
+    return new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(data));
+      socket.write(request);
+    });
+  }
+
+  it("end() and write() throw ERR_HTTP_INVALID_STATUS_CODE for statusCode = 99", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    const server = createServer((req, res) => {
+      res.statusCode = 99;
+      resolve({
+        "end('x')": thrownBy(() => res.end("x")),
+        "end()": thrownBy(() => res.end()),
+        "write('x')": thrownBy(() => res.write("x")),
+        "write('')": thrownBy(() => res.write("")),
+        headersSent: res.headersSent,
+      });
+      // The refused calls sent nothing, so the response can still be answered.
+      res.statusCode = 200;
+      res.end("ok");
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${await listening(server)}/`);
+      const refused = invalidStatusCode("99");
+      expect(await promise).toEqual({
+        "end('x')": refused,
+        "end()": refused,
+        "write('x')": refused,
+        "write('')": refused,
+        headersSent: false,
+      });
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: "ok" });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("end() and write() refuse every status code that writeHead() refuses", async () => {
+    // [res.statusCode, its text in the error message]
+    const refused: [unknown, string][] = [
+      [1000, "1000"],
+      [0, "0"],
+      [-0, "-0"],
+      [-1, "-1"],
+      [99.9, "99.9"],
+      [1e10, "10000000000"],
+      [Infinity, "Infinity"],
+      [NaN, "NaN"],
+      [undefined, "undefined"],
+      [null, "null"],
+      [true, "true"],
+      ["abc", "abc"],
+      ["1000", "1000"],
+      [{}, "{}"],
+      [[], "[]"],
+    ];
+    const seen: unknown[] = [];
+    const server = createServer((req, res) => {
+      const index = Number(req.url!.slice(1));
+      res.statusCode = refused[index][0] as number;
+      seen[index] = {
+        "write('x')": thrownBy(() => res.write("x")),
+        "end('x')": thrownBy(() => res.end("x")),
+        headersSent: res.headersSent,
+      };
+      res.statusCode = 200;
+      res.end();
+    });
+    try {
+      const port = await listening(server);
+      const statuses = await Promise.all(
+        refused.map(async (_, index) => {
+          const response = await fetch(`http://127.0.0.1:${port}/${index}`);
+          await response.arrayBuffer();
+          return response.status;
+        }),
+      );
+      expect(seen).toEqual(
+        refused.map(([, text]) => ({
+          "write('x')": invalidStatusCode(text),
+          "end('x')": invalidStatusCode(text),
+          headersSent: false,
+        })),
+      );
+      expect(statuses).toEqual(refused.map(() => 200));
+    } finally {
+      server.close();
+    }
+  });
+
+  it("end() and write() send a status code that writeHead() coerces to an integer", async () => {
+    // [res.statusCode, the integer that writeHead() makes of it, the message of that integer, what is sent of the body "x"]
+    const coerced: [unknown, number, string, string][] = [
+      ["404", 404, "Not Found", "x"],
+      ["204", 204, "No Content", ""],
+      [[204], 204, "No Content", ""],
+      [200.5, 200, "OK", "x"],
+      [2 ** 32 + 200, 200, "OK", "x"],
+    ];
+    const after: Record<string, object> = {};
+    const server = createServer((req, res) => {
+      const [, index, call] = req.url!.split("/");
+      res.statusCode = coerced[Number(index)][0] as number;
+      const thrown = thrownBy(() => {
+        if (call === "end") return res.end("x");
+        res.write("x");
+        res.end();
+      });
+      after[req.url!] = { thrown, statusCode: res.statusCode, statusMessage: res.statusMessage };
+      // Only a call that threw leaves the response open. Answer it, so that a failure is a wrong status and not a timeout.
+      if (!res.writableEnded) {
+        res.statusCode = 500;
+        res.end();
+      }
+    });
+    try {
+      const port = await listening(server);
+      const paths = coerced.flatMap((_, index) => [`/${index}/end`, `/${index}/write`]);
+      const results = await Promise.all(
+        paths.map(async path => {
+          const response = await fetch(`http://127.0.0.1:${port}${path}`);
+          const wire = { status: response.status, statusText: response.statusText, body: await response.text() };
+          return { ...after[path], ...wire };
+        }),
+      );
+      expect(results).toEqual(
+        coerced.flatMap(([, statusCode, statusMessage, body]) => {
+          // The response has the integer and its message after the call, and the client receives both.
+          const result = {
+            thrown: "no throw",
+            statusCode,
+            statusMessage,
+            status: statusCode,
+            statusText: statusMessage,
+            body,
+          };
+          return [result, result];
+        }),
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a deleted res.statusCode is 200", async () => {
+    const server = createServer((req, res) => {
+      delete (res as { statusCode?: number }).statusCode;
+      res.end("x");
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${await listening(server)}/`);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: "x" });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a response that waits behind a pipelined one throws in the call of the handler", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    let first: ServerResponse;
+    const server = createServer((req, res) => {
+      if (req.url === "/first") {
+        first = res;
+        return;
+      }
+      res.statusCode = 99;
+      resolve({ "write('x')": thrownBy(() => res.write("x")), "end('x')": thrownBy(() => res.end("x")) });
+      res.statusCode = 200;
+      res.end();
+      first.end("first");
+    });
+    try {
+      const wire = await rawRequest(
+        await listening(server),
+        "GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+      expect(await promise).toEqual({ "write('x')": invalidStatusCode("99"), "end('x')": invalidStatusCode("99") });
+      expect(wire.replace(/Date: [^\r]+\r\n/g, "")).toBe(
+        "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nfirst" +
+          "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("write() checks the status code before it rejects the body of a HEAD response", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    const server = createServer({ rejectNonStandardBodyWrites: true }, (req, res) => {
+      res.statusCode = 99;
+      const refused = thrownBy(() => res.write("x"));
+      res.statusCode = 200;
+      resolve({ refused, valid: thrownBy(() => res.write("x")) });
+      res.end();
+    });
+    try {
+      const wire = await rawRequest(await listening(server), "HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      expect(await promise).toEqual({
+        refused: invalidStatusCode("99"),
+        valid: {
+          name: "Error",
+          code: "ERR_HTTP_BODY_NOT_ALLOWED",
+          message: "Adding content for this request method or response status is not allowed.",
+        },
+      });
+      expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("end(chunk) on a destroyed response does not check the status code", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    const server = createServer((req, res) => {
+      res.destroy();
+      res.statusCode = 99;
+      resolve({
+        "write('x')": thrownBy(() => res.write("x")),
+        "end('x')": thrownBy(() => res.end("x")),
+        finished: res.finished,
+      });
+    });
+    try {
+      // The server destroys the connection, so the request fails or gets no bytes.
+      await rawRequest(await listening(server), "GET / HTTP/1.1\r\nHost: x\r\n\r\n").catch(() => {});
+      expect(await promise).toEqual({ "write('x')": "no throw", "end('x')": "no throw", finished: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("res._send() refuses a status code that no writeHead() call checked", async () => {
+    // Bun only: _send() of Node.js v26.3.0 stores no head. It writes the bytes in front of the head.
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    const server = createServer((req, res) => {
+      res.statusCode = 99;
+      resolve({ "_send('x')": thrownBy(() => (res as any)._send("x")), headersSent: res.headersSent });
+      res.statusCode = 200;
+      res.end("ok");
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${await listening(server)}/`);
+      expect(await promise).toEqual({ "_send('x')": invalidStatusCode("99"), headersSent: false });
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: "ok" });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the

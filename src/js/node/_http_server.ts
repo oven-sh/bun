@@ -3823,6 +3823,9 @@ ServerResponse.prototype.detachSocket = function (socket) {
   this.socket = null;
 };
 
+// Like Node.js, a response whose own statusCode was deleted answers 200.
+ServerResponse.prototype.statusCode = 200;
+
 ServerResponse.prototype._implicitHeader = function () {
   if (this.headersSent) return;
   // @ts-ignore
@@ -4079,12 +4082,22 @@ function updateHasBody(response, statusCode) {
   // status writeHead() picks.
 }
 
+// Whether Node's writeHead() takes this status code as it is. It coerces or refuses every other value: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L414-L419
+function isIntegerStatusCode(statusCode) {
+  return typeof statusCode === "number" && (statusCode | 0) === statusCode && statusCode >= 100 && statusCode <= 999;
+}
+
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
-    !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
+    !(
+      self.writeHead === OriginalWriteHeadFn &&
+      self._implicitHeader === OriginalImplicitHeadFn &&
+      // Node's end() stores no head for the chunk of a destroyed response, so the status code of that response is not checked.
+      (isIntegerStatusCode(self.statusCode) || self.destroyed)
+    )
   ) {
     // Node's end(chunk) assigns _contentLength before _implicitHeader reaches
     // _storeHeader, so this implicit call must not freeze the framing to chunked

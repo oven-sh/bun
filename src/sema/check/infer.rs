@@ -220,6 +220,16 @@ impl<'p> Checker<'p> {
         n.depth = 0;
         n.calls = 0;
         n.original_target = target;
+        // Fast path: `n.priority` only grows during inference and a candidate with a worse priority than the existing inference is
+        // discarded, so nothing can be recorded. Limited to `InferencePriorityReturnType`: at other priorities inference can still
+        // clear `topLevel`.
+        if priority & PRIORITY_RETURN != 0
+            && n.candidates
+                .iter()
+                .all(|c| c.fixed.is_some() || c.priority < priority)
+        {
+            return;
+        }
         self.infer_types(n, source, target);
     }
 

@@ -84,14 +84,10 @@ impl Checker<'_> {
                 for sig in self.super_constructor_sigs(sym) {
                     returns.push(self.sig_return(sig));
                 }
-                let all_the_same = self.answer_if_sure(|checker| {
-                    returns
-                        .iter()
-                        .all(|&returned| checker.is_identical(returned, base))
-                });
-                if all_the_same == Some(false)
-                    && let Some(at) = self.place_to_report_base_at(file, c)
-                {
+                let all_the_same = returns
+                    .iter()
+                    .all(|&returned| self.is_identical(returned, base));
+                if !all_the_same && let Some(at) = self.place_to_report_base_at(file, c) {
                     self.error_at(at, 2510, &[]);
                 }
             }
@@ -132,7 +128,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkBaseTypeAccessibility`: 2675, only from within a class can what it makes privately be extended.
+    /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own declaration.
     fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
         let TypeData::Anon {
             origin: Origin::ClassStatic(class),
@@ -144,47 +140,20 @@ impl Checker<'_> {
         let Some(&first) = self.signatures(apparent, true).first() else {
             return;
         };
-        // `getDefaultConstructSignatures`: a class without a constructor is made by that of what it extends, which stays private.
-        let (mut sig, mut steps) = (first, 0);
-        let (declared_in, func) = loop {
-            match *self.p.types.sig(sig) {
-                SigData::Construct { file, func, .. } => break (file, func),
-                SigData::DefaultConstruct {
-                    class: of, base, ..
-                } => {
-                    if steps == 32 || self.base_types(of).is_empty() {
-                        return;
-                    }
-                    let Some(inherited) = base else {
-                        return;
-                    };
-                    sig = inherited;
-                    steps += 1;
-                }
-                _ => return,
-            }
-        };
-        if !self.hir(declared_in)[func].flags.contains(Flags::PRIVATE) {
-            return;
-        }
-        let extends = self.hir(file)[c].extends;
-        let is_within = self
-            .enclosing_classes(file, extends)
-            .into_iter()
-            .any(|around| self.class_sym(file, around) == class);
-        if !is_within {
-            let start = self.start_of(file, extends);
-            // The type arguments are part of what is extended.
-            let last_argument = self.end_of_type_args(file, self.hir(file)[c].extends_args);
-            let end = if last_argument == 0 {
-                self.end_of_expr(file, extends)
-            } else {
-                let rest = self.hir(file).text.get(last_argument as usize..);
-                let close = rest.and_then(|rest| rest.iter().position(|&b| b == b'>'));
-                last_argument + close.map_or(0, |at| at as u32 + 1)
-            };
+        let declared = self.declared_sig(first);
+        let hir = self.hir(file);
+        if let Some((declared_in, func, _)) = self.sig_decl(declared)
+            && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
+            && !(self.enclosing_classes(file, hir[c].extends).into_iter())
+                .any(|around| self.class_sym(file, around) == class)
+        {
             let name = super::errors_modules::fully_qualified_name(self, class);
-            self.error_at((file, start, end), 2675, &[Arg::Text(&name)]);
+            self.error(
+                file,
+                hir.node(c).with(Part::Base),
+                2675,
+                &[Arg::Text(&name)],
+            );
         }
     }
 

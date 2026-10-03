@@ -21,17 +21,37 @@ impl Checker<'_> {
         right: ExprId,
     ) {
         let hir = self.hir(file);
-        if let Some(mixed) = self.operand_mixed_with_nullish(file, e, left, right) {
-            let (first, second) = if mixed == left {
-                match hir[left].kind {
-                    ExprKind::Binary { op: BinOp::And, .. } => ("&&", "??"),
-                    _ => ("||", "??"),
-                }
-            } else if mixed == right {
-                ("??", "&&")
-            } else {
-                ("??", "||")
-            };
+        // `None` unless `x` is an unparenthesized `BinaryExpression`. The inner option is its operator, `None` for an assignment.
+        let operator_of = |x: ExprId| match hir[x].kind {
+            _ if is_parenthesized(hir, x) || hir.kind(hir.node(x)) != Kind::BinaryExpression => {
+                None
+            }
+            ExprKind::Binary { op, .. } => Some(Some(op)),
+            _ => Some(None),
+        };
+        let grandparent = hir.parent(hir.node(e));
+        let mixed = if hir.kind(grandparent) == Kind::BinaryExpression {
+            match hir.data(grandparent) {
+                NodeData::Expr(outer) => match hir[outer].kind {
+                    ExprKind::Binary {
+                        op: BinOp::Or,
+                        left,
+                        ..
+                    } if operator_of(left).is_some() => Some((left, "??", "||")),
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else if let Some(operator) = operator_of(left) {
+            match operator {
+                Some(BinOp::Or) => Some((left, "||", "??")),
+                Some(BinOp::And) => Some((left, "&&", "??")),
+                _ => None,
+            }
+        } else {
+            (operator_of(right) == Some(Some(BinOp::And))).then_some((right, "??", "&&"))
+        };
+        if let Some((mixed, first, second)) = mixed {
             let at = (
                 file,
                 self.start_of(file, mixed),
@@ -40,18 +60,12 @@ impl Checker<'_> {
             self.grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
         }
         // `checkNullishCoalesceOperandLeft`
-        let target = self.skip_outer_expressions(file, left);
-        let code = match self.syntactic_nullishness(file, target) {
-            ALWAYS => 2871,
-            NEVER => 2869,
+        let left_target = self.skip_outer_expressions(file, left);
+        match self.syntactic_nullishness(file, left_target) {
+            ALWAYS => self.error(file, left_target, 2871, &[]),
+            NEVER => self.error(file, left_target, 2869, &[]),
             _ => return,
         };
-        let at = (
-            file,
-            self.error_start_inside_parentheses(file, target),
-            self.error_end_inside_parentheses(file, target),
-        );
-        self.error_at(at, code, &[]);
     }
 
     /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
@@ -88,53 +102,6 @@ impl Checker<'_> {
             _ => return,
         };
         self.error_at((file, start, end), 2378, &[]);
-    }
-
-    /// `checkNullishCoalesceOperands`: the binary expression that mixes `||` or `&&` with the `??` of `e`, which is `left ?? right`,
-    /// without parentheses (5076).
-    fn operand_mixed_with_nullish(
-        &self,
-        file: FileId,
-        e: ExprId,
-        left: ExprId,
-        right: ExprId,
-    ) -> Option<ExprId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `IsBinaryExpression`. The default of `{ a = b }` is kept as an assignment, and is none.
-        let is_binary_kind = |x: ExprId| match hir[x].kind {
-            ExprKind::Binary { .. } => true,
-            ExprKind::Assign { .. } => {
-                !matches!(bound.expr_parent[x.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
-            }
-            _ => false,
-        };
-        let is_binary = |x: ExprId| is_binary_kind(x) && !is_parenthesized(self.hir(file), x);
-        if let Parent::Expr(outer) = bound.expr_parent[e.idx()]
-            && outer.is_some()
-            && is_binary_kind(outer)
-            && !is_parenthesized(self.hir(file), e)
-        {
-            return match hir[outer].kind {
-                ExprKind::Binary {
-                    op: BinOp::Or,
-                    left: outer_left,
-                    ..
-                } if is_binary(outer_left) => Some(outer_left),
-                _ => None,
-            };
-        }
-        if is_binary(left) {
-            return matches!(
-                hir[left].kind,
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::And,
-                    ..
-                }
-            )
-            .then_some(left);
-        }
-        (is_binary(right) && matches!(hir[right].kind, ExprKind::Binary { op: BinOp::And, .. }))
-            .then_some(right)
     }
 
     /// `SkipOuterExpressions`
@@ -340,33 +307,16 @@ impl Checker<'_> {
         {
             return;
         }
-        let object = self.apparent_type(object);
-        // `createUnionOrIntersectionProperty`: that of a union can only be read if that of a member can only be read, may be left out if
-        // that of a member may be, and is whatever any of them is.
-        let (mut is_readonly, mut may_be_left_out) = (false, false);
-        let mut types = Vec::new();
-        for &part in self.parts(object) {
-            let part = self.apparent_type(part);
-            // `getPropertyOfTypeEx`: what every function and every object has counts, but for a `const` enum, which is no object.
-            let found = if self.is_const_enum_object(part) {
-                self.prop_of(part, name)
-            } else {
-                let Some(members) = self.members(part) else {
-                    return;
-                };
-                self.property_of_type(&members, name)
-            };
-            let Some((prop, mapper)) = found else { return };
-            is_readonly |= self.is_read_only(&prop);
-            may_be_left_out |= prop.flags.contains(PropFlags::OPTIONAL);
-            types.push(self.type_of_prop(&prop, mapper));
-        }
-        if is_readonly {
+        // `links.resolvedSymbol`
+        let Some((prop, mapper)) = self.get_property_of_type(object, name) else {
+            return;
+        };
+        if self.is_read_only(prop) {
             self.error_at((file, start, end), 2704, &[]);
             return;
         }
         // `checkDeleteExpressionMustBeOptional`
-        let ty = self.union(&types);
+        let ty = self.type_of_prop(prop, mapper);
         if !self.p.files.options.strict_null_checks
             || self.is_any(ty)
             || ty == TypeId::UNKNOWN
@@ -374,7 +324,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_optional = may_be_left_out
+        let is_optional = prop.flags.contains(PropFlags::OPTIONAL)
             || !self.p.files.options.exact_optional_property_types
                 && self.some_type(ty, |c, m| {
                     m.is_undefined() || m == TypeId::VOID || c.is_deferred(m)

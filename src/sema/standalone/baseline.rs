@@ -1296,6 +1296,7 @@ fn run_one(
         global_node_modules: None,
         progress: None,
         only: None,
+        order: 1,
         keeps_everything: false,
         stops_where_tsc_does: false,
         says_it_as_typescript_does: true,

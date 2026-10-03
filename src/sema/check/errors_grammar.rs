@@ -277,8 +277,16 @@ impl Checker<'_> {
             ExprKind::Cond { yes, no, .. } => {
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
-            ExprKind::Binary { left, right, .. } => {
-                self.is_side_effect_free(file, left) && self.is_side_effect_free(file, right)
+            // Iterates over the left spine, so that a long chain does not recurse.
+            ExprKind::Binary { .. } => {
+                let mut leftmost = e;
+                while let ExprKind::Binary { left, right, .. } = hir[leftmost].kind {
+                    if !self.is_side_effect_free(file, right) {
+                        return false;
+                    }
+                    leftmost = left;
+                }
+                self.is_side_effect_free(file, leftmost)
             }
             _ => false,
         }

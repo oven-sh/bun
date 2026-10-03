@@ -8,7 +8,7 @@
 //! leaves it open whether a candidate fits, nothing is said.
 
 use super::call::{Arg, CallLike, CallState};
-use super::explain::Line;
+use super::explain::{Line, NOWHERE};
 use super::relate::Relation;
 use super::sink::held;
 use super::*;
@@ -166,18 +166,8 @@ impl Checker<'_> {
                     }
                     _ => self.error_end_of(file, data.callee),
                 };
-                self.error_at((file, start, end), code, &[]);
-                self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
-                self.relate(start, code, |c| {
-                    let has_one_argument = data.args.len() == 1;
-                    c.related_to_invocation_error(
-                        file,
-                        data.callee,
-                        apparent,
-                        false,
-                        has_one_argument,
-                    )
-                });
+                let how = (false, data.args.len() == 1);
+                self.invocation_error((file, start, end), code, data.callee, apparent, how, None);
                 return;
             }
             self.report_call_resolution(file, e);
@@ -257,16 +247,45 @@ impl Checker<'_> {
             }
             return;
         }
-        let start = self.start_of(file, data.callee);
-        self.error_at(
-            (file, start, self.error_end_of(file, data.callee)),
-            2351,
-            &[],
-        );
-        self.explain_chain(start, 2351, |c| c.invocation_error_lines(apparent, true));
-        self.relate(start, 2351, |c| {
-            c.related_to_invocation_error(file, data.callee, apparent, true, false)
-        });
+        let at = self.place_of_written_callee(file, data.callee);
+        self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
+    }
+
+    /// Error span of a callee: from the start of the (possibly parenthesized) expression to its error end.
+    fn place_of_written_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.start_of(file, callee),
+            self.error_end_of(file, callee),
+        )
+    }
+
+    /// `invocationError`. `head`: the decorator head message to chain on top, if any.
+    pub(super) fn invocation_error(
+        &mut self,
+        at: (FileId, u32, u32),
+        code: u32,
+        target: ExprId,
+        apparent: TypeId,
+        (construct, has_one_argument): (bool, bool),
+        head: Option<u32>,
+    ) {
+        let mut diagnostic = Reported::bare(at, code);
+        let lines = self.invocation_error_lines(apparent, construct);
+        super::explain::add_lines(&mut diagnostic.message_chain, lines);
+        match head {
+            Some(head) => diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, head, &[]),
+            None => {
+                diagnostic.related_information = self.related_to_invocation_error(
+                    at.0,
+                    target,
+                    apparent,
+                    construct,
+                    has_one_argument,
+                )
+            }
+        }
+        self.add_diagnostic(diagnostic);
     }
 
     /// What `invocationError` relates to 2349, 6234 or 2351, said of `target`, whose apparent type is `apparent`.
@@ -413,20 +432,18 @@ impl Checker<'_> {
         } else {
             return;
         };
+        let related = match code {
+            2775 => self.name_in_need_of_a_type_annotation(file, data.callee),
+            _ => None,
+        };
         let start = self.start_of(file, data.callee);
         self.error_at(
             (file, start, self.end_of_expr(file, data.callee)),
             code,
             &[],
-        );
-        if code == 2775 {
-            self.relate(start, code, |checker| {
-                checker
-                    .name_in_need_of_a_type_annotation(file, data.callee)
-                    .into_iter()
-                    .collect()
-            });
-        }
+        )
+        .related_information
+        .extend(related);
     }
 
     /// `getTypeOfDottedName`, given the diagnostic: the first name of `e` that `getExplicitTypeOfSymbol` cannot tell the type of because
@@ -558,18 +575,11 @@ impl Checker<'_> {
             // With parentheses around it, it is those that are the element of the array.
             let is_element = !is_parenthesized(hir, e)
                 && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
-            let start = self.start_of(file, data.callee);
-            let code = if is_element { 2796 } else { 2349 };
-            self.error_at(
-                (file, start, self.error_end_of(file, data.callee)),
-                code,
-                &[],
-            );
-            if !is_element {
-                self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
-                self.relate(start, code, |c| {
-                    c.related_to_invocation_error(file, data.callee, apparent, false, false)
-                });
+            let at = self.place_of_written_callee(file, data.callee);
+            if is_element {
+                self.error_at(at, 2796, &[]);
+            } else {
+                self.invocation_error(at, 2349, data.callee, apparent, (false, false), None);
             }
             return;
         }
@@ -793,29 +803,22 @@ impl Checker<'_> {
         if let Some(&last) = s.candidates_for_argument_error.last() {
             let from = self.reported.len();
             self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
-            let said: Vec<(u32, u32)> = self.reported[from..]
-                .iter()
-                .map(|d| (d.start, d.code))
-                .collect();
+            let said = self.reported.split_off(from);
             let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if said.is_empty() {
                 Vec::new()
             } else {
                 self.related_to_failed_candidate(s, last, is_overloaded)
             };
-            for (start, mut code) in said {
-                if is_overloaded {
-                    self.explain_under(start, code, 2770, &[]);
-                    self.explain_under(start, 2770, 2769, &[]);
-                    code = 2769;
+            let overloaded: &[u32] = if is_overloaded { &[2770, 2769] } else { &[] };
+            for mut diagnostic in said {
+                for &on_top in overloaded.iter().chain(&head) {
+                    diagnostic = self.new_diagnostic_chain(Some(diagnostic), NOWHERE, on_top, &[]);
                 }
-                if let Some(head) = head {
-                    self.explain_under(start, code, head, &[]);
-                    code = head;
-                }
-                if !related.is_empty() {
-                    self.relate(start, code, |_| related.clone());
-                }
+                diagnostic
+                    .related_information
+                    .extend(related.iter().cloned());
+                self.add_diagnostic(diagnostic);
             }
         } else if let Some(sig) = s.candidate_for_argument_arity_error {
             self.report_argument_arity(s, &[sig], head);
@@ -1070,13 +1073,15 @@ impl Checker<'_> {
                 let said = self.reported.len();
                 self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345);
                 let (from, to) = self.error_range_of_expr(file, node);
-                let first = self.reported.get(said).map(|d| (d.start, d.code));
-                self.maybe_add_missing_await_info((file, from, to), given, wanted, first);
+                self.maybe_add_missing_await_info((file, from, to), given, wanted, said);
                 // `checkTypeRelatedToEx`: what `import * as ns` imports would have done.
                 if let Some((module, import)) = self.originating_import(given) {
                     let imported = self.type_of_symbol(module);
-                    if self.is_assignable(imported, wanted) {
-                        self.relate(at, 2345, |_| vec![import]);
+                    let is_it = |d: &&mut Reported| d.start == at && d.code == 2345;
+                    if self.is_assignable(imported, wanted)
+                        && let Some(diagnostic) = self.reported[said..].iter_mut().rev().find(is_it)
+                    {
+                        diagnostic.add_related_info(import);
                     }
                 }
             }
@@ -1112,8 +1117,7 @@ impl Checker<'_> {
                     };
                     let said = self.reported.len();
                     self.check_assignable_with_end(file, given, rest, at, end, ExprId::NONE, 2345);
-                    let first = self.reported.get(said).map(|d| (d.start, d.code));
-                    self.maybe_add_missing_await_info((file, at, end), given, rest, first);
+                    self.maybe_add_missing_await_info((file, at, end), given, rest, said);
                 }
                 return false;
             }
@@ -1121,15 +1125,17 @@ impl Checker<'_> {
         true
     }
 
-    /// `maybeAddMissingAwaitInfo`. `place`: the argument. `said`: the first thing that was said of it.
+    /// `maybeAddMissingAwaitInfo`. `place`: span of the argument. `said`: index in `self.reported` of the first diagnostic for it.
     fn maybe_add_missing_await_info(
         &mut self,
         place: (FileId, u32, u32),
         source: TypeId,
         target: TypeId,
-        said: Option<(u32, u32)>,
+        said: usize,
     ) {
-        let Some(d) = said else { return };
+        if said == self.reported.len() {
+            return;
+        }
         // `getAwaitedTypeOfPromise`
         let awaited_of_promise = |c: &mut Self, ty: TypeId| {
             let promised = c.thenable_value(ty)?;
@@ -1142,7 +1148,7 @@ impl Checker<'_> {
             return;
         };
         if self.is_assignable(awaited, target) {
-            self.relate(d.0, d.1, |_| vec![Reported::bare(place, 2773)]);
+            self.reported[said].add_related_info(Reported::bare(place, 2773));
         }
     }
 
@@ -1312,17 +1318,14 @@ impl Checker<'_> {
             let end = self.end_of_expr(file, args[args.len() - 1].node());
             ((start, end), code, vec![expected, given])
         };
-        self.note_printed(start, end, code, held(counted));
-        let top = head.unwrap_or(code);
+        let mut diagnostic = Reported::new((file, start, end), code, held(counted));
         if let Some(head) = head {
-            self.explain_under(start, code, head, &[]);
+            diagnostic = self.new_diagnostic_chain(Some(diagnostic), NOWHERE, head, &[]);
         }
-        self.error_at((file, start, 0), top, &[]);
         if args.len() < least && code != 2810 {
-            self.relate(start, top, |c| {
-                c.parameter_without_argument(sigs, args.len())
-            });
+            diagnostic.related_information = self.parameter_without_argument(sigs, args.len());
         }
+        self.add_diagnostic(diagnostic);
     }
 
     /// `isPromiseResolveArityError`: what is called is the `resolve` of `new Promise((resolve) => ...)`. With parentheses around

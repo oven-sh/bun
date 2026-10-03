@@ -471,7 +471,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a TypeScript module, visits nothing, and returns what `bun_sema` resolves types from.
-    /// A file that does not parse gives what could be made of it, marked `has_errors`.
+    /// A file the parser cannot recover from, or rejects for a reason TypeScript has no diagnostic for, is marked `has_errors`. It still
+    /// gets at least one syntactic error, unless the parser ran out of stack: then `early_errors` is empty and the driver reports that.
     /// `await_is_a_name`: the top level has no await context, as in a script (`parseSourceFileWorker`).
     /// Also returns whether `await` was parsed as a keyword at the top level.
     #[cold]
@@ -559,9 +560,6 @@ impl<'a> Parser<'a> {
         };
         parsing.set(parsing.get() + began.elapsed());
         let awaited = p.top_level_await_keyword.len > 0;
-        let Ok(stmts) = stmts else {
-            return (failed(), awaited);
-        };
         // Before `jsdoc::read_comments` sends the lexer through the comments again.
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
         // What is objected to without the tree suffering is for the checker to say, in its own words.
@@ -570,7 +568,8 @@ impl<'a> Parser<'a> {
         let (mut error_arguments, mut error_ends) = (Vec::new(), Vec::new());
         let has_jsx = p.is_jsx_enabled();
         let opening_brackets = Self::opening_brackets(p.log());
-        let mut has_errors = false;
+        let mut has_errors = stmts.is_err();
+        let mut untranslated = None;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
             let offset = msg.data.location.as_ref().map(|l| l.offset);
             // The location of a node was logged without `P::real_loc`.
@@ -605,19 +604,37 @@ impl<'a> Parser<'a> {
                         has_jsx,
                     ));
                 }
-                _ => has_errors = true,
+                (_, offset) => {
+                    has_errors = true;
+                    untranslated = untranslated.or(offset);
+                }
             }
         }
-        let syntax = *p.type_syntax.take().unwrap();
-        let mut file =
-            crate::sema::lower::Lower::run(p, syntax, stmts.as_slice(), is_declaration_file);
-        file.comment_directives = comment_directives.into();
-        crate::sema::comments::process_pragmas_into_fields(
-            &p.lexer,
-            leading_comments,
-            atoms,
-            &mut file,
-        );
+        // A rejected file never passes as free of errors.
+        if has_errors && syntactic.is_empty() && !matches!(stmts, Err(crate::Error::StackOverflow))
+        {
+            let at = untranslated.unwrap_or_else(|| p.lexer.loc().start.max(0) as usize);
+            syntactic.push((at as u32, 1012));
+        }
+        let mut file = match stmts {
+            Ok(stmts) => {
+                let syntax = *p.type_syntax.take().unwrap();
+                let stmts = stmts.as_slice();
+                let mut file =
+                    crate::sema::lower::Lower::run(p, syntax, stmts, is_declaration_file);
+                file.comment_directives = comment_directives.into();
+                crate::sema::comments::process_pragmas_into_fields(
+                    &p.lexer,
+                    leading_comments,
+                    atoms,
+                    &mut file,
+                );
+                file
+            }
+            Err(_) => failed(),
+        };
+        // The lowering sets it when it runs out of stack.
+        let has_errors = has_errors || file.has_errors;
         file.has_errors = has_errors;
         if !opening_brackets.is_empty() {
             file.opening_brackets.extend(opening_brackets);
@@ -636,7 +653,7 @@ impl<'a> Parser<'a> {
                 .iter()
                 .any(|&(_, code)| Self::is_parser_code(code));
         if has_errors {
-            file.early_errors.clear();
+            file.early_errors = syntactic;
         } else {
             file.early_errors.extend(syntactic);
             // `checkJSDecoratorSyntax` says these two, whatever else is wrong with the file.

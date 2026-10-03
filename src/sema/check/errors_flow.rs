@@ -1,4 +1,4 @@
-//! Where control gets to and where it does not: 7027 7028 7029, 2355 2366 2534 7030, 1104 1105 1107 1114 1115 1116.
+//! Where control gets to and where it does not: 7027 7028 7029, 2355 2366 2534 7030.
 //! Whether a generator is what a generator function says it returns.
 //!
 //! Follows `checkSourceElementUnreachable`, `checkLabeledStatement`, `checkSwitchStatement`,
@@ -270,89 +270,5 @@ impl Checker<'_> {
             is_async,
             Some(error_node),
         );
-    }
-
-    /// `checkGrammarBreakOrContinueStatement`, and one label inside another of the same name.
-    pub(super) fn check_jumps_and_labels(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.has_errors {
-            return;
-        }
-        let is_iteration = |mut s: StmtId, through_labels: bool| loop {
-            match hir[s].kind {
-                StmtKind::While { .. }
-                | StmtKind::DoWhile { .. }
-                | StmtKind::For { .. }
-                | StmtKind::ForIn { .. }
-                | StmtKind::ForOf { .. } => return true,
-                StmtKind::Labeled { body, .. } if through_labels => s = body,
-                _ => return false,
-            }
-        };
-        for i in 0..hir.stmts.len() {
-            if !matches!(
-                hir.stmts[i].kind,
-                StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Labeled { .. }
-            ) || matches!(bound.stmt_parent[i], Parent::None)
-            {
-                continue;
-            }
-            let start = hir.stmts[i].start;
-            let (label, is_break) = match hir.stmts[i].kind {
-                StmtKind::Break(label) => (label, true),
-                StmtKind::Continue(label) => (label, false),
-                StmtKind::Labeled { label, .. } => {
-                    let mut parent = bound.stmt_parent[i];
-                    loop {
-                        match parent {
-                            Parent::Stmt(s) if s.is_some() => {
-                                if matches!(hir[s].kind, StmtKind::Labeled { label: outer, .. } if outer == label)
-                                {
-                                    self.error_at((file, start, 0), 1114, &[Arg::Atom(label)]);
-                                    break;
-                                }
-                                parent = bound.stmt_parent[s.idx()];
-                            }
-                            Parent::Case(c) => parent = Parent::Stmt(bound.case_stmt[c.idx()]),
-                            _ => break,
-                        }
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            let mut parent = bound.stmt_parent[i];
-            let code = loop {
-                match parent {
-                    Parent::FnBody(_) => break Some(1107),
-                    Parent::Stmt(s) if s.is_some() => {
-                        match hir[s].kind {
-                            StmtKind::Labeled { label: outer, body }
-                                if label.is_some() && outer == label =>
-                            {
-                                break (!is_break && !is_iteration(body, true)).then_some(1115);
-                            }
-                            StmtKind::Switch { .. } if is_break && label.is_none() => break None,
-                            _ if label.is_none() && is_iteration(s, false) => break None,
-                            _ => {}
-                        }
-                        parent = bound.stmt_parent[s.idx()];
-                    }
-                    Parent::Case(c) => parent = Parent::Stmt(bound.case_stmt[c.idx()]),
-                    _ => {
-                        break Some(match (label.is_some(), is_break) {
-                            (true, true) => 1116,
-                            (true, false) => 1115,
-                            (false, true) => 1105,
-                            (false, false) => 1104,
-                        });
-                    }
-                }
-            };
-            if let Some(code) = code {
-                let end = self.end_of_stmt(file, StmtId(i as u32));
-                self.error_at((file, start, end), code, &[]);
-            }
-        }
     }
 }

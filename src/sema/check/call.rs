@@ -215,7 +215,10 @@ impl<'p> Checker<'p> {
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
         self.resolved_meanwhile.pop();
-        let holds = self.leave();
+        // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is non-empty.
+        let holds = self.leave()
+            || !self.contextual_binding_patterns.is_empty()
+                && self.taints == self.taints_before_patterns;
         // A call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what is wrong with it
         // as things stand then. Only the first time is kept.
         if is_under_way {
@@ -953,7 +956,7 @@ impl<'p> Checker<'p> {
         if !is_chosen && report_errors {
             // `resolvedSignature = result`, before the errors are reported.
             self.resolved_meanwhile.push((file, call, resolved));
-            let since = (self.reported.len(), self.noted_ahead.len());
+            let since = self.reported.len();
             // Whoever asks first resolves the call, from whatever file. What is reported is in the file of the call.
             let checking = (self.checking, self.is_type_checked);
             if self.checking != Some(file) {
@@ -963,8 +966,7 @@ impl<'p> Checker<'p> {
             (self.checking, self.is_type_checked) = checking;
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
-            self.settle_what_was_noted_ahead_since(since.0, since.1);
-            let said = self.reported.split_off(since.0);
+            let said = self.reported.split_off(since);
             if !said.is_empty() {
                 self.call_resolution_errors = Some(said);
             }
@@ -2652,11 +2654,7 @@ impl<'p> Checker<'p> {
     ) {
         let hir = self.hir(file);
         let expected = self.sig_params(contextual);
-        let own = hir[func]
-            .params
-            .iter()
-            .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)));
-        for (i, p) in own.enumerate() {
+        for (i, p) in hir[func].params.iter().enumerate() {
             if hir[p].flags.contains(Flags::REST) {
                 break;
             }

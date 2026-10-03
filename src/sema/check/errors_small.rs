@@ -459,28 +459,12 @@ impl Checker<'_> {
         if self.is_valid_spread_type(ty) {
             return;
         }
-        // In JSX it is what is spread that is pointed at, in an object literal the dots.
-        let start = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-            self.error_start_of(file, prop.value)
+        // JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
+        if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+            self.error_at(self.place_of_written_expr(file, prop.value), 2698, &[]);
         } else {
-            let value = self.start_of(file, prop.value);
-            let before = hir
-                .text
-                .get(..value as usize)
-                .unwrap_or_default()
-                .trim_ascii_end();
-            if before.ends_with(b"...") {
-                before.len() as u32 - 3
-            } else {
-                value.saturating_sub(3)
-            }
-        };
-        let end = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-            self.error_end_of(file, prop.value)
-        } else {
-            self.end_of_expr(file, prop.value)
-        };
-        self.error_at((file, start, end), 2698, &[]);
+            self.error(file, p, 2698, &[]);
+        }
     }
 
     /// `allTypesAssignableToKind(ty, TypeFlagsPrimitive)`

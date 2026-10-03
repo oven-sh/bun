@@ -890,7 +890,6 @@ impl<'p> Checker<'p> {
                 }
                 // The comparison of these two types was cut short when it was made.
                 if entry & COMPLEXITY_OVERFLOW != 0 {
-                    self.relation_gave_up = true;
                     self.relation_too_complex = true;
                 }
                 return entry & SUCCEEDED != 0;
@@ -901,15 +900,6 @@ impl<'p> Checker<'p> {
             return self.check_type_related_to(source, target, relation, missed, is_trial);
         }
         false
-    }
-
-    /// What `ask` answers. `None`: a comparison was cut short on the way, and the answer is not to be told anybody.
-    pub(super) fn answer_if_sure(&mut self, ask: impl FnOnce(&mut Self) -> bool) -> Option<bool> {
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-        let answer = ask(self);
-        let is_sure = !self.relation_gave_up;
-        self.relation_gave_up |= gave_up_before;
-        is_sure.then_some(answer)
     }
 
     /// `checkTypeRelatedToEx`, without the errors. `relation_too_complex` tells the caller to report 2859.
@@ -973,7 +963,6 @@ impl<'p> Checker<'p> {
             }
         }
         if overflow {
-            self.relation_gave_up = true;
             return false;
         }
         result.holds()
@@ -1426,10 +1415,10 @@ impl<'p> Checker<'p> {
         if let Some(&known) = self.simplified.get(&(t, writing)) {
             return known;
         }
-        let (cycles_before, gave_up_before) = (self.cycles, self.relation_gave_up);
+        let cycles_before = self.cycles;
         let result = self.simplified_conditional_worker(t, writing);
         // What is found out while the resolver runs into itself holds for nobody else.
-        if self.cycles == cycles_before && self.relation_gave_up == gave_up_before {
+        if self.cycles == cycles_before {
             self.simplified.insert((t, writing), result);
         }
         result
@@ -3361,7 +3350,6 @@ impl<'p> Checker<'p> {
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was cut short when it was made.
-                self.relation_gave_up = true;
                 r.hit_cached_overflow = true;
             }
             return Ternary::of(entry & SUCCEEDED != 0);
@@ -4090,21 +4078,9 @@ impl<'p> Checker<'p> {
                 return Ternary::FALSE;
             }
         }
-        // Two instantiations of one generic alias: go by how it varies with its type parameters.
-        let same_body = match (sd, td) {
-            (TypeData::Anon { origin: s, .. }, TypeData::Anon { origin: t, .. }) => s == t,
-            (TypeData::Fns { decls: s, .. }, TypeData::Fns { decls: t, .. }) => s == t,
-            (
-                TypeData::Cond {
-                    file: sf, node: sn, ..
-                },
-                TypeData::Cond {
-                    file: tf, node: tn, ..
-                },
-            ) => (sf, sn) == (tf, tn),
-            _ => false,
-        };
-        if same_body
+        // Two instantiations of the same generic alias: relate the type arguments by variance. tsgo limits alias variance probing to
+        // object and conditional SOURCE types; the target can be any type with that alias, including a union.
+        if self.flags(source) & (tf::OBJECT | tf::CONDITIONAL) != 0
             && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
             && {
                 let params = self.type_params_of_symbol(alias);
@@ -5543,30 +5519,18 @@ impl<'p> Checker<'p> {
         related
     }
 
-    /// The class a property is declared in.
+    /// `getDeclaringClass`
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
-        let (file, member) = match &prop.source {
-            PropSource::Symbol(sym) => match self.files().value_declaration(*sym)? {
-                (file, crate::bind::Decl::Member(member)) => (file, member),
-                (file, crate::bind::Decl::ParameterProperty(param)) => {
-                    let bound = self.bound(file);
-                    match bound.fns[bound.param_fn[param.idx()].idx()].owner {
-                        crate::bind::FnOwner::Member(member) => (file, member),
-                        _ => return None,
-                    }
-                }
-                // `this.name = value` in a member of a class.
-                (_, crate::bind::Decl::ThisProperty(_)) => {
-                    return self.files().parent_of_symbol(*sym);
-                }
-                _ => return None,
-            },
-            _ => return None,
-        };
-        match self.bound(file).member_owner[member.idx()] {
-            crate::bind::MemberOwner::Class(c) => Some(self.class_sym(file, c)),
+        match prop.source {
+            PropSource::Symbol(sym) => self.declaring_class_of_symbol(sym),
             _ => None,
         }
+    }
+
+    /// The parent of `sym` if it is a class: `s.Parent != nil && s.Parent.Flags&SymbolFlagsClass != 0`.
+    pub(super) fn declaring_class_of_symbol(&self, sym: Sym) -> Option<Sym> {
+        let parent = self.files().parent_of_symbol(sym)?;
+        (self.files().flags(parent).contains(SymFlags::CLASS)).then_some(parent)
     }
 
     /// `isValidOverrideOf`
@@ -6381,7 +6345,7 @@ impl<'p> Checker<'p> {
         } else {
             self.sig_return(target)
         };
-        if target_return == TypeId::VOID || self.is_any(target_return) {
+        if target_return == TypeId::VOID || target_return == TypeId::ANY {
             return result;
         }
         let source_return = if self.is_resolving_return_type(source) {

@@ -618,3 +618,71 @@ impl Checker<'_> {
 /// What is written for a node whose type is the error type: `error` (`IntrinsicName()`) if the test has no errors, or else `any`
 /// (`typeWriterWalker.hadErrorBaseline`). Whoever has the report of the test replaces it.
 pub const ERROR_TYPE_TEXT: &str = "\u{1}error";
+
+impl<'p> Checker<'p> {
+    /// `getTypeOfExpression`, called after `file` has been checked. tsgo does not memoize `checkExpression`, so `e` and its
+    /// subexpressions are checked again in the normal check mode with no contextual type pushed. Only what tsgo caches is reused:
+    /// resolved signatures, symbol types, and the parameter and return types of functions. The contextual type of an argument
+    /// therefore comes from the resolved signature, which decides again which literal types are preserved
+    /// (`isLiteralOfContextualType`) and what is a const context (`isConstContext`), and a generic function keeps its declared
+    /// type (`instantiateTypeWithSingleGenericCallSignature`). The cached type of an argument is the one from which the type
+    /// arguments of its call were inferred.
+    pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
+        // The first check, in which the calls around `e` are resolved.
+        self.type_of_expr(file, e);
+        let outer = self.begin_recheck();
+        let ty = match self.quick_type_of_expr(file, e) {
+            Some(quick) => quick,
+            None => self.check_expression_ex(file, e, CheckMode::empty()),
+        };
+        self.end_recheck(outer);
+        ty
+    }
+
+    /// `getTypeOfSymbol` for a member of an object literal or a JSX attribute whose `symbol.ValueDeclaration` is `p`. The first
+    /// request runs `checkPropertyAssignment`, `checkJsxAttribute` or the equivalent. `checkObjectLiteral` does not request it.
+    pub(super) fn get_type_of_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
+        // `checkShorthandPropertyAssignment(declaration, true)`: of `{ a = 1 }` it is the name that is checked.
+        let hir = self.hir(file);
+        if hir[p].kind == PropKind::Shorthand
+            && let ExprKind::Assign { target, .. } = hir[hir[p].value].kind
+        {
+            return self.type_of_expr(file, target);
+        }
+        self.type_of_literal_prop(file, p);
+        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
+        let outer = self.begin_recheck();
+        let ty = self.check_literal_member(file, p);
+        self.end_recheck(outer);
+        self.mode_of_recheck = mode_outside;
+        ty
+    }
+
+    /// Whether `flowAnalysisDisabled` is still set after `file` has been checked. `checkBlock` resets it at the end of a function
+    /// or module block, so it only stays set for a reference outside any such block.
+    pub(super) fn is_flow_analysis_left_disabled(&self, file: FileId) -> bool {
+        // A walk nests at most once per flow node.
+        if self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH
+            || self.p.flows_too_deep.len() == 0
+        {
+            return false;
+        }
+        (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {
+            self.p.flows_too_deep.get(&(file, e)).is_some()
+                && self.function_or_module_block_of(file, e) == crate::bind::Parent::File
+        })
+    }
+
+    /// `resolveEntityName`, `ignoreErrors`, `dontResolveAlias`
+    pub(super) fn resolve_entity(
+        &mut self,
+        file: FileId,
+        scope: crate::bind::ScopeId,
+        names: &[Atom],
+        meaning: SymFlags,
+    ) -> Option<Sym> {
+        let files = self.files();
+        let lookup = &mut |_, held, meaning| self.get_symbol(held, meaning);
+        files.resolve_entity_with(file, scope, names, meaning, false, lookup)
+    }
+}

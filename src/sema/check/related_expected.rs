@@ -9,9 +9,8 @@ impl Checker<'_> {
     /// against `target`.
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {
         // What is compared on the way says nothing about the comparison that is being reported.
-        let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
+        let too_complex = self.relation_too_complex;
         let related = self.where_expected_property_comes_from(target, name);
-        self.relation_gave_up = gave_up;
         self.relation_too_complex = too_complex;
         related
     }

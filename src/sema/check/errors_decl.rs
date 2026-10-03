@@ -17,33 +17,6 @@ impl Checker<'_> {
         self.check_index_signatures(file);
     }
 
-    /// `checkVariableLikeDeclaration`, of the elements of the pattern `pat` of a parameter of a function without a body: 2371, at what
-    /// the element binds.
-    pub(super) fn check_element_initializers(&mut self, file: FileId, pat: PatId) {
-        let hir = self.hir(file);
-        let elements: SmallVec<[(PatId, ExprId); 8]> = match hir[pat].kind {
-            PatKind::Object(props) => props
-                .iter()
-                .map(|p| &hir[p])
-                // `{ a: b }` there looks like a type that is none: that is said, and nothing else.
-                .filter(|prop| {
-                    prop.is_rest
-                        || prop.pos == hir[prop.value].pos
-                        || !matches!(hir[prop.value].kind, PatKind::Ident(_))
-                })
-                .map(|prop| (prop.value, prop.default))
-                .collect(),
-            PatKind::Array(elems) => elems.iter().map(|e| (hir[e].pat, hir[e].default)).collect(),
-            _ => return,
-        };
-        for (binding, initializer) in elements {
-            self.check_element_initializers(file, binding);
-            if initializer.is_some() {
-                self.error(file, binding, 2371, &[]);
-            }
-        }
-    }
-
     /// The end of `onSuccessfullyResolvedSymbol`: the default of a parameter, and the names in its pattern, are worked out before the
     /// parameter, and what the function declares after it, are there.
     fn check_parameter_references(&mut self, file: FileId) {

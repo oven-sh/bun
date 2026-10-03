@@ -118,7 +118,7 @@ impl Checker<'_> {
         self.xm_statements_out_of_place(&cx, top);
         self.xm_static_blocks(&cx);
         self.xm_import_calls_and_types(&cx);
-        // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
+        // Fast path: a cycle needs an alias that other files can import, or one that refers to another name in this file.
         let can_be_circular = cx.aliases.keys().any(|d| {
             matches!(
                 d,
@@ -126,6 +126,8 @@ impl Checker<'_> {
                     | Decl::ExportSpec(_)
                     | Decl::ExportStarAs(_)
                     | Decl::ExportExpr(_)
+                    | Decl::ModuleExports(_)
+                    | Decl::ExportsProperty(_)
             )
         });
         for (&decl, &sym) in &cx.aliases {
@@ -1199,11 +1201,10 @@ impl Checker<'_> {
             {
                 report(self, 1291, 1292);
             } else if type_only.is_some_and(|of| of != cx.file) {
+                let related = self.type_only_declaration_related(sym, self.atom_text(name));
                 report(self, 1289, 1290);
-                let code = if is_export_equals { 1289 } else { 1290 };
-                self.relate(hir[e].pos, code, |c| {
-                    c.type_only_declaration_related(sym, c.atom_text(name))
-                });
+                let said = self.reported.last_mut().unwrap();
+                said.related_information.extend(related);
             }
         }
     }
@@ -1387,57 +1388,25 @@ impl Checker<'_> {
         }))
     }
 
-    /// `checkImportType`, `getTypeFromImportTypeNode`
+    /// `checkImportType`: `getResolutionModeOverride`
     fn xm_import_calls_and_types(&mut self, cx: &Cx<'_>) {
-        let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
+        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+        if !cx.grammar || hir.import_attributes.is_empty() {
+            return;
+        }
         for (i, node) in hir.types.iter().enumerate() {
-            let TypeNodeKind::Import {
-                spec,
-                name,
-                is_typeof,
-                ..
-            } = node.kind
-            else {
+            if !matches!(node.kind, TypeNodeKind::Import { .. }) || bound.is_unchecked_type(i) {
                 continue;
-            };
-            if bound.is_unchecked_type(i) {
-                continue;
-            }
-            if !name.is_empty() {
-                self.check_import_type_names(cx.file, TypeNodeId(i as u32));
             }
             let within = TextRange {
                 pos: node.pos,
                 end: self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
             };
-            if cx.grammar
-                && let Some((_, object, attributes)) =
-                    self.xm_get_import_attributes(cx.file, within)
-            {
-                // The node starts at the brace: `with` is a property of the object around it.
+            if let Some((_, object, attributes)) = self.xm_get_import_attributes(cx.file, within) {
+                // The `ImportAttributes` node starts at the inner `{`: `with` is a property of the enclosing object literal.
                 let end = self.xm_end_of_import_attributes(cx.file, object);
                 let node = (cx.file, hir[object].pos, end);
                 self.get_resolution_mode_override(node, attributes, true);
-            }
-            if !name.is_empty() {
-                continue;
-            }
-            // The module itself, or what it says it is, has to be what is asked for.
-            let Some(module) = self.xm_module_of_specifier(cx.file, spec) else {
-                continue;
-            };
-            let flags = files.symbol_flags(files.module_value(module));
-            if flags == SymFlags::all() {
-                continue;
-            }
-            if !flags.intersects(if is_typeof {
-                SymFlags::VALUE
-            } else {
-                SymFlags::TYPE
-            }) {
-                let code = if is_typeof { 1339 } else { 1340 };
-                let end = within.end;
-                self.error_at((cx.file, node.pos, end), code, &[Arg::Atom(spec)]);
             }
         }
     }

@@ -99,19 +99,19 @@ describe.concurrent("bun check", () => {
     expect(stdout).toMatchInlineSnapshot(`
       "6 | const ada: User = {
       7 |   id: "1",
-            ^^
+            ^
       error: TS2322: Type 'string' is not assignable to type 'number'.
           at index.ts:7:3
 
       2 |   id: number;
-            ^^
+            ^
       note: The expected type comes from property 'id' which is declared here on type 'User'
          at index.ts:2:3
 
        9 | };
       10 | 
       11 | console.log(ada.nmae);
-                           ^^^^
+                           ^
       error: TS2339: Property 'nmae' does not exist on type 'User'.
           at index.ts:11:17"
     `);
@@ -201,19 +201,19 @@ describe.concurrent("bun check", () => {
     expect(pretty.stdout).toMatchInlineSnapshot(`
       "1 | import type { User } from "./types";
       2 | const ada: User = { id: 1 };
-                ^^^
+                ^
       error: TS2741: Property 'email' is missing in type '{ id: number; }' but required in type 'User'.
           at index.ts:2:7
 
       3 |   email: string;
-            ^^^^^
+            ^
       note: 'email' is declared here.
          at types.ts:3:3
 
       2 | const ada: User = { id: 1 };
       3 | const o = { colour: "red" };
       4 | o.color;
-            ^^^^^
+            ^
       error: TS2551: Property 'color' does not exist on type '{ colour: string; }'. Did you mean 'colour'?
           at index.ts:4:3
 
@@ -266,7 +266,7 @@ describe.concurrent("bun check", () => {
       const { stdout, stderr, exitCode } = await check(dir, ["--pretty"]);
       expect(stdout).toMatchInlineSnapshot(`
         "1 | console.lgo(0);
-                    ^^^
+                    ^
         error: TS2339: Property 'lgo' does not exist on type '{ log(...args: unknown[]): void; }'.
             at a.ts:1:9
             60 times in 2 files
@@ -284,7 +284,7 @@ describe.concurrent("bun check", () => {
         20 | console.lgo(19);
         21 | const a: string = 1, b: string = 2, c: string = 3;
         22 | missing;
-             ^^^^^^^
+             ^
         error: TS2304: Cannot find name 'missing'.
             at b.ts:22:1"
       `);
@@ -516,6 +516,17 @@ describe.concurrent("bun check", () => {
       mkdirSync(join(String(dir), "node_modules"));
       symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const { stdout, exitCode } = await check(dir, ["a.ts"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(process.platform === "win32")("a named pipe in the project directory is ignored", async () => {
+      using dir = project({ "a.ts": `export const a: string = 1;\n` });
+      // Reading a pipe that nobody writes to blocks forever.
+      expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
+      const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
         `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
       );
@@ -850,7 +861,7 @@ describe.concurrent("bun check", () => {
       expect(pretty.stdout).toMatchInlineSnapshot(`
         "1 | const é = "é";
         2 |  const 名前: number = é;
-                   ^^
+                   ^
         error: TS2322: Type 'string' is not assignable to type 'number'.
             at a.ts:2:8
 

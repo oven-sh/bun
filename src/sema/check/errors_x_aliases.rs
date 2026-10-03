@@ -41,6 +41,9 @@ pub(super) struct SpecifierSite {
     pub(super) is_not_validated: bool,
 }
 
+/// `directivesByLine`: (line, start of the directive, is `@ts-expect-error`, is used).
+type DirectivesByLine = Vec<(usize, u32, bool, bool)>;
+
 impl Checker<'_> {
     pub(super) fn check_x_aliases(&mut self, file: FileId) {
         let hir = self.hir(file);
@@ -144,6 +147,7 @@ impl Checker<'_> {
     /// the check does not. `markIdentifierAliasReferenced` asks `getResolvedSymbol` of every identifier that is emitted as an
     /// expression. The check has asked nearly all of them. Not the `q` of `export import r = q`, which it resolves as a namespace:
     /// where `q` is no value, that is 2708, 2693 or 2304. tsgo's test harness counts them (TS-1). Nothing else shows them.
+    #[cfg(feature = "baselines")]
     pub fn mark_linked_references_recursively(&self, file: FileId) -> bool {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let (options, module) = (&files.options, files.module(file));
@@ -751,23 +755,14 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let start = hir[reference].pos;
-            self.error(file, name, 1272, &[]);
-            self.relate(start, 1272, |c| {
-                // The first of its declarations that declares an alias.
-                let declared = c
-                    .files()
-                    .symbol(root)
-                    .decls
-                    .iter()
-                    .find_map(|&d| c.place_of_alias_declaration(root, d));
-                match declared {
-                    Some(at) => {
-                        vec![c.new_diagnostic(at, 1376, &[Arg::Atom(hir[name.at(0)].text)])]
-                    }
-                    None => Vec::new(),
-                }
-            });
+            // The first alias declaration of the symbol.
+            let declarations = self.files().symbol(root).decls.iter();
+            let related = { declarations }
+                .find_map(|&d| self.place_of_alias_declaration(root, d))
+                .map(|at| self.new_diagnostic(at, 1376, &[Arg::Atom(hir[name.at(0)].text)]));
+            self.error(file, name, 1272, &[])
+                .related_information
+                .extend(related);
         }
     }
 
@@ -1109,9 +1104,9 @@ impl Checker<'_> {
 
     // ───────────────────────────── comments that are about errors ─────────────────────────────
 
-    /// `getBindAndCheckDiagnosticsWithChecker`: nothing is said of a file that says `// @ts-nocheck`; what `// @ts-ignore` and
-    /// `// @ts-expect-error` are about is taken back; and an error that was expected and did not come is one: 2578.
-    /// `out` is everything the file has been told: this comes after all the rest.
+    /// `getBindAndCheckDiagnosticsWithChecker`: drops all diagnostics of a `// @ts-nocheck` file, removes the diagnostics suppressed by
+    /// `// @ts-ignore` and `// @ts-expect-error`, and reports TS2578 for an unused `@ts-expect-error`. Must run after all other
+    /// checker diagnostics of the file have been collected.
     pub fn check_x_comment_directives(&mut self, file: FileId) {
         let hir = self.hir(file);
         let text = &hir.text[..];
@@ -1121,39 +1116,10 @@ impl Checker<'_> {
             return;
         }
         let directives = &hir.comment_directives;
-        if directives.is_empty() {
+        let Some((line_starts, by_line)) = self.get_diagnostics_with_preceding_directives(file, 0)
+        else {
             return;
-        }
-        let line_starts = compute_ecma_line_starts(text);
-        let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
-        // `directivesByLine`: the line, where the directive starts, whether an error is expected, and whether one came.
-        let mut by_line: Vec<(usize, u32, bool, bool)> = Vec::new();
-        for &CommentDirective { start, kind, .. } in directives {
-            let expects_error = kind == CommentDirectiveKind::ExpectError;
-            let line = line_of(start);
-            // The last in a line is the one that counts.
-            if by_line.last().is_some_and(|last| last.0 == line) {
-                by_line.pop();
-            }
-            by_line.push((line, start, expects_error, false));
-        }
-        // `getDiagnosticsWithPrecedingDirectives`
-        self.reported.retain(|d| {
-            let mut line = line_of(d.start);
-            while line > 0 {
-                line -= 1;
-                if let Ok(i) = by_line.binary_search_by_key(&line, |directive| directive.0) {
-                    // `GetIncludeProcessorDiagnostics`: what loading the program came upon is gone through apart from the rest. It
-                    // is taken back, and is not the error that was expected.
-                    by_line[i].3 |= !matches!(d.code, 1006 | 2688 | 2726 | 2727 | 6053);
-                    return false;
-                }
-                if !is_comment_or_blank_line(text, line_starts[line] as usize) {
-                    break;
-                }
-            }
-            true
-        });
+        };
         // An error that may have been there and was not found is not said to be missing.
         if hir.has_errors || hir.syntax_errors > 0 {
             return;
@@ -1187,6 +1153,53 @@ impl Checker<'_> {
                 self.error_at((file, start, end), 2578, &[]);
             }
         }
+    }
+
+    /// `getDiagnosticsWithPrecedingDirectives` over `self.reported[first..]`: removes the diagnostics that a preceding `@ts-ignore` or
+    /// `@ts-expect-error` suppresses. Returns the line starts and the directive table, or `None` if the file has no directives.
+    pub(super) fn get_diagnostics_with_preceding_directives(
+        &mut self,
+        file: FileId,
+        first: usize,
+    ) -> Option<(Vec<u32>, DirectivesByLine)> {
+        let hir = self.hir(file);
+        let text = &hir.text[..];
+        let directives = &hir.comment_directives;
+        if directives.is_empty() {
+            return None;
+        }
+        let line_starts = compute_ecma_line_starts(text);
+        let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
+        let mut by_line = DirectivesByLine::new();
+        for &CommentDirective { start, kind, .. } in directives {
+            let expects_error = kind == CommentDirectiveKind::ExpectError;
+            let line = line_of(start);
+            // The last in a line is the one that counts.
+            if by_line.last().is_some_and(|last| last.0 == line) {
+                by_line.pop();
+            }
+            by_line.push((line, start, expects_error, false));
+        }
+        let mut seen = 0;
+        self.reported.retain(|d| {
+            seen += 1;
+            if seen <= first {
+                return true;
+            }
+            let mut line = line_of(d.start);
+            while line > 0 {
+                line -= 1;
+                if let Ok(i) = by_line.binary_search_by_key(&line, |directive| directive.0) {
+                    by_line[i].3 = true;
+                    return false;
+                }
+                if !is_comment_or_blank_line(text, line_starts[line] as usize) {
+                    break;
+                }
+            }
+            true
+        });
+        Some((line_starts, by_line))
     }
 
     /// Whether the type of everything written from `from` up to `to` has been worked out. An error that rests on one that has

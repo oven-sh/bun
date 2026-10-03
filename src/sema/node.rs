@@ -99,6 +99,15 @@ impl Kind {
     }
 
     /// `IsFunctionLikeKind`
+    /// `IsIterationStatement(node, false)`
+    pub fn is_iteration_statement(self) -> bool {
+        use Kind::*;
+        matches!(
+            self,
+            ForStatement | ForInStatement | ForOfStatement | DoStatement | WhileStatement
+        )
+    }
+
     pub fn is_function_like(self) -> bool {
         use Kind::*;
         self.is_function_like_declaration()

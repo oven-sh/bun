@@ -707,6 +707,8 @@ pub struct Redeclaration {
 /// Side tables of a [`File`], index for index.
 #[derive(Default)]
 pub struct Bound {
+    /// The tree was too deep to bind. Nothing else is filled in.
+    pub ran_out_of_stack: bool,
     pub symbols: Vec<Symbol>,
     pub scopes: Vec<Scope>,
     /// Each table is a run of `entries`, in the order the symbols were made in.
@@ -761,6 +763,10 @@ pub struct Bound {
     pub type_by_alias: Vec<bool>,
     /// The `this` types written inside a type literal, where there is no such thing. `getThisType`
     pub this_in_type_literal: FxHashSet<TypeNodeId>,
+    /// `None`: the binder did not reach the row. The parser can leave rows that nothing refers to (a construct dropped during error
+    /// recovery, an annotation in a parenthesized list that is not an arrow function, `<T>(x)` read as a cast). They have no symbol,
+    /// scope or owner, so a pass over a whole vector has to skip them. The same holds for `member_owner`, `fns[..].owner` and
+    /// `type_param_scope`.
     pub pat_parent: Vec<PatParent>,
     pub pat_symbol: Vec<SymbolId>,
     pub prop_owner: Vec<ExprId>,

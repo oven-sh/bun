@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::bind::{
-    Bound, ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
+    Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
 };
 use crate::program::SymbolTable;
 
@@ -24,9 +24,8 @@ struct Unused<'a> {
     atoms: &'a crate::atom::Interner,
     /// By symbol: the meanings it was referred to with.
     referenced: Vec<u8>,
-    /// The members of classes that are private and read somewhere.
-    read_members: Vec<MemberId>,
-    read_parameter_properties: Vec<ParamId>,
+    /// `symbolReferenceLinks`, of the private members of classes and the private parameter properties.
+    referenced_members: crate::util::FxHashSet<Sym>,
     /// Something was read under a key that could not be worked out: it may have been any member.
     reads_unknown_members: bool,
     /// By scope: the function, class, interface, enum, alias or namespace declared whose scope it is.
@@ -69,8 +68,7 @@ impl Checker<'_> {
             bound,
             atoms: &self.p.files.atoms,
             referenced: vec![0; bound.symbols.len()],
-            read_members: Vec::new(),
-            read_parameter_properties: Vec::new(),
+            referenced_members: Default::default(),
             reads_unknown_members: false,
             owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
             has_unchecked_returns: false,
@@ -305,13 +303,16 @@ impl Checker<'_> {
                         && let ExprKind::String(name) = hir[left].kind
                     {
                         // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
-                        let is_it = |m: MemberId, is_static: bool| {
-                            hir[m].key == PropKey::Private(name)
-                                && hir[m].flags.contains(Flags::STATIC) == is_static
+                        let find = |is_static: bool| {
+                            hir[class].members.iter().find(|&m| {
+                                hir[m].key == PropKey::Private(name)
+                                    && hir[m].flags.contains(Flags::STATIC) == is_static
+                            })
                         };
-                        let is_static = !hir[class].members.iter().any(|m| is_it(m, false));
-                        u.read_members
-                            .extend(hir[class].members.iter().filter(|&m| is_it(m, is_static)));
+                        if let Some(m) = find(false).or_else(|| find(true)) {
+                            let symbol = self.symbol_of_member(file, m);
+                            u.referenced_members.insert(symbol);
+                        }
                     }
                 }
                 _ => {}
@@ -338,7 +339,7 @@ impl Checker<'_> {
         // `const { x } = o`: `checkVariableLikeDeclaration`. Whatever a binding element goes by is looked up in what is taken apart, be it
         // the name of a rest element or of an element of an array pattern.
         for i in 0..hir.pats.len() {
-            if hir.is_in_with(hir.pats[i].pos) {
+            if hir.is_in_with(hir.pats[i].pos) || matches!(bound.pat_parent[i], PatParent::None) {
                 continue;
             }
             match hir.pats[i].kind {
@@ -471,29 +472,14 @@ impl Checker<'_> {
                 (prop, mapper) = (first, MapperId::IDENTITY);
             }
             let Some(first) = &found else {
-                let is_private = match &prop.source {
-                    PropSource::Symbol(sym) => {
-                        // Every access comes here: late binding is asked only of what can have more than one declaration.
-                        let symbol = self.files().symbol(*sym);
-                        let declarations = if symbol.decls.len() == 1
-                            && symbol.name != known::computed
-                            && !symbol.flags.contains(SymFlags::MERGED)
-                        {
-                            self.files().decls_of(*sym)
-                        } else {
-                            self.declarations_of_property(*sym)
-                        };
-                        declarations.iter().any(|&(f, decl)| match decl {
-                            Decl::Member(m) => {
-                                let member = &self.hir(f)[m];
-                                member.flags.contains(Flags::PRIVATE)
-                                    || matches!(member.key, PropKey::Private(_))
-                            }
-                            Decl::ParameterProperty(p) => {
-                                self.hir(f)[p].flags.contains(Flags::PRIVATE)
-                            }
-                            _ => false,
-                        })
+                let is_private = match self.value_declaration_of_prop(prop) {
+                    Some((f, Decl::Member(m))) => {
+                        let member = &self.hir(f)[m];
+                        member.flags.contains(Flags::PRIVATE)
+                            || matches!(member.key, PropKey::Private(_))
+                    }
+                    Some((f, Decl::ParameterProperty(p))) => {
+                        self.hir(f)[p].flags.contains(Flags::PRIVATE)
                     }
                     _ => false,
                 };
@@ -508,40 +494,29 @@ impl Checker<'_> {
             }
         }
         let Some((prop, _)) = found else { return };
-        let is_write_only = at.is_some_and(|e| u.is_write_only(e));
-        match &prop.source {
-            PropSource::Symbol(sym)
-                if let Some((of, Decl::ParameterProperty(p))) =
-                    self.files().value_declaration(*sym) =>
-            {
-                if of == file && !is_write_only {
-                    u.read_parameter_properties.push(p)
-                }
-            }
-            PropSource::Symbol(sym) => {
-                let members = &self.members_of_symbol(*sym);
-                // Written to and no more, unless writing runs a setter.
-                let has_setter = members.iter().any(|&(f, m)| {
-                    let member = &self.hir(f)[m];
-                    member.kind == MemberKind::Setter || member.flags.contains(Flags::ACCESSOR)
-                });
-                if is_write_only && !has_setter {
-                    return;
-                }
-                // Got at through the class itself from inside the member, whichever of its declarations that is: no use of it.
-                if (from_this.is_some()
-                    || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
-                    && let Some(inside) = at.or(from_this).and_then(|e| u.enclosing_member_fn(e))
-                    && members.contains(&(file, inside))
-                    && (is_this_type || self.is_uninstantiated(file, members))
-                {
-                    return;
-                }
-                u.read_members
-                    .extend(members.iter().filter(|m| m.0 == file).map(|m| m.1));
-            }
-            _ => {}
+        let PropSource::Symbol(symbol) = prop.source else {
+            return;
+        };
+        // A write-only access is not a reference, unless the write calls a setter.
+        if at.is_some_and(|e| u.is_write_only(e))
+            && !self
+                .flags_of_property(symbol)
+                .contains(SymFlags::SET_ACCESSOR)
+        {
+            return;
         }
+        // A self-reference from inside any declaration of the member is not a reference.
+        if (from_this.is_some() || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
+            && let Some(inside) = at.or(from_this).and_then(|e| u.enclosing_member_fn(e))
+            && self.symbol_of_member(file, inside) == symbol
+            && (is_this_type || {
+                let members = self.members_of_symbol(symbol);
+                self.is_uninstantiated(file, &members)
+            })
+        {
+            return;
+        }
+        u.referenced_members.insert(symbol);
     }
 
     /// Whether `createUnionOrIntersectionProperty` takes the two for one property: one declaration, of one type.
@@ -898,20 +873,23 @@ impl Unused<'_> {
         }
     }
 
-    /// A property `name` of something that could not be worked out is got at: whatever goes by the name may be what is read.
+    /// Property access `.name` on a receiver whose type did not resolve: conservatively marks every member of the file with that name as referenced.
     fn note_members_named(&mut self, name: Atom) {
-        let hir = self.hir;
-        self.read_members.extend(
-            (0..hir.members.len() as u32)
-                .map(MemberId)
-                .filter(|&m| hir[m].key.name() == Some(name)),
-        );
+        let (hir, bound) = (self.hir, self.bound);
+        let members = (0..hir.members.len())
+            .filter(|&m| hir.members[m].key.name() == Some(name))
+            .map(|m| bound.member_symbol[m]);
         let is_it = |p: &ParamId| {
             hir[*p].flags.contains(Flags::PRIVATE)
                 && matches!(hir[hir[*p].pat].kind, PatKind::Ident(n) if n == name)
         };
-        self.read_parameter_properties
-            .extend((0..hir.params.len() as u32).map(ParamId).filter(is_it));
+        let properties = (0..hir.params.len() as u32)
+            .map(ParamId)
+            .filter(is_it)
+            .map(|p| bound.symbol_of_declaration(Decl::ParameterProperty(p)));
+        let symbols = members.chain(properties).filter(|symbol| symbol.is_some());
+        self.referenced_members
+            .extend(symbols.map(|symbol| self.files.sym(self.file, symbol)));
     }
 
     /// The scope `e` is written in. Unless the binder kept it, that of the innermost function, class or namespace around.
@@ -1389,6 +1367,9 @@ impl Checker<'_> {
                 // Set for function declarations and named function expressions only. A method that several files declare in one
                 // interface is one symbol too, which is not tracked.
                 let symbol = bound.fn_symbol[i];
+                if matches!(bound.fns[i].owner, FnOwner::None) {
+                    continue;
+                }
                 if symbol.is_none() || u.is_declared_in_one_file(symbol) {
                     self.check_unused_type_parameters(u, hir.node(FnId(i as u32)), f.type_params);
                 }
@@ -1655,7 +1636,7 @@ impl Checker<'_> {
         let (hir, bound, file) = (u.hir, u.bound, u.file);
         for (i, member) in hir.members.iter().enumerate() {
             let m = MemberId(i as u32);
-            let MemberOwner::Class(class) = bound.member_owner[i] else {
+            let MemberOwner::Class(_) = bound.member_owner[i] else {
                 continue;
             };
             match member.kind {
@@ -1668,26 +1649,16 @@ impl Checker<'_> {
                     {
                         continue;
                     }
-                    let same_name = |other: MemberId| {
-                        let o = &hir[other];
-                        o.flags.contains(Flags::STATIC) == member.flags.contains(Flags::STATIC)
-                            && match (o.key, member.key) {
-                                (PropKey::Name(a), PropKey::Name(b))
-                                | (PropKey::Private(a), PropKey::Private(b)) => a == b,
-                                _ => false,
-                            }
-                    };
-                    let mut others = hir[class].members.iter();
-                    // It would have been said of the getter.
+                    let symbol = self.symbol_of_member(file, m);
+                    // Already reported on the getter.
                     if member.kind == MemberKind::Setter
-                        && others.any(|o| hir[o].kind == MemberKind::Getter && same_name(o))
+                        && self
+                            .flags_of_property(symbol)
+                            .contains(SymFlags::GET_ACCESSOR)
                     {
                         continue;
                     }
-                    let mut others = hir[class].members.iter();
-                    if !others.any(|o| same_name(o) && u.read_members.contains(&o))
-                        && !u.read_members.contains(&m)
-                    {
+                    if !u.referenced_members.contains(&symbol) {
                         let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
                         let name = hir.text.get(start as usize..end as usize);
                         let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));
@@ -1697,9 +1668,10 @@ impl Checker<'_> {
                 MemberKind::Constructor => {
                     for p in hir[member.func].params.iter() {
                         // The property, that is. The parameter may well be.
-                        if hir[p].flags.contains(Flags::PRIVATE)
-                            && !u.read_parameter_properties.contains(&p)
-                        {
+                        let property = bound.symbol_of_declaration(Decl::ParameterProperty(p));
+                        let is_referenced = property.is_some()
+                            && (u.referenced_members).contains(&self.files().sym(file, property));
+                        if hir[p].flags.contains(Flags::PRIVATE) && !is_referenced {
                             let at = self.place_of_token(file, hir[hir[p].pat].pos);
                             let name = hir.text(hir.node(hir[p].pat));
                             self.report_unused(u, hir.node(p), false, at, 6138, &[Arg::Atom(name)]);

@@ -88,10 +88,9 @@ impl Checker<'_> {
         }
         for (of, declaration) in declarations {
             if of == file
-                && let crate::bind::Decl::ModuleExports(assignment) = declaration
+                && let Some((start, end)) = self.error_range_of_declaration(file, declaration)
             {
-                let start = self.start_of(file, assignment);
-                self.error_at((file, start, self.end_of_expr(file, assignment)), 6424, &[]);
+                self.error_at((file, start, end), 6424, &[]);
             }
         }
     }

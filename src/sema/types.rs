@@ -1517,7 +1517,12 @@ impl TypeStore {
                     | PropSource::Copy(t, ..)
                     | PropSource::ReverseMapped(t, _) = p.source
                     {
-                        flags |= self.object_flags(t);
+                        let mut of_type = self.object_flags(t);
+                        // `getWidenedProperty` widens it when the property is read.
+                        if p.flags.contains(PropFlags::WIDEN) {
+                            of_type.remove(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL);
+                        }
+                        flags |= of_type;
                     }
                     flags |= self.mapper_record(p.mapper).1;
                 }

@@ -28,6 +28,12 @@ pub(super) enum AliasTarget {
     Unknown,
 }
 
+impl From<Sym> for AliasTarget {
+    fn from(symbol: Sym) -> Self {
+        AliasTarget::Symbol(symbol)
+    }
+}
+
 impl AliasTarget {
     pub(super) fn symbol(self) -> Option<Sym> {
         match self {
@@ -568,6 +574,25 @@ impl<'p> Checker<'p> {
         AliasTarget::Unknown
     }
 
+    /// `resolveSymbol`
+    pub(super) fn resolve_symbol(&mut self, symbol: impl Into<AliasTarget>) -> AliasTarget {
+        match symbol.into() {
+            AliasTarget::Symbol(alias) if self.files().is_non_local_alias(alias) => {
+                self.resolve_alias(alias)
+            }
+            symbol => symbol,
+        }
+    }
+
+    /// `getTypeOfSymbol`
+    pub(super) fn type_of_alias_target(&mut self, symbol: AliasTarget) -> TypeId {
+        match symbol {
+            AliasTarget::Symbol(symbol) => self.type_of_symbol(symbol),
+            AliasTarget::Property(_, _, ty) => ty,
+            AliasTarget::Unknown => TypeId::ERROR,
+        }
+    }
+
     /// The end of `getTargetOfAliasLikeExpression`: in `export = e`, `export default e`, `module.exports = e` and `exports.x = e`, an
     /// entity name `e` that `resolveEntityName` does not resolve stands for the `resolvedSymbol` that checking `e` records.
     fn resolved_symbol_of_alias_like_expression(&mut self, sym: Sym) -> AliasTarget {
@@ -683,19 +708,6 @@ impl<'p> Checker<'p> {
             reports_errors,
             &mut |_, held, meaning| self.get_symbol(held, meaning),
         )
-    }
-
-    /// `resolveEntityName`, `ignoreErrors`, `dontResolveAlias`
-    pub(super) fn resolve_entity(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        names: &[Atom],
-        meaning: SymFlags,
-    ) -> Option<Sym> {
-        let files = self.files();
-        let lookup = &mut |_, held, meaning| self.get_symbol(held, meaning);
-        files.resolve_entity_with(file, scope, names, meaning, false, lookup)
     }
 
     /// `resolveEntityName`, `dontResolveAlias`
@@ -1631,7 +1643,10 @@ impl<'p> Checker<'p> {
                 self.hir(file)[e].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
             )
-            && self.enter(Query::Expr(file, e))
+            && {
+                self.instantiation_count = 0;
+                self.enter(Query::Expr(file, e))
+            }
         {
             let quick = self.quick_type_of_expr(file, e);
             self.leave();
@@ -3260,8 +3275,7 @@ impl<'p> Checker<'p> {
             && self.inference_contexts.is_empty()
             && self.held_for_now.is_empty()
             // These are raised for whoever asked, each time.
-            && !(self.relation_gave_up
-                || self.relation_too_complex
+            && !(self.relation_too_complex
                 || !self.relations_too_deep.is_empty())
             && self.reliability == 0
         {

@@ -7,7 +7,7 @@
 
 use super::sink::held;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, Symbol, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
 use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
@@ -100,7 +100,7 @@ impl Checker<'_> {
         self.check_circular_mapped_properties(file);
         for p in 0..hir.type_params.len() {
             let constraint = hir.type_params[p].constraint;
-            if constraint.is_none() {
+            if constraint.is_none() || bound.type_param_scope[p].is_none() {
                 continue;
             }
             let own = TypeParamId(p as u32);
@@ -121,10 +121,10 @@ impl Checker<'_> {
                 let start = start_of_constraint(hir, constraint);
                 let end = self.end_of_type_node_from(file, constraint, start);
                 let name = self.atom_text(hir.type_params[p].name);
-                self.error_at((file, start, end), 2313, &[Arg::Text(&name)]);
-                self.relate(start, 2313, |c| {
-                    c.origin_of_circular_constraint(file, own, start, end)
-                });
+                let related = self.origin_of_circular_constraint(file, own, start, end);
+                self.error_at((file, start, end), 2313, &[Arg::Text(&name)])
+                    .related_information
+                    .extend(related);
             }
         }
     }
@@ -190,7 +190,8 @@ impl Checker<'_> {
             if !matches!(
                 hir[member].kind,
                 MemberKind::Property | MemberKind::Getter | MemberKind::Setter
-            ) {
+            ) || matches!(bound.member_owner[i], MemberOwner::None)
+            {
                 continue;
             }
             // `getTypeOfSymbol`: the properties and accessors among the declarations of one symbol are one property, known by the
@@ -205,6 +206,9 @@ impl Checker<'_> {
         }
         for i in 0..hir.fns.len() {
             let func = FnId(i as u32);
+            if matches!(bound.fns[i].owner, FnOwner::None) {
+                continue;
+            }
             // An accessor of a class, an interface or a type literal that says what it is was asked above, with the property it makes.
             let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
                 && !(hir[func].kind == FnKind::Getter

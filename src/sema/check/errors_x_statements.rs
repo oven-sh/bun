@@ -727,17 +727,6 @@ impl Checker<'_> {
             self.reported
                 .retain(|d| !matches!(d.code, 1103 | 1308 | 1545 | 18041));
         }
-        // `checkBreakOrContinueStatement`, `checkLabeledStatement`: no other matter of grammar is brought up of what 1036 is said of.
-        let refused: SmallVec<[u32; 4]> = (self.reported.iter())
-            .filter(|d| d.code == 1036)
-            .map(|d| d.start)
-            .collect();
-        if !refused.is_empty() {
-            self.reported.retain(|d| {
-                !matches!(d.code, 1104 | 1105 | 1107 | 1114 | 1115 | 1116)
-                    || !refused.contains(&d.start)
-            });
-        }
         // `checkExternalImportOrExportDeclaration` reports 1141 for a module specifier that is no string literal and returns.
         for &specifier in &hir.specifier_expressions {
             self.never_check(

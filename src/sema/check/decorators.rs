@@ -441,15 +441,10 @@ impl<'p> Checker<'p> {
             }
             if !hir.has_parse_diagnostics
                 && !written.is_parenthesized
-                && self.invalid_syntax_in_decorator(file, e).is_some()
+                && let Some((from, to)) = self.invalid_syntax_in_decorator(file, e)
             {
-                self.error_at((file, written.start, written.end), 1497, &[]);
-                self.relate(written.start, 1497, |c| {
-                    c.invalid_syntax_in_decorator(file, e)
-                        .map(|(from, to)| Reported::bare((file, from, to), 1498))
-                        .into_iter()
-                        .collect()
-                });
+                self.error_at((file, written.start, written.end), 1497, &[])
+                    .add_related_info(Reported::bare((file, from, to), 1498));
             }
             self.check_decorator(file, owner, e, written);
         }
@@ -545,10 +540,14 @@ impl<'p> Checker<'p> {
             return;
         }
         if sigs.is_empty() {
-            self.error_at((file, start, 0), head, &[]);
-            self.note(start, end, 2349, &[]);
-            self.explain_chain(start, 2349, |c| c.invocation_error_lines(apparent, false));
-            self.explain_under(start, 2349, head, &[]);
+            self.invocation_error(
+                (file, start, end),
+                2349,
+                e,
+                apparent,
+                (false, false),
+                Some(head),
+            );
             return;
         }
         let Some(expected) = self.decorator_call_signature(file, owner) else {

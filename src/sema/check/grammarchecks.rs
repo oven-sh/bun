@@ -104,6 +104,67 @@ impl Checker<'_> {
             || self.grammar_error_in_modifiers(file, node).is_some()
     }
 
+    /// `checkGrammarBreakOrContinueStatement`
+    pub(super) fn check_grammar_break_or_continue_statement(
+        &mut self,
+        file: FileId,
+        s: StmtId,
+    ) -> bool {
+        let hir = self.hir(file);
+        let (target_label, is_break) = match hir[s].kind {
+            StmtKind::Break(label) => (label, true),
+            StmtKind::Continue(label) => (label, false),
+            _ => return false,
+        };
+        let mut current = hir.node(s);
+        while current.is_some() {
+            let kind = hir.kind(current);
+            if kind.is_function_like() || kind == Kind::ClassStaticBlockDeclaration {
+                return self.grammar_error_on_node(file, s, 1107, &[]);
+            }
+            match kind {
+                Kind::LabeledStatement => {
+                    if let NodeData::Stmt(labeled) = hir.data(current)
+                        && let StmtKind::Labeled { label, body } = hir[labeled].kind
+                        && target_label.is_some()
+                        && label == target_label
+                    {
+                        // `continue` can only target labels that are on iteration statements.
+                        return !is_break
+                            && !is_iteration_statement(hir, body, true)
+                            && self.grammar_error_on_node(file, s, 1115, &[]);
+                    }
+                }
+                Kind::SwitchStatement if is_break && target_label.is_none() => return false,
+                _ if target_label.is_none() && kind.is_iteration_statement() => return false,
+                _ => {}
+            }
+            current = hir.parent(current);
+        }
+        let code = match (target_label.is_some(), is_break) {
+            (true, true) => 1116,
+            (true, false) => 1115,
+            (false, true) => 1105,
+            (false, false) => 1104,
+        };
+        self.grammar_error_on_node(file, s, code, &[])
+    }
+
+    /// Duplicate-label check from `checkLabeledStatement` (TS1114).
+    pub(super) fn check_grammar_duplicate_label(&mut self, file: FileId, s: StmtId, label: Atom) {
+        let hir = self.hir(file);
+        let mut current = hir.parent(hir.node(s));
+        while current.is_some() && !hir.kind(current).is_function_like() {
+            if let NodeData::Stmt(outer) = hir.data(current)
+                && matches!(hir[outer].kind, StmtKind::Labeled { label: it, .. } if it == label)
+            {
+                self.grammar_error_at((file, hir[s].start, 0), 1114, &[Arg::Atom(label)]);
+                break;
+            }
+            current = hir.parent(current);
+        }
+    }
+
     /// `checkGrammarFunctionLikeDeclaration`
     pub(super) fn check_grammar_function_like_declaration(
         &mut self,
@@ -900,4 +961,16 @@ fn equals_token_after_name(text: &[u8], name: u32) -> Option<u32> {
         at = skip_trivia(text, at + 1);
     }
     (text.get(at) == Some(&b'=')).then_some(at as u32)
+}
+
+/// `IsIterationStatement`
+fn is_iteration_statement(
+    hir: &hir::File,
+    mut s: StmtId,
+    look_in_labeled_statements: bool,
+) -> bool {
+    while look_in_labeled_statements && let StmtKind::Labeled { body, .. } = hir[s].kind {
+        s = body;
+    }
+    hir.kind(hir.node(s)).is_iteration_statement()
 }

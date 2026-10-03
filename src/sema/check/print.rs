@@ -6,7 +6,6 @@
 
 use super::enclosing_declaration::Enclosing;
 
-use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
 use crate::resolve::remove_file_extension;
@@ -49,9 +48,6 @@ pub(super) const DECLARATION_EMIT_NODE_BUILDER_FLAGS: u32 = WRITE_CLASS_EXPRESSI
 /// `FlagsIgnoreErrors`, which `typeToStringEx`, `symbolToStringEx` and `signatureToStringEx` add.
 const IGNORE_ERRORS: u32 =
     ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS | ALLOW_THIS_IN_OBJECT_LITERAL;
-/// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
-const WRITTEN_OUT: u32 = 1 << 16;
-
 const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
 const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
@@ -127,6 +123,7 @@ impl Checker<'_> {
     }
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
+    #[cfg(feature = "baselines")]
     pub(super) fn type_to_string_for_baseline_with(
         &mut self,
         ty: TypeId,
@@ -151,11 +148,6 @@ impl Checker<'_> {
     /// `typeToStringEx(t, nil, TypeFormatFlagsNoTypeReduction)`: an intersection nothing can be is written out, not as `never`.
     pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> String {
         self.printed(|c, out| c.write_type(out, ty, NO_TYPE_REDUCTION))
-    }
-
-    /// `typeToString` of a type that is made of what `ty` is made of and has no `alias`.
-    pub fn type_to_string_written_out(&mut self, ty: TypeId) -> String {
-        self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING | WRITTEN_OUT))
     }
 
     /// `t.symbol.ValueDeclaration`, if that is an expression (`ast.IsExpression`), and the scope names are looked up in from it.
@@ -243,6 +235,7 @@ impl Checker<'_> {
     }
 
     /// `getNameOfSymbolAsWritten`, of the symbol of the function expression or arrow function `e`, which has no `Sym`.
+    #[cfg(feature = "baselines")]
     pub(super) fn name_of_function_expression(&mut self, file: FileId, e: ExprId) -> String {
         to_valid_utf8(with_printer(self, None, None, 0, |printer| {
             printer
@@ -251,10 +244,38 @@ impl Checker<'_> {
         }))
     }
 
+    /// `getNameOfSymbolAsWritten` for the `__object` symbol of an object literal: the name of the variable it initializes, else `__object`.
+    pub(super) fn name_of_object_literal(&self, file: FileId, e: ExprId) -> Vec<u8> {
+        match self.bound(file).expr_parent[e.idx()] {
+            Parent::VarInit(declaration) if !is_parenthesized(self.hir(file), e) => {
+                self.declaration_name_of_variable(file, self.hir(file)[declaration].pat)
+            }
+            _ => b"__object".to_vec(),
+        }
+    }
+
+    /// `getNameOfSymbolAsWritten` for the `__type` symbol of a type literal: the name of the variable it annotates, else `__type`.
+    pub(super) fn name_of_type_literal(&self, file: FileId, node: TypeNodeId) -> Vec<u8> {
+        let mut declarations = self.hir(file).var_decls.iter();
+        match declarations.find(|declaration| declaration.ty == node) {
+            Some(declaration) => self.declaration_name_of_variable(file, declaration.pat),
+            None => b"__type".to_vec(),
+        }
+    }
+
+    /// `DeclarationNameToString` of a variable's name. An identifier is read from the atom table: default library files do not retain their text.
+    fn declaration_name_of_variable(&self, file: FileId, pat: PatId) -> Vec<u8> {
+        let hir = self.hir(file);
+        match hir[pat].kind {
+            PatKind::Ident(name) => self.files().atoms.bytes(name).to_vec(),
+            _ => hir.text[hir[pat].pos as usize..self.end_of_pat(file, pat) as usize].to_vec(),
+        }
+    }
+
     /// `symbolToString`, of a property.
     pub(super) fn write_prop(&mut self, out: &mut Vec<u8>, prop: &Prop) {
         let mut text = with_printer(self, None, None, IGNORE_ERRORS, |printer| {
-            printer.name_of_property_as_written(prop, 0)
+            printer.name_of_property_as_written(prop)
         });
         out.append(&mut text);
     }
@@ -293,7 +314,7 @@ impl Checker<'_> {
 
     /// `t.alias`, as far as it can be told: the type alias `type_to_string` names `ty` by. `None`: it writes `ty` out.
     pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
-        self.alias_of_type(ty).map(|alias| alias.0)
+        self.alias_symbol_of_type(ty)
     }
 
     /// `c.varianceTypeParameter = parameter`: the type parameter `sub-T` and `super-T` are named after, for as long as the error of
@@ -312,7 +333,7 @@ impl<'p> Checker<'p> {
     pub(super) fn serialize_type_for_declaration(
         &mut self,
         file: FileId,
-        declaration: Option<SyntaxNode>,
+        declaration: Option<hir::Node>,
         ty: TypeId,
         enclosing_declaration: Enclosing,
         flags: u32,
@@ -458,7 +479,7 @@ fn with_printer<'p, T>(
     flags: u32,
     print: impl FnOnce(&mut Printer<'_, 'p>) -> T,
 ) -> T {
-    let saved = (checker.relation_gave_up, checker.relation_too_complex);
+    let saved = checker.relation_too_complex;
     let is_barrier = !std::mem::take(&mut checker.printing_closes_circles);
     if is_barrier {
         checker.eager.push(checker.stack.len());
@@ -498,7 +519,7 @@ fn with_printer<'p, T>(
     if is_barrier {
         checker.eager.pop();
     }
-    (checker.relation_gave_up, checker.relation_too_complex) = saved;
+    checker.relation_too_complex = saved;
     result
 }
 
@@ -650,7 +671,7 @@ pub(super) trait SymbolTracker<'p> {
     ) -> bool;
     fn report(&mut self, c: &mut Checker<'p>, report: Report);
     /// `ReportInferenceFallback`, of `node` of `file`.
-    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: SyntaxNode);
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: hir::Node);
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p>);
 }
@@ -795,6 +816,37 @@ pub(super) fn quoted(text: &[u8], quote: u8, escapes_non_ascii: bool) -> Vec<u8>
     out
 }
 
+/// The properties whose `Declarations` those of `prop` are, one after the other, until `visit` says true: itself, if it is declared.
+/// `Checker::declared_properties` without the list.
+pub(super) fn for_each_declared<'a>(
+    prop: &'a Prop,
+    visit: &mut dyn FnMut(&'a Prop) -> bool,
+) -> bool {
+    match &prop.source {
+        PropSource::Type(_) => false,
+        PropSource::Intersected(_, parts)
+        | PropSource::Copy(_, parts, _)
+        | PropSource::ReverseMapped(_, parts) => {
+            parts.iter().any(|part| for_each_declared(part, visit))
+        }
+        PropSource::Mapped(..) => {
+            let parts = prop.declared_by_modifiers_property();
+            parts.iter().any(|part| for_each_declared(part, visit))
+        }
+        _ => visit(prop),
+    }
+}
+
+/// What has `symbol.Declarations[0]`.
+pub(super) fn first_declared(prop: &Prop) -> Option<&Prop> {
+    let mut first = None;
+    for_each_declared(prop, &mut |declared| {
+        first = Some(declared);
+        true
+    });
+    first
+}
+
 fn string_mapping_name(kind: StringMappingKind) -> &'static [u8] {
     match kind {
         StringMappingKind::Uppercase => b"Uppercase",
@@ -915,7 +967,7 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `ReportInferenceFallback`, which does not wait.
-    fn report_inference_fallback(&mut self, file: FileId, node: SyntaxNode) {
+    fn report_inference_fallback(&mut self, file: FileId, node: hir::Node) {
         if let Some(tracker) = self.tracker.as_deref_mut() {
             tracker.report_inference_fallback(self.c, file, node);
         }
@@ -1140,9 +1192,7 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => {}
         }
-        let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
-        if !is_written_out
-            && let Some((alias, arguments)) = self.c.alias_of_type(ty)
+        if let Some((alias, arguments)) = self.c.alias_of_type(ty)
             && (self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE != 0
                 || self.is_type_symbol_accessible(alias))
         {
@@ -1471,30 +1521,6 @@ impl<'p> Printer<'_, 'p> {
         declared.name == known::default && declared.parent.is_some()
     }
 
-    /// The string, the number or the `[computed]` name written at `pos`, as it is written. `None`: something else is written there,
-    /// or the text of the file is not kept. `is_computed`: `pos` may be that of the expression in the brackets.
-    fn written_literal_name(&self, file: FileId, pos: u32, is_computed: bool) -> Option<Vec<u8>> {
-        let text = &self.c.hir(file).text[..];
-        let mut start = pos as usize;
-        if is_computed && text.get(start) != Some(&b'[') {
-            let mut before = start.min(text.len());
-            while before > 0 && (text[before - 1].is_ascii_whitespace() || text[before - 1] == b'(')
-            {
-                before -= 1;
-            }
-            if before == 0 || text[before - 1] != b'[' {
-                return None;
-            }
-            start = before - 1;
-        }
-        let end = match *text.get(start)? {
-            b'[' | b'"' | b'\'' | b'0'..=b'9' => self.c.end_of_name_at(file, start as u32) as usize,
-            _ => return None,
-        };
-        let end = end.clamp(start, text.len());
-        Some(text[start..end].to_vec())
-    }
-
     /// `a`, `a.b.c`
     fn entity_name_text(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
         match self.c.hir(file)[e].kind {
@@ -1506,197 +1532,79 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
-    /// `GetTextOfNode`, of the name at `start`, if that says more than its atom: the unicode escapes of an identifier, the quotes of a
-    /// `ModuleExportName`.
-    fn text_of_name_at(&self, file: FileId, start: u32) -> Option<Vec<u8>> {
-        self.text_of_name(file, start, self.c.end_of_token_at(file, start))
+    /// `GetTextOfNode`. Empty: it is missing, the tree does not say where it starts, or the text is not kept (the default library).
+    fn get_text_of_node(&self, file: FileId, node: hir::Node) -> &'p [u8] {
+        let hir = self.c.hir(file);
+        let (start, end) = (hir.start(node), self.c.end_of_node(file, node));
+        let text = hir.text.get(start as usize..end as usize);
+        text.filter(|_| start != 0).unwrap_or_default()
     }
 
-    /// The same, of the name from `start` to `end`.
-    fn text_of_name(&self, file: FileId, start: u32, end: u32) -> Option<Vec<u8>> {
-        let written = self.c.hir(file).text.get(start as usize..end as usize)?;
-        (written.contains(&b'\\') || matches!(written.first(), Some(b'"' | b'\'')))
-            .then(|| written.to_vec())
-    }
-
-    /// `DeclarationNameToString`, of the name `key` written at `pos`.
-    fn declaration_name_to_string(&self, file: FileId, key: PropKey, pos: u32) -> Vec<u8> {
-        match key {
-            // `pos` may be that of the expression in the brackets.
-            PropKey::Computed(_) => None,
-            _ => self.text_of_name_at(file, pos),
+    /// `DeclarationNameToString`. The source text is used only for what `node.Text()` lacks, the escapes of an identifier. A name is not
+    /// always at `start` (the name of an `@overload` is at the tag), and a missing name still has a token at that position.
+    fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
+        match self.get_text_of_node(file, name) {
+            written if written.contains(&b'\\') => written.to_vec(),
+            _ => self.property_key_text(file, name),
         }
-        .unwrap_or_else(|| self.property_key_text(file, key, pos))
     }
 
     /// The same of a clone of the name, which the printer gives its `node.Text()`: an identifier is without its escapes.
-    fn property_key_text(&self, file: FileId, key: PropKey, pos: u32) -> Vec<u8> {
-        if let Some(text) =
-            self.written_literal_name(file, pos, matches!(key, PropKey::Computed(_)))
-        {
-            return text;
-        }
-        match key {
-            PropKey::Name(known::empty) => b"(Missing)".to_vec(),
-            PropKey::Name(name) => {
-                let name = self.text(name);
-                let is_bare = is_identifier(&name)
-                    || name.first().is_some_and(u8::is_ascii_digit)
-                    // The name of a JSX attribute.
-                    || !self.c.hir(file).text.is_empty();
-                if is_bare {
-                    name
-                } else {
-                    quoted(&name, b'"', false)
-                }
+    fn property_key_text(&self, file: FileId, name: hir::Node) -> Vec<u8> {
+        let hir = self.c.hir(file);
+        let (text, written) = (hir.text(name), self.get_text_of_node(file, name));
+        match (hir.kind(name), written.first()) {
+            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => written.to_vec(),
+            (Kind::ComputedPropertyName, _) => match hir.data(hir.expression(name)) {
+                NodeData::Expr(e) => self.entity_name_text(file, e),
+                _ => None,
             }
-            PropKey::Private(name) => self.c.written_name(name).to_vec(),
-            PropKey::Computed(e) => match self.entity_name_text(file, e) {
-                Some(name) => cat!(b"[", name, b"]"),
-                None => b"(Missing)".to_vec(),
-            },
+            .map_or(b"(Missing)".to_vec(), |name| cat!(b"[", name, b"]")),
+            // The kind decides where there is no text, in the default library. A JSON file says `StringLiteral` of every name, be it a bare word.
+            (Kind::StringLiteral, _) if hir.text.is_empty() => {
+                quoted(&self.text(text), b'"', false)
+            }
+            (Kind::PrivateIdentifier, _) if text.is_some() => self.c.written_name(text).to_vec(),
+            _ if text.is_some() && text != known::empty => self.text(text),
             // A name that names nothing (`getDeclarationName`), as it is written: `#x` with no class around it.
-            PropKey::None if is_private_name_at(self.c.hir(file), pos) => self
-                .c
-                .source_text(file, pos, self.c.end_of_name_at(file, pos))
-                .into_bytes(),
-            PropKey::None => b"(Missing)".to_vec(),
+            (_, Some(b'#')) => written.to_vec(),
+            _ => b"(Missing)".to_vec(),
         }
     }
 
     /// `DeclarationNameToString(GetNameOfDeclaration(decl))`
     fn name_of_declaration(&self, file: FileId, decl: Decl) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
+        // `GetNonAssignedNameOfDeclaration`
         let name = match decl {
-            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => match hir[pat].kind {
-                PatKind::Ident(name) => name,
-                _ => Atom::NONE,
-            },
-            Decl::Fn(function) => hir[function].name,
-            Decl::Class(class) => hir[class].name,
-            Decl::Interface(interface) => hir[interface].name,
-            Decl::Alias(alias) => hir[alias].name,
-            Decl::Enum(enumeration) => hir[enumeration].name,
-            // `[e]`, which is an error: as it is written.
-            Decl::EnumMember(member) if hir[member].name.is_none() => {
-                let start = hir[member].pos;
-                let end = self.c.end_of_name_at(file, start);
-                return Some(self.c.source_text(file, start, end).into_bytes());
-            }
-            Decl::EnumMember(member) => {
-                return Some(self.declaration_name_to_string(
-                    file,
-                    PropKey::Name(hir[member].name),
-                    hir[member].pos,
-                ));
-            }
-            Decl::Module(module) => match hir[module].name {
-                ModuleName::Ident(name) => name,
-                ModuleName::String(name) => {
-                    return Some(
-                        self.written_literal_name(file, hir[module].name_pos, false)
-                            .unwrap_or_else(|| quoted(&self.text(name), b'"', false)),
-                    );
-                }
-                ModuleName::Global => known::global,
-            },
-            Decl::TypeParam(parameter) => hir[parameter].name,
-            Decl::ImportDefault(import) => hir[import].default,
-            Decl::ImportNamespace(import) => hir[import].namespace,
-            Decl::ImportSpec(specifier) => hir[specifier].local,
-            Decl::ImportEquals(import) => hir[import].name,
-            Decl::ExportSpec(specifier) => hir[specifier].exported,
-            Decl::ExportStarAs(statement)
-            | Decl::ExportExpr(statement)
-            | Decl::UmdGlobal(statement) => match hir[statement].kind {
-                StmtKind::ExportStar { alias, .. } => alias,
-                StmtKind::ExportAsNamespace(name) => name,
-                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => match hir[e].kind {
-                    ExprKind::Ident(name) => name,
-                    _ => Atom::NONE,
-                },
-                _ => Atom::NONE,
-            },
             Decl::ExportsProperty(e) | Decl::Expando(e) => {
-                return self
-                    .c
-                    .name_of_assignment_declaration(file, e)
-                    .map(String::into_bytes);
+                let name = self.c.name_of_assignment_declaration(file, e);
+                return name.map(String::into_bytes);
             }
-            _ => Atom::NONE,
+            // It IS the name. `hir.node(decl)` would go up to what it names and `name` down again.
+            Decl::Var(name) | Decl::Param(name) | Decl::Require(name) => hir.node(name),
+            Decl::ExportExpr(s) => match hir[s].kind {
+                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
+                    if matches!(hir[e].kind, ExprKind::Ident(_)) =>
+                {
+                    hir.node(e)
+                }
+                _ => hir::Node::NONE,
+            },
+            _ => hir.name(hir.node(decl)),
         };
-        if name.is_none() {
-            return None;
-        }
-        if let Some(text) = self
-            .c
-            .declaration_name_start(file, decl)
-            .and_then(|start| self.text_of_name_at(file, start))
-        {
-            return Some(text);
-        }
-        if name == known::empty {
-            return Some(b"(Missing)".to_vec());
-        }
-        Some(self.text(name))
+        name.is_some()
+            .then(|| self.declaration_name_to_string(file, name))
     }
 
     /// `DeclarationNameToString(GetAssignedName(e))`: the name of what `e` is given to.
     fn name_of_initialized_variable(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let parent = bound.expr_parent[e.idx()];
-        // What is in parentheses is given to nothing.
-        if is_parenthesized(self.c.hir(file), e) {
-            return None;
-        }
-        if let Parent::VarInit(declaration) = parent {
-            return match hir[hir[declaration].pat].kind {
-                PatKind::Ident(name) => Some(self.text(name)),
-                _ => None,
-            };
-        }
-        let written = |pat: PatId| {
-            self.c
-                .source_text(file, hir[pat].pos, self.c.end_of_pat(file, pat))
-                .into_bytes()
-        };
-        match parent {
-            // Not the attribute of a JSX element.
-            Parent::Prop(p)
-                if hir[p].kind == PropKind::Init
-                    && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-            {
-                Some(self.declaration_name_to_string(file, hir[p].key, hir[p].pos))
-            }
-            Parent::PatPropDefault(p) => Some(written(hir[p].value)),
-            Parent::PatElemDefault(p) => Some(written(hir[p].pat)),
-            Parent::Expr(outer) if outer.is_some() => {
-                // `{ a = e }` is a `ShorthandPropertyAssignment`.
-                if matches!(bound.expr_parent[outer.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
-                {
-                    return None;
-                }
-                let left = match hir[outer].kind {
-                    ExprKind::Assign { target, value, .. } if value == e => target,
-                    ExprKind::Binary { left, right, .. } if right == e => left,
-                    _ => return None,
-                };
-                if is_parenthesized(self.c.hir(file), left) {
-                    return None;
-                }
-                match hir[left].kind {
-                    ExprKind::Ident(name) | ExprKind::Dot { name, .. } => Some(self.text(name)),
-                    ExprKind::Index { index, .. }
-                        if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_)) =>
-                    {
-                        let end = self.c.end_inside_parentheses(file, index);
-                        Some(self.c.source_text(file, hir[index].pos, end).into_bytes())
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
+        let hir = self.c.hir(file);
+        let start = self.c.bound(file).get_assigned_name(hir, e)?;
+        let end = self.c.end_of_name_at(file, start);
+        hir.text
+            .get(start as usize..end as usize)
+            .map(<[u8]>::to_vec)
     }
 
     /// `getNameOfSymbolAsWritten`. `is_initial`: `FlagsInInitialEntityName`.
@@ -1731,6 +1639,10 @@ impl<'p> Printer<'_, 'p> {
                         .unwrap_or_else(|| b"(Anonymous function)".to_vec());
                 }
             }
+            Some(&(file, Decl::TypeLiteral(node))) => {
+                return self.c.name_of_type_literal(file, node);
+            }
+            Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
             Some(&(file, Decl::File)) => {
                 return cat! { b"\"", remove_file_extension(&files.module(file).path), b"\"" };
             }
@@ -2111,7 +2023,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// The symbol or the alias a type that is written as a name goes by.
     fn symbol_of_reference(&mut self, ty: TypeId) -> Option<Sym> {
-        if let Some((alias, _)) = self.c.alias_of_type(ty) {
+        if let Some(alias) = self.c.alias_symbol_of_type(ty) {
             return Some(alias);
         }
         match self.c.data(ty) {
@@ -2160,8 +2072,9 @@ impl<'p> Printer<'_, 'p> {
             ScopeKind::Fn(function) => {
                 if let FnOwner::Member(member) = bound.fns[function.idx()].owner {
                     let owner = bound.member_owner[member.idx()];
-                    let member = &self.c.hir(file)[member];
-                    let name = self.declaration_name_to_string(file, member.key, member.name_pos);
+                    let hir = self.c.hir(file);
+                    let name = hir.node(member).with(Part::Name);
+                    let name = self.declaration_name_to_string(file, name);
                     // `getSymbolChain`: a method is reached through its class.
                     if self.enclosing_declaration.is_some()
                         && let MemberOwner::Class(class) = owner
@@ -3254,9 +3167,12 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// Where the first declaration of `prop` is.
-    fn place_of_property(&mut self, prop: &Prop, depth: u32) -> Place {
+    fn place_of_property(&mut self, prop: &Prop) -> Place {
         let at = |c: &Checker<'p>, file: FileId, pos: u32| {
             Place::At(c.place_in_program_order(file, pos))
+        };
+        let Some(prop) = first_declared(prop) else {
+            return Place::Nowhere;
         };
         match &prop.source {
             PropSource::Literal(file, written) => {
@@ -3268,22 +3184,6 @@ impl<'p> Printer<'_, 'p> {
                 }
                 _ => self.place_of_symbol(*symbol),
             },
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts)
-                if depth < 8 =>
-            {
-                match parts.first() {
-                    Some(first) => self.place_of_property(first, depth + 1),
-                    None => Place::Nowhere,
-                }
-            }
-            PropSource::Mapped(..) if depth < 8 => {
-                match prop.declared_by_modifiers_property().first() {
-                    Some(first) => self.place_of_property(first, depth + 1),
-                    None => Place::Nowhere,
-                }
-            }
             _ => Place::Nowhere,
         }
     }
@@ -3301,7 +3201,7 @@ impl<'p> Printer<'_, 'p> {
                         .first_declaration_pos_of_literal_property(*file, *written);
                     Place::At(self.c.place_in_program_order(*file, pos))
                 }
-                _ => self.place_of_property(prop, 0),
+                _ => self.place_of_property(prop),
             };
             keyed.push(match place {
                 Place::At(place) => ((0, place, name), prop),
@@ -3341,96 +3241,77 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// How the declarations of `prop` write its name.
-    fn written_names(&mut self, prop: &Prop, depth: u32, out: &mut Vec<WrittenName>) {
+    fn written_names(&mut self, prop: &Prop, out: &mut Vec<WrittenName>) {
         let plain = WrittenName {
             is_string: false,
             is_single_quoted: false,
             is_computed: false,
         };
-        match &prop.source {
-            PropSource::Symbol(symbol) => {
-                let list = self.c.members_of_symbol(*symbol);
-                let assignments = match list.is_empty() {
-                    true => self.c.assignments_of_symbol(*symbol),
-                    false => smallvec::SmallVec::new(),
-                };
-                if list.is_empty() && assignments.is_empty() {
-                    out.push(plain);
-                }
-                for &declaration in assignments.iter() {
-                    let hir = self.c.hir(symbol.file);
-                    let is_string = match hir[declaration].kind {
-                        ExprKind::Assign { target, .. } => match hir[target].kind {
-                            ExprKind::Index { index, .. } => {
-                                let key = self.c.type_of_expr(symbol.file, index);
-                                self.c.is_string_like(key)
-                            }
+        for_each_declared(prop, &mut |prop| {
+            match &prop.source {
+                PropSource::Symbol(symbol) => {
+                    let list = self.c.members_of_symbol(*symbol);
+                    let assignments = match list.is_empty() {
+                        true => self.c.assignments_of_symbol(*symbol),
+                        false => smallvec::SmallVec::new(),
+                    };
+                    if list.is_empty() && assignments.is_empty() {
+                        out.push(plain);
+                    }
+                    for &declaration in assignments.iter() {
+                        let hir = self.c.hir(symbol.file);
+                        let is_string = match hir[declaration].kind {
+                            ExprKind::Assign { target, .. } => match hir[target].kind {
+                                ExprKind::Index { index, .. } => {
+                                    let key = self.c.type_of_expr(symbol.file, index);
+                                    self.c.is_string_like(key)
+                                }
+                                _ => false,
+                            },
                             _ => false,
-                        },
-                        _ => false,
-                    };
-                    out.push(WrittenName { is_string, ..plain });
+                        };
+                        out.push(WrittenName { is_string, ..plain });
+                    }
+                    for &(file, member) in list.iter() {
+                        let hir = self.c.hir(file);
+                        let member = &hir[member];
+                        let (is_string, is_computed) = match member.key {
+                            PropKey::Computed(e) => {
+                                let key = self.c.type_of_expr(file, e);
+                                (self.c.is_string_like(key), true)
+                            }
+                            _ => (member.flags.contains(Flags::STRING_NAME), false),
+                        };
+                        out.push(WrittenName {
+                            is_string,
+                            is_single_quoted: hir.text.get(member.name_pos as usize)
+                                == Some(&b'\''),
+                            is_computed,
+                        });
+                    }
                 }
-                for &(file, member) in list.iter() {
-                    let hir = self.c.hir(file);
-                    let member = &hir[member];
-                    let (is_string, is_computed) = match member.key {
-                        PropKey::Computed(e) => {
-                            let key = self.c.type_of_expr(file, e);
-                            (self.c.is_string_like(key), true)
-                        }
-                        _ => (member.flags.contains(Flags::STRING_NAME), false),
-                    };
-                    out.push(WrittenName {
-                        is_string,
-                        is_single_quoted: hir.text.get(member.name_pos as usize) == Some(&b'\''),
-                        is_computed,
-                    });
+                PropSource::Literal(file, written) => {
+                    for declaration in self.c.bound(*file).declarations_of_literal_member(*written)
+                    {
+                        let name = self.written_name_of_literal_property(*file, declaration);
+                        out.push(name);
+                    }
                 }
+                _ => {}
             }
-            PropSource::Literal(file, written) => {
-                for declaration in self.c.bound(*file).declarations_of_literal_member(*written) {
-                    let name = self.written_name_of_literal_property(*file, declaration);
-                    out.push(name);
-                }
-            }
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts)
-                if depth < 8 =>
-            {
-                for part in parts.iter() {
-                    self.written_names(part, depth + 1, out);
-                }
-            }
-            PropSource::Mapped(..) if depth < 8 => {
-                for part in prop.declared_by_modifiers_property() {
-                    self.written_names(part, depth + 1, out);
-                }
-            }
-            _ => {}
-        }
+            false
+        });
     }
 
     /// The expression in the brackets of the first declaration of `prop`, if it is written `a` or `a.b.c`.
-    fn computed_key_text(&mut self, prop: &Prop, depth: u32) -> Option<Vec<u8>> {
+    fn computed_key_text(&mut self, prop: &Prop) -> Option<Vec<u8>> {
+        let prop = first_declared(prop)?;
         let (file, key) = match &prop.source {
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
                 (file, Decl::Member(member)) => (file, self.c.hir(file)[member].key),
                 _ => return None,
             },
             PropSource::Literal(file, written) => (*file, self.c.hir(*file)[*written].key),
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts)
-                if depth < 8 =>
-            {
-                return self.computed_key_text(parts.first()?, depth + 1);
-            }
-            PropSource::Mapped(..) if depth < 8 => {
-                let first = prop.declared_by_modifiers_property().first()?;
-                return self.computed_key_text(first, depth + 1);
-            }
             _ => return None,
         };
         match key {
@@ -3458,14 +3339,12 @@ impl<'p> Printer<'_, 'p> {
                 UniqueSymbolDeclaration::Variable(variable) => self.symbol_to_expression(variable),
                 UniqueSymbolDeclaration::Member(file, m) => self
                     .member_to_expression(file, m, name)
-                    .or_else(|| self.computed_key_text(prop, 0))
+                    .or_else(|| self.computed_key_text(prop))
                     .unwrap_or_else(|| self.text(name)),
-                UniqueSymbolDeclaration::SymbolConstructor => {
-                    match self.computed_key_text(prop, 0) {
-                        Some(written) => written,
-                        None => cat!(b"Symbol.", self.text(name)),
-                    }
-                }
+                UniqueSymbolDeclaration::SymbolConstructor => match self.computed_key_text(prop) {
+                    Some(written) => written,
+                    None => cat!(b"Symbol.", self.text(name)),
+                },
             };
             self.enclosing_declaration = outer;
             self.approximate_length += expression.len() + 1;
@@ -3473,7 +3352,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let name = bytes.to_vec();
         let mut written = Vec::new();
-        self.written_names(prop, 0, &mut written);
+        self.written_names(prop, &mut written);
         let is_string_named = !written.is_empty() && written.iter().all(|w| w.is_string);
         let quote = if !written.is_empty() && written.iter().all(|w| w.is_single_quoted) {
             b'\''
@@ -3540,30 +3419,25 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `getNameOfSymbolAsWritten`, of a property: its name as its first declaration writes it.
-    fn name_of_property_as_written(&mut self, prop: &Prop, depth: u32) -> Vec<u8> {
+    fn name_of_property_as_written(&mut self, prop: &Prop) -> Vec<u8> {
+        let prop = first_declared(prop).unwrap_or(prop);
         match &prop.source {
             PropSource::Literal(file, property) => {
-                let written = &self.c.hir(*file)[*property];
-                let end = self.c.end_of_prop_name(*file, *property);
-                // `GetTextOfNode(name)`: a computed name ends where the parser left it, be the `]` missing.
-                if matches!(written.key, PropKey::Computed(_)) {
-                    return self.c.source_text(*file, written.pos, end).into_bytes();
-                }
-                // The name of a JSX attribute is more than a token: `data-\u0061`.
-                return self
-                    .text_of_name(*file, written.pos, end)
-                    .unwrap_or_else(|| self.property_key_text(*file, written.key, written.pos));
+                // A computed name ends where the parser left it, be the `]` missing, and the name of a JSX attribute is more than a token
+                // (`data-\u0061`): `end_of_node` knows both.
+                let name = self.c.hir(*file).node(*property).with(Part::Name);
+                return self.declaration_name_to_string(*file, name);
             }
             PropSource::Symbol(symbol) => {
                 return match self.c.files().value_declaration(*symbol) {
                     Some((file, Decl::Member(member))) => {
-                        let member = &self.c.hir(file)[member];
-                        self.declaration_name_to_string(file, member.key, member.name_pos)
+                        // `2n`, and `#x` outside a class, are not a `PropKey` but are still printed.
+                        let name = self.c.hir(file).node(member).with(Part::Name);
+                        self.declaration_name_to_string(file, name)
                     }
                     Some((file, Decl::ParameterProperty(parameter))) => {
                         let hir = self.c.hir(file);
-                        let pos = hir[hir[parameter].pat].pos;
-                        self.declaration_name_to_string(file, PropKey::Name(prop.name), pos)
+                        self.declaration_name_to_string(file, hir.name(hir.node(parameter)))
                     }
                     Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                         match self.c.name_of_assignment_declaration(file, first) {
@@ -3573,20 +3447,6 @@ impl<'p> Printer<'_, 'p> {
                     }
                     _ => self.symbol_to_text(*symbol),
                 };
-            }
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts)
-                if depth < 8 =>
-            {
-                if let Some(first) = parts.first() {
-                    return self.name_of_property_as_written(first, depth + 1);
-                }
-            }
-            PropSource::Mapped(..) if depth < 8 => {
-                if let Some(first) = prop.declared_by_modifiers_property().first() {
-                    return self.name_of_property_as_written(first, depth + 1);
-                }
             }
             _ => {}
         }
@@ -3694,42 +3554,19 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// The start of `addPropertyToElementList`, of a property that a `unique symbol` names.
-    fn track_late_bound_name(&mut self, prop: &Prop, depth: u32) {
+    fn track_late_bound_name(&mut self, prop: &Prop) {
+        let Some(prop) = first_declared(prop) else {
+            let mut name = Vec::new();
+            self.c.write_prop(&mut name, prop);
+            return self.report(Report::NonSerializableProperty(name));
+        };
         let (file, key) = match &prop.source {
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol) {
                 Some((file, Decl::Member(m))) => (file, self.c.hir(file)[m].key),
                 _ => return,
             },
             PropSource::Literal(file, p) => (*file, self.c.hir(*file)[*p].key),
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts) => {
-                if let Some(first) = parts.first()
-                    && depth < 8
-                {
-                    self.track_late_bound_name(first, depth + 1);
-                }
-                return;
-            }
-            PropSource::Mapped(..) => {
-                match prop.declared_by_modifiers_property().first() {
-                    Some(first) if depth < 8 => self.track_late_bound_name(first, depth + 1),
-                    Some(_) => {}
-                    // It has no declaration.
-                    None => {
-                        let mut name = Vec::new();
-                        self.c.write_prop(&mut name, prop);
-                        self.report(Report::NonSerializableProperty(name));
-                    }
-                }
-                return;
-            }
-            // It has no declaration.
-            PropSource::Type(_) => {
-                let mut name = Vec::new();
-                self.c.write_prop(&mut name, prop);
-                return self.report(Report::NonSerializableProperty(name));
-            }
+            _ => return,
         };
         // `hasLateBindableName`
         if let PropKey::Computed(e) = key
@@ -3793,7 +3630,7 @@ impl<'p> Printer<'_, 'p> {
         };
         // `isLateBoundName`
         if self.c.files().atoms.is_symbol_name(prop.name) {
-            self.track_late_bound_name(prop, 0);
+            self.track_late_bound_name(prop);
         }
         let declared = if reverse_mapped.is_some() {
             self.property_with_declarations(owner, prop.name)
@@ -3906,7 +3743,7 @@ impl<'p> Printer<'_, 'p> {
                     } else if prop.value.is_some() && hir[prop.value].pos == prop.pos {
                         value
                     } else {
-                        cat! { self.property_key_text(file, prop.key, prop.pos), b": ", value }
+                        cat! { self.property_key_text(file, hir.property_name(hir.node(p))), b": ", value }
                     });
                 }
                 let last = props.iter().next_back();
@@ -4303,11 +4140,7 @@ impl<'p> Printer<'_, 'p> {
         for parameter in &expanded {
             parameters.push(self.parameter_text(parameter));
         }
-        let this = match self.c.sig_this_type(signature) {
-            Some(this) => Some((this, signature)),
-            None => self.this_parameter_taken_from_context(signature),
-        };
-        if let Some((this, declared_by)) = this {
+        if let Some((this, declared_by)) = self.c.sig_this_parameter(signature) {
             let node = self.serialize_type_of_this_parameter(declared_by, this);
             self.approximate_length += b"this".len() + 3;
             parameters.insert(0, cat!(b"this: ", node.text));
@@ -4423,27 +4256,6 @@ impl<'p> Printer<'_, 'p> {
                 _ => return false,
             };
         }
-    }
-
-    /// `assignContextualParameterTypes`: a context sensitive function that declares no `this` parameter gets that of the signature
-    /// it is expected to have (`createSymbolWithType(context.thisParameter, nil)`): its type here, and the signature that declares it.
-    fn this_parameter_taken_from_context(&mut self, signature: SigId) -> Option<(TypeId, SigId)> {
-        let (file, func, mapper) = match *self.c.p.types.sig(signature) {
-            SigData::WithReturn { sig: inner, .. } => {
-                return self.this_parameter_taken_from_context(inner);
-            }
-            SigData::Decl { file, func, mapper } => (file, func, mapper),
-            _ => return None,
-        };
-        let FnOwner::Expr(owner) = self.c.bound(file).fns[func.idx()].owner else {
-            return None;
-        };
-        if !self.c.is_context_sensitive(file, owner) {
-            return None;
-        }
-        let expected = self.c.contextual_signature(file, func)?;
-        let this = self.c.sig_this_type(expected)?;
-        Some((self.c.instantiate(this, mapper), expected))
     }
 
     /// A function type or a constructor type.

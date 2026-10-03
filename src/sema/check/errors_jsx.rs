@@ -177,7 +177,7 @@ impl Checker<'_> {
                 continue;
             }
             if factory_is_missing {
-                let at = (tag_name_start(hir, e), tag_name_end(hir, e));
+                let at = (hir[element.tag].pos, hir[element.tag].end);
                 self.explain_missing_jsx_factory(file, e, scope, at, factory, 2874);
             }
             for p in element.attrs.iter() {
@@ -235,9 +235,8 @@ impl Checker<'_> {
             if let Some(colon) = name.iter().position(|&c| c == b':')
                 && !(name[0].is_ascii_lowercase() || name[..colon].contains(&b'-'))
             {
-                let start = hir[jsx.tag].pos;
-                let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
-                self.grammar_error_at((file, start, end), 2639, &[]);
+                let tag = hir[jsx.tag];
+                self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
         let mut seen: Vec<PropKey> = Vec::new();
@@ -308,7 +307,7 @@ impl Checker<'_> {
         let error_node = if is_jsx_open_fragment {
             (file, hir[e].pos, jsx.opening_end)
         } else {
-            (file, tag_name_start(hir, e), tag_name_end(hir, e))
+            (file, hir[jsx.tag].pos, hir[jsx.tag].end)
         };
         let expr_types = if is_jsx_open_fragment {
             // `getJsxNamespaceAt` goes by the name fragments are made with. Only where that leads to the `JSX` elements go by.
@@ -401,8 +400,7 @@ impl Checker<'_> {
         if let Some(&(.., ty)) = pushed.clone().find(|c| c.0 == file && c.1 == e) {
             return Some(ty);
         }
-        // `getContextualTypeForJsxExpression`: nothing is expected of a child of a fragment. `getContextualTypeForArgumentAtIndex`:
-        // nor of anything while the element is `resolvingSignature`.
+        // `getContextualTypeForJsxExpression`: a child of a fragment has no contextual type.
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
             return None;
@@ -410,22 +408,23 @@ impl Checker<'_> {
         if hir[j].tag.is_none() {
             return None;
         }
-        // FOR SPEED, kept: every attribute and every child asks.
-        if let Some(kept) = self.p.jsx_attributes_types.get(&(file, j)) {
-            return Some(kept);
-        }
-        if self.p.calls.get(&(file, e)).is_none()
-            && !self
-                .resolved_meanwhile
-                .iter()
-                .any(|r| r.0 == file && r.1 == e)
-            && self.stack.contains(&Query::Call(file, e))
+        // `getContextualTypeForArgumentAtIndex`: no contextual type while the signature is `resolvingSignature`. That state belongs to
+        // this checker, so it is read from its own query stack and never from the shared `calls` table.
+        let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
+        if self.stack.contains(&Query::Call(file, e))
+            && !self.resolved_meanwhile.iter().any(is_this_element)
         {
             return None;
         }
+        // Cache: queried once per attribute and per child.
+        if let Some(cached) = self.p.jsx_attributes_types.get(&(file, j)) {
+            return Some(cached);
+        }
         let signature = self.resolved_signature(file, e).sig?;
         let ty = self.jsx_effective_first_argument(file, e, signature);
-        if self.p.calls.get(&(file, e)).is_some() {
+        // Cacheable only if computed from the cached signature.
+        let cached = self.p.calls.get(&(file, e));
+        if cached.is_some_and(|cached| cached.sig == Some(signature)) {
             self.p.jsx_attributes_types.insert((file, j), ty);
         }
         Some(ty)
@@ -549,7 +548,7 @@ impl Checker<'_> {
         let error_node = if tag.is_none() {
             (file, hir[e].pos, hir[j].opening_end)
         } else {
-            (file, tag_name_start(hir, e), tag_name_end(hir, e))
+            (file, hir[tag].pos, hir[tag].end)
         };
         if tag.is_some()
             && self.jsx_intrinsic_tag_name(file, tag).is_none()
@@ -806,7 +805,7 @@ impl Checker<'_> {
             diagnostic.related_information.extend(related);
             diagnostic
         } else if !is_related(self) {
-            let at = (file, tag_name_start(hir, e), tag_name_end(hir, e));
+            let at = (file, hir[hir[j].tag].pos, hir[hir[j].tag].end);
             let code = if children.len() > 1 { 2746 } else { 2745 };
             self.new_diagnostic(at, code, &[Arg::Atom(name), Arg::Type(wanted)])
         } else {
@@ -826,7 +825,10 @@ impl Checker<'_> {
         expected: (Atom, TypeId),
     ) -> Reported {
         let hir = self.hir(file);
-        let tag = text_of(hir, tag_name_start(hir, e), tag_name_end(hir, e));
+        let ExprKind::Jsx(j) = hir[e].kind else {
+            unreachable!()
+        };
+        let tag = text_of(hir, hir[hir[j].tag].pos, hir[hir[j].tag].end);
         let args = [
             Arg::Bytes(tag),
             Arg::Atom(expected.0),
@@ -974,7 +976,7 @@ impl Checker<'_> {
             return;
         };
         let tag = hir[j].tag;
-        let at = (file, tag_name_start(hir, e), tag_name_end(hir, e));
+        let at = (file, hir[tag].pos, hir[tag].end);
         let intrinsic = self.jsx_intrinsic_tag_name(file, tag);
         let mut diags = Vec::new();
         // `JSX.ElementType` says it all, if it is there.
@@ -1079,16 +1081,6 @@ fn parse_isolated_entity_name(atoms: &crate::atom::Interner, text: &[u8]) -> Opt
 
 fn text_of(hir: &hir::File, start: u32, end: u32) -> &[u8] {
     &hir.text[start as usize..end as usize]
-}
-
-/// Where the name in the opening tag of the element `e` starts.
-fn tag_name_start(hir: &hir::File, e: ExprId) -> u32 {
-    skip_trivia(&hir.text, hir[e].pos as usize + 1) as u32
-}
-
-/// Where it ends.
-fn tag_name_end(hir: &hir::File, e: ExprId) -> u32 {
-    jsx_tag_name_end(&hir.text, tag_name_start(hir, e) as usize) as u32
 }
 
 /// Whether the `child` of an element is `JsxText`: a string that is in no braces.

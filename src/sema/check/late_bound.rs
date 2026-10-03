@@ -115,7 +115,7 @@ impl<'p> Checker<'p> {
         {
             for &(file, decl) in files.decls_of(assignments).iter() {
                 let hir = self.hir(file);
-                if let Decl::Expando(e) = decl
+                if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                     && let ExprKind::Assign { target, .. } = hir[e].kind
                     && let ExprKind::Index { index, .. } = hir[target].kind
                 {

@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# The `.types` and `.symbols` baseline writers. Test-only: enabled by `bun_sema_standalone`, never by the product.
+baselines = []
+
 [dependencies]
 bun_core.workspace = true
 bun_paths.workspace = true

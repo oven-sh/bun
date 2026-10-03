@@ -900,9 +900,13 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `parseImportTag`, from the token after the name of the tag on.
     fn read_import(&mut self) -> Import {
-        // Nothing but blanks is left of the comment, and `skipWhitespaceOrAsterisk` leaves those. `parseModuleSpecifier` misses an
-        // expression at that token, which stays.
-        if !self.is_in_lexer && matches!(self.token, Token::Whitespace | Token::NewLine) {
+        // Either only whitespace remains in the comment (`skipWhitespaceOrAsterisk` does not consume it), or `ScanJSDocToken` returned
+        // `KindUnknown`, for example for a quote or a slash. `parseModuleSpecifier` reports TS1109 without consuming the token.
+        let cannot_start_expression = matches!(
+            self.token,
+            Token::Whitespace | Token::NewLine | Token::Unknown
+        );
+        if !self.is_in_lexer && cannot_start_expression {
             self.error_at_token(1109);
             return Import {
                 end: self.start as u32,

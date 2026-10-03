@@ -181,15 +181,11 @@ impl Checker<'_> {
         name: u32,
         declaration: Node,
     ) {
-        self.error_at(
-            (file, start, 0),
-            code,
-            &[Arg::Text(&self.declaration_name_at(file, name))],
-        );
-        self.relate(start, code, |c| {
-            let (from, to) = c.get_error_range_for_node(file, declaration);
-            vec![c.declared_here((file, from, to), c.declaration_name_at(file, name))]
-        });
+        let (from, to) = self.get_error_range_for_node(file, declaration);
+        let name = self.declaration_name_at(file, name);
+        let related = self.declared_here((file, from, to), name.clone());
+        self.error_at((file, start, 0), code, &[Arg::Text(&name)])
+            .add_related_info(related);
     }
 
     /// `isBlockScopedNameDeclaredBeforeUse`, of a declaration and a use in `file`.

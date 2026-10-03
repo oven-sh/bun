@@ -55,6 +55,8 @@ impl Eq for Reference {}
 pub(super) struct FlowMemo {
     /// `getEffectsSignature`, by call.
     effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
+    /// `links.effectsSignature` of the calls `getEffectsSignature` has to resolve: generic or overloaded.
+    resolved_effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
     /// See `index_narrowing_subjects`: of which file; by symbol, the first flow node with a test, a `switch` or an assignment that is about
     /// it (empty: the file has no such filter); a bit by symbol, for calls that are statements and have not all been found idle;
     /// those calls, by symbol.
@@ -312,7 +314,7 @@ impl About {
 }
 
 /// `getTypeAtFlowNode`: the invocation that finds this many under way gives up.
-const MAX_FLOW_DEPTH: u32 = 2000;
+pub(super) const MAX_FLOW_DEPTH: u32 = 2000;
 
 /// What `checkNonNullTypeWithReporter` reports.
 #[derive(Copy, Clone)]
@@ -492,15 +494,12 @@ impl<'p> Checker<'p> {
     /// none of the flags that relations, unions and intersections raise for their callers.
     fn run_memoizable<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> (T, bool) {
         let before = self.what_only_holds_for_now();
-        let gave_up = std::mem::take(&mut self.relation_gave_up);
         let too_complex = std::mem::take(&mut self.relation_too_complex);
         let reliability = std::mem::take(&mut self.reliability);
         let result = work(self);
         let is_memoizable = self.what_only_holds_for_now() == before
-            && !self.relation_gave_up
             && !self.relation_too_complex
             && self.reliability == 0;
-        self.relation_gave_up |= gave_up;
         self.relation_too_complex |= too_complex;
         self.reliability |= reliability;
         (result, is_memoizable)
@@ -2836,7 +2835,7 @@ impl<'p> Checker<'p> {
         match sigs[..] {
             [only] if self.sig_type_params(only).is_empty() => Some(only),
             _ if sigs.iter().any(|&s| self.sig_predicate(s).is_some()) => {
-                self.resolved_signature(file, e).sig
+                self.resolved_effects_signature(file, e)
             }
             _ => None,
         }
@@ -3334,7 +3333,7 @@ impl<'p> Checker<'p> {
                 if !sigs.iter().any(|&s| self.sig_predicate(s).is_some()) {
                     return None;
                 }
-                self.resolved_signature(file, call).sig?
+                self.resolved_effects_signature(file, call)?
             }
         };
         let predicate = self.sig_predicate(sig)?;
@@ -4098,19 +4097,6 @@ impl<'p> Checker<'p> {
                 _ => self.outward(file, block),
             };
         }
-    }
-
-    /// Whether `flowAnalysisDisabled` is still set when `file` has been checked. `checkBlock` puts it back at the end of a function
-    /// or module block, so it stays set for a reference that is in none.
-    pub(super) fn is_flow_analysis_left_disabled(&self, file: FileId) -> bool {
-        // A walk nests at most once per flow node.
-        if self.bound(file).flow_places <= MAX_FLOW_DEPTH || self.p.flows_too_deep.len() == 0 {
-            return false;
-        }
-        (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {
-            self.p.flows_too_deep.get(&(file, e)).is_some()
-                && self.function_or_module_block_of(file, e) == Parent::File
-        })
     }
 
     /// `if c.flowAnalysisDisabled { return c.errorType }`, for the writer alone: in the check the answer would depend on evaluation order.
@@ -6021,6 +6007,27 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// The `getResolvedSignature` branch of `getEffectsSignature`. tsgo caches the result unconditionally, including resolutions made
+    /// during the analysis of a flow loop or inside a cycle, where the resolved signature itself is not cached. Without this cache
+    /// every visit of a condition or call node resolves the call again: exponential in the number of guard and assertion calls.
+    fn resolved_effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
+        if let Some(&cached) = self
+            .flow_memo
+            .resolved_effects_signatures
+            .get(&(file, call))
+        {
+            return cached;
+        }
+        let resolved = self.resolved_signature(file, call);
+        // `UNRESOLVED`: the query was refused by the depth or stack limit.
+        if resolved.ret != TypeId::UNRESOLVED {
+            self.flow_memo
+                .resolved_effects_signatures
+                .insert((file, call), resolved.sig);
+        }
+        resolved.sig
+    }
+
     /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
     /// never returns.
     pub(super) fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
@@ -6086,7 +6093,7 @@ impl<'p> Checker<'p> {
                     return None;
                 }
                 *took_resolving = true;
-                self.resolved_signature(file, call).sig?
+                self.resolved_effects_signature(file, call)?
             }
         };
         self.asserts_or_never_returns(sig).then_some(sig)
@@ -6136,8 +6143,7 @@ impl<'p> Checker<'p> {
                     predicate
                 } else {
                     match self
-                        .resolved_signature(file, call)
-                        .sig
+                        .resolved_effects_signature(file, call)
                         .and_then(|s| self.sig_predicate(s))
                     {
                         Some(p) => p,

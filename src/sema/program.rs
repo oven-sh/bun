@@ -1937,7 +1937,25 @@ impl Files {
         std::mem::take(&mut shared.lock().done)
     }
 
-    /// All that goes by the file alone.
+    /// `parse_and_bind` with 64 KB less stack, for the first time a file is parsed. The guards of the parser, the lowering and the binder
+    /// compare the stack pointer with the end of the stack, and `bring_in` parses a file again from another depth: a file that is within
+    /// the limit here is within it there.
+    #[inline(never)]
+    fn parse_and_bind_with_margin(
+        host: &dyn Host,
+        options: &Options,
+        atoms: &Interner,
+        path: &[u8],
+        is_lib: bool,
+        says_esm: bool,
+        text: Cow<'static, [u8]>,
+    ) -> (hir::File, Bound) {
+        let margin = std::mem::MaybeUninit::<[u8; 64 << 10]>::uninit();
+        std::hint::black_box(&margin);
+        Self::parse_and_bind(host, options, atoms, path, is_lib, says_esm, text)
+    }
+
+    /// Everything that depends on the file alone.
     fn parse_and_bind(
         host: &dyn Host,
         options: &Options,
@@ -1979,15 +1997,24 @@ impl Files {
         let is_before =
             |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
         let _binding = Spent::on(host, Phase::Bind);
-        let bound = bind::bind(
-            &hir,
-            bind::BindOptions {
-                emit_standard_class_fields: options.emit_standard_class_fields,
-                before_es2020: is_before(ScriptTarget::ES2020),
-                before_es2017: is_before(ScriptTarget::ES2017),
-            },
-            atoms,
-        );
+        let bind_options = bind::BindOptions {
+            emit_standard_class_fields: options.emit_standard_class_fields,
+            before_es2020: is_before(ScriptTarget::ES2020),
+            before_es2017: is_before(ScriptTarget::ES2017),
+        };
+        let mut bound = bind::bind(&hir, bind_options, atoms);
+        // The same result as when the parser runs out of stack: an empty tree, which `check_file` reports as not fully checked.
+        if bound.ran_out_of_stack {
+            hir = hir::File {
+                text: std::mem::take(&mut hir.text),
+                source_len: hir.source_len,
+                has_module_syntax: hir.has_module_syntax,
+                has_errors: true,
+                has_parse_diagnostics: true,
+                ..host.parse(path, b"", atoms, options)
+            };
+            bound = bind::bind(&hir, bind_options, atoms);
+        }
         rename_private_names(&mut hir, &bound, atoms, path);
         (hir, bound)
     }
@@ -2049,7 +2076,8 @@ impl Files {
             } else {
                 Atom::NONE
             };
-        let (hir, bound) = Self::parse_and_bind(host, options, atoms, path, is_lib, says_esm, text);
+        let (hir, bound) =
+            Self::parse_and_bind_with_margin(host, options, atoms, path, is_lib, says_esm, text);
         let _resolving = Spent::on(host, Phase::Resolve);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
@@ -3379,6 +3407,20 @@ impl Files {
         parent.is_some().then(|| self.sym(sym.file, parent))
     }
 
+    /// The raw `symbol.Parent` field, unlike `getParentOfSymbol`, which returns the merged parent. `mergeSymbolTable` only
+    /// re-parents symbols that were actually merged. A symbol that exists only in the source table keeps its parent, for example
+    /// the `declare module "m"` block that contains it.
+    pub fn symbol_parent(&self, sym: Sym) -> Option<Sym> {
+        let symbol = self.symbol(sym);
+        if symbol.flags.contains(SymFlags::MERGED) {
+            return self.parent_of_symbol(sym);
+        }
+        symbol.parent.is_some().then_some(Sym {
+            file: sym.file,
+            id: symbol.parent,
+        })
+    }
+
     /// `getExportSymbolOfValueSymbolIfExported`
     pub fn export_symbol_of_value_symbol_if_exported(&self, sym: Sym) -> Sym {
         let exported = self
@@ -3549,8 +3591,11 @@ impl Files {
                     }
                 }
                 let held = self.export(container, name);
+                // A symbol found in the exports of a CommonJS module is only in scope if it is a type.
+                let is_commonjs = s.kind == ScopeKind::File && bound.commonjs_indicator.is_some();
                 if !held.is_some_and(|sym| self.flags(sym).contains(SymFlags::EXPORT_ONLY))
                     && let Some(sym) = lookup(SymbolTable::Exports(container), held, visible)
+                    && !(is_commonjs && !self.flags(sym).intersects(SymFlags::TYPE))
                 {
                     return Ok(Some(sym));
                 }

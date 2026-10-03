@@ -531,7 +531,7 @@ fn jsx_name_end(text: &[u8], at: usize) -> usize {
 }
 
 /// `parseJsxElementName`: `a`, `a-b`, `a:b`, `a.b.c`
-pub(super) fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
+fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
     let mut end = jsx_name_end(text, at);
     // "`a:b.c` is invalid syntax, don't even look for the `.` if we parse `a:b`"
     if end == at || text[at..end].contains(&b':') {

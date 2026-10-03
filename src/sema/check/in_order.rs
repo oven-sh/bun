@@ -98,6 +98,7 @@ impl Checker<'_> {
 
     /// `checkDeferredNode`
     fn check_deferred_node(&mut self, file: FileId, e: ExprId) {
+        self.instantiation_count = 0;
         let hir = self.hir(file);
         match hir[e].kind {
             // `checkFunctionExpressionOrObjectLiteralMethodDeferred`, `checkAccessorDeclaration`
@@ -274,19 +275,14 @@ impl Checker<'_> {
             PatKind::Ident(name) => name,
             _ => Atom::NONE,
         };
-        if p != hir[func].this_param {
-            self.check_binding_name(file, node.pat);
-            self.check_expression(file, node.default);
-            self.check_parameter_initializer(file, p);
-        }
         // `NodeIsPresent(fn.Body())`: written, whether or not it is kept.
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
-        // `checkVariableLikeDeclaration`
-        if !has_body && p != hir[func].this_param {
-            self.check_element_initializers(file, node.pat);
-            if node.default.is_some() {
+        if p != hir[func].this_param {
+            if self.check_name_and_initializer(file, node.pat, node.default, !has_body) {
                 self.error(file, p, 2371, &[]);
+            } else {
+                self.check_parameter_initializer(file, p);
             }
         }
         if node.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -350,10 +346,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `shouldCheckErasableSyntax`. `NodeFlagsAmbient`: all there is in a declaration file has it.
+    /// `shouldCheckErasableSyntax`
     fn should_check_erasable_syntax(&self, file: FileId) -> bool {
-        let hir = self.hir(file);
-        self.p.files.options.erasable_syntax_only && !hir.is_js && hir.kind != FileKind::Declaration
+        self.p.files.options.erasable_syntax_only && !self.hir(file).is_js
     }
 
     /// From `checkAssertion`: 1294, of `<T>operand`, from the `<` up to `node.Expression().Pos()`.
@@ -384,8 +379,29 @@ impl Checker<'_> {
         }
     }
 
+    /// The part of `checkVariableLikeDeclaration` from `node.Name()` to the initializer, for a parameter or a binding element.
+    /// `is_bodiless`: the declaration belongs to a parameter of a function without a body. Returns true where tsgo reports TS2371 and
+    /// returns early; the caller reports it on its own node.
+    fn check_name_and_initializer(
+        &mut self,
+        file: FileId,
+        name: PatId,
+        initializer: ExprId,
+        is_bodiless: bool,
+    ) -> bool {
+        let exits = is_bodiless && initializer.is_some();
+        // Binding pattern elements are checked before the early return; the type of an identifier is resolved after it.
+        if !exits || !matches!(self.hir(file)[name].kind, PatKind::Ident(_)) {
+            self.check_binding_name(file, name, is_bodiless);
+        }
+        if !exits {
+            self.check_expression(file, initializer);
+        }
+        exits
+    }
+
     /// `checkVariableLikeDeclaration`, as far as `node.Name()` goes: a name, or the elements of a pattern (`checkBindingElement`).
-    fn check_binding_name(&mut self, file: FileId, pat: PatId) {
+    fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
         if pat.is_none() {
             return;
         }
@@ -417,8 +433,15 @@ impl Checker<'_> {
                         self.check_expression(file, key);
                     }
                     self.check_binding_element_accessibility(file, pat, hir[p].value);
-                    self.check_binding_name(file, hir[p].value);
-                    self.check_expression(file, hir[p].default);
+                    let (name, prop) = (hir[p].value, &hir[p]);
+                    // `{ a: b }` in a signature gets TS2842 (unused renaming) instead of TS2371.
+                    if self.check_name_and_initializer(file, name, prop.default, is_bodiless)
+                        && (prop.is_rest
+                            || prop.pos == hir[name].pos
+                            || !matches!(hir[name].kind, PatKind::Ident(_)))
+                    {
+                        self.error(file, name, 2371, &[]);
+                    }
                     self.check_binding_element_initializer(file, hir[p].value, hir[p].default);
                 }
             }
@@ -437,8 +460,14 @@ impl Checker<'_> {
                         );
                     }
                     self.check_binding_element_accessibility(file, pat, hir[e].pat);
-                    self.check_binding_name(file, hir[e].pat);
-                    self.check_expression(file, hir[e].default);
+                    if self.check_name_and_initializer(
+                        file,
+                        hir[e].pat,
+                        hir[e].default,
+                        is_bodiless,
+                    ) {
+                        self.error(file, hir[e].pat, 2371, &[]);
+                    }
                     self.check_binding_element_initializer(file, hir[e].pat, hir[e].default);
                 }
             }
@@ -525,7 +554,7 @@ impl Checker<'_> {
     fn check_variable_declaration(&mut self, file: FileId, d: VarDeclId) {
         let decl = &self.hir(file)[d];
         self.check_type_node(file, decl.ty);
-        self.check_binding_name(file, decl.pat);
+        self.check_binding_name(file, decl.pat, false);
         self.check_expression(file, decl.init);
         self.check_variable_initializer(file, d);
         if matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing) {
@@ -743,6 +772,7 @@ impl Checker<'_> {
         if node.is_none() || self.is_stack_low() {
             return;
         }
+        self.instantiation_count = 0;
         let hir = self.hir(file);
         match hir[node].kind {
             // `checkTypeReferenceNode`
@@ -858,6 +888,7 @@ impl Checker<'_> {
         {
             self.within_unreachable_code = true;
         }
+        self.instantiation_count = 0;
         self.check_source_element_worker(file, s);
         self.within_unreachable_code = within_unreachable_code;
     }
@@ -878,10 +909,7 @@ impl Checker<'_> {
                 | StmtKind::While { .. }
                 | StmtKind::DoWhile { .. }
                 | StmtKind::Switch { .. }
-                | StmtKind::Try { .. }
-                | StmtKind::Break(_)
-                | StmtKind::Continue(_)
-                | StmtKind::Labeled { .. } => true,
+                | StmtKind::Try { .. } => true,
                 StmtKind::Block(_) => !is_with_statement(hir, s),
                 // An import or an export whose specifier is not a string is kept as an empty statement.
                 StmtKind::Empty => {
@@ -938,12 +966,10 @@ impl Checker<'_> {
                 }
             }
             // `checkImportEqualsDeclaration`, past `checkGrammarModuleElementContext`
-            StmtKind::ImportEquals(x) => {
+            StmtKind::ImportEquals(_) => {
                 if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_)) {
                     self.check_grammar_import_equals_declaration(file, s);
-                    if self.should_check_erasable_syntax(file)
-                        && !hir[x].flags.contains(Flags::AMBIENT)
-                    {
+                    if self.should_check_erasable_syntax(file) && !hir.is_ambient(hir.node(s)) {
                         self.error(file, s, 1294, &[]);
                     }
                 }
@@ -1111,7 +1137,16 @@ impl Checker<'_> {
                 self.check_source_element(file, handler);
                 self.check_source_element(file, finalizer);
             }
-            StmtKind::Labeled { body, .. } => {
+            // `checkBreakOrContinueStatement`
+            StmtKind::Break(_) | StmtKind::Continue(_) => {
+                if !self.check_grammar_statement_in_ambient_context(file, s) {
+                    self.check_grammar_break_or_continue_statement(file, s);
+                }
+            }
+            StmtKind::Labeled { label, body } => {
+                if !self.check_grammar_statement_in_ambient_context(file, s) {
+                    self.check_grammar_duplicate_label(file, s, label);
+                }
                 if self.p.files.options.allow_unused_labels == Some(false)
                     && bound.unused_labels.contains(&s)
                 {
@@ -1131,7 +1166,7 @@ impl Checker<'_> {
                     let preserves_const_enums =
                         options.preserve_const_enums || options.isolated_modules;
                     if self.should_check_erasable_syntax(file)
-                        && !hir[module].flags.contains(Flags::AMBIENT)
+                        && !hir.is_ambient(hir.node(s))
                         && bound.is_instantiated_module(module, preserves_const_enums)
                     {
                         self.error(file, hir.name(hir.node(s)), 1294, &[]);
@@ -1139,8 +1174,7 @@ impl Checker<'_> {
                 }
             }
             StmtKind::Enum(e) => {
-                if self.should_check_erasable_syntax(file) && !hir[e].flags.contains(Flags::AMBIENT)
-                {
+                if self.should_check_erasable_syntax(file) && !hir.is_ambient(hir.node(s)) {
                     self.error(file, s, 1294, &[]);
                 }
                 self.check_collisions_for_declaration_name(file, s, hir[e].name);
@@ -1302,6 +1336,7 @@ impl Checker<'_> {
                 self.check_erasable_type_assertion(file, e, expr);
                 self.check_expression(file, expr);
                 self.check_type_node(file, ty);
+                self.check_assertion_deferred(file, e, expr, ty);
             }
             // `checkSatisfiesExpression`
             ExprKind::Satisfies { expr, ty } => {

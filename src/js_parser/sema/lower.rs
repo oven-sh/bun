@@ -760,6 +760,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn stmt_without_jsdoc(&mut self, stmt: &Stmt) -> Option<StmtId> {
         if !self.stack_check.is_safe_to_recurse() {
             self.b.file.syntax_errors += 1;
+            self.b.file.has_errors = true;
             return None;
         }
         let pos = self.pos_of(stmt.loc);
@@ -1081,6 +1082,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn binding(&mut self, binding: &ast::Binding) -> PatId {
         let pos = self.pos_of(binding.loc);
         if !self.stack_check.is_safe_to_recurse() {
+            self.b.file.has_errors = true;
             return self.b.file.pat(PatKind::Missing, pos, pos);
         }
         // A name that is a piece of the text is as long as it is written.
@@ -1850,6 +1852,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if !self.stack_check.is_safe_to_recurse() {
             let pos = self.pos_of(expr.loc);
             self.b.file.syntax_errors += 1;
+            self.b.file.has_errors = true;
             self.written_end = pos;
             self.written_start = pos;
             return self.b.file.expr(ExprKind::Missing, pos, pos);

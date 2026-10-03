@@ -292,13 +292,13 @@ impl<'p> Checker<'p> {
     ) -> bool {
         let is_related = self.is_type_related_to_if_told(source, target, relation, true);
         let (is_related, diagnostic) = match (is_related, error_node) {
-            (Some(true), _) => return true,
+            (Ok(true), _) => return true,
             (_, None) => return false,
-            (None, Some(at)) => {
+            (Err(code), Some(at)) => {
                 let args = [Arg::Type(source), Arg::Type(target)];
-                (false, Some(self.new_diagnostic(at, 2859, &args)))
+                (false, Some(self.new_diagnostic(at, code, &args)))
             }
-            (Some(false), Some(at)) => {
+            (Ok(false), Some(at)) => {
                 let (is_related, diagnostic) =
                     self.relation_diagnostic(source, target, relation, at, head_message);
                 (
@@ -313,25 +313,35 @@ impl<'p> Checker<'p> {
         is_related
     }
 
-    /// `isTypeRelatedTo`. `None`: it got too complex. What cannot be told counts as related. `is_trial`: tsgo makes no such comparison
-    /// here, see `Relater::keeps_failures`.
+    /// `isTypeRelatedTo`. `Err(code)`: the comparison overflowed (`r.overflow`); `code` is 2859 (complexity) or 2321 (stack depth).
+    /// `is_trial`: tsgo has no comparison at this point, see `Relater::keeps_failures`.
     pub(super) fn is_type_related_to_if_told(
         &mut self,
         source: TypeId,
         target: TypeId,
         relation: Relation,
         is_trial: bool,
-    ) -> Option<bool> {
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
+    ) -> Result<bool, u32> {
+        let too_deep_before = self.relations_too_deep.len();
         let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
         self.is_trial_comparison = is_trial;
         let is_related = self.related(source, target, relation);
         self.is_trial_comparison = false;
-        let is_sure = !self.relation_gave_up;
-        let is_too_complex = self.relation_too_complex;
-        self.relation_gave_up |= gave_up_before;
-        self.relation_too_complex = too_complex_before;
-        (!is_too_complex).then_some(is_related || !is_sure)
+        let is_too_complex = std::mem::replace(&mut self.relation_too_complex, too_complex_before);
+        // Only the entry for (source, target) is this comparison's own `r.overflow`. Nested comparisons, run while a type is being resolved,
+        // use a separate `Relater` without an error node. Their entries stay in the list and the caller reports them at `c.currentNode`.
+        let (mut at, mut is_too_deep) = (0, false);
+        self.relations_too_deep.retain(|&pair| {
+            at += 1;
+            let is_own = at > too_deep_before && pair == (source, target);
+            is_too_deep |= is_own;
+            !is_own
+        });
+        match () {
+            _ if is_too_complex => Err(2859),
+            _ if is_too_deep => Err(2321),
+            _ => Ok(is_related),
+        }
     }
 
     /// `reportDiagnostic`
@@ -364,7 +374,6 @@ impl<'p> Checker<'p> {
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
         // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
-        let gave_up = self.relation_gave_up;
         let too_complex = self.relation_too_complex;
         let reliability = self.reliability;
         r.head_message = head;
@@ -377,7 +386,6 @@ impl<'p> Checker<'p> {
             r.related_info.clear();
             self.report_error_results_alone(&mut r, source, target, head);
         }
-        self.relation_gave_up = gave_up;
         self.relation_too_complex = too_complex;
         self.reliability = reliability;
         let lines = lines_of(&r.error_chain, 0);
@@ -627,8 +635,9 @@ impl<'p> Checker<'p> {
             }
             _ => None,
         };
-        // While the base types are being worked out there are none, which holds only for now.
-        if self.p.base_types.get(&target).is_none() {
+        // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. Cache it only if
+        // it was computed from the cached base types: another thread can publish them after the call above.
+        if self.p.base_types.get(&target).as_deref() != Some(&bases[..]) {
             return base;
         }
         self.p.equivalent_base_types.insert(ty, base)

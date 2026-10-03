@@ -230,10 +230,11 @@ impl<'p> Checker<'p> {
             self.mark_tainted_from(0);
             return known;
         }
-        // `instantiationDepth == 100`: 2589 and the error type, which is cached like any other result.
-        if self.instantiation_depth >= 100 {
+        // `instantiationDepth == 100 || instantiationCount >= 5_000_000`: report TS2589 and return the error type.
+        if self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000 {
             return self.instantiation_too_deep();
         }
+        self.instantiation_count += 1;
         self.instantiation_depth += 1;
         let (cycles_before, limits_before) = (self.cycles, self.limits);
         let result = self.instantiate_uncached(ty, mapper);

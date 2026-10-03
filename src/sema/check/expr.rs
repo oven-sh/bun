@@ -349,6 +349,8 @@ impl<'p> Checker<'p> {
                 // `checkExpressionWithContextualType` has no guard against re-entry. A visit begun before the pattern was looked at
                 // this way took its names for what they are declared as: this one does not go the same way.
                 let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
+                // `checkExpressionEx`
+                self.instantiation_count = 0;
                 let entered = self.enter(Query::Expr(file, e));
                 self.resolution_start = resolution_start;
                 if !entered {
@@ -459,6 +461,7 @@ impl<'p> Checker<'p> {
         let pushed_at = self.flow_loop_pushed_since(first)?;
         // Hide the first visit from `enter`, which still refuses when time, native stack or query depth run out.
         let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
+        self.instantiation_count = 0;
         let entered = self.enter(Query::Expr(file, e));
         self.resolution_start = resolution_start;
         if !entered {
@@ -1062,7 +1065,7 @@ impl<'p> Checker<'p> {
         }
         if target.written
             && self
-                .readonly_entity_assigned_to(file, e, obj, name)
+                .readonly_entity_assigned_to(file, e, obj, receiver, name)
                 .is_some()
         {
             let right = self.place_of_token(file, name_pos);
@@ -1252,7 +1255,8 @@ impl<'p> Checker<'p> {
             let mut was_missing_prop = false;
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k)
-                    && let Some(prop) = self.readonly_entity_assigned_to(file, e, obj, name)
+                    && let Some(prop) =
+                        self.readonly_entity_assigned_to(file, e, obj, receiver, name)
                 {
                     let at = (
                         file,
@@ -2313,11 +2317,19 @@ impl<'p> Checker<'p> {
         func: FnId,
         owner: ExprId,
     ) -> Option<TypeId> {
-        if self.is_context_sensitive_function_or_method(file, func, owner)
-            && let Some(sig) = self.assigned_contextual_signature(file, func)
-            && let Some(this) = self.sig_this_type(sig)
-        {
-            return Some(this);
+        if self.is_context_sensitive_function_or_method(file, func, owner) {
+            // `getThisTypeOfDeclaration`: the `this` type assigned by `assignContextualParameterTypes`.
+            if let Some(sig) = self.assigned_contextual_signature(file, func)
+                && let Some(this) = self.sig_this_type(sig)
+            {
+                return Some(this);
+            }
+            // `getContextualSignature` is not cached: the enclosing call may have been resolved since the signature was assigned.
+            if let Some(sig) = self.contextual_signature(file, func)
+                && let Some(this) = self.sig_this_type(sig)
+            {
+                return Some(this);
+            }
         }
         if !self.p.files.options.no_implicit_this && !self.hir(file).is_js {
             return None;
@@ -2426,43 +2438,6 @@ impl<'p> Checker<'p> {
                 && self.bound(file).fns[func.idx()].contains_this
     }
 
-    /// `getTypeOfExpression`, asked once `file` is checked. `checkExpression` is not memoised: `e` and all it is made of are checked
-    /// again, in the normal check mode and with nothing pushed. What is read is what tsgo keeps: resolved signatures, the types of
-    /// symbols, the parameter and return types of functions. So what is expected of an argument is what the resolved signature
-    /// takes, which decides anew which literal types stay (`isLiteralOfContextualType`) and what is a const context
-    /// (`isConstContext`), and a generic function is as it is declared (`instantiateTypeWithSingleGenericCallSignature`). The kept
-    /// type of an argument is the one the type arguments of its call were inferred from.
-    pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
-        // The first check, in which the calls around `e` are resolved.
-        self.type_of_expr(file, e);
-        let outer = self.begin_recheck();
-        let ty = match self.quick_type_of_expr(file, e) {
-            Some(quick) => quick,
-            None => self.check_expression_ex(file, e, CheckMode::empty()),
-        };
-        self.end_recheck(outer);
-        ty
-    }
-
-    /// `getTypeOfSymbol` of a member of an object literal or a JSX attribute, of which `p` is `symbol.ValueDeclaration`:
-    /// `checkPropertyAssignment`, `checkJsxAttribute` and the like, the first time it is asked. `checkObjectLiteral` does not ask.
-    pub(super) fn get_type_of_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
-        // `checkShorthandPropertyAssignment(declaration, true)`: of `{ a = 1 }` it is the name that is checked.
-        let hir = self.hir(file);
-        if hir[p].kind == PropKind::Shorthand
-            && let ExprKind::Assign { target, .. } = hir[hir[p].value].kind
-        {
-            return self.type_of_expr(file, target);
-        }
-        self.type_of_literal_prop(file, p);
-        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
-        let outer = self.begin_recheck();
-        let ty = self.check_literal_member(file, p);
-        self.end_recheck(outer);
-        self.mode_of_recheck = mode_outside;
-        ty
-    }
-
     /// Whether `type_of_expr` has the type of `e` at hand.
     fn has_type_of_expr(&self, file: FileId, e: ExprId) -> bool {
         if self.is_rechecking() {
@@ -2473,7 +2448,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `checkPropertyAssignment`, `checkObjectLiteralMethod` and the like of the member `p`, as `checkObjectLiteral` asks them.
-    fn check_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
+    pub(super) fn check_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
         if !self.is_rechecking() {
             return self.type_of_literal_prop(file, p);
         }
@@ -2591,6 +2566,15 @@ impl<'p> Checker<'p> {
     /// type of a property has.
     fn with_propagated_non_inferrable_flag(&mut self, ty: TypeId) -> TypeId {
         self.map_type(ty, |c, m| {
+            // `getSpreadType` of a generic type returns `getIntersectionType`, which propagates the flag.
+            if let TypeData::Intersection(parts) = c.data(m) {
+                let parts: SmallVec<[TypeId; 4]> = parts
+                    .to_vec()
+                    .into_iter()
+                    .map(|part| c.with_propagated_non_inferrable_flag(part))
+                    .collect();
+                return c.intersection(&parts);
+            }
             let TypeData::Synth(shape) = c.data(m) else {
                 return m;
             };
@@ -3201,12 +3185,12 @@ impl<'p> Checker<'p> {
         func: FnId,
         check_mode: CheckMode,
     ) {
-        if self.context_checked(file, func).is_some() {
+        if self.is_context_checked(file, e, func) {
             return;
         }
         let contextual_signature = self.contextual_signature(file, func);
-        // Obtaining the contextual type may have got back to here, during overload resolution of the call around.
-        if self.context_checked(file, func).is_some() {
+        // Computing the contextual type can re-enter this function during overload resolution of the enclosing call.
+        if self.is_context_checked(file, e, func) {
             return;
         }
         let hir = self.hir(file);
@@ -3261,6 +3245,7 @@ impl<'p> Checker<'p> {
             // `if signature.resolvedReturnType == nil`
             if self.leave() && self.p.fn_return_types.get(file, func.idx()).is_none() {
                 self.p.fn_return_types.set(file, func.idx(), ty);
+                self.note_result(Query::Return(file, func));
             }
         }
         // `checkSignatureDeclaration` has no check mode.
@@ -3270,7 +3255,22 @@ impl<'p> Checker<'p> {
         self.context_checking.pop();
         if holds {
             self.p.context_checked.insert((file, func), assigned);
+            self.context_checked_here.insert((file, func));
         }
+    }
+
+    /// `links.flags&NodeCheckFlagsContextChecked != 0`. The first contextual check of a function also updates the inference context of the
+    /// enclosing call. Another thread's check updated that thread's context, so its entry in `Program::context_checked` counts only if no
+    /// inference context of this checker covers `e`.
+    fn is_context_checked(&self, file: FileId, e: ExprId, func: FnId) -> bool {
+        // `context_checked_here` is a subset of `Program::context_checked`.
+        self.context_checking.iter().any(|c| c.0 == (file, func))
+            || self.p.context_checked.get(&(file, func)).is_some()
+                && (self.inference_contexts.is_empty()
+                    || self.context_checked_here.contains(&(file, func))
+                    || !self
+                        .get_inference_context(file, e)
+                        .is_some_and(|level| self.inference_contexts[level].context.is_some()))
     }
 
     /// `NodeCheckFlagsContextChecked`, with what `assignContextualParameterTypes` was given.

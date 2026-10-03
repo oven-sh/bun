@@ -47,7 +47,6 @@ mod errors_x_statements;
 mod errors_x_typenodes;
 pub mod explain;
 mod explain_relation;
-mod explain_table;
 mod expr;
 mod fix_t7;
 mod flow;
@@ -66,10 +65,16 @@ mod related_expected;
 mod shape;
 mod sink;
 pub(crate) mod spans;
+#[cfg(feature = "baselines")]
+#[path = "../standalone/symbol_writer.rs"]
 pub mod symbol_writer;
 mod symbols;
+#[cfg(feature = "baselines")]
+#[path = "../standalone/type_writer.rs"]
 pub mod type_writer;
 mod unions;
+#[cfg(feature = "baselines")]
+#[path = "../standalone/visit_node.rs"]
 mod visit_node;
 
 use crate::atom::{Atom, known};
@@ -91,7 +96,6 @@ use shape::members_among;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
 use spans::is_identifier_part;
-use spans::jsx_tag_name_end;
 use spans::skip_trivia;
 use spans::start_of_token_before;
 use spans::token_end;
@@ -276,8 +280,11 @@ impl Program {
     }
 
     pub fn new(files: Arc<Files>) -> Program {
+        // `check_source_file_alone` calls this on a worker thread. `hir` and `bound` of a transient module are mutated and freed by
+        // the thread that owns it, so they are not read here. Its nodes use thread-local storage: `Bases::at` returns `None`.
         let bases = |len: fn(&crate::program::Module) -> usize| {
-            Bases::new(files.modules.iter().map(|m| len(m)))
+            let count = |m: &crate::program::ModuleCell| if m.is_transient { 0 } else { len(m) };
+            Bases::new(files.modules.iter().map(count))
         };
         let exprs = bases(|m| m.hir.exprs.len());
         let type_nodes = bases(|m| m.hir.types.len());
@@ -438,6 +445,8 @@ impl Program {
             context_free_level: usize::MAX,
             came_full_circle: false,
             left_a_circle: false,
+            taints: 0,
+            taints_before_patterns: 0,
             cycles: 0,
             lowest_taint: usize::MAX,
             depth: 0,
@@ -450,6 +459,7 @@ impl Program {
             literals_checked_under: FxHashMap::default(),
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
+            instantiation_count: 0,
             recent_instantiations: Default::default(),
             limits: 0,
             instantiations_up_to_a_limit: FxHashMap::default(),
@@ -462,7 +472,6 @@ impl Program {
             simplified: FxHashMap::default(),
             inherited_names: [0; 4],
             cond_distributive_memo: FxHashMap::default(),
-            relation_gave_up: false,
             relation_too_complex: false,
             relations_too_deep: Vec::new(),
             checking: None,
@@ -522,6 +531,7 @@ impl Program {
             reported_unreachable_nodes: Vec::new(),
             call_resolution_errors: None,
             context_checking: Vec::new(),
+            context_checked_here: Default::default(),
             resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
@@ -664,6 +674,8 @@ struct QueryFrame {
     reported_from: u32,
     /// Where it is counted in `Checker::under_way`.
     class: u16,
+    /// `typeResolutionHasProperty`: this checker has cached a result for the same query since the frame was pushed.
+    has_result: bool,
 }
 
 pub struct Checker<'p> {
@@ -721,6 +733,10 @@ pub struct Checker<'p> {
     came_full_circle: bool,
     /// What the last `leave` left was in a circle.
     left_a_circle: bool,
+    /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
+    taints: u64,
+    /// `taints` when the first entry of `contextual_binding_patterns` was pushed. `u64::MAX` if the innermost frame was non-cacheable then.
+    taints_before_patterns: u64,
     /// How many questions have come back to themselves.
     cycles: u64,
     /// The lowest index given to `mark_tainted_from` since the innermost `begin_taint_scope`.
@@ -746,6 +762,8 @@ pub struct Checker<'p> {
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
+    /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
+    instantiation_count: u32,
     /// What was last read from or put into `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
     /// How many times `error_at_current_node` had nothing to say since `check_file` began: what was being worked out is not kept.
@@ -768,8 +786,6 @@ pub struct Checker<'p> {
     pub(super) inherited_names: [u64; 4],
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
-    /// A comparison was cut short. What it answered is not to be told anybody.
-    pub(super) relation_gave_up: bool,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
     /// The two types of each `checkTypeRelatedToEx` that has reached 100 nested comparisons (2321). The caller clears it before comparing.
@@ -893,6 +909,8 @@ pub struct Checker<'p> {
     /// The functions whose first look is under way, see `context_checked`. They are in `Program::context_checked`, for every thread,
     /// once what the first look works out is: whoever found the one without the other would go on without a first look of its own.
     context_checking: Vec<((FileId, crate::hir::FnId), Option<SigId>)>,
+    /// The functions whose entry in `Program::context_checked` this checker wrote or tried to write. See `is_context_checked`.
+    context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// `NodeCheckFlagsInCheckIdentifier`: the patterns `getNarrowedTypeOfSymbol` is at.
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that nothing takes.
@@ -1111,6 +1129,7 @@ impl<'p> Checker<'p> {
             circular: false,
             drops_reported,
             reported_from: self.reported.len() as u32,
+            has_result: false,
         });
         true
     }
@@ -1442,39 +1461,26 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `typeResolutionHasProperty`, of the resolutions from `i` up: whether one that is under way has been given its answer
-    /// meanwhile, by the same question asked where this one could not be seen, or by another thread.
+    /// `typeResolutionHasProperty` for the frames from `i` up. In tsgo `links` belong to one checker. A result that another thread
+    /// has cached in the meantime is a valid value for any caller, but is unrelated to the queries this checker has in flight.
     fn is_answered_since(&self, i: usize) -> bool {
-        self.stack[i..].iter().any(|&q| {
-            self.is_resolution(q)
-                && match q {
-                    Query::Symbol(sym) => self.p.symbol_types.get(&sym).is_some(),
-                    Query::Pat(file, pat) => self.p.pat_types.get(file, pat.idx()).is_some(),
-                    Query::Return(file, func) => {
-                        self.p.fn_return_types.get(file, func.idx()).is_some()
-                    }
-                    Query::MappedProp(mapped, name) => {
-                        self.p.mapped_prop_types.get(&(mapped, name)).is_some()
-                    }
-                    Query::Declared(sym) => self.p.declared_types.get(&sym).is_some(),
-                    Query::Bases(sym) => self.p.base_types.get(&sym).is_some(),
-                    Query::BaseConstructor(sym) => {
-                        self.p.base_constructor_types.get(&sym).is_some()
-                    }
-                    Query::Constraint(ty) => self.p.constraints.get(&ty).is_some(),
-                    Query::InitializerIsUndefined(file, param) => self
-                        .p
-                        .initializer_is_undefined
-                        .get(&(file, param))
-                        .is_some(),
-                    Query::TypeArguments(ty) => self
-                        .p
-                        .types
-                        .deferred(ty)
-                        .is_some_and(DeferredTypeArguments::is_resolved),
-                    _ => false,
-                }
-        })
+        self.frames[i..].iter().any(|frame| frame.has_result)
+    }
+
+    /// A result for `q` has been cached by this checker. Marks the frames of `q` that are still on the stack.
+    #[cold]
+    #[inline(never)]
+    fn note_result(&mut self, q: Query) {
+        if self.is_resolution(q) {
+            for (frame, _) in self
+                .frames
+                .iter_mut()
+                .zip(&self.stack)
+                .filter(|x| *x.1 == q)
+            {
+                frame.has_result = true;
+            }
+        }
     }
 
     /// A question went unanswered only because of how deep it was asked. Asked from elsewhere it has an answer, so
@@ -1579,10 +1585,13 @@ impl<'p> Checker<'p> {
     /// Whether the answer holds whoever asks, and so may be kept.
     #[inline]
     fn leave(&mut self) -> bool {
-        self.stack.pop();
+        let q = self.stack.pop().unwrap();
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.under_way[frame.class as usize] -= 1;
+        if self.under_way[frame.class as usize] != 0 && (!frame.tainted || frame.circular) {
+            self.note_result(q);
+        }
         self.left_a_circle = frame.circular;
         if self.reported.len() > frame.reported_from as usize {
             self.settle_reported(frame);
@@ -1631,6 +1640,13 @@ impl<'p> Checker<'p> {
 
     /// The answers to the questions from `stack[from]` up do not hold whoever asks.
     fn mark_tainted_from(&mut self, from: usize) {
+        self.taints += 1;
+        self.mark_tainted_by_pattern_from(from);
+    }
+
+    /// `mark_tainted_from`, because an identifier declared in a pattern in `contextual_binding_patterns` evaluated to `any`. Not counted in
+    /// `taints`.
+    fn mark_tainted_by_pattern_from(&mut self, from: usize) {
         self.lowest_taint = self.lowest_taint.min(from);
         for frame in &mut self.frames[from..] {
             frame.tainted = true;
@@ -1743,6 +1759,7 @@ impl<'p> Checker<'p> {
         for frame in &mut self.frames[depth..] {
             frame.tainted = true;
         }
+        self.taints += 1;
         self.cycles += 1;
     }
 

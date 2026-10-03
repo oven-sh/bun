@@ -245,7 +245,7 @@ impl<'p> Checker<'p> {
         let keys = self.union(&keys);
         let has_origin = index_flags.is_empty()
             && matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
-            || self.alias_of_type(ty).is_some();
+            || self.alias_symbol_of_type(ty).is_some();
         if has_origin && self.is_union(keys) {
             self.with_origin(keys, UnionOrigin::Keyof(ty))
         } else {

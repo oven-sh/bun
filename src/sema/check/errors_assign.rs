@@ -78,7 +78,6 @@ impl Checker<'_> {
                 None,
             );
         }
-        self.check_assertions(file);
         self.check_literals_against_patterns(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
         for &(owner, node) in &hir.jsdoc_types {
@@ -405,47 +404,43 @@ impl Checker<'_> {
             .then(|| self.type_from_node(file, hir[p].ty))
     }
 
-    /// `checkAssertionDeferred`: 2352, `x as T` where neither is anything like the other, or what is said in its place.
-    fn check_assertions(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let by_kind = self.exprs_by_kind(file);
-        for &assertion in by_kind.of(ExprTag::As) {
-            let i = assertion.idx();
-            let ExprKind::As { expr, ty } = hir.exprs[i].kind else {
-                continue;
-            };
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            let given = self.type_of_expr(file, expr);
-            let target = self.type_from_node(file, ty);
-            let given = self.base_of_literal(given);
-            let widened = self.widened(given);
-            if self.is_comparable(target, widened) {
-                continue;
-            }
-            let given = self.regular_type_of_object_literal(given);
-            if self.is_comparable(given, target) {
-                continue;
-            }
-            // A type that is made from a JSDoc tag is the error node.
-            let (at, end) = if hir.is_in_jsdoc(hir[ty].pos) {
-                (hir[ty].pos, self.end_of_type_node(file, ty))
-            } else {
-                (
-                    self.start_inside_parentheses(file, ExprId(i as u32)),
-                    self.end_inside_parentheses(file, ExprId(i as u32)),
-                )
-            };
-            self.check_type_comparable_to(given, target, Some((file, at, end)), Some(2352));
+    /// `checkAssertionDeferred`: reports 2352 for `x as T` when neither type is comparable to the other.
+    pub(super) fn check_assertion_deferred(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        expr: ExprId,
+        ty: TypeNodeId,
+    ) {
+        let hir = self.hir(file);
+        let given = self.type_of_expr(file, expr);
+        let target = self.type_from_node(file, ty);
+        let given = self.base_of_literal(given);
+        let widened = self.widened(given);
+        if self.is_comparable(target, widened) {
+            return;
         }
+        let given = self.regular_type_of_object_literal(given);
+        if self.is_comparable(given, target) {
+            return;
+        }
+        // For a JSDoc type assertion the error node is the type node.
+        let (at, end) = if hir.is_in_jsdoc(hir[ty].pos) {
+            (hir[ty].pos, self.end_of_type_node(file, ty))
+        } else {
+            (
+                self.start_inside_parentheses(file, e),
+                self.end_inside_parentheses(file, e),
+            )
+        };
+        self.check_type_comparable_to(given, target, Some((file, at, end)), Some(2352));
     }
 
-    /// `checkObjectLiteral`, `contextualTypeHasPattern`: what a pattern takes apart may only have what the pattern takes out of it.
-    /// 2353.
+    /// `checkObjectLiteral`, `contextualTypeHasPattern`: reports 2353 for a property of an object literal that the destructuring pattern
+    /// it is assigned to does not bind.
     fn check_literals_against_patterns(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `getContextualTypeForAssignmentExpression`: what is assigned to a pattern is expected to be what the pattern is.
+        // `getContextualTypeForAssignmentExpression`: the contextual type of the right-hand side is the type of the destructuring pattern.
         let by_kind = self.exprs_by_kind(file);
         for &assignment in by_kind.of(ExprTag::Assign) {
             let i = assignment.idx();
@@ -462,10 +457,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let expected = self.type_of_expr(file, target);
-            self.contextual.push((file, value, expected));
             self.check_literals_expected_by_pattern(file, value);
-            self.contextual.pop();
         }
     }
 
@@ -682,31 +674,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeFromImportTypeNode`: the symbol `import("spec").A.B` names as a type. `None` if the module or a name is not found.
-    fn import_type_symbol(
-        &self,
-        file: FileId,
-        spec: Atom,
-        name: Span<NameId>,
-        mode: ResolutionMode,
-    ) -> Option<Sym> {
-        let (hir, files) = (self.hir(file), self.files());
-        let module = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
-        let mut sym = files.module_value(module);
-        for (k, part) in hir.texts(name).enumerate() {
-            let wanted = if k + 1 == name.len() {
-                SymFlags::TYPE
-            } else {
-                SymFlags::NAMESPACE
-            };
-            let member = files.namespace_member(sym, part)?;
-            sym = files
-                .resolve_alias_as(member, wanted)
-                .filter(|&next| files.flags(next).intersects(wanted))?;
-        }
-        Some(sym)
-    }
-
     /// `checkTypeReferenceOrImport`
     pub(super) fn check_type_reference_or_import(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
@@ -731,12 +698,13 @@ impl Checker<'_> {
                 )
             }
             TypeNodeKind::Import {
-                spec,
-                name,
                 args,
                 is_typeof: false,
-                mode,
-            } if !args.is_empty() => (args, self.import_type_symbol(file, spec, name, mode)),
+                ..
+            } if !args.is_empty() => {
+                let symbol = self.resolve_import_type(file, node, false);
+                (args, symbol.and_then(|it| self.resolve_symbol(it).symbol()))
+            }
             _ => return,
         };
         if let Some(sym) = sym
@@ -1222,9 +1190,9 @@ impl Checker<'_> {
         let is_related =
             self.is_type_related_to_if_told(source, target, Relation::Assignable, false);
         match is_related {
-            Some(true) => return true,
-            Some(false) if error_node.is_none() => return false,
-            Some(false) => {
+            Ok(true) => return true,
+            Ok(false) if error_node.is_none() => return false,
+            Ok(false) => {
                 let output = diagnostic_output.as_deref_mut();
                 if let Some((file, e)) = expr
                     && self.elaborate_error(
@@ -1241,13 +1209,13 @@ impl Checker<'_> {
                 }
             }
             // The overflow is reported instead of the relation error. The pair is not compared again to elaborate.
-            None => {}
+            Err(_) => {}
         }
         let output = diagnostic_output.as_deref_mut();
         let is_assignable =
             self.check_type_assignable_to_ex(source, target, error_node, head_message, output);
         // `isTypeRelatedTo` has come upon the overflow before, with no node to report it on but `c.currentNode`: the assignment.
-        if is_related.is_none()
+        if let Err(code) = is_related
             && let Some((file, e)) = expr
             && let Parent::Expr(whole) = self.bound(file).expr_parent[e.idx()]
             && whole.is_some()
@@ -1255,7 +1223,7 @@ impl Checker<'_> {
         {
             let start = self.start_inside_parentheses(file, whole);
             let at = (file, start, self.end_inside_parentheses(file, whole));
-            let diagnostic = self.new_diagnostic(at, 2859, &[Arg::Type(source), Arg::Type(target)]);
+            let diagnostic = self.new_diagnostic(at, code, &[Arg::Type(source), Arg::Type(target)]);
             self.report_diagnostic(diagnostic, diagnostic_output);
         }
         is_assignable
@@ -1323,63 +1291,57 @@ impl Checker<'_> {
                 return true;
             }
         }
-        match hir[e].kind {
-            // `x as const`. `<const>x` is not gone into.
-            ExprKind::AsConst(inner) => {
-                let before = hir
-                    .text
-                    .get(..self.start_of(file, inner) as usize)
-                    .unwrap_or_default()
-                    .trim_ascii_end();
-                let is_prefix = before
-                    .strip_suffix(b">")
-                    .is_some_and(|b| b.trim_ascii_end().ends_with(b"const"));
-                !is_prefix
-                    && self.elaborate_error(
-                        file,
-                        inner,
-                        false,
-                        source,
-                        target,
-                        head_message,
-                        diagnostic_output,
-                    )
-            }
+        let next = match hir[e].kind {
+            // `x as const` is elaborated through its operand. `<const>x` is not.
+            ExprKind::AsConst(inner) if hir.kind(hir.node(e)) == Kind::AsExpression => inner,
             ExprKind::Assign {
-                op: None, value, ..
-            } => self.elaborate_error(
-                file,
-                value,
-                false,
-                source,
-                target,
-                head_message,
-                diagnostic_output,
-            ),
-            ExprKind::Binary {
+                op: None,
+                value: right,
+                ..
+            }
+            | ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
                 ..
-            } => self.elaborate_error(
-                file,
-                right,
-                false,
-                source,
-                target,
-                head_message,
-                diagnostic_output,
-            ),
+            } => right,
             ExprKind::Object(props) => {
-                self.elaborate_object_literal(file, props, source, target, diagnostic_output)
+                return self.elaborate_object_literal(
+                    file,
+                    props,
+                    source,
+                    target,
+                    diagnostic_output,
+                );
             }
             ExprKind::Array(items) => {
-                self.elaborate_array_literal(file, items, source, target, diagnostic_output)
+                return self.elaborate_array_literal(
+                    file,
+                    items,
+                    source,
+                    target,
+                    diagnostic_output,
+                );
             }
             ExprKind::Fn(func) if hir[func].kind == FnKind::Arrow => {
-                self.elaborate_arrow_function(file, func, source, target, diagnostic_output)
+                return self.elaborate_arrow_function(
+                    file,
+                    func,
+                    source,
+                    target,
+                    diagnostic_output,
+                );
             }
-            _ => false,
-        }
+            _ => return false,
+        };
+        self.elaborate_error(
+            file,
+            next,
+            false,
+            source,
+            target,
+            head_message,
+            diagnostic_output,
+        )
     }
 
     fn is_primitive_or_never(&self, ty: TypeId) -> bool {
@@ -1837,13 +1799,12 @@ impl Checker<'_> {
             && self.type_of_property(given, known::then).is_none()
         {
             // What is compared here says nothing about the comparison that is being reported.
-            let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
+            let too_complex = self.relation_too_complex;
             // `createPromiseType`
             let unwrapped = self.map_type(given, |c, m| c.awaited_argument(m).unwrap_or(m));
             let awaited = self.awaited_no_alias(unwrapped).unwrap_or(TypeId::UNKNOWN);
             let promise = self.promise_of(awaited);
             let is_meant_to_be_async = self.is_assignable(promise, wanted);
-            self.relation_gave_up = gave_up;
             self.relation_too_complex = too_complex;
             if is_meant_to_be_async {
                 let (start, end) = self.error_range_of_fn(file, func);
@@ -1891,13 +1852,11 @@ impl Checker<'_> {
         }
         let first = lines.remove(0);
         let code = first.code;
-        self.add_diagnostic(Reported::new(
-            (self.checking.unwrap(), start, end),
-            code,
-            first.args,
-        ));
-        self.explain_chain(start, code, |_| lines);
-        self.relate(start, code, |_| related);
+        let at = (self.checking.unwrap(), start, end);
+        let mut diagnostic = Reported::new(at, code, first.args);
+        super::explain::add_lines(&mut diagnostic.message_chain, lines);
+        diagnostic.related_information = related;
+        self.add_diagnostic(diagnostic);
         Some((start, code))
     }
 

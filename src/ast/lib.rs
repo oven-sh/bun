@@ -1052,21 +1052,17 @@ impl Data {
                     )?;
 
                     write_n_bytes(to, b' ', line_offset_for_second_line)?;
-                    // `^^^^` under all of what `length` covers, as far as this line goes.
-                    let left_in_line = line_text.len().saturating_sub(location.column as usize);
-                    let carets = 1 + location.length.saturating_sub(1).min(left_in_line);
                     if ENABLE_ANSI_COLORS && !message_color.is_empty() {
                         to.write_str(message_color)?;
                         to.write_str(color_name)?;
                         // always bold the ^
                         to.write_str(B)?;
 
-                        write_n_bytes(to, b'^', carets)?;
+                        to.write_char('^')?;
 
                         to.write_str("\x1b[0m\n")?;
                     } else {
-                        write_n_bytes(to, b'^', carets)?;
-                        to.write_char('\n')?;
+                        to.write_str("^\n")?;
                     }
                 }
             }

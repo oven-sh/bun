@@ -217,6 +217,11 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--only="))
                     .map(str::as_bytes),
                 keeps_everything: args.iter().any(|a| a == "--keep"),
+                order: args
+                    .iter()
+                    .find_map(|a| a.strip_prefix("--order="))
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1),
                 stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
                 says_it_as_typescript_does: false,
                 loaded: args
@@ -226,6 +231,10 @@ fn main() {
                 checked: None,
                 after_file,
             };
+            // A binary without the flag ignores it silently. A script that tests start orders looks for this line.
+            if request.order != 1 {
+                eprintln!("order {}", request.order);
+            }
             bun_sema_driver::check_then(&request, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
@@ -290,7 +299,7 @@ fn main() {
                         instructions.saturating_sub(loading) as f64 / 1e9
                     );
                 }
-                std::process::exit(i32::from(report.error_count() > 0));
+                std::process::exit(i32::from(!report.is_ok()));
             })
         }
         Some("baselines") => {

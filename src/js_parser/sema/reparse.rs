@@ -818,7 +818,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             None => (FnKind::FunctionType, Flags::empty(), Atom::NONE),
         };
-        let params = self.b.file.add_params(&params);
+        let mut params = self.b.file.add_params(&params);
+        // `GetThisParameter`. A parameter created from an `@this` tag precedes every `@param` tag.
+        if this_param.is_none() {
+            (this_param, params) = self.b.file.split_this_parameter(params);
+        }
         self.b.file.add_fn(Func {
             kind,
             flags: flags | Flags::REPARSED,

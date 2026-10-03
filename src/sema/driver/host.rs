@@ -226,6 +226,8 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     }
     Cow::Owned(match BOM::detect(&bytes) {
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
+        // `BOM::detect` needs three bytes. A UTF-16 mark alone is an empty file.
+        None if bytes == [0xFF, 0xFE] => Vec::new(),
         None => bytes,
     })
 }
@@ -235,10 +237,19 @@ fn split(path: &[u8]) -> (&[u8], &[u8]) {
     (dirname::<Posix>(path), basename_posix(path))
 }
 
-/// Whether what is at `path` is a directory, links followed. `None`: nothing is there.
+/// Whether `path` is a directory (true) or a regular file (false), following symlinks. `None`: it does not exist, or it is neither.
+/// `FileExists` and `GetAccessibleEntries` accept regular files only: reading a FIFO or a device can block forever.
 fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
-    let found = bun_sys::exists_at_type(directory, z(path, &mut path_buffer_pool::get()));
-    Some(found.ok()? == ExistsAtType::Directory)
+    let mut buffer = path_buffer_pool::get();
+    let path = z(path, &mut buffer);
+    if cfg!(windows) {
+        return Some(bun_sys::exists_at_type(directory, path).ok()? == ExistsAtType::Directory);
+    }
+    match bun_sys::kind_from_mode(bun_sys::fstatat(directory, path).ok()?.st_mode as _) {
+        EntryKind::Directory => Some(true),
+        EntryKind::File => Some(false),
+        _ => None,
+    }
 }
 
 impl Disk {
@@ -396,7 +407,9 @@ fn list(path: &[u8]) -> Directory {
                 Some(is_dir) => is_dir,
                 None => continue,
             },
-            _ => false,
+            EntryKind::File => false,
+            // A FIFO, socket or device.
+            _ => continue,
         };
         if is_link {
             listing.links.push(name.to_vec());

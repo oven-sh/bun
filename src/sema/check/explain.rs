@@ -83,16 +83,6 @@ impl Checker<'_> {
             .find(|d| d.start == start && d.code == code)
     }
 
-    /// The arguments of the message of the error `code` reported at `start`.
-    pub(super) fn explain(
-        &mut self,
-        start: u32,
-        code: u32,
-        args: impl FnOnce(&mut Self) -> Vec<String>,
-    ) {
-        self.explain_to(start, 0, code, args);
-    }
-
     /// The same, and that the error ends at `end`: the end of the node TypeScript reports it on.
     pub(super) fn explain_to(
         &mut self,
@@ -133,18 +123,11 @@ impl Checker<'_> {
         self.last_reported(start, code).unwrap()
     }
 
-    /// What was noted of an error before it was reported goes with it. What was noted of none goes.
+    /// Merges each pending note into the diagnostic with the same start and code. Notes without a match are dropped.
     pub(super) fn settle_what_was_noted_ahead(&mut self) {
-        self.settle_what_was_noted_ahead_since(0, 0);
-        self.noted_ahead.clear();
-    }
-
-    /// The same, of what has been reported since there were `reported` reports and noted since there were `noted` notes. What is noted
-    /// of none of these waits.
-    pub(super) fn settle_what_was_noted_ahead_since(&mut self, reported: usize, noted: usize) {
-        for ahead in self.noted_ahead.split_off(noted) {
+        for ahead in std::mem::take(&mut self.noted_ahead) {
             let is_it = |d: &&mut Reported| d.start == ahead.start && d.code == ahead.code;
-            match self.reported[reported..].iter_mut().find(is_it) {
+            match self.reported.iter_mut().find(is_it) {
                 Some(d) if d.is_bare() || ahead.is_bare() => {
                     if !ahead.is_bare() {
                         (d.end, d.args) = (ahead.end, ahead.args);
@@ -162,7 +145,7 @@ impl Checker<'_> {
                     let file = d.file;
                     self.reported.push(Reported { file, ..ahead });
                 }
-                None => self.noted_ahead.push(ahead),
+                None => {}
             }
         }
     }
@@ -177,32 +160,6 @@ impl Checker<'_> {
         let related = related(self);
         let last = self.last_reported_or_ahead(start, code);
         last.related_information.extend(related);
-    }
-
-    /// `compactAndMergeRelatedInfos`: adds related information to what was first reported as `code` at `start`, which is what is
-    /// shown. `is_again`: the error has been reported before. Then what goes with any of the reports is put in the order of errors,
-    /// each thing once.
-    pub(super) fn relate_reports_merged(
-        &mut self,
-        start: u32,
-        code: u32,
-        is_again: bool,
-        related: Vec<Reported>,
-    ) {
-        let Some(first) = self
-            .reported
-            .iter()
-            .position(|d| d.start == start && d.code == code)
-        else {
-            return;
-        };
-        let mut all = std::mem::take(&mut self.reported[first].related_information);
-        all.extend(related);
-        if is_again {
-            all.sort_by(|a, b| self.compare_diagnostics(a, b));
-            all.dedup();
-        }
-        self.reported[first].related_information = all;
     }
 
     /// Whether `GetSuggestionDiagnostics` are reported as well.
@@ -220,31 +177,6 @@ impl Checker<'_> {
         let text = &self.hir(file).text;
         let end = (end as usize).min(text.len());
         String::from_utf8_lossy(&text[(start as usize).min(end)..end]).into_owned()
-    }
-
-    /// Adds lines under the message last reported as `code` at `start`: the reasons, outermost first.
-    pub(super) fn explain_chain(
-        &mut self,
-        start: u32,
-        code: u32,
-        lines: impl FnOnce(&mut Self) -> Vec<Line>,
-    ) {
-        let lines = lines(self);
-        if let Some(last) = self.last_reported(start, code) {
-            add_lines(&mut last.message_chain, lines);
-        }
-    }
-
-    /// `NewDiagnosticChain`: puts the message `head` on top of what was last reported as `code` at `start`. The error goes by
-    /// `head` from now on, and what it said is the first of its reasons.
-    pub(super) fn explain_under(&mut self, start: u32, code: u32, head: u32, args: &[Arg<'_>]) {
-        let args = self.stringify_args(args);
-        if let Some(last) = self.last_reported(start, code) {
-            let mut said = Reported::new(NOWHERE, code, std::mem::replace(&mut last.args, args));
-            said.message_chain = std::mem::take(&mut last.message_chain);
-            last.message_chain.push(said);
-            last.code = head;
-        }
     }
 
     /// `check_file` and `finish_file`, for whoever checks one file by itself.
@@ -304,9 +236,6 @@ impl Checker<'_> {
             Some(b'\n' | b'\r') if !hir.is_in_jsdoc(d.start) => d.start,
             _ => self.end_of_token_at(d.file, d.start),
         };
-        if d.args.is_empty() {
-            d.args = args_from_source(&hir.text, d.start, token_end, d.code);
-        }
         d.end = match d.end {
             NO_LENGTH => d.start,
             end if end != 0 && end >= d.start => end,
@@ -318,17 +247,4 @@ impl Checker<'_> {
                 .map_or(token_end, |e| e.2),
         };
     }
-}
-
-/// The arguments of a message that nothing was noted for, where they can be read off the source: the name or the string the error is
-/// reported on.
-fn args_from_source(text: &[u8], start: u32, end: u32, code: u32) -> Args {
-    use super::explain_table::Source;
-    let token = &text[(start as usize).min(text.len())..(end as usize).min(text.len())];
-    super::explain_table::sources(code)
-        .iter()
-        .map(|source| match source {
-            Source::Name => token.into(),
-        })
-        .collect()
 }

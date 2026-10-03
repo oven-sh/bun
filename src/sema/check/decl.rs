@@ -1,5 +1,6 @@
 //! From declarations and type syntax to types.
 
+use super::errors_modules::fully_qualified_name_of;
 use super::errors_x_enums_names::{Location, is_ambient_enum, is_declared_before_use};
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
@@ -1213,7 +1214,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getConstraintOfTypeParameter`: what `param extends`. A constraint that comes back to the parameter is none.
+    /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
         if let Some(kept) = self.p.type_param_constraints.get(&param) {
             return kept;
@@ -1228,11 +1229,9 @@ impl<'p> Checker<'p> {
         match *self.data(param) {
             TypeData::ThisParam(sym) => Some(self.declared_type(sym)),
             TypeData::TypeParam(file, tp, around) => {
-                let before = self.what_only_holds_for_now();
+                let (before, scope) = (self.what_only_holds_for_now(), self.begin_taint_scope());
                 let constraint = self.resolve_constraint_of_type_param(param, file, tp, around);
-                if self.what_only_holds_for_now() == before
-                    && self.is_constraint_settled(param, file, tp, around, constraint)
-                {
+                if !self.end_taint_scope(&scope) && self.what_only_holds_for_now() == before {
                     self.p.type_param_constraints.insert(param, constraint);
                 }
                 constraint
@@ -1263,29 +1262,6 @@ impl<'p> Checker<'p> {
             return None;
         }
         Some(constraint)
-    }
-
-    /// Whether `constraint`, which is what `param` was just found to extend, was read from what is kept itself. A frame can be left
-    /// without its answer being kept and without `what_only_holds_for_now` moving.
-    fn is_constraint_settled(
-        &self,
-        param: TypeId,
-        file: FileId,
-        tp: TypeParamId,
-        around: MapperId,
-        constraint: Option<TypeId>,
-    ) -> bool {
-        if around != MapperId::IDENTITY {
-            let declared = self.type_param(file, tp);
-            return self.p.type_param_constraints.get(&declared).is_some();
-        }
-        let (of, written, _) =
-            self.type_param_declaration_with(file, tp, |p: &TypeParam| p.constraint);
-        let node = self.hir(of)[written].constraint;
-        if node.is_some() {
-            return self.p.type_node_types.get(of, node.idx()).is_some();
-        }
-        constraint.is_none() || self.p.inferred_constraints.get(&param).is_some()
     }
 
     /// `getConstraintFromTypeParameter`: the same, whether or not it goes round in a circle.
@@ -1600,49 +1576,41 @@ impl<'p> Checker<'p> {
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
             return None;
         };
-        let before = self.what_only_holds_for_now();
-        let (default, is_settled) = self.resolve_default_of_type_param(file, tp, around);
-        if is_settled && self.what_only_holds_for_now() == before {
+        let (before, scope) = (self.what_only_holds_for_now(), self.begin_taint_scope());
+        let default = self.resolve_default_of_type_param(file, tp, around);
+        if !self.end_taint_scope(&scope) && self.what_only_holds_for_now() == before {
             self.p.type_param_defaults.insert(param, default);
         }
         default
     }
 
-    /// With it, whether it was read from what is kept itself. A frame can be left without its answer being kept and without
-    /// `what_only_holds_for_now` moving.
     #[inline(never)]
     fn resolve_default_of_type_param(
         &mut self,
         file: FileId,
         tp: TypeParamId,
         around: MapperId,
-    ) -> (Option<TypeId>, bool) {
-        // That of a fresh one is that of the declared one, with what is around it filled in.
+    ) -> Option<TypeId> {
+        // The default of a cloned type parameter is the declared default instantiated with the mapper of the clone.
         if around != MapperId::IDENTITY {
             let declared = self.type_param(file, tp);
-            let default = self.default_of_type_param(declared);
-            let is_settled = self.p.type_param_defaults.get(&declared).is_some();
-            let Some(default) = default else {
-                return (None, is_settled);
-            };
+            let default = self.default_of_type_param(declared)?;
             let mapper = self.clone_mapper(file, tp, around);
-            return (Some(self.instantiate(default, mapper)), is_settled);
+            return Some(self.instantiate(default, mapper));
         }
         let (of, written, lists) =
             self.type_param_declaration_with(file, tp, |p: &TypeParam| p.default);
         let node = self.hir(of)[written].default;
         if node.is_none() {
-            return (None, true);
+            return None;
         }
         let default = self.type_from_node(of, node);
-        let is_settled = self.p.type_node_types.get(of, node.idx()).is_some();
-        let default = match lists {
+        Some(match lists {
             Some((theirs, own)) => {
                 self.in_terms_of_own_type_params(default, (of, theirs), (file, own))
             }
             None => default,
-        };
-        (Some(default), is_settled)
+        })
     }
 
     /// The same for the type parameters of `sig`, whose defaults may mention those of what it was found in.
@@ -2475,126 +2443,7 @@ impl<'p> Checker<'p> {
                 let args = self.types_from_nodes(file, args);
                 self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
             }
-            TypeNodeKind::Import {
-                spec,
-                name,
-                args,
-                is_typeof,
-                mode,
-            } => {
-                // `getTypeFromImportTypeNode`
-                let mode = self.files().mode_of_import(file, mode);
-                let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
-                    return TypeId::ERROR;
-                };
-                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
-                // `resolveExternalModuleSymbol`: the module, or what it says it is with `export =`. One that could not be followed is
-                // `unknownSymbol`.
-                let value = self.files().module_value(module);
-                let is_followed = self
-                    .files()
-                    .flags(value)
-                    .intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE);
-                if is_typeof {
-                    // The module is no value.
-                    if names.is_empty()
-                        && is_followed
-                        && !self.files().symbol_flags(value).intersects(SymFlags::VALUE)
-                    {
-                        return TypeId::ERROR;
-                    }
-                    // Name by name a property of the type of the value before. Those of a module or a namespace are what it
-                    // exports, what it exports as a type only too.
-                    let mut at: Result<Sym, TypeId> = Ok(value);
-                    for &n in &names {
-                        if let Ok(container) = at
-                            && let Some(member) = self.files().namespace_member(container, n)
-                        {
-                            match self.files().resolve_alias_as(member, SymFlags::VALUE) {
-                                Some(next)
-                                    if self.files().flags(next).intersects(SymFlags::VALUE) =>
-                                {
-                                    at = Ok(next);
-                                    continue;
-                                }
-                                Some(_) => {}
-                                None => {
-                                    at = Err(self.type_of_symbol(member));
-                                    continue;
-                                }
-                            }
-                        }
-                        let ty = match at {
-                            Ok(sym) => self.type_of_symbol(sym),
-                            Err(ty) => ty,
-                        };
-                        // `getPropertyOfTypeEx`: `any` has no properties.
-                        let property = if self.has_any_flag(ty) {
-                            None
-                        } else {
-                            self.type_of_property(ty, n)
-                        };
-                        match property {
-                            Some(next) => at = Err(next),
-                            None => {
-                                return TypeId::ERROR;
-                            }
-                        }
-                    }
-                    let ty = match at {
-                        Ok(sym) => self.type_of_symbol(sym),
-                        Err(ty) => ty,
-                    };
-                    if args.is_empty() {
-                        return ty;
-                    }
-                    let args = self.types_from_nodes(file, args);
-                    let node = InstantiationExpression::TypeNode(file, node);
-                    return self.with_type_arguments(ty, &args, node);
-                }
-                if !is_followed {
-                    return TypeId::ERROR;
-                }
-                // Namespaces up to the last name, which is to be a type.
-                let mut sym = value;
-                for (i, &n) in names.iter().enumerate() {
-                    let wanted = if i + 1 == names.len() {
-                        SymFlags::TYPE
-                    } else {
-                        SymFlags::NAMESPACE
-                    };
-                    let Some(member) = self.files().namespace_member(sym, n) else {
-                        return TypeId::ERROR;
-                    };
-                    let Some(next) = self.files().resolve_alias_as(member, wanted) else {
-                        return TypeId::ERROR;
-                    };
-                    if !self.files().flags(next).intersects(wanted) {
-                        return TypeId::ERROR;
-                    }
-                    sym = next;
-                }
-                // `getDeclaredTypeOfAlias`: `resolveSymbol` does not follow an `export =` that is a namespace as well as an alias.
-                if self.files().flags(sym).contains(SymFlags::ALIAS)
-                    && !self.files().flags(sym).intersects(SymFlags::TYPE)
-                {
-                    let Some(target) = self.files().resolve_alias(sym) else {
-                        return TypeId::ERROR;
-                    };
-                    // `checkNoTypeArguments`
-                    if !args.is_empty() || !self.files().flags(target).intersects(SymFlags::TYPE) {
-                        return TypeId::ERROR;
-                    }
-                    let ty = self.declared_type(target);
-                    return self.regular(ty);
-                }
-                // `getTypeReferenceType`
-                let flags = self.files().flags(sym);
-                if !flags.intersects(SymFlags::TYPE) {
-                    return TypeId::ERROR;
-                }
-                self.type_reference_type_of_node(file, scope, node, sym, args)
-            }
+            TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
             TypeNodeKind::Ref { name, args } => {
                 if let Some(intended) = self.get_intended_type_from_jsdoc_type_reference(file, node)
                 {
@@ -2627,6 +2476,139 @@ impl<'p> Checker<'p> {
                 self.type_reference_type_of_node(file, scope, node, sym, args)
             }
         }
+    }
+
+    /// `getTypeFromImportTypeNode`
+    fn get_type_from_import_type_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> TypeId {
+        let TypeNodeKind::Import {
+            args, is_typeof, ..
+        } = self.hir(file)[node].kind
+        else {
+            return TypeId::ERROR;
+        };
+        let reports_errors = !self.bound(file).is_unchecked_type(node.idx());
+        let Some(symbol) = self.resolve_import_type(file, node, reports_errors) else {
+            return TypeId::ERROR;
+        };
+        // `resolveImportSymbolType`
+        if is_typeof {
+            let ty = self.type_of_alias_target(symbol);
+            // `getInstantiationExpressionType`: `typeArguments == nil`
+            if args.is_empty() {
+                return ty;
+            }
+            let args = self.types_from_nodes(file, args);
+            let node = InstantiationExpression::TypeNode(file, node);
+            return self.with_type_arguments(ty, &args, node);
+        }
+        let AliasTarget::Symbol(sym) = self.resolve_symbol(symbol) else {
+            return TypeId::ERROR;
+        };
+        // `resolveSymbol` only follows a non-local alias. An `export =` symbol that is also a namespace is returned unchanged:
+        // `getDeclaredTypeOfAlias`.
+        let flags = self.files().flags(sym);
+        if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::TYPE) {
+            let Some(target) = self.files().resolve_alias(sym) else {
+                return TypeId::ERROR;
+            };
+            // `checkNoTypeArguments`
+            if !args.is_empty() || !self.files().flags(target).intersects(SymFlags::TYPE) {
+                return TypeId::ERROR;
+            }
+            let ty = self.declared_type(target);
+            return self.regular(ty);
+        }
+        // `getTypeReferenceType`
+        if !flags.intersects(SymFlags::TYPE) {
+            return TypeId::ERROR;
+        }
+        self.type_reference_type_of_node(file, scope, node, sym, args)
+    }
+
+    /// The qualifier loop of `getTypeFromImportTypeNode`. Returns the final `currentNamespace` (the module symbol if there is no qualifier),
+    /// or `None` where tsgo returns `errorType`.
+    pub(super) fn resolve_import_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        reports_errors: bool,
+    ) -> Option<AliasTarget> {
+        let (hir, files) = (self.hir(file), self.files());
+        let TypeNodeKind::Import {
+            spec,
+            name,
+            is_typeof,
+            mode,
+            ..
+        } = hir[node].kind
+        else {
+            return None;
+        };
+        let target_meaning = if is_typeof {
+            SymFlags::VALUE
+        } else {
+            SymFlags::TYPE
+        };
+        let mode = files.mode_of_import(file, mode);
+        let inner_module_symbol = files.module_of_specifier_as(file, spec, mode)?;
+        // `resolveExternalModuleSymbol`
+        let module_symbol = self.resolve_symbol(files.module_value(inner_module_symbol));
+        if name.is_empty() {
+            let flags = match module_symbol {
+                AliasTarget::Symbol(symbol) => self.get_symbol_flags(symbol),
+                _ => SymFlags::PROPERTY,
+            };
+            if !flags.intersects(target_meaning) {
+                if reports_errors {
+                    let code = if is_typeof { 1339 } else { 1340 };
+                    self.error(file, node, code, &[Arg::Atom(spec)]);
+                }
+                return None;
+            }
+        }
+        let mut current_namespace = module_symbol;
+        for (i, current) in name.iter().enumerate() {
+            let text = hir[current].text;
+            let meaning = if is_typeof || i + 1 == name.len() {
+                target_meaning
+            } else {
+                SymFlags::NAMESPACE
+            };
+            let merged_resolved_symbol = self.resolve_symbol(current_namespace);
+            // `includeTypeOnlyMembers`: the object type of a module or namespace omits type-only exports, so look in the export table first.
+            let exported = (merged_resolved_symbol.symbol())
+                .and_then(|symbol| files.namespace_member(symbol, text));
+            let mut next = self.get_symbol(exported, meaning).map(AliasTarget::Symbol);
+            if next.is_none() && is_typeof {
+                let ty = self.type_of_alias_target(merged_resolved_symbol);
+                if let Some((prop, mapper)) = self.get_property_of_type(ty, text) {
+                    next = Some(AliasTarget::Property(
+                        ty,
+                        text,
+                        self.type_of_prop(prop, mapper),
+                    ));
+                }
+            }
+            let Some(next) = next else {
+                if reports_errors {
+                    let namespace = fully_qualified_name_of(self, current_namespace);
+                    self.error(
+                        file,
+                        current,
+                        2694,
+                        &[Arg::Bytes(&namespace), Arg::Atom(text)],
+                    );
+                }
+                return None;
+            };
+            current_namespace = next;
+        }
+        Some(current_namespace)
     }
 
     /// `getTypeReferenceType`, of the reference to the type `sym` that is written at `node` with the type arguments `args`.
@@ -3587,18 +3569,35 @@ impl<'p> Checker<'p> {
 
     /// `getThisTypeOfSignature`: what it is to be called on, whatever made the signature.
     pub fn sig_this_type(&mut self, sig: SigId) -> Option<TypeId> {
+        Some(self.sig_this_parameter(sig)?.0)
+    }
+
+    /// `signature.thisParameter`: its type and the signature that declares it. A context-sensitive function without a `this` parameter
+    /// takes the one of its contextual signature (`assignContextualParameterTypes`: `createSymbolWithType(context.thisParameter, nil)`).
+    pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.p.types.sig(sig) {
-            SigData::WithReturn { sig: inner, .. } => return self.sig_this_type(inner),
-            SigData::Synth { this, .. } => return this,
+            SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
+            SigData::Synth { this, .. } => return Some((this?, sig)),
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
-        let f = &self.hir(file)[func];
-        if f.this_param.is_none() {
+        if self.hir(file)[func].this_param.is_some() {
+            let declared = self.type_of_this_parameter(file, func);
+            return Some((self.instantiate(declared, mapper), sig));
+        }
+        let crate::bind::FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner else {
+            return None;
+        };
+        if !self.is_context_sensitive(file, owner) {
             return None;
         }
-        let declared = self.type_of_this_parameter(file, func);
-        Some(self.instantiate(declared, mapper))
+        let contextual = self.assigned_contextual_signature(file, func)?;
+        // The contextual signature can be the function's own signature.
+        if (self.sig_decl(contextual)).is_some_and(|(f, g, _)| (f, g) == (file, func)) {
+            return None;
+        }
+        let (this, declared_by) = self.sig_this_parameter(contextual)?;
+        Some((self.instantiate(this, mapper), declared_by))
     }
 
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {

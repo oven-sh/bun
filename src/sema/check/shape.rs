@@ -2459,17 +2459,30 @@ impl<'p> Checker<'p> {
             .intersects(SymFlags::VALUE)
     }
 
-    /// `isReadonlySymbol`, of what a module, a namespace or an enum exports: constants and enum members. What an alias stands
-    /// for does not count.
+    /// `PropFlags` of an export of a module, namespace or enum. Constants and enum members are read-only (`isReadonlySymbol`); the
+    /// target of an alias is not considered. An expando assignment (`f.name = value`) takes its modifiers from JSDoc
+    /// (`getDeclarationModifierFlagsFromSymbol`).
     fn export_flags(&self, export: Sym) -> PropFlags {
         let own = self.files().flags(export);
+        let mut flags = PropFlags::empty();
         if own.intersects(SymFlags::VARIABLE) && own.contains(SymFlags::CONST)
             || own.contains(SymFlags::ENUM_MEMBER)
         {
-            PropFlags::READONLY
-        } else {
-            PropFlags::empty()
+            flags |= PropFlags::READONLY;
         }
+        if own.contains(SymFlags::ASSIGNMENT)
+            && let Some((file, Decl::Expando(first))) = self.files().value_declaration(export)
+        {
+            let modifiers = self.hir(file).jsdoc_modifiers_of(first);
+            if modifiers.contains(Flags::READONLY) {
+                flags |= PropFlags::READONLY;
+            }
+            if self.declaring_class_of_symbol(export).is_some() {
+                flags.set(PropFlags::PRIVATE, modifiers.contains(Flags::PRIVATE));
+                flags.set(PropFlags::PROTECTED, modifiers.contains(Flags::PROTECTED));
+            }
+        }
+        flags
     }
 
     pub(super) fn exports_in_order(&self, sym: Sym) -> Vec<(Atom, Sym)> {
@@ -4681,9 +4694,9 @@ impl<'p> Checker<'p> {
 
     /// `prop.ValueDeclaration`
     pub(super) fn value_declaration_of_prop(&self, prop: &Prop) -> Option<(FileId, Decl)> {
-        match Self::value_declaration(prop)? {
-            &PropSource::Symbol(sym) => self.files().value_declaration(sym),
-            &PropSource::Literal(file, p) => Some((file, Decl::Property(p))),
+        match *Self::value_declaration(prop)? {
+            PropSource::Symbol(sym) => self.files().value_declaration(sym),
+            PropSource::Literal(file, p) => Some((file, Decl::Property(p))),
             _ => None,
         }
     }

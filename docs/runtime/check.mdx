@@ -124,12 +124,12 @@ In a terminal, `bun check` shows the source around each error and the declaratio
 1 | import { greet } from "./user";
 2 |
 3 | const message = greet({ id: "1", name: "Ada" });
-                            ^^
+                            ^
 error: TS2322: Type 'string' is not assignable to type 'number'.
     at src/index.ts:3:25
 
 2 |   id: number;
-      ^^
+      ^
 note: The expected type comes from property 'id' which is declared here on type 'User'
    at src/user.ts:2:3
 
@@ -146,7 +146,7 @@ Above 50 errors, the terminal format shows each distinct error once. Under it, `
 
 ```txt
 1 | export const v0: number = "0";
-                 ^^
+                 ^
 error: TS2322: Type 'string' is not assignable to type 'number'.
     at m1.ts:1:14
     60 times in 2 files

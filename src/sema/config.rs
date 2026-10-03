@@ -497,6 +497,7 @@ pub fn load_overriding(
 
 /// The same, going by TypeScript 7 alone: what only older versions took is as wrong as what never meant anything, and what is wrong is as
 /// good as not said.
+#[cfg(feature = "baselines")]
 pub fn load_as_typescript_does(
     host: &dyn Host,
     path: &[u8],

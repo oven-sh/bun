@@ -184,6 +184,13 @@ impl<'p> Checker<'p> {
         {
             return self.implied_by_pattern_inner(file, pat, for_context, report_errors);
         }
+        if self.contextual_binding_patterns.is_empty() {
+            self.taints_before_patterns = if self.is_innermost_tainted() {
+                u64::MAX
+            } else {
+                self.taints
+            };
+        }
         self.contextual_binding_patterns
             .push((file, pat, self.stack.len()));
         let ty = self.implied_by_pattern_inner(file, pat, for_context, report_errors);
@@ -262,7 +269,7 @@ impl<'p> Checker<'p> {
                     PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
                         if outer == pattern {
                             // What is made of it holds for as long as the implied type is being worked out.
-                            self.mark_tainted_from(floor.min(self.stack.len()));
+                            self.mark_tainted_by_pattern_from(floor.min(self.stack.len()));
                             self.cycles += 1;
                             return true;
                         }
@@ -1277,7 +1284,7 @@ impl<'p> Checker<'p> {
             && !self.is_innermost_tainted()
             && !matches!(self.stack.last(), Some(Query::Call(..)))
             // These are raised for whoever asked, each time.
-            && !(self.relation_gave_up || self.relation_too_complex)
+            && !self.relation_too_complex
             && self.reliability == 0
             // What is under way is passed over in silence, or taken for what it is so far, by whoever comes upon it meanwhile.
             && self.instantiation_depth == 0

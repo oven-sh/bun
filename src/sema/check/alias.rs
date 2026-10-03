@@ -68,7 +68,22 @@ impl<'p> Checker<'p> {
         if let Some((alias, type_arguments)) = self.stored_alias(ty) {
             return Some((*alias, type_arguments.to_vec()));
         }
-        let (file, node, mapper) = match *self.data(ty) {
+        let (file, node, mapper) = self.alias_node_of_type(ty)?;
+        self.alias_of_node_under(file, node, mapper)
+    }
+
+    /// `t.alias.symbol`, without computing the alias type arguments.
+    pub(super) fn alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
+        if let Some((alias, _)) = self.stored_alias(ty) {
+            return Some(*alias);
+        }
+        let (file, node, _) = self.alias_node_of_type(ty)?;
+        self.alias_symbol_for_type_node(file, self.bound(file).type_scope[node.idx()], node)
+    }
+
+    /// The type node that identifies `ty`, and its mapper. A type that stores no alias has the alias whose body is that node.
+    fn alias_node_of_type(&self, ty: TypeId) -> Option<(FileId, TypeNodeId, MapperId)> {
+        Some(match *self.data(ty) {
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 mapper,
@@ -85,8 +100,7 @@ impl<'p> Checker<'p> {
                 (file, node, mapper)
             }
             _ => return None,
-        };
-        self.alias_of_node_under(file, node, mapper)
+        })
     }
 
     /// The alias whose body `node` is, with what `mapper` puts for its type parameters.
@@ -110,11 +124,26 @@ impl<'p> Checker<'p> {
         source: TypeId,
         target: TypeId,
     ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>, bool)> {
-        let (alias, sources) = self.alias_of_type(source)?;
-        let (target_alias, targets) = self.alias_of_type(target)?;
-        if alias != target_alias || self.stack.contains(&Query::Declared(alias)) {
+        // Fast path for the common failure. Two types that store no alias have the same alias only if they are written at the same
+        // node: an alias declaration has one body.
+        if self.stored_alias(source).is_none() && self.stored_alias(target).is_none() {
+            let (source, target) = (
+                self.alias_node_of_type(source)?,
+                self.alias_node_of_type(target)?,
+            );
+            if (source.0, source.1) != (target.0, target.1) {
+                return None;
+            }
+        }
+        // The symbols are compared before any alias type argument is computed.
+        let alias = self.alias_symbol_of_type(source)?;
+        if self.alias_symbol_of_type(target)? != alias
+            || self.stack.contains(&Query::Declared(alias))
+        {
             return None;
         }
+        let ((_, sources), (_, targets)) =
+            (self.alias_of_type(source)?, self.alias_of_type(target)?);
         if sources.is_empty() && targets.is_empty() {
             return Some((alias, sources, targets, false));
         }
@@ -132,6 +161,17 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> Option<(Sym, SmallVec<[TypeId; 4]>)> {
+        let alias = self.alias_symbol_for_type_node(file, scope, node)?;
+        Some((alias, self.local_type_params_of_symbol(alias)))
+    }
+
+    /// `getAliasSymbolForTypeNode`
+    fn alias_symbol_for_type_node(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> Option<Sym> {
         let alias = self.alias_with_body(file, scope, node)?;
         let symbol = self.bound(file).alias_symbol[alias.idx()];
         if symbol.is_none() {
@@ -146,7 +186,7 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        Some((alias, self.local_type_params_of_symbol(alias)))
+        Some(alias)
     }
 
     /// What `getTypeFromUnionTypeNode` does with `getAliasForTypeNode(node)`. `ty`: what `node` comes to.

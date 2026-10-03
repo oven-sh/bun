@@ -8,7 +8,7 @@
 
 use super::errors::is_close;
 use super::*;
-use crate::bind::{Decl, PatParent, ScopeId};
+use crate::bind::{PatParent, ScopeId};
 
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
@@ -278,12 +278,10 @@ impl Checker<'_> {
             .declaration_of_alias_symbol(equals)
             .or_else(|| files.value_declaration(equals))
             .filter(|declaration| declaration.0 == file);
-        let (start, end) = match declaration {
-            Some((_, Decl::ExportExpr(s))) => (self.hir(file)[s].start, self.end_of_stmt(file, s)),
-            Some((_, Decl::ModuleExports(e))) => {
-                (self.start_of(file, e), self.end_of_expr(file, e))
-            }
-            _ => return,
+        let Some((start, end)) =
+            declaration.and_then(|it| self.error_range_of_declaration(file, it.1))
+        else {
+            return;
         };
         let others = |of: Sym| {
             files
@@ -402,10 +400,38 @@ pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node)
 /// `getFullyQualifiedName`
 pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
     let name = c.symbol_to_string(sym);
-    match c.files().parent_of_symbol(sym) {
+    match c.files().symbol_parent(sym) {
         Some(parent) => format!("{}.{name}", fully_qualified_name(c, parent)),
         None => name,
     }
+}
+
+/// `getFullyQualifiedName` for an `AliasTarget`. A synthesized property (of a union, an intersection, a mapped type, a tuple) has no `Parent`.
+pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) -> Vec<u8> {
+    let (object, name) = match symbol {
+        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol).into_bytes(),
+        AliasTarget::Property(object, name, _) => (object, name),
+        AliasTarget::Unknown => return b"unknown".to_vec(),
+    };
+    let Some((mut prop, _)) = c.get_property_of_type(object, name) else {
+        return c.files().atoms.bytes(name).to_vec();
+    };
+    // `getSpreadSymbol` keeps the `Parent` of the original property.
+    while let PropSource::Copy(_, of, true) = &prop.source {
+        prop = &of[0];
+    }
+    let mut qualified = match prop.source {
+        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol).into_bytes(),
+        PropSource::Literal(file, property) => {
+            let owner = c.bound(file).prop_owner[property.idx()];
+            let mut parent = c.name_of_object_literal(file, owner);
+            parent.push(b'.');
+            parent
+        }
+        _ => Vec::new(),
+    };
+    c.write_prop(&mut qualified, prop);
+    qualified
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.

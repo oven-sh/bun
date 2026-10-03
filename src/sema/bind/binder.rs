@@ -84,6 +84,7 @@ pub(super) struct Binder<'f> {
     /// `associatedDeclarationForContainingInitializerOrBindingName`, kept on the way down: its name, and the function whose parameter
     /// it is or is part of. No name: there is none, or `withinDeferredContext`.
     associated_declaration: (PatId, FnId),
+    stack_check: bun_core::StackCheck,
 }
 
 impl<'f> Binder<'f> {
@@ -188,9 +189,24 @@ impl<'f> Binder<'f> {
             type_literal_depth: 0,
             scope_change_of: FnId::NONE,
             associated_declaration: (PatId::NONE, FnId::NONE),
+            stack_check: bun_core::StackCheck::init(),
         };
         this.file();
+        if this.b.ran_out_of_stack {
+            return Bound {
+                ran_out_of_stack: true,
+                ..Default::default()
+            };
+        }
         this.finish()
+    }
+
+    /// Whether the tree is too deep to bind on this thread's stack. Every recursion of the binder goes through `stmt`, `pat`, `ty` or `expr`.
+    #[inline]
+    fn is_out_of_stack(&mut self) -> bool {
+        let is_out_of_stack = !self.stack_check.is_safe_to_recurse();
+        self.b.ran_out_of_stack |= is_out_of_stack;
+        is_out_of_stack
     }
 
     // ───────────────────────────── symbols and scopes ─────────────────────────────
@@ -1380,6 +1396,10 @@ impl<'f> Binder<'f> {
                     && !b.symbols[symbol.idx()]
                         .flags
                         .contains(SymFlags::EXPORT_ONLY)
+                    // An export of a CommonJS module is only in scope inside the module if it is a type.
+                    && !(s.kind == ScopeKind::File
+                        && b.commonjs_indicator.is_some()
+                        && !b.symbols[symbol.idx()].flags.intersects(SymFlags::TYPE))
                     && b.symbols[symbol.idx()].flags.intersects(match s.kind {
                         ScopeKind::Enum(_) => SymFlags::ENUM_MEMBER,
                         _ => (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
@@ -1574,6 +1594,9 @@ impl<'f> Binder<'f> {
     }
 
     fn stmt(&mut self, id: StmtId, parent: Parent) {
+        if self.is_out_of_stack() {
+            return;
+        }
         self.b.stmt_parent[id.idx()] = parent;
         self.b.stmt_scope[id.idx()] = self.scope;
         self.b.stmt_flow[id.idx()] = self.flow;
@@ -2488,6 +2511,9 @@ impl<'f> Binder<'f> {
     }
 
     fn pat(&mut self, pat: PatId, parent: PatParent, flags: SymFlags) {
+        if self.is_out_of_stack() {
+            return;
+        }
         self.b.pat_parent[pat.idx()] = parent;
         match self.f[pat].kind {
             PatKind::Missing => {}
@@ -3284,7 +3310,20 @@ impl<'f> Binder<'f> {
         }
     }
 
-    fn ty(&mut self, id: TypeNodeId) {
+    fn ty(&mut self, mut id: TypeNodeId) {
+        if self.is_out_of_stack() {
+            return;
+        }
+        let around = (self.by_alias, self.scope_change_of);
+        // A chain of type operators (`T[][][]..`) does not recurse.
+        while let Some(operand) = self.ty_or_operand(id) {
+            id = operand;
+        }
+        (self.by_alias, self.scope_change_of) = around;
+    }
+
+    /// Binds `id`. If `id` is a type operator, returns its operand unbound, with `by_alias` and `scope_change_of` set for it.
+    fn ty_or_operand(&mut self, id: TypeNodeId) -> Option<TypeNodeId> {
         self.b.type_scope[id.idx()] = self.scope;
         if self.is_unchecked {
             self.b.unchecked_types.push(id);
@@ -3364,7 +3403,7 @@ impl<'f> Binder<'f> {
             }
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => self.tys(types),
             TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-                self.ty(t)
+                return Some(t);
             }
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
@@ -3489,6 +3528,7 @@ impl<'f> Binder<'f> {
         }
         self.by_alias = by_alias;
         self.scope_change_of = scope_change_of;
+        None
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
@@ -3547,12 +3587,12 @@ impl<'f> Binder<'f> {
         self.is_unchecked = around;
     }
 
-    fn expr(&mut self, id: ExprId, parent: Parent) {
+    /// The start of `expr`: the part that does not depend on flow or on the enclosing expression.
+    fn enter_expr(&mut self, id: ExprId, parent: Parent) {
         self.b.expr_parent[id.idx()] = parent;
         if self.is_unchecked {
             self.b.unchecked_exprs.push(id);
         }
-        let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         match self.f[id].kind {
             // Of a declaration file there is no text: there the names the classes around declare tell.
             ExprKind::Dot { name, name_pos, .. }
@@ -3578,6 +3618,14 @@ impl<'f> Binder<'f> {
             }
             _ => {}
         }
+    }
+
+    fn expr(&mut self, id: ExprId, parent: Parent) {
+        if self.is_out_of_stack() {
+            return;
+        }
+        self.enter_expr(id, parent);
+        let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Expr(id);
         // Only `!`, `&&`, `||`, `??` and what changes nothing pass the targets of a condition on to their operands.
         let targets = (self.true_target, self.false_target);
@@ -3768,17 +3816,7 @@ impl<'f> Binder<'f> {
                 target,
                 value,
             } => self.logical(id, target, value, targets, true),
-            // `bindBinaryExpressionFlow`: each side of a comma may be a call that asserts something or never returns.
-            ExprKind::Binary { op, left, right } => {
-                self.expr(left, me);
-                if op == BinOp::Comma {
-                    self.maybe_call_flow(left);
-                }
-                self.expr(right, me);
-                if op == BinOp::Comma {
-                    self.maybe_call_flow(right);
-                }
-            }
+            ExprKind::Binary { .. } => self.binary(id),
             // `bindDestructuringAssignmentFlow`: a default inside a pattern is worked out before the pattern it is the default of.
             ExprKind::Assign {
                 op: None,
@@ -3832,8 +3870,7 @@ impl<'f> Binder<'f> {
                         _ => None,
                     };
                     if let Some((decl, flags, excludes)) = declared {
-                        let flags =
-                            if is_alias { SymFlags::ALIAS } else { flags } | SymFlags::EXPORT_ONLY;
+                        let flags = if is_alias { SymFlags::ALIAS } else { flags };
                         let file = self.b.file_symbol;
                         let exports = self.b.symbols[file.idx()].exports;
                         let symbol = self.declare_symbol(exports, file, decl, flags, excludes);
@@ -3985,7 +4022,7 @@ impl<'f> Binder<'f> {
             self.b.symbols[file.idx()].exports,
             file,
             Decl::ExportsProperty(call),
-            SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::EXPORT_ONLY,
+            SymFlags::FUNCTION_SCOPED_VARIABLE,
             SymFlags::FUNCTION_SCOPED_VARIABLE_EXCLUDES,
         );
     }
@@ -4080,6 +4117,44 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `bindBinaryExpressionFlow`, for an operator that is not logical, after the start of `expr(root)`. It iterates over the left spine, as
+    /// TypeScript's trampoline does, so that a long chain (`a + b + c + ..`, the comma chains of minified code) does not recurse. Nothing
+    /// is evaluated on the way down, so the state `expr` saves and restores is the same for every operator on the spine.
+    fn binary(&mut self, root: ExprId) {
+        let is_on_spine = |kind: ExprKind| matches!(kind, ExprKind::Binary { op, .. } if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish));
+        let mut node = root;
+        while let ExprKind::Binary { left, .. } = self.f[node].kind
+            && is_on_spine(self.f[left].kind)
+        {
+            self.enter_expr(left, Parent::Expr(node));
+            node = left;
+        }
+        let mut is_innermost = true;
+        loop {
+            let ExprKind::Binary { op, left, right } = self.f[node].kind else {
+                unreachable!()
+            };
+            let me = Parent::Expr(node);
+            if std::mem::take(&mut is_innermost) {
+                self.expr(left, me);
+            }
+            // Each side of a comma may be a call that asserts something or never returns.
+            if op == BinOp::Comma {
+                self.maybe_call_flow(left);
+            }
+            self.expr(right, me);
+            if op == BinOp::Comma {
+                self.maybe_call_flow(right);
+            }
+            match self.b.expr_parent[node.idx()] {
+                Parent::Expr(parent) if node != root => node = parent,
+                _ => break,
+            }
+        }
+    }
+
+    /// `bindLogicalLikeExpression`, after the start of `expr(id)`. It iterates over the left spine, so that a long chain
+    /// (`a || b || c || ..`) does not recurse.
     fn logical(
         &mut self,
         id: ExprId,
@@ -4088,15 +4163,6 @@ impl<'f> Binder<'f> {
         targets: (FlowId, FlowId),
         is_assignment: bool,
     ) {
-        let me = Parent::Expr(id);
-        let is_and = matches!(
-            self.f[id].kind,
-            ExprKind::Binary { op: BinOp::And, .. }
-                | ExprKind::Assign {
-                    op: Some(BinOp::And),
-                    ..
-                }
-        );
         let top_level = targets.0.is_none();
         let post = if top_level {
             self.branch_label()
@@ -4109,24 +4175,63 @@ impl<'f> Binder<'f> {
         if top_level {
             self.has_flow_effects = false;
         }
-        let pre_right = self.branch_label();
-        if is_and {
-            self.condition(left, me, pre_right, on_false);
-        } else {
-            self.condition(left, me, on_true, pre_right);
+        // Down: what `expr` and this function do before the left operand, for each logical operator on the spine. An entry holds the
+        // operator, its right operand, its targets, the label before its right operand, and `scope_change_of` as it was around it.
+        let mut spine: SmallVec<[(ExprId, ExprId, (FlowId, FlowId), FlowId, FnId); 4]> =
+            SmallVec::new();
+        let (mut node, mut operands, mut on) = (id, (left, right), (on_true, on_false));
+        let mut scope_change_of = self.scope_change_of;
+        loop {
+            let pre_right = self.branch_label();
+            spine.push((node, operands.1, on, pre_right, scope_change_of));
+            let is_and = matches!(
+                self.f[node].kind,
+                ExprKind::Binary { op: BinOp::And, .. }
+                    | ExprKind::Assign {
+                        op: Some(BinOp::And),
+                        ..
+                    }
+            );
+            on = if is_and {
+                (pre_right, on.1)
+            } else {
+                (on.0, pre_right)
+            };
+            let ExprKind::Binary {
+                op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
+                left,
+                right,
+            } = self.f[operands.0].kind
+            else {
+                self.condition(operands.0, Parent::Expr(node), on.0, on.1);
+                break;
+            };
+            self.enter_expr(operands.0, Parent::Expr(node));
+            // `requiresScopeChangeWorker`, as in `expr`.
+            scope_change_of = self.scope_change_of;
+            if op == BinOp::Nullish && scope_change_of.is_some() {
+                self.note_scope_change(self.options.before_es2020);
+                self.scope_change_of = FnId::NONE;
+            }
+            (node, operands) = (operands.0, (left, right));
         }
-        self.flow = self.finish_label(pre_right);
-        if is_assignment {
-            self.true_target = FlowId::NONE;
-            self.false_target = FlowId::NONE;
-            self.expr(right, me);
-            self.assignment_target(left);
-            let t = self.flow_condition(true, self.flow, id);
-            self.add_edge(on_true, t);
-            let f = self.flow_condition(false, self.flow, id);
-            self.add_edge(on_false, f);
-        } else {
-            self.condition(right, me, on_true, on_false);
+        // Up: the right operands, innermost first.
+        while let Some((node, right, on, pre_right, scope_change_of)) = spine.pop() {
+            let me = Parent::Expr(node);
+            self.flow = self.finish_label(pre_right);
+            if is_assignment && node == id {
+                self.true_target = FlowId::NONE;
+                self.false_target = FlowId::NONE;
+                self.expr(right, me);
+                self.assignment_target(left);
+                let t = self.flow_condition(true, self.flow, id);
+                self.add_edge(on.0, t);
+                let f = self.flow_condition(false, self.flow, id);
+                self.add_edge(on.1, f);
+            } else {
+                self.condition(right, me, on.0, on.1);
+            }
+            self.scope_change_of = scope_change_of;
         }
         // `bindBinaryExpressionFlow`: how it came out makes no difference afterwards, unless something was assigned to on the way.
         if top_level {

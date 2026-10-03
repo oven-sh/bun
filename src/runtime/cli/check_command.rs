@@ -274,6 +274,7 @@ fn run_quietly(
         global_node_modules: global.as_deref(),
         progress,
         only: None,
+        order: 1,
         keeps_everything: false,
         stops_where_tsc_does: true,
         says_it_as_typescript_does: false,

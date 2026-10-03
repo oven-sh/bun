@@ -4,7 +4,6 @@
 //! The codes are the TypeScript compiler's. An error that would rest on something the resolver could not work out is not
 //! reported: better to miss one than to make one up.
 
-use super::errors_modules::fully_qualified_name;
 use super::errors_x_operators::has_empty_object_intersection;
 use super::sink::held;
 use super::*;
@@ -30,6 +29,18 @@ impl Checked {
         self.syntactic.is_empty()
             && self.declaration.is_empty()
             && self.semantic.as_ref().is_none_or(Vec::is_empty)
+    }
+
+    /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
+    /// separately. `None` if there are none.
+    pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
+        (!self.declaration.is_empty()).then(|| Checked {
+            syntactic: Vec::new(),
+            semantic: None,
+            declaration: std::mem::take(&mut self.declaration),
+            has_parse_diagnostics: self.has_parse_diagnostics,
+            never_checked: Vec::new(),
+        })
     }
 }
 
@@ -72,6 +83,10 @@ impl Checker<'_> {
         self.release_shapes_for_now();
         self.is_type_checked = false;
         let hir = self.hir(file);
+        // The parser or the binder ran out of stack.
+        if hir.has_errors && hir.early_errors.is_empty() {
+            self.ran_out_of_stack.set(true);
+        }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
         self.checking = Some(file);
@@ -125,7 +140,12 @@ impl Checker<'_> {
         // `getBindAndCheckDiagnostics` has nothing to say of a JSON file.
         let is_json = hir.kind == FileKind::Json;
         if self.only_syntax || is_json || !self.reports_semantic_errors(file) {
-            return self.checked(None, false);
+            let mut checked = self.checked(None, false);
+            if !self.only_syntax {
+                self.emit_resolver_links = Default::default();
+                checked.declaration = self.get_declaration_diagnostics(file);
+            }
+            return checked;
         }
         self.settle_what_was_noted_ahead();
         let syntactic = std::mem::take(&mut self.reported);
@@ -164,7 +184,6 @@ impl Checker<'_> {
         self.check_use_before_declaration(file);
         self.check_iteration(file);
         self.check_names_and_exports(file);
-        self.check_jumps_and_labels(file);
         self.check_declarations(file);
         self.check_small_things(file);
         self.check_circularities(file);
@@ -199,14 +218,21 @@ impl Checker<'_> {
             .partition(|d: &Reported| d.file == file);
         self.reported = elsewhere;
         self.commit_reported_from(0);
+        let declaration = self.get_declaration_diagnostics(file);
+        self.is_type_checked = true;
+        let mut checked = self.checked(Some(semantic), has_parse_diagnostics);
+        (checked.syntactic, checked.declaration) = (syntactic, declaration);
+        checked
+    }
+
+    /// `GetDeclarationDiagnostics`. It also runs for files that are not type-checked. `self.reported` must be empty on entry.
+    fn get_declaration_diagnostics(&mut self, file: FileId) -> Vec<Reported> {
         self.check_module_exports_assignments(file);
         if self.files().options.emits_declarations {
             self.check_declaration_emit(file);
         }
-        self.is_type_checked = true;
-        let mut checked = self.checked(Some(semantic), has_parse_diagnostics);
-        checked.declaration = std::mem::replace(&mut checked.syntactic, syntactic);
-        checked
+        self.settle_what_was_noted_ahead();
+        std::mem::take(&mut self.reported)
     }
 
     /// What has been reported and not committed is `GetSyntacticDiagnostics`.
@@ -243,7 +269,6 @@ impl Checker<'_> {
                 self.reported
                     .retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
             }
-            self.include_processor_diagnostics(file);
             if !is_plain_js {
                 // `JSDocDiagnostics`
                 for &(start, code) in hir.jsdoc_errors.iter() {
@@ -253,6 +278,15 @@ impl Checker<'_> {
                 self.relate_early_errors(file, &hir.jsdoc_errors);
                 // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
                 self.check_x_comment_directives(file);
+            }
+            // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate pass that does not
+            // mark directives as used.
+            if hir.check_directive != Some(false) {
+                let first = self.reported.len();
+                self.include_processor_diagnostics(file);
+                if self.reported.len() > first {
+                    self.get_diagnostics_with_preceding_directives(file, first);
+                }
             }
         }
         self.settle_what_was_noted_ahead();
@@ -1510,115 +1544,6 @@ impl Checker<'_> {
         self.add_diagnostic(diagnostic);
     }
 
-    /// `getTypeFromImportTypeNode`: 2694, each name after `import("m")` has to be there.
-    pub(super) fn check_import_type_names(&mut self, file: FileId, node: TypeNodeId) {
-        let hir = self.hir(file);
-        let TypeNodeKind::Import {
-            spec,
-            name,
-            is_typeof,
-            mode,
-            ..
-        } = hir[node].kind
-        else {
-            return;
-        };
-        let mode = self.files().mode_of_import(file, mode);
-        // Of a module that is not found that much has been said.
-        let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
-            return;
-        };
-        let mut sym = self.files().module_value(module);
-        // What `export =` gives could not be found; what a JSON file has is up to what is in it. `resolveSymbol`: an `export =` that
-        // is a namespace too (`bindCommonJSTypeExports`) is `currentNamespace` itself.
-        let meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        let flags = self.files().flags(sym);
-        if flags.contains(SymFlags::ALIAS) && !flags.intersects(meanings)
-            || self.files().hir(module.file).kind == FileKind::Json
-        {
-            return;
-        }
-        // In `typeof import("m").a.b`: the type the names so far come to, once they are past what modules and namespaces export.
-        let mut ty: Option<TypeId> = None;
-        // `sym` is what an `export { a }` stands for: who says so, and under which name. That alias is `currentNamespace`.
-        let mut exported_by: Option<(Sym, Atom)> = None;
-        for (i, current) in name.iter().enumerate() {
-            let n = hir[current].text;
-            let wanted = if is_typeof {
-                SymFlags::VALUE
-            } else if i + 1 == name.len() {
-                SymFlags::TYPE
-            } else {
-                SymFlags::NAMESPACE
-            };
-            // `currentNamespace`, as long as it is a symbol here.
-            let namespace = ty.is_none().then_some((sym, exported_by));
-            let member = if ty.is_none() {
-                self.files().namespace_member(sym, n)
-            } else {
-                None
-            };
-            // `getSymbol`, `symbolIsValueEx`: an alias is what it stands for, be it exported as a type only.
-            let exported = match member {
-                Some(member) if self.files().flags(member).intersects(wanted) => Some(member),
-                Some(member) => match self.files().resolve_alias_if_needed(member) {
-                    Some(target) => self
-                        .files()
-                        .flags(target)
-                        .intersects(wanted)
-                        .then_some(target),
-                    // What it stands for cannot be told, unless it is a property.
-                    None => match self.get_symbol_flags(member) {
-                        flags if flags == SymFlags::all() => return,
-                        flags => flags.intersects(wanted).then_some(member),
-                    },
-                },
-                None => None,
-            };
-            let is_there = match exported {
-                Some(exported) => {
-                    exported_by = member
-                        .filter(|&member| {
-                            self.files().flags(member).contains(SymFlags::ALIAS)
-                                && self.files().export(sym, n) == Some(member)
-                        })
-                        .map(|_| (sym, n));
-                    sym = exported;
-                    true
-                }
-                // `getPropertyOfTypeEx`: the properties of the type of a value are there as well. `any` has none.
-                None if is_typeof => {
-                    let of = match ty {
-                        Some(ty) => ty,
-                        None => self.type_of_symbol(sym),
-                    };
-                    ty = if self.has_any_flag(of) {
-                        None
-                    } else {
-                        self.type_of_property(of, n)
-                    };
-                    ty.is_some()
-                }
-                None => false,
-            };
-            if !is_there {
-                let Some((namespace, exported_by)) = namespace else {
-                    self.error(file, current, 2694, &[]);
-                    return;
-                };
-                let mut qualified =
-                    fully_qualified_name(self, exported_by.map_or(namespace, |by| by.0))
-                        .into_bytes();
-                if let Some((_, name)) = exported_by {
-                    qualified.push(b'.');
-                    qualified.extend_from_slice(self.files().atoms.bytes(name));
-                }
-                self.error(file, current, 2694, &[Arg::Bytes(&qualified), Arg::Atom(n)]);
-                return;
-            }
-        }
-    }
-
     /// `checkAndReportErrorForExtendingInterface`: `e` is the dotted name that a class extends or that is given type arguments (an
     /// `ExpressionWithTypeArguments` either way), or the left part of it, and the whole name is that of an interface.
     pub(super) fn is_extending_interface(&self, file: FileId, e: ExprId) -> bool {
@@ -1950,9 +1875,18 @@ impl Files {
         meaning: SymFlags,
         try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
     ) -> Option<(Meant, bool)> {
-        let (files, bound) = (self, self.bound(file));
+        let (files, hir, bound) = (self, self.hir(file), self.bound(file));
         let text = files.atoms.bytes(name);
         let (mut word, mut is_among_locals) = (None, false);
+        // tsgo keeps the name of a function or class expression out of every symbol table: `Resolve` compares it directly.
+        let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound.symbols[id.idx()]
+            .decls
+            .first()
+        {
+            Some(&Decl::Fn(f)) => hir[f].kind != FnKind::Expr,
+            Some(&Decl::Class(c)) => !matches!(bound.class_owner[c.idx()], ClassOwner::Expr(_)),
+            _ => true,
+        };
         // `getSuggestionForSymbolNameLookup`
         let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             is_among_locals = matches!(table, SymbolTable::Locals(..));
@@ -1973,7 +1907,7 @@ impl Files {
                     if s.kind == ScopeKind::File && s.symbol.is_none() {
                         return None;
                     }
-                    let locals = bound.table(s.locals).iter();
+                    let locals = bound.table(s.locals).iter().filter(is_in_table);
                     let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
                     get_spelling_suggestion_for_name(files, text, locals.filter(fits).map(named))
                 }
@@ -2856,21 +2790,20 @@ impl<'p> Checker<'p> {
         }))
     }
 
-    /// `isAssignmentToReadonlyEntity`: the property `name` of `obj`, which is what `e` is, if `e` is written to and the property can only be
-    /// read.
+    /// `isAssignmentToReadonlyEntity`: returns the property `name` if the access `e` (`obj.name` or `obj[name]`) is an assignment target
+    /// and the property is read-only. `ty` is the receiver type on which the access resolved the property.
     pub(super) fn readonly_entity_assigned_to(
         &mut self,
         file: FileId,
         e: ExprId,
         obj: ExprId,
+        ty: TypeId,
         name: Atom,
     ) -> Option<&'p Prop> {
         self.write_kind(file, e)?;
-        let ty = self.type_of_expr(file, obj);
         if self.is_any(ty) {
             return None;
         }
-        let ty = self.non_nullable(ty);
         // `getIndexedAccessTypeOrUndefined`: in `a[k]` no property is looked for where `a` has only a string index signature.
         if matches!(self.hir(file)[e].kind, ExprKind::Index { .. })
             && !self.files().atoms.is_symbol_name(name)

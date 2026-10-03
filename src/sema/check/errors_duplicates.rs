@@ -6,8 +6,8 @@
 //! `checkObjectTypeForDuplicateDeclarations` and `checkTypeParameters`. What the binder refused is on record
 //! (`Bound::redeclarations`) and is reported here.
 
+use super::explain::NO_LENGTH;
 use super::late_bound::LateBoundConflict;
-use super::sink::held;
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, JsDeclarationKind, SymbolId, assignment_declaration_kind, flags_of_member,
@@ -54,21 +54,8 @@ impl Checker<'_> {
         // `checkTypeParameters`
         for params in lists {
             for (i, p) in params.iter().enumerate() {
-                if params
-                    .iter()
-                    .take(i)
-                    .any(|earlier| hir[earlier].name == hir[p].name)
-                {
-                    self.error_at((file, hir[p].pos, 0), 2300, &[]);
-                    if hir[p].name == known::empty {
-                        let missing = vec!["(Missing)".to_owned()];
-                        self.note_printed(
-                            hir[p].pos,
-                            super::explain::NO_LENGTH,
-                            2300,
-                            held(missing),
-                        );
-                    }
+                if (params.iter().take(i)).any(|earlier| hir[earlier].name == hir[p].name) {
+                    self.report_on_declaration_name(file, Decl::TypeParam(p), 2300);
                 }
             }
         }
@@ -116,81 +103,86 @@ impl Checker<'_> {
         })
     }
 
-    /// `declareSymbolEx`: "Report errors every position with duplicate declaration. Report errors on previous encountered
-    /// declarations".
+    /// The reporting half of `declareSymbolEx`: one diagnostic for the rejected declaration and one for each earlier declaration of
+    /// the symbol. Equal diagnostics are merged later by `sort_and_deduplicate_diagnostics`.
     fn report_redeclarations(&mut self, file: FileId) {
-        use super::explain::NO_LENGTH;
         let bound = self.bound(file);
-        let related_at = |(start, end, _): (u32, u32, bool), code: u32| {
-            Reported::bare(
-                (file, start, if end == NO_LENGTH { start } else { end }),
-                code,
+        let place = |d: &Reported| {
+            (
+                file,
+                d.start,
+                if d.end == NO_LENGTH { d.start } else { d.end },
             )
         };
-        // Each report: where, with which code, and what goes with it.
-        let mut reports: Vec<((u32, u32, bool), u32, Vec<Reported>, Decl)> = Vec::new();
         for refusal in bound.redeclarations.iter() {
-            let (symbol, code) = (refusal.symbol, refusal.code);
-            self.relate_export_type_without_braces(file, refusal.decl, code);
-            let reported = reports.len();
-            let Some(new) = self.range_of_declaration_name(file, refusal.decl) else {
+            let message = refusal.code;
+            let Some(mut diag) =
+                self.new_diagnostic_for_declaration_name(file, refusal.decl, message)
+            else {
                 continue;
             };
-            let earlier = bound.symbols[symbol.idx()].decls[..refusal.count as usize].iter();
-            // `multipleDefaultExports`
-            let are_defaults = code == 2528;
-            let mut firsts = Vec::new();
-            for (index, &at) in earlier.enumerate() {
-                let Some(range) = self.range_of_declaration_name(file, at) else {
+            let did_you_mean = self.did_you_mean_export_type_with_braces(file, refusal.decl);
+            diag.related_information.extend(did_you_mean);
+            let multiple_default_exports = message == 2528;
+            let declarations = &bound.symbols[refusal.symbol.idx()].decls[..refusal.count as usize];
+            for (index, &declaration) in declarations.iter().enumerate() {
+                let Some(mut d) =
+                    self.new_diagnostic_for_declaration_name(file, declaration, message)
+                else {
                     continue;
                 };
-                let mut another = Vec::new();
-                if are_defaults {
-                    another.push(related_at(new, if index == 0 { 2753 } else { 6204 }));
-                    firsts.push(related_at(range, 2752));
+                if multiple_default_exports {
+                    let here = if index == 0 { 2753 } else { 6204 };
+                    d.add_related_info(Reported::bare(place(&diag), here));
+                    diag.add_related_info(Reported::bare(place(&d), 2752));
                 }
-                reports.push((range, code, another, at));
+                self.add_diagnostic(d);
             }
-            reports.push((new, code, firsts, refusal.decl));
-            self.reported.extend(
-                reports[reported..]
-                    .iter()
-                    .map(|report| Reported::bare((file, report.0.0, 0), report.1)),
-            );
-        }
-        // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
-        reports.sort_by_key(|report| (report.0.0, report.1));
-        for same in reports.chunk_by(|a, b| (a.0.0, a.1) == (b.0.0, b.1)) {
-            let ((start, end, is_token), code) = (same[0].0, same[0].1);
-            let mut related: Vec<Reported> =
-                same.iter().flat_map(|r| r.2.iter().cloned()).collect();
-            if same.len() > 1 {
-                related.sort_by_key(|r| (r.file, r.start, r.end, r.code));
-                related.dedup();
-            }
-            // `getDisplayName`
-            let at = same[0].3;
-            if matches!(at, Decl::ExportExpr(it) if matches!(self.hir(file)[it].kind, StmtKind::ExportAssign(_)))
-            {
-                // `export = e` has no name, so `getDeclarationName`.
-                let end = if is_token { 0 } else { end };
-                self.note(start, end, code, &[Arg::Text("export=")]);
-            } else if matches!(at, Decl::Member(_) | Decl::Property(_)) {
-                self.note_duplicate_name(file, start, start);
-            } else if self.is_declaration_name_missing(file, at) {
-                self.note(start, NO_LENGTH, code, &[Arg::Text("(Missing)")]);
-            } else if !is_token {
-                self.note(start, end, code, &[]);
-            }
-            if !related.is_empty() {
-                self.relate(start, code, |_| related);
-            }
+            self.add_diagnostic(diag);
         }
     }
 
-    /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`, and whether that is one token. A function or a class without a
-    /// name is reported at its first token, `export default e` as a whole unless `e` is an identifier.
-    fn range_of_declaration_name(&self, file: FileId, decl: Decl) -> Option<(u32, u32, bool)> {
+    /// `createDiagnosticForNode(GetNameOfDeclaration(node) ?? node, message, getDisplayName(node))`. The name argument is omitted
+    /// for messages without a placeholder (`messageNeedsName`). Returns `None` if the declaration has no range to report on.
+    fn new_diagnostic_for_declaration_name(
+        &mut self,
+        file: FileId,
+        node: Decl,
+        message: u32,
+    ) -> Option<Reported> {
+        let (start, mut end) = self.range_of_declaration_name(file, node)?;
+        let hir = self.hir(file);
+        // `getDisplayName`: the source text of the name node. `export = e` and `export default e` have no name node and use
+        // `getDeclarationName`.
+        let display_name: &[u8] = match node {
+            Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => b"export=",
+            Decl::ExportExpr(_) => b"default",
+            _ if !matches!(node, Decl::Member(_) | Decl::Property(_))
+                && self.is_declaration_name_missing(file, node) =>
+            {
+                end = NO_LENGTH;
+                b"(Missing)"
+            }
+            _ => (hir.text.get(start as usize..end as usize)).unwrap_or_default(),
+        };
+        let message_needs_name = !matches!(message, 2528 | 2567);
+        let args = [Arg::Bytes(display_name)];
+        Some(self.new_diagnostic(
+            (file, start, end),
+            message,
+            &args[..message_needs_name as usize],
+        ))
+    }
+
+    fn report_on_declaration_name(&mut self, file: FileId, node: Decl, message: u32) {
+        if let Some(diagnostic) = self.new_diagnostic_for_declaration_name(file, node, message) {
+            self.add_diagnostic(diagnostic);
+        }
+    }
+
+    /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`. An unnamed function or class uses its first token.
+    /// `export default e` uses the whole statement unless `e` is an identifier.
+    fn range_of_declaration_name(&self, file: FileId, decl: Decl) -> Option<(u32, u32)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let start = match decl {
             Decl::Fn(it) if hir[it].name.is_none() => match bound.fns[it.idx()].owner {
@@ -204,42 +196,26 @@ impl Checker<'_> {
             Decl::ExportExpr(statement) => {
                 let start = self.export_assignment_name_start(file, statement);
                 if start == hir[statement].start {
-                    return Some((start, self.end_of_stmt(file, statement), false));
+                    return Some((start, self.end_of_stmt(file, statement)));
                 }
-                // A missing identifier has no length.
+                // A missing identifier has an empty range.
                 let (StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)) = hir[statement].kind
                 else {
                     return None;
                 };
                 if matches!(hir[e].kind, ExprKind::Missing) {
-                    return Some((start, super::explain::NO_LENGTH, false));
+                    return Some((start, NO_LENGTH));
                 }
                 start
             }
+            // A member name can be a string literal or a computed name, so the range covers the whole name node.
+            Decl::Member(_) | Decl::Property(_) => {
+                let start = self.declaration_name_start(file, decl)?;
+                return Some((start, self.end_of_name_at(file, start)));
+            }
             _ => self.declaration_name_start(file, decl)?,
         };
-        Some((start, self.end_of_token_at(file, start), true))
-    }
-
-    /// Reports `code` at the name of every declaration in `decls` that is in `file`.
-    fn report_declarations<'a>(
-        &mut self,
-        file: FileId,
-        decls: impl Iterator<Item = &'a Declaration>,
-        code: u32,
-    ) {
-        for &(of, decl, _) in decls {
-            if of == file
-                && let Some(start) = self.declaration_name_start(of, decl)
-            {
-                self.error_at((file, start, 0), code, &[]);
-                // `getDisplayName`. What 2649 says is noted where it is reported.
-                if code != 2649 && self.is_declaration_name_missing(of, decl) {
-                    let missing = vec!["(Missing)".to_owned()];
-                    self.note_printed(start, super::explain::NO_LENGTH, code, held(missing));
-                }
-            }
-        }
+        Some((start, self.end_of_token_at(file, start)))
     }
 
     /// Whether the name of `decl` is an identifier that is not there.
@@ -273,8 +249,9 @@ impl Checker<'_> {
         name == known::empty
     }
 
-    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols, and says where the other symbol is declared. Skips
-    /// a symbol whose first declaration is in a plain JavaScript file. `named`: what goes by the name of `source`.
+    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols, with related information for the declarations
+    /// of the other symbol. Skips a symbol whose first declaration is in a plain JavaScript file. `named`: the symbol whose name is
+    /// printed.
     fn report_merge_symbol_error(
         &mut self,
         file: FileId,
@@ -286,19 +263,20 @@ impl Checker<'_> {
         if !target.iter().chain(source).any(|d| d.0 == file) {
             return;
         }
-        // `symbolToString(source)`. A member: as its first declaration writes it.
-        let name = match source.first() {
+        // `symbolToString(source)`. For a member, the source text of the name in its first declaration.
+        let mut name = Vec::new();
+        match source.first() {
             Some(&(of, decl @ (Decl::Member(_) | Decl::Property(_)), _)) => {
-                let place = self.place_of_declaration(of, decl);
-                place.map_or(String::new(), |(of, from, to)| {
-                    self.source_text(of, from, to)
-                })
+                if let Some((of, from, to)) = self.place_of_declaration(of, decl) {
+                    let written = self.hir(of).text.get(from as usize..to as usize);
+                    name.extend_from_slice(written.unwrap_or_default());
+                }
             }
-            _ => self.symbol_to_string(named),
-        };
-        // A missing name has no length.
+            _ => self.write_symbol(&mut name, named),
+        }
+        // A missing name has an empty range.
         let end = match self.files().symbol(named).name {
-            known::empty => super::explain::NO_LENGTH,
+            known::empty => NO_LENGTH,
             _ => 0,
         };
         for (symbol, other) in [(source, target), (target, source)] {
@@ -314,85 +292,72 @@ impl Checker<'_> {
                         .filter_map(|d| self.place_of_declaration(d.0, d.1))
                         .collect::<Vec<_>>()
                         .into_iter();
-                    let at = match decl {
-                        Decl::Member(_) | Decl::Property(_) => {
-                            (start, self.end_of_name_at(of, start))
-                        }
-                        _ => (start, end),
+                    let end = match decl {
+                        Decl::Member(_) | Decl::Property(_) => self.end_of_name_at(of, start),
+                        _ => end,
                     };
-                    self.add_duplicate_declaration_error(file, at, others, &name, code);
+                    self.add_duplicate_declaration_error((file, start, end), others, &name, code);
                 }
             }
         }
     }
 
-    /// `addDuplicateDeclarationError`: reports `code` at `at`, which is in `file` (an end of 0: the token there), and says where else
-    /// the name is declared.
+    /// `addDuplicateDeclarationError`: reports `code` at `at` (`end == 0` means the token at `start`), with related information
+    /// for the other declarations of the name. tsgo's `lookupOrIssueError` only finds an existing diagnostic that has no related
+    /// information yet, so each call adds a diagnostic; `compactAndMergeRelatedInfos` merges the equal ones.
     fn add_duplicate_declaration_error(
         &mut self,
-        file: FileId,
-        at: (u32, u32),
+        at: super::related::Place,
         others: impl Iterator<Item = super::related::Place>,
-        name: &str,
+        name: &[u8],
         code: u32,
     ) {
-        let (start, end) = at;
-        let is_again = self
-            .reported
-            .iter()
-            .any(|d| d.start == start && d.code == code);
-        self.error_at((file, start, 0), code, &[]);
-        let mut related: Vec<Reported> = Vec::new();
+        let mut err = self.new_diagnostic(at, code, &[Arg::Bytes(name)]);
         for other in others {
-            if (other.0, other.1) == (file, start)
+            let related = &err.related_information;
+            if (other.0, other.1) == (at.0, at.1)
                 || related.len() >= 5
                 || related.iter().any(|r| (r.file, r.start, r.end) == other)
             {
                 continue;
             }
-            let (code, args) = if related.is_empty() {
-                (6203, vec![name.to_owned()])
-            } else {
-                (6204, Vec::new())
+            let related = match related.is_empty() {
+                true => self.new_diagnostic(other, 6203, &[Arg::Bytes(name)]),
+                false => Reported::bare(other, 6204),
             };
-            related.push(Reported::new(other, code, held(args)));
+            err.add_related_info(related);
         }
-        self.note(start, end, code, &[Arg::Text(name)]);
-        self.relate_reports_merged(start, code, is_again, related);
+        self.add_diagnostic(err);
     }
 
-    /// `declareSymbolEx`: `export type T;`, which is about to be refused with `code`, may have been meant to be `export type { T }`.
-    /// `out`: what has been reported so far.
-    fn relate_export_type_without_braces(&mut self, file: FileId, decl: Decl, code: u32) {
-        let Decl::Alias(a) = decl else { return };
+    /// Related information for a rejected `export type T;`: suggests `export type { T }` (`declareSymbolEx`).
+    fn did_you_mean_export_type_with_braces(
+        &mut self,
+        file: FileId,
+        decl: Decl,
+    ) -> Option<Reported> {
+        let Decl::Alias(a) = decl else { return None };
         let hir = self.hir(file);
         let alias = &hir[a];
         if !alias.flags.contains(Flags::EXPORT) || alias.flags.contains(Flags::REPARSED) {
-            return;
+            return None;
         }
         // `NodeIsMissing(node.Type())`
         let mut next = self.skip_trivia_from(file, self.end_of_name_at(file, alias.name_pos));
         if hir.text.get(next as usize) == Some(&b'=') {
             next = self.skip_trivia_from(file, next + 1);
         }
-        if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}'))
-            || self
-                .reported
-                .iter()
-                .any(|d| d.start == alias.name_pos && d.code == code)
-        {
-            return;
+        if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}')) {
+            return None;
         }
-        self.relate(alias.name_pos, code, |c| {
-            vec![c.new_diagnostic(
-                c.place_of_token(file, alias.name_pos),
-                1369,
-                &[Arg::Text(&format!(
-                    "export type {{ {} }}",
-                    c.atom_text(alias.name)
-                ))],
-            )]
-        });
+        let meant = [
+            b"export type { ",
+            self.files().atoms.bytes(alias.name),
+            b" }",
+        ]
+        .concat();
+        let at = self.place_of_token(file, alias.name_pos);
+        Some(self.new_diagnostic(at, 1369, &[Arg::Bytes(&meant)]))
     }
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge.
@@ -420,13 +385,12 @@ impl Checker<'_> {
             let there = declarations(&files.parts(target)[..parts as usize]);
             let added = declarations(&files.parts(source));
             if files.flags(target).contains(SymFlags::NAMESPACE_MODULE) {
-                // What does not go with a namespace without values has words of its own, said once.
-                self.report_declarations(file, added.iter().take(1), 2649);
+                // A value that merges with a non-instantiated namespace reports TS2649 once, on its first declaration.
                 if let Some(&(of, decl, _)) = added.first()
                     && of == file
                     && let Some(start) = self.declaration_name_start(of, decl)
                 {
-                    self.note(start, 0, 2649, &[Arg::Sym(target)]);
+                    self.error_at((file, start, 0), 2649, &[Arg::Sym(target)]);
                 }
                 continue;
             }
@@ -453,10 +417,8 @@ impl Checker<'_> {
                 .iter()
                 .enumerate()
                 .any(|(j, other)| j != i && other.0 == name)
-                && let Some(start) =
-                    self.declaration_name_start(file, bound.symbols[symbol.idx()].decls[0])
             {
-                self.error_at((file, start, 0), 2300, &[]);
+                self.report_on_declaration_name(file, bound.symbols[symbol.idx()].decls[0], 2300);
             }
         }
     }
@@ -704,8 +666,7 @@ impl Checker<'_> {
             } else if let Some(name) = self.declared_member_name(file, member.key) {
                 let is_static = member.flags.contains(Flags::STATIC);
                 if !is_ambient && is_static && name == known::prototype {
-                    self.error_at((file, member.name_pos, 0), 2699, &[]);
-                    self.explain_static_name_conflict(file, m, name);
+                    self.report_static_property_name_conflict(file, m, name);
                 }
                 if check_private_names && matches!(member.key, PropKey::Private(_)) {
                     let at = private_names.iter().position(|it| it.0 == name);
@@ -810,40 +771,28 @@ impl Checker<'_> {
                         b"name" | b"length" | b"caller" | b"arguments"
                     )
                 {
-                    self.error_at((file, member.name_pos, 0), 2699, &[]);
-                    self.explain_static_name_conflict(file, m, name);
+                    self.report_static_property_name_conflict(file, m, name);
                 }
             }
         }
     }
 
-    /// The arguments of 2699, which is reported on the name of the static member `m`: `name`, and the class.
-    fn explain_static_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
-        let start = self.hir(file)[m].name_pos;
-        let end = self.end_of_member_name(file, m);
-        self.explain_to(start, end, 2699, |c| {
-            let mut class_name = String::new();
-            if let crate::bind::MemberOwner::Class(class) = c.bound(file).member_owner[m.idx()] {
-                let symbol = c.bound(file).class_symbol[class.idx()];
-                class_name = if symbol.is_some() {
-                    let symbol = c.files().sym(file, symbol);
-                    c.symbol_to_string(symbol)
-                } else {
-                    c.atom_text(c.hir(file)[class].name)
-                };
-            }
-            vec![c.atom_text(name), class_name]
-        });
-    }
-
-    /// The argument of 2300 at the name of a member that starts at `start`: the name that starts at `named_at`, as it is written.
-    fn note_duplicate_name(&mut self, file: FileId, start: u32, named_at: u32) {
-        let name = self.source_text(file, named_at, self.end_of_name_at(file, named_at));
-        self.note(
-            start,
-            self.end_of_name_at(file, start),
-            2300,
-            &[Arg::Text(&name)],
+    /// Reports TS2699 on the name of static member `m`. Arguments: the property name and the class name.
+    fn report_static_property_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
+        let at = (
+            file,
+            self.hir(file)[m].name_pos,
+            self.end_of_member_name(file, m),
         );
+        let class_name = match self.bound(file).member_owner[m.idx()] {
+            crate::bind::MemberOwner::Class(class) => {
+                match self.bound(file).class_symbol[class.idx()] {
+                    symbol if symbol.is_some() => Arg::Sym(self.files().sym(file, symbol)),
+                    _ => Arg::Atom(self.hir(file)[class].name),
+                }
+            }
+            _ => Arg::Bytes(b""),
+        };
+        self.error_at(at, 2699, &[Arg::Atom(name), class_name]);
     }
 }

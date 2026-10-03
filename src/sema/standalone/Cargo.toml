@@ -11,7 +11,7 @@ name = "bun-sema"
 path = "main.rs"
 
 [dependencies]
-bun_sema.workspace = true
+bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
 bun_threading.workspace = true

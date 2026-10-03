@@ -997,35 +997,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         })
     }
 
-    /// `getNameOfSymbolAsWritten`, of the symbol of an object literal: the variable it initializes names it.
+    /// `getNameOfSymbolAsWritten` for the symbol of an object literal.
     fn name_of_object_literal(&self, file: FileId, e: ExprId) -> String {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        if let Parent::VarInit(declaration) = bound.expr_parent[e.idx()]
-            && !is_parenthesized(self.c.hir(file), e)
-        {
-            let pat = hir[declaration].pat;
-            return self
-                .c
-                .source_text(file, hir[pat].pos, self.c.end_of_pat(file, pat));
-        }
-        "__object".to_owned()
+        crate::messages::text(&self.c.name_of_object_literal(file, e))
     }
 
-    /// The same for the symbol of a type literal: the variable it is the type of names it.
+    /// `getNameOfSymbolAsWritten` for the symbol of a type literal.
     fn name_of_type_literal(&self, file: FileId, node: TypeNodeId) -> String {
-        let hir = self.c.hir(file);
-        match hir
-            .var_decls
-            .iter()
-            .find(|declaration| declaration.ty == node)
-        {
-            Some(declaration) => self.c.source_text(
-                file,
-                hir[declaration.pat].pos,
-                self.c.end_of_pat(file, declaration.pat),
-            ),
-            None => "__type".to_owned(),
-        }
+        crate::messages::text(&self.c.name_of_type_literal(file, node))
     }
 
     // ───────────────────────────── `symbol.Declarations` ─────────────────────────────
@@ -1461,5 +1440,31 @@ fn utf16_length(byte: u8) -> usize {
         0x80..=0xBF => 0,
         0xF0..=0xFF => 2,
         _ => 1,
+    }
+}
+
+impl<'p> Checker<'p> {
+    /// `lookupSymbolChain` as `symbolToExpression` calls it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone,
+    /// ..)`, without `yieldModuleSymbol`. Returns whether the chain starts with `globalThis`, and the rest of the chain.
+    /// `is_parent`: `symbol` is the parent of a symbol that is in no symbol table, so `endOfChain` is false and the meaning is
+    /// `SymbolFlagsNamespace`; the chain is then empty if `symbol` has no printable name.
+    pub(super) fn lookup_symbol_chain_for_symbol_to_string(
+        &mut self,
+        symbol: Sym,
+        is_parent: bool,
+        at: Enclosing,
+    ) -> (bool, Vec<Sym>) {
+        let (meaning, depth) = if is_parent {
+            (super::errors_declaration_emit::Meaning::Namespace, 1)
+        } else {
+            (super::errors_declaration_emit::Meaning::None, 0)
+        };
+        let mut chain = self.symbol_chain_ex(symbol, at, meaning, false, depth);
+        let starts_with_global_this =
+            chain.len() > 1 && chain[0] == self.files().global_this_symbol;
+        if starts_with_global_this {
+            chain.remove(0);
+        }
+        (starts_with_global_this, chain)
     }
 }

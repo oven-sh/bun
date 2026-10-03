@@ -236,12 +236,9 @@ impl Checker<'_> {
                 if elem.optional && self.p.files.options.strict_null_checks {
                     ty = self.union(&[ty, TypeId::NULL]);
                 }
-                let fits = self.answer_if_sure(|c| c.can_be_spread_in_a_tuple(ty));
-                if fits != Some(true) {
-                    if fits == Some(false) {
-                        let start = start_of_tuple_element(hir, elem);
-                        self.error_at((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
-                    }
+                if !self.can_be_spread_in_a_tuple(ty) {
+                    let start = start_of_tuple_element(hir, elem);
+                    self.error_at((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
                     break;
                 }
                 if self.is_array(ty)
@@ -360,7 +357,7 @@ impl Checker<'_> {
                 continue;
             }
             let own = self.type_from_node(file, hir[p].constraint);
-            if self.answer_if_sure(|c| c.is_identical(own, wanted)) == Some(false) {
+            if !self.is_identical(own, wanted) {
                 for p in declarations {
                     let name = self.place_of_token(file, hir[p].pos);
                     self.error_at(name, 2838, &[Arg::Atom(hir[p].name)]);
@@ -749,31 +746,29 @@ impl Checker<'_> {
         self.check_indexed_access_index_type(whole, access_node, None);
     }
 
-    /// `checkIndexedAccessIndexType`, of the type `object[keys]` that waits for its type parameters: why `keys` cannot be used to
-    /// look into `object`, 4105 or 2536. `None`: it can, or it cannot be told.
+    /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536) if `keys` cannot
+    /// index `object`.
     pub(super) fn why_not_a_key_of(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
         // Of type parameters the answer goes by what they extend.
         let apparent = self.apparent_type(object);
         let object_keys = self.keys_to_look_into(object);
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
-        let fits = self.answer_if_sure(|c| {
-            c.parts(keys).iter().all(|&key| {
-                c.is_assignable(key, object_keys)
-                    || has_number_index && c.is_applicable_index_type(key, TypeId::NUMBER)
-                    || {
-                        // `A extends B ? A : never` is an `A` that is a `B`.
-                        matches!(c.data(key), TypeData::Cond { .. }) && {
-                            let [check, extends, yes, no] =
-                                [0, 1, 2, 3].map(|piece| c.cond_piece(key, piece));
-                            let passed = c.intersection(&[extends, check]);
-                            yes == check
-                                && c.is_assignable(passed, object_keys)
-                                && c.is_assignable(no, object_keys)
-                        }
+        let fits = self.parts(keys).iter().all(|&key| {
+            self.is_assignable(key, object_keys)
+                || has_number_index && self.is_applicable_index_type(key, TypeId::NUMBER)
+                || {
+                    // `A extends B ? A : never` is an `A` that is a `B`.
+                    matches!(self.data(key), TypeData::Cond { .. }) && {
+                        let [check, extends, yes, no] =
+                            [0, 1, 2, 3].map(|piece| self.cond_piece(key, piece));
+                        let passed = self.intersection(&[extends, check]);
+                        yes == check
+                            && self.is_assignable(passed, object_keys)
+                            && self.is_assignable(no, object_keys)
                     }
-            })
+                }
         });
-        if fits != Some(false) {
+        if fits {
             return None;
         }
         // `getReducedType`: nothing can be what it extends, and anything is a key of `never`.
@@ -828,23 +823,19 @@ impl Checker<'_> {
                 && matches!(self.hir(file)[constraint].kind, TypeNodeKind::Keyof(_));
             if !is_keyof && self.is_generic(over) {
                 // `MappedTypeNameTypeKindRemapping`
-                match self.answer_if_sure(|c| c.is_assignable(name_type, param)) {
-                    Some(true) => {}
-                    Some(false) => {
-                        let renamed: Vec<TypeId> = self
-                            .parts(over)
-                            .iter()
-                            .map(|&key| {
-                                let mapper = self.mapper_from(&[param], &[key]);
-                                match self.instantiate(name_type, mapper) {
-                                    TypeId::STRING => self.union(&[TypeId::STRING, TypeId::NUMBER]),
-                                    name => name,
-                                }
-                            })
-                            .collect();
-                        return self.union(&renamed);
-                    }
-                    None => return TypeId::UNRESOLVED,
+                if !self.is_assignable(name_type, param) {
+                    let renamed: Vec<TypeId> = self
+                        .parts(over)
+                        .iter()
+                        .map(|&key| {
+                            let mapper = self.mapper_from(&[param], &[key]);
+                            match self.instantiate(name_type, mapper) {
+                                TypeId::STRING => self.union(&[TypeId::STRING, TypeId::NUMBER]),
+                                name => name,
+                            }
+                        })
+                        .collect();
+                    return self.union(&renamed);
                 }
             }
         }

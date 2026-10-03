@@ -57,37 +57,27 @@ impl Checker<'_> {
                         && !self.is_assignable(static_type, properties)
                     {
                         // `properties` goes by the name of what it is made from.
-                        self.explain(name_or_node, 2417, |c| {
-                            let (heir, base) =
-                                c.type_names_for_error_display(static_type, static_base);
-                            vec![heir, base]
-                        });
+                        let (heir, base) =
+                            self.type_names_for_error_display(static_type, static_base);
                         let static_base =
                             if self.fits_each_without_signatures(static_type, static_base) {
                                 properties
                             } else {
                                 static_base
                             };
-                        {
-                            let (lines, related) = self.relation_lines_with_related(
-                                static_type,
-                                static_base,
-                                super::relate::Relation::Assignable,
-                                Some(2417),
-                                0,
-                            );
-                            self.explain_chain(name_or_node, 2417, |_| {
-                                lines.into_iter().skip(1).collect()
-                            });
-                            self.relate(name_or_node, 2417, |_| related);
-                        }
-                        self.report_not_assignable_with_end(
+                        let (lines, related) = self.relation_lines_with_related(
                             static_type,
-                            properties,
-                            name_or_node,
+                            static_base,
+                            super::relate::Relation::Assignable,
+                            Some(2417),
                             0,
-                            2417,
                         );
+                        let at = (file, name_or_node, 0);
+                        let mut diagnostic = Reported::new(at, 2417, held(vec![heir, base]));
+                        let reasons = lines.into_iter().skip(1).collect();
+                        super::explain::add_lines(&mut diagnostic.message_chain, reasons);
+                        diagnostic.related_information = related;
+                        self.add_diagnostic(diagnostic);
                     }
                 }
             }
@@ -172,8 +162,7 @@ impl Checker<'_> {
         // on it: it is asked once they are not.
         let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
         let [source, target] = with_this;
-        if self.is_type_related_to_if_told(source, target, Relation::Assignable, true) == Some(true)
-        {
+        if self.is_type_related_to_if_told(source, target, Relation::Assignable, true) == Ok(true) {
             return None;
         }
         for (t, plain) in with_this.iter_mut().zip([ty, base]) {
@@ -396,11 +385,9 @@ impl Checker<'_> {
                     continue;
                 }
                 if base_accessor && !base_property && derived_property && !derived_accessor {
-                    self.error_at((file, start, 0), 2610, &[]);
-                    self.explain_override(file, start, 2610, inherited, base, class_type);
+                    self.report_override((file, start), 2610, inherited, base, class_type);
                 } else if base_property && !base_accessor && derived_accessor {
-                    self.error_at((file, start, 0), 2611, &[]);
-                    self.explain_override(file, start, 2611, inherited, base, class_type);
+                    self.report_override((file, start), 2611, inherited, base, class_type);
                 } else if self.p.files.options.use_define_for_class_fields
                     && !is_abstract
                     && self.is_redefined_without_initializer(file, c, derived, class_type)
@@ -417,15 +404,12 @@ impl Checker<'_> {
                 }
             } else if base_method {
                 if !(derived_method || derived_property) {
-                    self.error_at((file, start, 0), 2423, &[]);
-                    self.explain_override(file, start, 2423, inherited, base, class_type);
+                    self.report_override((file, start), 2423, inherited, base, class_type);
                 }
             } else if base_accessor {
-                self.error_at((file, start, 0), 2426, &[]);
-                self.explain_override(file, start, 2426, inherited, base, class_type);
+                self.report_override((file, start), 2426, inherited, base, class_type);
             } else {
-                self.error_at((file, start, 0), 2425, &[]);
-                self.explain_override(file, start, 2425, inherited, base, class_type);
+                self.report_override((file, start), 2425, inherited, base, class_type);
             }
         }
         if not_implemented > 0 {
@@ -526,26 +510,21 @@ impl Checker<'_> {
             || !self.is_assigned_in_constructor(file, hir[constructor].func, name, class_type)
     }
 
-    /// The arguments of what `checkKindsOfPropertyMemberOverrides` says at the name of a member that overrides `inherited`.
-    fn explain_override(
+    /// Reports a `checkKindsOfPropertyMemberOverrides` error at the name of the member that overrides `inherited`.
+    fn report_override(
         &mut self,
-        file: FileId,
-        start: u32,
+        (file, start): (FileId, u32),
         code: u32,
         inherited: &Prop,
         base: TypeId,
         heir: TypeId,
     ) {
-        let end = self.end_of_name_at(file, start);
-        self.explain_to(start, end, code, |c| {
-            let name = c.prop_to_string(inherited);
-            let (base, heir) = (c.type_to_string(base), c.type_to_string(heir));
-            if matches!(code, 2610 | 2611) {
-                vec![name, base, heir]
-            } else {
-                vec![base, name, heir]
-            }
-        });
+        let (name, base, heir) = (Arg::Prop(inherited), Arg::Type(base), Arg::Type(heir));
+        let args = match code {
+            2610 | 2611 => [name, base, heir],
+            _ => [base, name, heir],
+        };
+        self.error_at((file, start, self.end_of_name_at(file, start)), code, &args);
     }
 
     pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {

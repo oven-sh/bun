@@ -397,6 +397,10 @@ pub struct Options {
     pub isolated_declarations: bool,
     /// `GetEmitDeclarations`: `declaration`, or `composite`.
     pub emits_declarations: bool,
+    /// `noEmitOnError`
+    pub no_emit_on_error: bool,
+    /// `IsIncremental`: `incremental`, or `composite`.
+    pub is_incremental: bool,
     /// `noErrorTruncation`
     pub no_error_truncation: bool,
     /// `emitDecoratorMetadata`
@@ -524,6 +528,8 @@ impl Options {
         options.erasable_syntax_only = flag(b"erasableSyntaxOnly");
         options.composite = flag(b"composite");
         options.emits_declarations = flag(b"declaration") || options.composite;
+        options.no_emit_on_error = flag(b"noEmitOnError");
+        options.is_incremental = flag(b"incremental") || options.composite;
         options.isolated_declarations = flag(b"isolatedDeclarations") && options.emits_declarations;
         options.no_error_truncation = flag(b"noErrorTruncation");
         options.emit_decorator_metadata = flag(b"emitDecoratorMetadata");

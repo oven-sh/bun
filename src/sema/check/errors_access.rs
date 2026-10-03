@@ -1115,8 +1115,8 @@ impl Checker<'_> {
         self.bound(file).is_write_access(self.hir(file), e)
     }
 
-    /// `getDeclarationModifierFlagsFromSymbolEx`, of a property that is declared in one place: what is written on its setter if it is
-    /// written to, or else on its getter, or else on the first of its declarations.
+    /// `getDeclarationModifierFlagsFromSymbolEx` for a property backed by a single symbol. Uses the setter's modifiers for a write
+    /// access, otherwise the getter's, otherwise those of the value declaration.
     fn get_declaration_modifier_flags_from_symbol_ex(
         &mut self,
         prop: &Prop,
@@ -1124,36 +1124,35 @@ impl Checker<'_> {
     ) -> Flags {
         match &prop.source {
             PropSource::Symbol(sym) => {
-                let (mut f, mut m) = match self.files().value_declaration(*sym) {
-                    Some((f, Decl::ParameterProperty(p))) => return self.hir(f)[p].flags,
-                    Some((f, Decl::Member(m))) => (f, m),
-                    // The modifiers of the first assignment. Only a member of a class is private or protected.
-                    Some((f, Decl::ThisProperty(first))) => {
-                        return self.hir(f).jsdoc_modifiers_of(first);
+                let flags = match self.files().value_declaration(*sym) {
+                    Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].flags,
+                    // Only accessors need the declaration list: the accessor in use determines the flags.
+                    Some((f, Decl::Member(m)))
+                        if self.files().flags(*sym).intersects(SymFlags::ACCESSOR) =>
+                    {
+                        let declared = self.members_of_symbol(*sym);
+                        let of_kind = |kind: MemberKind| {
+                            (declared.iter().copied()).find(|&(f, m)| self.hir(f)[m].kind == kind)
+                        };
+                        let setter = of_kind(MemberKind::Setter).filter(|_| writing);
+                        let (f, m) = setter
+                            .or_else(|| of_kind(MemberKind::Getter))
+                            .unwrap_or((f, m));
+                        self.hir(f)[m].flags
                     }
-                    Some((f, Decl::Expando(first))) => {
-                        let modifiers = self.hir(f).jsdoc_modifiers_of(first);
-                        return modifiers
-                            .difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC);
+                    Some((f, Decl::Member(m))) => self.hir(f)[m].flags,
+                    // JSDoc modifiers of the first assignment.
+                    Some((f, Decl::ThisProperty(first) | Decl::Expando(first))) => {
+                        self.hir(f).jsdoc_modifiers_of(first)
                     }
                     _ => return Flags::empty(),
                 };
-                // Every `a.b` comes here: `s.Declarations` is asked for only where there is a choice.
-                if self.files().flags(*sym).intersects(SymFlags::ACCESSOR) {
-                    let declared = self.members_of_symbol(*sym);
-                    let of_kind = |kind: MemberKind| {
-                        (declared.iter().copied()).find(|&(f, m)| self.hir(f)[m].kind == kind)
-                    };
-                    let setter = of_kind(MemberKind::Setter).filter(|_| writing);
-                    (f, m) = setter
-                        .or_else(|| of_kind(MemberKind::Getter))
-                        .unwrap_or((f, m));
-                }
-                let flags = self.hir(f)[m].flags;
-                // Only a class keeps things to itself.
-                match self.bound(f).member_owner[m.idx()] {
-                    MemberOwner::Class(_) => flags,
-                    _ => flags.difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC),
+                // Accessibility modifiers only apply to class members.
+                let accessibility = Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC;
+                if flags.intersects(accessibility) && self.declaring_class(prop).is_none() {
+                    flags.difference(accessibility)
+                } else {
+                    flags
                 }
             }
             _ => Flags::empty(),

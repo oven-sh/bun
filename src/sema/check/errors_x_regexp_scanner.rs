@@ -1238,7 +1238,7 @@ impl<'a> RegExpParser<'a> {
             let property_name_or_value_start = self.pos;
             let property_name_or_value = self.scan_word_characters();
             if self.peek() == Some(b'=') {
-                let values = values_of_non_binary_unicode_property(property_name_or_value);
+                let values = NON_BINARY_UNICODE_PROPERTIES.get(property_name_or_value);
                 if self.pos == property_name_or_value_start {
                     self.error(1523, self.pos, 0);
                 } else if values.is_none() {
@@ -1252,9 +1252,7 @@ impl<'a> RegExpParser<'a> {
                         property_name_or_value_start,
                         property_name_or_value.len(),
                         property_name_or_value,
-                        NON_BINARY_UNICODE_PROPERTIES
-                            .iter()
-                            .map(|name| name.as_bytes()),
+                        NON_BINARY_UNICODE_PROPERTIES.keys(),
                     );
                 }
                 self.pos += 1;
@@ -1262,21 +1260,28 @@ impl<'a> RegExpParser<'a> {
                 let property_value = self.scan_word_characters();
                 if self.pos == property_value_start {
                     self.error(1525, self.pos, 0);
-                } else if let Some(values) = values
-                    && !has(values, property_value)
+                } else if let Some(&is_general_category) = values
+                    && !match is_general_category {
+                        true => GENERAL_CATEGORY_VALUES.contains(property_value),
+                        false => SCRIPT_VALUES.contains(property_value),
+                    }
                 {
-                    self.error(1526, property_value_start, property_value.len());
+                    let (start, length) = (property_value_start, property_value.len());
+                    self.error(1526, start, length);
                     // `getSpellingSuggestionForUnicodePropertyValue`
-                    self.suggest(
-                        property_value_start,
-                        property_value.len(),
-                        property_value,
-                        values.iter().map(|value| value.as_bytes()),
-                    );
+                    match is_general_category {
+                        true => self.suggest(
+                            start,
+                            length,
+                            property_value,
+                            GENERAL_CATEGORY_VALUES.iter(),
+                        ),
+                        false => self.suggest(start, length, property_value, SCRIPT_VALUES.iter()),
+                    }
                 }
             } else if self.pos == property_name_or_value_start {
                 self.error(1527, self.pos, 0);
-            } else if has(BINARY_UNICODE_PROPERTIES_OF_STRINGS, property_name_or_value) {
+            } else if BINARY_UNICODE_PROPERTIES_OF_STRINGS.contains(property_name_or_value) {
                 if !self.unicode_sets_mode {
                     self.error(
                         1528,
@@ -1292,8 +1297,8 @@ impl<'a> RegExpParser<'a> {
                 } else {
                     self.may_contain_strings = true;
                 }
-            } else if !has(GENERAL_CATEGORY_VALUES, property_name_or_value)
-                && !has(BINARY_UNICODE_PROPERTIES, property_name_or_value)
+            } else if !GENERAL_CATEGORY_VALUES.contains(property_name_or_value)
+                && !BINARY_UNICODE_PROPERTIES.contains(property_name_or_value)
             {
                 self.error(
                     1529,
@@ -1307,9 +1312,8 @@ impl<'a> RegExpParser<'a> {
                     property_name_or_value,
                     GENERAL_CATEGORY_VALUES
                         .iter()
-                        .chain(BINARY_UNICODE_PROPERTIES)
-                        .chain(BINARY_UNICODE_PROPERTIES_OF_STRINGS)
-                        .map(|name| name.as_bytes()),
+                        .chain(BINARY_UNICODE_PROPERTIES.iter())
+                        .chain(BINARY_UNICODE_PROPERTIES_OF_STRINGS.iter()),
                 );
             }
             self.scan_expected_char(b'}');
@@ -1549,96 +1553,85 @@ fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64>
     (distance <= max_value).then_some(distance)
 }
 
-fn has(names: &[&str], name: &[u8]) -> bool {
-    names.iter().any(|n| n.as_bytes() == name)
+bun_core::comptime_string_map! {
+    /// `nonBinaryUnicodeProperties`: maps a property name or alias to its value set. `true`: `General_Category` values. `false`:
+    /// `Script` values, which `Script_Extensions` also accepts.
+    static NON_BINARY_UNICODE_PROPERTIES: bool = {
+        b"General_Category" => true, b"gc" => true,
+        b"Script" => false, b"sc" => false, b"Script_Extensions" => false, b"scx" => false,
+    };
 }
 
-/// `nonBinaryUnicodeProperties`, `valuesOfNonBinaryUnicodeProperties`: what the property of that name or alias can be.
-fn values_of_non_binary_unicode_property(name: &[u8]) -> Option<&'static [&'static str]> {
-    match name {
-        b"General_Category" | b"gc" => Some(GENERAL_CATEGORY_VALUES),
-        // An expression only takes one value, so those of `Script_Extensions` are those of `Script`.
-        b"Script" | b"sc" | b"Script_Extensions" | b"scx" => Some(SCRIPT_VALUES),
-        _ => None,
-    }
+bun_core::comptime_string_set! {
+    /// `binaryUnicodeProperties`: https://tc39.es/ecma262/#table-binary-unicode-properties
+    static BINARY_UNICODE_PROPERTIES = {
+        "ASCII", "ASCII_Hex_Digit", "AHex", "Alphabetic", "Alpha", "Any", "Assigned", "Bidi_Control", "Bidi_C", "Bidi_Mirrored",
+        "Bidi_M", "Case_Ignorable", "CI", "Cased", "Changes_When_Casefolded", "CWCF", "Changes_When_Casemapped", "CWCM",
+        "Changes_When_Lowercased", "CWL", "Changes_When_NFKC_Casefolded", "CWKCF", "Changes_When_Titlecased", "CWT",
+        "Changes_When_Uppercased", "CWU", "Dash", "Default_Ignorable_Code_Point", "DI", "Deprecated", "Dep", "Diacritic", "Dia",
+        "Emoji", "Emoji_Component", "EComp", "Emoji_Modifier", "EMod", "Emoji_Modifier_Base", "EBase", "Emoji_Presentation",
+        "EPres", "Extended_Pictographic", "ExtPict", "Extender", "Ext", "Grapheme_Base", "Gr_Base", "Grapheme_Extend", "Gr_Ext",
+        "Hex_Digit", "Hex", "IDS_Binary_Operator", "IDSB", "IDS_Trinary_Operator", "IDST", "ID_Continue", "IDC", "ID_Start", "IDS",
+        "Ideographic", "Ideo", "Join_Control", "Join_C", "Logical_Order_Exception", "LOE", "Lowercase", "Lower", "Math",
+        "Noncharacter_Code_Point", "NChar", "Pattern_Syntax", "Pat_Syn", "Pattern_White_Space", "Pat_WS", "Quotation_Mark", "QMark",
+        "Radical", "Regional_Indicator", "RI", "Sentence_Terminal", "STerm", "Soft_Dotted", "SD", "Terminal_Punctuation", "Term",
+        "Unified_Ideograph", "UIdeo", "Uppercase", "Upper", "Variation_Selector", "VS", "White_Space", "space", "XID_Continue",
+        "XIDC", "XID_Start", "XIDS",
+    };
 }
 
-/// The keys of `nonBinaryUnicodeProperties`.
-static NON_BINARY_UNICODE_PROPERTIES: &[&str] = &[
-    "General_Category",
-    "gc",
-    "Script",
-    "sc",
-    "Script_Extensions",
-    "scx",
-];
+bun_core::comptime_string_set! {
+    /// `binaryUnicodePropertiesOfStrings`: https://tc39.es/ecma262/#table-binary-unicode-properties-of-strings
+    static BINARY_UNICODE_PROPERTIES_OF_STRINGS = {
+        "Basic_Emoji", "Emoji_Keycap_Sequence", "RGI_Emoji_Modifier_Sequence", "RGI_Emoji_Flag_Sequence", "RGI_Emoji_Tag_Sequence",
+        "RGI_Emoji_ZWJ_Sequence", "RGI_Emoji",
+    };
+}
 
-/// `binaryUnicodeProperties`: https://tc39.es/ecma262/#table-binary-unicode-properties
-#[rustfmt::skip]
-static BINARY_UNICODE_PROPERTIES: &[&str] = &[
-    "ASCII", "ASCII_Hex_Digit", "AHex", "Alphabetic", "Alpha", "Any", "Assigned", "Bidi_Control", "Bidi_C", "Bidi_Mirrored",
-    "Bidi_M", "Case_Ignorable", "CI", "Cased", "Changes_When_Casefolded", "CWCF", "Changes_When_Casemapped", "CWCM",
-    "Changes_When_Lowercased", "CWL", "Changes_When_NFKC_Casefolded", "CWKCF", "Changes_When_Titlecased", "CWT",
-    "Changes_When_Uppercased", "CWU", "Dash", "Default_Ignorable_Code_Point", "DI", "Deprecated", "Dep", "Diacritic", "Dia",
-    "Emoji", "Emoji_Component", "EComp", "Emoji_Modifier", "EMod", "Emoji_Modifier_Base", "EBase", "Emoji_Presentation",
-    "EPres", "Extended_Pictographic", "ExtPict", "Extender", "Ext", "Grapheme_Base", "Gr_Base", "Grapheme_Extend", "Gr_Ext",
-    "Hex_Digit", "Hex", "IDS_Binary_Operator", "IDSB", "IDS_Trinary_Operator", "IDST", "ID_Continue", "IDC", "ID_Start", "IDS",
-    "Ideographic", "Ideo", "Join_Control", "Join_C", "Logical_Order_Exception", "LOE", "Lowercase", "Lower", "Math",
-    "Noncharacter_Code_Point", "NChar", "Pattern_Syntax", "Pat_Syn", "Pattern_White_Space", "Pat_WS", "Quotation_Mark", "QMark",
-    "Radical", "Regional_Indicator", "RI", "Sentence_Terminal", "STerm", "Soft_Dotted", "SD", "Terminal_Punctuation", "Term",
-    "Unified_Ideograph", "UIdeo", "Uppercase", "Upper", "Variation_Selector", "VS", "White_Space", "space", "XID_Continue",
-    "XIDC", "XID_Start", "XIDS",
-];
+bun_core::comptime_string_set! {
+    /// `valuesOfNonBinaryUnicodeProperties["General_Category"]`
+    static GENERAL_CATEGORY_VALUES = {
+        "C", "Other", "Cc", "Control", "cntrl", "Cf", "Format", "Cn", "Unassigned", "Co", "Private_Use", "Cs", "Surrogate", "L",
+        "Letter", "LC", "Cased_Letter", "Ll", "Lowercase_Letter", "Lm", "Modifier_Letter", "Lo", "Other_Letter", "Lt",
+        "Titlecase_Letter", "Lu", "Uppercase_Letter", "M", "Mark", "Combining_Mark", "Mc", "Spacing_Mark", "Me", "Enclosing_Mark",
+        "Mn", "Nonspacing_Mark", "N", "Number", "Nd", "Decimal_Number", "digit", "Nl", "Letter_Number", "No", "Other_Number", "P",
+        "Punctuation", "punct", "Pc", "Connector_Punctuation", "Pd", "Dash_Punctuation", "Pe", "Close_Punctuation", "Pf",
+        "Final_Punctuation", "Pi", "Initial_Punctuation", "Po", "Other_Punctuation", "Ps", "Open_Punctuation", "S", "Symbol", "Sc",
+        "Currency_Symbol", "Sk", "Modifier_Symbol", "Sm", "Math_Symbol", "So", "Other_Symbol", "Z", "Separator", "Zl",
+        "Line_Separator", "Zp", "Paragraph_Separator", "Zs", "Space_Separator",
+    };
+}
 
-/// `binaryUnicodePropertiesOfStrings`: https://tc39.es/ecma262/#table-binary-unicode-properties-of-strings
-#[rustfmt::skip]
-static BINARY_UNICODE_PROPERTIES_OF_STRINGS: &[&str] = &[
-    "Basic_Emoji", "Emoji_Keycap_Sequence", "RGI_Emoji_Modifier_Sequence", "RGI_Emoji_Flag_Sequence", "RGI_Emoji_Tag_Sequence",
-    "RGI_Emoji_ZWJ_Sequence", "RGI_Emoji",
-];
-
-/// `valuesOfNonBinaryUnicodeProperties["General_Category"]`
-#[rustfmt::skip]
-static GENERAL_CATEGORY_VALUES: &[&str] = &[
-    "C", "Other", "Cc", "Control", "cntrl", "Cf", "Format", "Cn", "Unassigned", "Co", "Private_Use", "Cs", "Surrogate", "L",
-    "Letter", "LC", "Cased_Letter", "Ll", "Lowercase_Letter", "Lm", "Modifier_Letter", "Lo", "Other_Letter", "Lt",
-    "Titlecase_Letter", "Lu", "Uppercase_Letter", "M", "Mark", "Combining_Mark", "Mc", "Spacing_Mark", "Me", "Enclosing_Mark",
-    "Mn", "Nonspacing_Mark", "N", "Number", "Nd", "Decimal_Number", "digit", "Nl", "Letter_Number", "No", "Other_Number", "P",
-    "Punctuation", "punct", "Pc", "Connector_Punctuation", "Pd", "Dash_Punctuation", "Pe", "Close_Punctuation", "Pf",
-    "Final_Punctuation", "Pi", "Initial_Punctuation", "Po", "Other_Punctuation", "Ps", "Open_Punctuation", "S", "Symbol", "Sc",
-    "Currency_Symbol", "Sk", "Modifier_Symbol", "Sm", "Math_Symbol", "So", "Other_Symbol", "Z", "Separator", "Zl",
-    "Line_Separator", "Zp", "Paragraph_Separator", "Zs", "Space_Separator",
-];
-
-/// `scriptValues`: Unicode 15.1
-#[rustfmt::skip]
-static SCRIPT_VALUES: &[&str] = &[
-    "Adlm", "Adlam", "Aghb", "Caucasian_Albanian", "Ahom", "Arab", "Arabic", "Armi", "Imperial_Aramaic", "Armn", "Armenian",
-    "Avst", "Avestan", "Bali", "Balinese", "Bamu", "Bamum", "Bass", "Bassa_Vah", "Batk", "Batak", "Beng", "Bengali", "Bhks",
-    "Bhaiksuki", "Bopo", "Bopomofo", "Brah", "Brahmi", "Brai", "Braille", "Bugi", "Buginese", "Buhd", "Buhid", "Cakm", "Chakma",
-    "Cans", "Canadian_Aboriginal", "Cari", "Carian", "Cham", "Cher", "Cherokee", "Chrs", "Chorasmian", "Copt", "Coptic", "Qaac",
-    "Cpmn", "Cypro_Minoan", "Cprt", "Cypriot", "Cyrl", "Cyrillic", "Deva", "Devanagari", "Diak", "Dives_Akuru", "Dogr", "Dogra",
-    "Dsrt", "Deseret", "Dupl", "Duployan", "Egyp", "Egyptian_Hieroglyphs", "Elba", "Elbasan", "Elym", "Elymaic", "Ethi",
-    "Ethiopic", "Geor", "Georgian", "Glag", "Glagolitic", "Gong", "Gunjala_Gondi", "Gonm", "Masaram_Gondi", "Goth", "Gothic",
-    "Gran", "Grantha", "Grek", "Greek", "Gujr", "Gujarati", "Guru", "Gurmukhi", "Hang", "Hangul", "Hani", "Han", "Hano",
-    "Hanunoo", "Hatr", "Hatran", "Hebr", "Hebrew", "Hira", "Hiragana", "Hluw", "Anatolian_Hieroglyphs", "Hmng", "Pahawh_Hmong",
-    "Hmnp", "Nyiakeng_Puachue_Hmong", "Hrkt", "Katakana_Or_Hiragana", "Hung", "Old_Hungarian", "Ital", "Old_Italic", "Java",
-    "Javanese", "Kali", "Kayah_Li", "Kana", "Katakana", "Kawi", "Khar", "Kharoshthi", "Khmr", "Khmer", "Khoj", "Khojki", "Kits",
-    "Khitan_Small_Script", "Knda", "Kannada", "Kthi", "Kaithi", "Lana", "Tai_Tham", "Laoo", "Lao", "Latn", "Latin", "Lepc",
-    "Lepcha", "Limb", "Limbu", "Lina", "Linear_A", "Linb", "Linear_B", "Lisu", "Lyci", "Lycian", "Lydi", "Lydian", "Mahj",
-    "Mahajani", "Maka", "Makasar", "Mand", "Mandaic", "Mani", "Manichaean", "Marc", "Marchen", "Medf", "Medefaidrin", "Mend",
-    "Mende_Kikakui", "Merc", "Meroitic_Cursive", "Mero", "Meroitic_Hieroglyphs", "Mlym", "Malayalam", "Modi", "Mong",
-    "Mongolian", "Mroo", "Mro", "Mtei", "Meetei_Mayek", "Mult", "Multani", "Mymr", "Myanmar", "Nagm", "Nag_Mundari", "Nand",
-    "Nandinagari", "Narb", "Old_North_Arabian", "Nbat", "Nabataean", "Newa", "Nkoo", "Nko", "Nshu", "Nushu", "Ogam", "Ogham",
-    "Olck", "Ol_Chiki", "Orkh", "Old_Turkic", "Orya", "Oriya", "Osge", "Osage", "Osma", "Osmanya", "Ougr", "Old_Uyghur", "Palm",
-    "Palmyrene", "Pauc", "Pau_Cin_Hau", "Perm", "Old_Permic", "Phag", "Phags_Pa", "Phli", "Inscriptional_Pahlavi", "Phlp",
-    "Psalter_Pahlavi", "Phnx", "Phoenician", "Plrd", "Miao", "Prti", "Inscriptional_Parthian", "Rjng", "Rejang", "Rohg",
-    "Hanifi_Rohingya", "Runr", "Runic", "Samr", "Samaritan", "Sarb", "Old_South_Arabian", "Saur", "Saurashtra", "Sgnw",
-    "SignWriting", "Shaw", "Shavian", "Shrd", "Sharada", "Sidd", "Siddham", "Sind", "Khudawadi", "Sinh", "Sinhala", "Sogd",
-    "Sogdian", "Sogo", "Old_Sogdian", "Sora", "Sora_Sompeng", "Soyo", "Soyombo", "Sund", "Sundanese", "Sylo", "Syloti_Nagri",
-    "Syrc", "Syriac", "Tagb", "Tagbanwa", "Takr", "Takri", "Tale", "Tai_Le", "Talu", "New_Tai_Lue", "Taml", "Tamil", "Tang",
-    "Tangut", "Tavt", "Tai_Viet", "Telu", "Telugu", "Tfng", "Tifinagh", "Tglg", "Tagalog", "Thaa", "Thaana", "Thai", "Tibt",
-    "Tibetan", "Tirh", "Tirhuta", "Tnsa", "Tangsa", "Toto", "Ugar", "Ugaritic", "Vaii", "Vai", "Vith", "Vithkuqi", "Wara",
-    "Warang_Citi", "Wcho", "Wancho", "Xpeo", "Old_Persian", "Xsux", "Cuneiform", "Yezi", "Yezidi", "Yiii", "Yi", "Zanb",
-    "Zanabazar_Square", "Zinh", "Inherited", "Qaai", "Zyyy", "Common", "Zzzz", "Unknown",
-];
+bun_core::comptime_string_set! {
+    /// `scriptValues`: Unicode 15.1
+    static SCRIPT_VALUES = {
+        "Adlm", "Adlam", "Aghb", "Caucasian_Albanian", "Ahom", "Arab", "Arabic", "Armi", "Imperial_Aramaic", "Armn", "Armenian",
+        "Avst", "Avestan", "Bali", "Balinese", "Bamu", "Bamum", "Bass", "Bassa_Vah", "Batk", "Batak", "Beng", "Bengali", "Bhks",
+        "Bhaiksuki", "Bopo", "Bopomofo", "Brah", "Brahmi", "Brai", "Braille", "Bugi", "Buginese", "Buhd", "Buhid", "Cakm", "Chakma",
+        "Cans", "Canadian_Aboriginal", "Cari", "Carian", "Cham", "Cher", "Cherokee", "Chrs", "Chorasmian", "Copt", "Coptic", "Qaac",
+        "Cpmn", "Cypro_Minoan", "Cprt", "Cypriot", "Cyrl", "Cyrillic", "Deva", "Devanagari", "Diak", "Dives_Akuru", "Dogr", "Dogra",
+        "Dsrt", "Deseret", "Dupl", "Duployan", "Egyp", "Egyptian_Hieroglyphs", "Elba", "Elbasan", "Elym", "Elymaic", "Ethi",
+        "Ethiopic", "Geor", "Georgian", "Glag", "Glagolitic", "Gong", "Gunjala_Gondi", "Gonm", "Masaram_Gondi", "Goth", "Gothic",
+        "Gran", "Grantha", "Grek", "Greek", "Gujr", "Gujarati", "Guru", "Gurmukhi", "Hang", "Hangul", "Hani", "Han", "Hano",
+        "Hanunoo", "Hatr", "Hatran", "Hebr", "Hebrew", "Hira", "Hiragana", "Hluw", "Anatolian_Hieroglyphs", "Hmng", "Pahawh_Hmong",
+        "Hmnp", "Nyiakeng_Puachue_Hmong", "Hrkt", "Katakana_Or_Hiragana", "Hung", "Old_Hungarian", "Ital", "Old_Italic", "Java",
+        "Javanese", "Kali", "Kayah_Li", "Kana", "Katakana", "Kawi", "Khar", "Kharoshthi", "Khmr", "Khmer", "Khoj", "Khojki", "Kits",
+        "Khitan_Small_Script", "Knda", "Kannada", "Kthi", "Kaithi", "Lana", "Tai_Tham", "Laoo", "Lao", "Latn", "Latin", "Lepc",
+        "Lepcha", "Limb", "Limbu", "Lina", "Linear_A", "Linb", "Linear_B", "Lisu", "Lyci", "Lycian", "Lydi", "Lydian", "Mahj",
+        "Mahajani", "Maka", "Makasar", "Mand", "Mandaic", "Mani", "Manichaean", "Marc", "Marchen", "Medf", "Medefaidrin", "Mend",
+        "Mende_Kikakui", "Merc", "Meroitic_Cursive", "Mero", "Meroitic_Hieroglyphs", "Mlym", "Malayalam", "Modi", "Mong",
+        "Mongolian", "Mroo", "Mro", "Mtei", "Meetei_Mayek", "Mult", "Multani", "Mymr", "Myanmar", "Nagm", "Nag_Mundari", "Nand",
+        "Nandinagari", "Narb", "Old_North_Arabian", "Nbat", "Nabataean", "Newa", "Nkoo", "Nko", "Nshu", "Nushu", "Ogam", "Ogham",
+        "Olck", "Ol_Chiki", "Orkh", "Old_Turkic", "Orya", "Oriya", "Osge", "Osage", "Osma", "Osmanya", "Ougr", "Old_Uyghur", "Palm",
+        "Palmyrene", "Pauc", "Pau_Cin_Hau", "Perm", "Old_Permic", "Phag", "Phags_Pa", "Phli", "Inscriptional_Pahlavi", "Phlp",
+        "Psalter_Pahlavi", "Phnx", "Phoenician", "Plrd", "Miao", "Prti", "Inscriptional_Parthian", "Rjng", "Rejang", "Rohg",
+        "Hanifi_Rohingya", "Runr", "Runic", "Samr", "Samaritan", "Sarb", "Old_South_Arabian", "Saur", "Saurashtra", "Sgnw",
+        "SignWriting", "Shaw", "Shavian", "Shrd", "Sharada", "Sidd", "Siddham", "Sind", "Khudawadi", "Sinh", "Sinhala", "Sogd",
+        "Sogdian", "Sogo", "Old_Sogdian", "Sora", "Sora_Sompeng", "Soyo", "Soyombo", "Sund", "Sundanese", "Sylo", "Syloti_Nagri",
+        "Syrc", "Syriac", "Tagb", "Tagbanwa", "Takr", "Takri", "Tale", "Tai_Le", "Talu", "New_Tai_Lue", "Taml", "Tamil", "Tang",
+        "Tangut", "Tavt", "Tai_Viet", "Telu", "Telugu", "Tfng", "Tifinagh", "Tglg", "Tagalog", "Thaa", "Thaana", "Thai", "Tibt",
+        "Tibetan", "Tirh", "Tirhuta", "Tnsa", "Tangsa", "Toto", "Ugar", "Ugaritic", "Vaii", "Vai", "Vith", "Vithkuqi", "Wara",
+        "Warang_Citi", "Wcho", "Wancho", "Xpeo", "Old_Persian", "Xsux", "Cuneiform", "Yezi", "Yezidi", "Yiii", "Yi", "Zanb",
+        "Zanabazar_Square", "Zinh", "Inherited", "Qaai", "Zyyy", "Common", "Zzzz", "Unknown",
+    };
+}

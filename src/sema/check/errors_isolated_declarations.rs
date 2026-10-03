@@ -15,36 +15,9 @@ use super::decl::Predicate;
 use super::enclosing_declaration::Enclosing;
 use super::sink::held;
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use bstr::ByteSlice;
-
-/// A node of the tree, as far as an error is reported on it or the way up from it is gone.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum Node {
-    /// An expression itself, whatever parentheses it is in.
-    Expr(ExprId),
-    /// An expression with the parentheses around it, which it has.
-    Written(ExprId),
-    /// What an object literal is made of: `a: 1`, `a`, `...a`, a method, an accessor.
-    Prop(PropId),
-    /// The `[a]` that names one of those.
-    PropName(PropId),
-    /// A member of a class, an interface or a type literal.
-    Member(MemberId),
-    Var(VarDeclId),
-    Param(ParamId),
-    /// The binding elements of an object pattern and of an array pattern.
-    PatProp(PatPropId),
-    PatElem(PatElemId),
-    Stmt(StmtId),
-    Type(TypeNodeId),
-    /// The name in a type reference, or after `typeof`.
-    EntityName(TypeNodeId),
-    /// The `extends` clause of a class.
-    Extends(ClassId),
-    /// A function the binder did not get to.
-    Nowhere,
-}
+use std::ops::ControlFlow;
 
 /// `PseudoType`
 pub(super) enum Pseudo {
@@ -185,183 +158,13 @@ impl<'p> Checker<'p> {
                 });
                 one.related.dedup();
             }
-            self.add_diagnostic(Reported::new(
-                (self.checking.unwrap(), one.start, one.end),
-                one.code,
-                held(one.args),
-            ));
-            let related = one.related;
-            if !related.is_empty() {
-                self.relate(one.start, one.code, move |_| related);
-            }
+            let at = (self.checking.unwrap(), one.start, one.end);
+            self.add_diagnostic(Reported::new(at, one.code, held(one.args)))
+                .related_information = one.related;
         }
     }
 
     // ───────────────────────────── the tree ─────────────────────────────
-
-    pub(super) fn iso_node_of_fn(&self, file: FileId, f: FnId) -> Node {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match bound.fns[f.idx()].owner {
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                Parent::Prop(p)
-                    if hir[p].value == e
-                        && matches!(
-                            hir[p].kind,
-                            PropKind::Method | PropKind::Getter | PropKind::Setter
-                        ) =>
-                {
-                    Node::Prop(p)
-                }
-                _ => Node::Expr(e),
-            },
-            FnOwner::Stmt(s) => Node::Stmt(s),
-            FnOwner::Member(m) => Node::Member(m),
-            FnOwner::Type(t) => Node::Type(t),
-            FnOwner::None => Node::Nowhere,
-        }
-    }
-
-    fn iso_node_of_class(&self, file: FileId, c: ClassId) -> Node {
-        match self.bound(file).class_owner[c.idx()] {
-            ClassOwner::Expr(e) => Node::Expr(e),
-            ClassOwner::Stmt(s) => Node::Stmt(s),
-        }
-    }
-
-    /// The function-like `node` is.
-    pub(super) fn iso_fn_of_node(&self, file: FileId, node: Node) -> Option<FnId> {
-        let hir = self.hir(file);
-        match node {
-            Node::Expr(e) => match hir[e].kind {
-                ExprKind::Fn(f) => Some(f),
-                _ => None,
-            },
-            Node::Prop(p) => match hir[p].kind {
-                PropKind::Method | PropKind::Getter | PropKind::Setter => {
-                    match hir.exprs.get(hir[p].value.idx())?.kind {
-                        ExprKind::Fn(f) => Some(f),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            },
-            Node::Member(m) => hir[m].func.some(),
-            Node::Stmt(s) => match hir[s].kind {
-                StmtKind::Fn(f) => Some(f),
-                _ => None,
-            },
-            Node::Type(t) => match hir[t].kind {
-                TypeNodeKind::Fn(f) => Some(f),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// The expression as it is written.
-    pub(super) fn iso_written(&self, file: FileId, e: ExprId) -> Node {
-        if is_parenthesized(self.hir(file), e) {
-            Node::Written(e)
-        } else {
-            Node::Expr(e)
-        }
-    }
-
-    /// What binds the pattern `pat`.
-    pub(super) fn iso_owner_of_pattern(&self, file: FileId, pat: PatId) -> Option<Node> {
-        match self.bound(file).pat_parent[pat.idx()] {
-            PatParent::Var(d) => Some(Node::Var(d)),
-            PatParent::Param(p) => Some(Node::Param(p)),
-            PatParent::Prop(_, p) => Some(Node::PatProp(p)),
-            PatParent::Elem(_, p) => Some(Node::PatElem(p)),
-            PatParent::None => None,
-        }
-    }
-
-    /// `node.Parent`, leaving out parentheses, and the lists, blocks and clauses nothing is asked of.
-    fn iso_parent(&self, tx: &Emit, node: Node) -> Option<Node> {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match node {
-            Node::Expr(e) | Node::Written(e) => match bound.expr_parent[e.idx()] {
-                Parent::Expr(parent) => Some(Node::Expr(parent)),
-                Parent::Stmt(s) => s.some().map(Node::Stmt),
-                Parent::VarInit(d) => Some(Node::Var(d)),
-                Parent::ParamDefault(p) => Some(Node::Param(p)),
-                Parent::PatPropDefault(p) => Some(Node::PatProp(p)),
-                Parent::PatElemDefault(p) => Some(Node::PatElem(p)),
-                Parent::Prop(p) => Some(Node::Prop(p)),
-                Parent::PatKey(_) => None,
-                Parent::PropKey(_, p) | Parent::MethodKey(p) => Some(Node::PropName(p)),
-                Parent::MemberKey(m) => Some(Node::Member(m)),
-                Parent::MemberInit(m) => Some(Node::Member(m)),
-                Parent::FnBody(f) => Some(self.iso_node_of_fn(file, f)),
-                Parent::EnumInit(m) => bound.enum_member_owner[m.idx()]
-                    .some()
-                    .and_then(|owner| hir[owner].stmt.some())
-                    .map(Node::Stmt),
-                Parent::Case(c) => Some(Node::Stmt(bound.case_stmt[c.idx()])),
-                Parent::ClassExtends(c) => Some(Node::Extends(c)),
-                _ => None,
-            },
-            Node::Prop(p) => bound.prop_owner[p.idx()].some().map(Node::Expr),
-            Node::PropName(p) => Some(Node::Prop(p)),
-            Node::Member(m) => match bound.member_owner[m.idx()] {
-                MemberOwner::Class(c) => Some(self.iso_node_of_class(file, c)),
-                MemberOwner::Interface(i) => hir[i].stmt.some().map(Node::Stmt),
-                MemberOwner::TypeLiteral(t) => Some(Node::Type(t)),
-                MemberOwner::None => None,
-            },
-            Node::Var(d) => bound.var_stmt[d.idx()].some().map(Node::Stmt),
-            Node::Param(p) => bound.param_fn[p.idx()]
-                .some()
-                .map(|f| self.iso_node_of_fn(file, f)),
-            Node::PatProp(p) => match bound.pat_parent[hir[p].value.idx()] {
-                PatParent::Prop(outer, _) => self.iso_owner_of_pattern(file, outer),
-                _ => None,
-            },
-            Node::PatElem(p) => match bound.pat_parent[hir[p].pat.idx()] {
-                PatParent::Elem(outer, _) => self.iso_owner_of_pattern(file, outer),
-                _ => None,
-            },
-            Node::Stmt(s) => match bound.stmt_parent[s.idx()] {
-                Parent::Stmt(parent) => parent.some().map(Node::Stmt),
-                Parent::FnBody(f) => Some(self.iso_node_of_fn(file, f)),
-                Parent::Case(c) => Some(Node::Stmt(bound.case_stmt[c.idx()])),
-                Parent::Module(m) => hir[m].stmt.some().map(Node::Stmt),
-                _ => None,
-            },
-            Node::Type(t) => self.iso_holder_of_type(file, t),
-            Node::EntityName(t) => Some(Node::Type(t)),
-            Node::Extends(c) => Some(self.iso_node_of_class(file, c)),
-            Node::Nowhere => None,
-        }
-    }
-
-    /// What the type node `t` is written directly in. It is looked for: only an error asks.
-    fn iso_holder_of_type(&self, file: FileId, t: TypeNodeId) -> Option<Node> {
-        let hir = self.hir(file);
-        if let Some(p) = hir.params.iter().position(|p| p.ty == t) {
-            return Some(Node::Param(ParamId(p as u32)));
-        }
-        if let Some(d) = hir.var_decls.iter().position(|d| d.ty == t) {
-            return Some(Node::Var(VarDeclId(d as u32)));
-        }
-        if let Some(m) = hir.members.iter().position(|m| m.ty == t) {
-            return Some(Node::Member(MemberId(m as u32)));
-        }
-        if let Some(f) = hir.fns.iter().position(|f| f.ret == t) {
-            return Some(self.iso_node_of_fn(file, FnId(f as u32)));
-        }
-        let asserts = |e: &Expr| match e.kind {
-            ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => ty == t,
-            _ => false,
-        };
-        if let Some(e) = hir.exprs.iter().position(asserts) {
-            return Some(Node::Expr(ExprId(e as u32)));
-        }
-        Self::type_node_parent(hir, t).some().map(Node::Type)
-    }
 
     /// `IsPrimitiveLiteralValue`, of `e` itself, whatever parentheses it is in.
     pub(super) fn iso_is_primitive_literal(
@@ -425,29 +228,20 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn iso_is_property_declaration(&self, file: FileId, m: MemberId) -> bool {
-        self.hir(file)[m].kind == MemberKind::Property
-            && matches!(
-                self.bound(file).member_owner[m.idx()],
-                MemberOwner::Class(_)
-            )
-    }
-
     /// `IsDeclaration`, of what an expression can be directly in.
-    fn iso_is_declaration(&self, file: FileId, node: Node) -> bool {
-        let hir = self.hir(file);
-        match node {
-            Node::Var(_)
-            | Node::Param(_)
-            | Node::Member(_)
-            | Node::Prop(_)
-            | Node::PatProp(_)
-            | Node::PatElem(_) => true,
-            Node::Stmt(s) => matches!(
+    pub(super) fn iso_is_declaration(hir: &hir::File, node: Node) -> bool {
+        match hir.data(node) {
+            NodeData::VarDecl(_)
+            | NodeData::Param(_)
+            | NodeData::Member(_)
+            | NodeData::Prop(_)
+            | NodeData::PatProp(_)
+            | NodeData::PatElem(_) => true,
+            NodeData::Stmt(s) => matches!(
                 hir[s].kind,
                 StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
             ),
-            Node::Expr(e) => matches!(
+            NodeData::Expr(e) => matches!(
                 hir[e].kind,
                 ExprKind::Fn(_)
                     | ExprKind::Class(_)
@@ -461,72 +255,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── the errors ─────────────────────────────
 
-    /// `GetErrorRangeForNode`
-    fn iso_range(&self, file: FileId, node: Node) -> (u32, u32) {
-        let hir = self.hir(file);
-        match node {
-            Node::Expr(e) => (
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            ),
-            Node::Written(e) => self.error_range_of_expr(file, e),
-            Node::Prop(p) => match hir[p].kind {
-                PropKind::Method | PropKind::Getter | PropKind::Setter => {
-                    (hir[p].pos, self.end_of_prop_name(file, p))
-                }
-                PropKind::Spread => {
-                    let value = self.start_of(file, hir[p].value);
-                    let before = hir
-                        .text
-                        .get(..value as usize)
-                        .unwrap_or_default()
-                        .trim_ascii_end();
-                    let start = if before.ends_with(b"...") {
-                        before.len() as u32 - 3
-                    } else {
-                        value.saturating_sub(3)
-                    };
-                    (start, self.end_of_prop(file, p))
-                }
-                PropKind::Init | PropKind::Shorthand => (hir[p].pos, self.end_of_prop(file, p)),
-            },
-            Node::PropName(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
-            Node::Member(m) => self.error_range_of_member(file, m),
-            Node::Var(d) => self.error_range_of_var_decl(file, d),
-            Node::Param(p) => (hir[p].pos, self.end_of_param(file, p)),
-            Node::PatProp(p) => self.error_range_of_pat_prop(file, p),
-            Node::PatElem(p) => self.error_range_of_pat_elem(file, p),
-            Node::Stmt(s) => self.error_range_of_stmt(file, s),
-            Node::Type(t) => (hir[t].pos, self.end_of_type_node(file, t)),
-            Node::EntityName(t) => match hir[t].kind {
-                TypeNodeKind::Typeof { expr, .. } if expr.is_some() => {
-                    (self.start_of(file, expr), self.end_of_expr(file, expr))
-                }
-                TypeNodeKind::Ref { name, .. } => {
-                    let start = hir[t].pos;
-                    let mut end = self.end_of_name_at(file, start);
-                    for _ in 1..name.len() {
-                        let dot = self.skip_trivia_from(file, end);
-                        if hir.text.get(dot as usize) != Some(&b'.') {
-                            break;
-                        }
-                        let next = self.skip_trivia_from(file, dot + 1);
-                        end = self.end_of_name_at(file, next);
-                    }
-                    (start, end)
-                }
-                _ => (hir[t].pos, self.end_of_type_node(file, t)),
-            },
-            Node::Extends(c) => (
-                self.start_of(file, hir[c].extends),
-                self.end_of_class_extends(file, c),
-            ),
-            Node::Nowhere => (0, 0),
-        }
-    }
-
     fn iso_said(&self, file: FileId, node: Node, code: u32) -> Said {
-        let (start, end) = self.iso_range(file, node);
+        let (start, end) = self.get_error_range_for_node(file, node);
         Said {
             start,
             end,
@@ -538,60 +268,42 @@ impl<'p> Checker<'p> {
     }
 
     fn iso_related(&self, file: FileId, node: Node, code: u32, args: Vec<String>) -> Reported {
-        let (start, end) = self.iso_range(file, node);
+        let (start, end) = self.get_error_range_for_node(file, node);
         Reported::new((file, start, end), code, held(args))
     }
 
-    /// `GetTextOfNode(node.Name())`, of a variable, a parameter or a property.
+    /// `GetTextOfNode(node.Name())`
     fn iso_name_text(&self, file: FileId, node: Node) -> String {
         let hir = self.hir(file);
-        let pat = match node {
-            Node::Var(d) => hir[d].pat,
-            Node::Param(p) => hir[p].pat,
-            Node::Member(m) => {
-                return self.source_text(file, hir[m].name_pos, self.end_of_member_name(file, m));
-            }
-            _ => return String::new(),
-        };
-        self.source_text(file, hir[pat].pos, self.end_of_pat(file, pat))
+        let name = hir.name(node);
+        self.source_text(file, hir.start(name), self.end_of_node(file, name))
     }
 
     /// `getErrorByDeclarationKind`, `getRelatedSuggestionByDeclarationKind`. 0: there is none.
-    fn iso_codes_of_declaration(&self, file: FileId, node: Node) -> (u32, u32) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match node {
-            Node::Var(_) => (9010, 9027),
-            Node::Param(_) => (9011, 9028),
-            Node::Stmt(s) => match hir[s].kind {
-                StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => (9037, 9036),
-                StmtKind::Fn(_) => (9007, 9031),
-                _ => (0, 0),
-            },
-            Node::Expr(e) if matches!(hir[e].kind, ExprKind::Fn(_)) => (9007, 9030),
-            Node::Prop(p) => match hir[p].kind {
-                PropKind::Method => (9008, 9034),
-                PropKind::Getter => (9009, 9032),
-                PropKind::Setter => (9009, 9033),
-                _ => (0, 0),
-            },
-            Node::Member(m) => {
-                let is_in_class = matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
-                match hir[m].kind {
-                    MemberKind::Property => (9012, 9029),
-                    MemberKind::Method if is_in_class => (9008, 9034),
-                    MemberKind::Getter => (9009, 9032),
-                    MemberKind::Setter => (9009, 9033),
-                    MemberKind::ConstructSignature => (9008, 9031),
-                    _ => (0, 0),
-                }
-            }
+    fn iso_codes_of_declaration(kind: Kind) -> (u32, u32) {
+        match kind {
+            Kind::FunctionExpression | Kind::ArrowFunction => (9007, 9030),
+            Kind::FunctionDeclaration => (9007, 9031),
+            Kind::MethodDeclaration => (9008, 9034),
+            Kind::ConstructSignature => (9008, 9031),
+            Kind::GetAccessor => (9009, 9032),
+            Kind::SetAccessor => (9009, 9033),
+            Kind::VariableDeclaration => (9010, 9027),
+            Kind::Parameter => (9011, 9028),
+            Kind::PropertyDeclaration | Kind::PropertySignature => (9012, 9029),
+            Kind::SpreadAssignment => (9015, 0),
+            Kind::ShorthandPropertyAssignment => (9016, 0),
+            Kind::ArrayLiteralExpression => (9017, 0),
+            Kind::SpreadElement => (9018, 0),
+            Kind::ExportAssignment => (9037, 9036),
+            Kind::ComputedPropertyName => (9038, 0),
             _ => (0, 0),
         }
     }
 
     /// The suggestion at `declaration`: `Add a type annotation to the variable {0}.` and the like.
     fn iso_suggestion(&self, file: FileId, declaration: Node) -> Option<Reported> {
-        let code = self.iso_codes_of_declaration(file, declaration).1;
+        let code = Self::iso_codes_of_declaration(self.hir(file).kind(declaration)).1;
         let args = match code {
             0 => return None,
             9027..=9029 => vec![self.iso_name_text(file, declaration)],
@@ -601,236 +313,168 @@ impl<'p> Checker<'p> {
     }
 
     /// `findNearestDeclaration`
-    fn iso_nearest_declaration(&self, tx: &Emit, node: Node) -> Option<Node> {
-        let hir = self.hir(tx.file);
-        let mut at = Some(node);
-        while let Some(n) = at {
-            match n {
-                Node::Stmt(s) => {
-                    return match hir[s].kind {
-                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => Some(n),
-                        StmtKind::Return(_) => self.iso_function_around(tx, n),
-                        _ => None,
-                    };
-                }
-                Node::Var(_) | Node::Param(_) => return Some(n),
-                Node::Member(m) if self.iso_is_property_declaration(tx.file, m) => return Some(n),
-                _ => {}
-            }
-            at = self.iso_parent(tx, n);
-        }
-        None
-    }
-
-    /// `FindAncestor(node, isFunctionLikeAndNotConstructor)`
-    fn iso_function_around(&self, tx: &Emit, node: Node) -> Option<Node> {
-        let hir = self.hir(tx.file);
-        let mut at = self.iso_parent(tx, node);
-        while let Some(n) = at {
-            if self.iso_fn_of_node(tx.file, n).is_some_and(|f| {
-                matches!(
-                    hir[f].kind,
-                    FnKind::Decl
-                        | FnKind::Expr
-                        | FnKind::Arrow
-                        | FnKind::Method
-                        | FnKind::Getter
-                        | FnKind::Setter
+    fn iso_nearest_declaration(&self, file: FileId, node: Node) -> Node {
+        let hir = self.hir(file);
+        // `isDeclarationEnoughForErrors`
+        let result = hir.find_ancestor(node, |n| {
+            let kind = hir.kind(n);
+            is_statement(hir, n)
+                || matches!(
+                    kind,
+                    Kind::VariableDeclaration | Kind::PropertyDeclaration | Kind::Parameter
                 )
-            }) {
-                return Some(n);
-            }
-            at = self.iso_parent(tx, n);
+        });
+        match hir.kind(result) {
+            Kind::ExportAssignment => result,
+            // `isFunctionLikeAndNotConstructor`
+            Kind::ReturnStatement => hir.find_ancestor(result, |n| {
+                let kind = hir.kind(n);
+                kind.is_function_like_declaration() && kind != Kind::Constructor
+            }),
+            _ if is_statement(hir, result) => Node::NONE,
+            _ => result,
         }
-        None
     }
 
     /// `addParentDeclarationRelatedInfo`
-    fn iso_add_parent_declaration(&self, tx: &Emit, node: Node, said: &mut Said) {
-        if let Some(declaration) = self.iso_nearest_declaration(tx, node)
-            && let Some(suggestion) = self.iso_suggestion(tx.file, declaration)
-        {
-            said.related.push(suggestion);
-        }
+    fn iso_add_parent_declaration(&self, file: FileId, node: Node, said: &mut Said) {
+        let declaration = self.iso_nearest_declaration(file, node);
+        said.related.extend(self.iso_suggestion(file, declaration));
     }
 
-    /// `createExpressionErrorEx`. `message`: what is said instead of 9013.
-    fn iso_expression_error(&self, tx: &Emit, node: Node, message: Option<u32>) -> Said {
-        let file = tx.file;
+    /// `createExpressionErrorEx`. `message` overrides TS9013.
+    fn iso_expression_error(&self, file: FileId, node: Node, message: Option<u32>) -> Said {
         let hir = self.hir(file);
-        let Some(declaration) = self.iso_nearest_declaration(tx, node) else {
+        let declaration = self.iso_nearest_declaration(file, node);
+        if declaration.is_none() {
             return self.iso_said(file, node, message.unwrap_or(9013));
-        };
-        // `isParentForIDDIagnostic`
-        let mut parent = self.iso_parent(tx, node);
-        while let Some(n) = parent {
-            match n {
-                Node::Stmt(s) => {
-                    if !matches!(
-                        hir[s].kind,
-                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-                    ) {
-                        parent = None;
-                    }
-                    break;
-                }
-                Node::Expr(e)
-                    if matches!(hir[e].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) => {}
-                _ => break,
-            }
-            parent = self.iso_parent(tx, n);
         }
-        let suggestion = self.iso_suggestion(file, declaration);
-        if parent == Some(declaration) {
-            let code = self.iso_codes_of_declaration(file, declaration).0;
-            let mut said = self.iso_said(file, node, message.unwrap_or(code));
-            said.related.extend(suggestion);
-            said
-        } else {
-            let mut said = self.iso_said(file, node, message.unwrap_or(9013));
-            said.related.extend(suggestion);
+        // `isParentForIDDIagnostic`
+        let parent = hir.find_ancestor_or_quit(hir.parent(node), |n| match hir.kind(n) {
+            Kind::ExportAssignment => ControlFlow::Break(true),
+            _ if is_statement(hir, n) => ControlFlow::Break(false),
+            Kind::ParenthesizedExpression | Kind::AsExpression | Kind::TypeAssertionExpression => {
+                ControlFlow::Continue(())
+            }
+            _ => ControlFlow::Break(true),
+        });
+        let is_direct = parent == declaration;
+        let code = match is_direct {
+            true => Self::iso_codes_of_declaration(hir.kind(declaration)).0,
+            false => 9013,
+        };
+        let mut said = self.iso_said(file, node, message.unwrap_or(code));
+        said.related.extend(self.iso_suggestion(file, declaration));
+        if !is_direct {
             said.related
                 .push(self.iso_related(file, node, 9035, Vec::new()));
-            said
         }
+        said
     }
 
     /// `createAccessorTypeError`
-    fn iso_accessor_error(&mut self, tx: &Emit, func: FnId) -> Said {
-        let file = tx.file;
+    fn iso_accessor_error(&mut self, file: FileId, node: Node) -> Said {
         let hir = self.hir(file);
+        let func = hir.function_of(node);
         let (getter, setter) = self.iso_accessors(file, func);
         let target = match hir[func].params.iter().next() {
-            Some(param) if hir[func].kind == FnKind::Setter => Node::Param(param),
-            _ => self.iso_node_of_fn(file, func),
+            Some(param) if hir[func].kind == FnKind::Setter => hir.node(param),
+            _ => node,
         };
         let mut said = self.iso_said(file, target, 9009);
-        if let Some(setter) = setter {
-            let node = self.iso_node_of_fn(file, setter);
-            said.related
-                .push(self.iso_related(file, node, 9033, Vec::new()));
-        }
-        if let Some(getter) = getter {
-            let node = self.iso_node_of_fn(file, getter);
-            said.related
-                .push(self.iso_related(file, node, 9032, Vec::new()));
+        for (accessor, code) in [(setter, 9033), (getter, 9032)] {
+            let related = accessor.map(|f| self.iso_related(file, hir.node(f), code, Vec::new()));
+            said.related.extend(related);
         }
         said
     }
 
     /// `createReturnTypeError`
-    fn iso_return_type_error(&self, tx: &Emit, node: Node) -> Said {
-        let (code, suggestion) = self.iso_codes_of_declaration(tx.file, node);
-        let mut said = self.iso_said(tx.file, node, code);
-        self.iso_add_parent_declaration(tx, node, &mut said);
+    fn iso_return_type_error(&self, file: FileId, node: Node) -> Said {
+        let (code, suggestion) = Self::iso_codes_of_declaration(self.hir(file).kind(node));
+        let mut said = self.iso_said(file, node, code);
+        self.iso_add_parent_declaration(file, node, &mut said);
         said.related
-            .push(self.iso_related(tx.file, node, suggestion, Vec::new()));
+            .push(self.iso_related(file, node, suggestion, Vec::new()));
         said
     }
 
     /// `createObjectLiteralError`, `createArrayLiteralError`
-    fn iso_literal_error(&self, tx: &Emit, node: Node, code: u32) -> Said {
-        let mut said = self.iso_said(tx.file, node, code);
-        self.iso_add_parent_declaration(tx, node, &mut said);
+    fn iso_literal_error(&self, file: FileId, node: Node) -> Said {
+        let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
+        let mut said = self.iso_said(file, node, code);
+        self.iso_add_parent_declaration(file, node, &mut said);
         said
     }
 
     /// `createVariableOrPropertyError`
-    fn iso_variable_or_property_error(&self, tx: &Emit, node: Node) -> Said {
-        let code = self.iso_codes_of_declaration(tx.file, node).0;
-        let mut said = self.iso_said(tx.file, node, code);
-        said.related.extend(self.iso_suggestion(tx.file, node));
+    fn iso_variable_or_property_error(&self, file: FileId, node: Node) -> Said {
+        let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
+        let mut said = self.iso_said(file, node, code);
+        said.related.extend(self.iso_suggestion(file, node));
         said
     }
 
     /// `createParameterError`
-    fn iso_parameter_error(&mut self, tx: &Emit, p: ParamId) -> Said {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let func = bound.param_fn[p.idx()];
-        if func.is_some() && hir[func].kind == FnKind::Setter {
-            return self.iso_accessor_error(tx, func);
+    fn iso_parameter_error(&mut self, file: FileId, node: Node, p: ParamId) -> Said {
+        let hir = self.hir(file);
+        if hir.kind(hir.parent(node)) == Kind::SetAccessor {
+            return self.iso_accessor_error(file, hir.parent(node));
         }
         let adds_undefined = self.requires_adding_implicit_undefined(file, p, None);
-        if !adds_undefined && hir[p].default.is_some() {
-            let default = self.iso_written(file, hir[p].default);
-            return self.iso_expression_error(tx, default, None);
+        if !adds_undefined && hir.initializer(node).is_some() {
+            return self.iso_expression_error(file, hir.initializer(node), None);
         }
-        let mut said = self.iso_said(
-            file,
-            Node::Param(p),
-            if adds_undefined { 9025 } else { 9011 },
-        );
-        said.related
-            .extend(self.iso_suggestion(file, Node::Param(p)));
+        let mut said = self.iso_said(file, node, if adds_undefined { 9025 } else { 9011 });
+        said.related.extend(self.iso_suggestion(file, node));
         said
     }
 
     /// `createGetIsolatedDeclarationErrors`
-    fn iso_error_for(&mut self, tx: &Emit, node: Node) -> Said {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `FindAncestor(node, IsHeritageClause)`
-        let mut at = Some(node);
-        while let Some(n) = at {
-            if matches!(n, Node::Extends(_)) {
-                return self.iso_said(file, node, 9021);
-            }
-            at = self.iso_parent(tx, n);
+    fn iso_error_for(&mut self, file: FileId, node: Node) -> Said {
+        let hir = self.hir(file);
+        if hir.find_ancestor_kind(node, Kind::HeritageClause).is_some() {
+            return self.iso_said(file, node, 9021);
         }
-        // `createEntityInTypeNodeError`
-        if matches!(node, Node::Type(_) | Node::EntityName(_))
-            || matches!(node, Node::Expr(e) if matches!(hir[e].kind, ExprKind::Ident(_))
-                || is_property_access_entity_name_expression(hir, e))
+        let (kind, data) = (hir.kind(node), hir.data(node));
+        // `IsPartOfTypeNode`, `IsTypeQueryNode`, `IsEntityName`, `IsEntityNameExpression`: `createEntityInTypeNodeError`
+        if matches!(kind, Kind::Identifier | Kind::QualifiedName)
+            || matches!(data, NodeData::Type(_))
+            || matches!(data, NodeData::Expr(e) if is_property_access_entity_name_expression(hir, e))
         {
             let mut said = self.iso_said(file, node, 9039);
             said.args = vec![self.source_text(file, said.start, said.end)];
-            self.iso_add_parent_declaration(tx, node, &mut said);
+            self.iso_add_parent_declaration(file, node, &mut said);
             return said;
         }
-        match node {
-            Node::Member(m) => {
-                let is_in_class = matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
-                match hir[m].kind {
-                    MemberKind::Getter | MemberKind::Setter => {
-                        self.iso_accessor_error(tx, hir[m].func)
-                    }
-                    MemberKind::Method if is_in_class => self.iso_return_type_error(tx, node),
-                    MemberKind::ConstructSignature => self.iso_return_type_error(tx, node),
-                    MemberKind::Property if is_in_class => {
-                        self.iso_variable_or_property_error(tx, node)
-                    }
-                    _ => self.iso_expression_error(tx, node, None),
-                }
+        match (kind, data) {
+            (Kind::GetAccessor | Kind::SetAccessor, _) => self.iso_accessor_error(file, node),
+            (
+                Kind::ComputedPropertyName
+                | Kind::ShorthandPropertyAssignment
+                | Kind::SpreadAssignment
+                | Kind::ArrayLiteralExpression
+                | Kind::SpreadElement,
+                _,
+            ) => self.iso_literal_error(file, node),
+            (
+                Kind::MethodDeclaration
+                | Kind::ConstructSignature
+                | Kind::FunctionExpression
+                | Kind::ArrowFunction
+                | Kind::FunctionDeclaration,
+                _,
+            ) => self.iso_return_type_error(file, node),
+            (Kind::BindingElement, _) => self.iso_said(file, node, 9019),
+            (Kind::PropertyDeclaration | Kind::VariableDeclaration, _) => {
+                self.iso_variable_or_property_error(file, node)
             }
-            Node::Prop(p) => match (hir[p].kind, self.iso_fn_of_node(file, node)) {
-                (PropKind::Getter | PropKind::Setter, Some(func)) => {
-                    self.iso_accessor_error(tx, func)
-                }
-                (PropKind::Method, _) => self.iso_return_type_error(tx, node),
-                (PropKind::Shorthand, _) => self.iso_literal_error(tx, node, 9016),
-                (PropKind::Spread, _) => self.iso_literal_error(tx, node, 9015),
-                (PropKind::Init, _) if hir[p].value.is_some() => {
-                    let value = self.iso_written(file, hir[p].value);
-                    self.iso_expression_error(tx, value, None)
-                }
-                _ => self.iso_expression_error(tx, node, None),
-            },
-            Node::PropName(_) => self.iso_literal_error(tx, node, 9038),
-            Node::Expr(e) => match hir[e].kind {
-                ExprKind::Array(_) => self.iso_literal_error(tx, node, 9017),
-                ExprKind::Spread(_) => self.iso_literal_error(tx, node, 9018),
-                ExprKind::Fn(_) => self.iso_return_type_error(tx, node),
-                ExprKind::Class(_) => self.iso_expression_error(tx, node, Some(9022)),
-                _ => self.iso_expression_error(tx, node, None),
-            },
-            Node::Stmt(s) if matches!(hir[s].kind, StmtKind::Fn(_)) => {
-                self.iso_return_type_error(tx, node)
+            (_, NodeData::Param(p)) => self.iso_parameter_error(file, node, p),
+            (Kind::PropertyAssignment, _) if hir.initializer(node).is_some() => {
+                self.iso_expression_error(file, hir.initializer(node), None)
             }
-            Node::PatProp(_) | Node::PatElem(_) => self.iso_said(file, node, 9019),
-            Node::Var(_) => self.iso_variable_or_property_error(tx, node),
-            Node::Param(p) => self.iso_parameter_error(tx, p),
-            _ => self.iso_expression_error(tx, node, None),
+            (Kind::ClassExpression, _) => self.iso_expression_error(file, node, Some(9022)),
+            _ => self.iso_expression_error(file, node, None),
         }
     }
 
@@ -838,8 +482,8 @@ impl<'p> Checker<'p> {
     pub(super) fn iso_type_of_declared(&mut self, file: FileId, node: Node) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_pattern = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_)).then_some(pat);
-        let pat = match node {
-            Node::Expr(e) => {
+        let pat = match hir.data(node) {
+            NodeData::Expr(e) => {
                 return match hir[e].kind {
                     ExprKind::Fn(_) | ExprKind::Class(_) => Some(self.type_of_expr(file, e)),
                     ExprKind::Assign { value, .. } if bound.is_expando_declaration(e) => {
@@ -850,12 +494,12 @@ impl<'p> Checker<'p> {
                     _ => None,
                 };
             }
-            Node::Prop(p) => {
+            NodeData::Prop(p) => {
                 return (hir[p].kind != PropKind::Spread)
                     .then(|| self.type_of_literal_prop(file, p));
             }
-            Node::Member(m) => return Some(self.iso_type_of_member(file, m)),
-            Node::Stmt(s) => {
+            NodeData::Member(m) => return Some(self.iso_type_of_member(file, m)),
+            NodeData::Stmt(s) => {
                 let symbol = match hir[s].kind {
                     StmtKind::Fn(f) => bound.fn_symbol[f.idx()],
                     StmtKind::Class(c) => bound.class_symbol[c.idx()],
@@ -870,10 +514,10 @@ impl<'p> Checker<'p> {
                 }
                 return Some(self.type_of_symbol(self.files().sym(file, symbol)));
             }
-            Node::Var(d) => of_pattern(hir[d].pat)?,
-            Node::Param(p) => return Some(self.type_of_param(file, p)),
-            Node::PatProp(p) => of_pattern(hir[p].value)?,
-            Node::PatElem(p) => of_pattern(hir[p].pat)?,
+            NodeData::VarDecl(d) => of_pattern(hir[d].pat)?,
+            NodeData::Param(p) => return Some(self.type_of_param(file, p)),
+            NodeData::PatProp(p) => of_pattern(hir[p].value)?,
+            NodeData::PatElem(p) => of_pattern(hir[p].pat)?,
             _ => return None,
         };
         Some(self.type_of_pat(file, pat))
@@ -914,7 +558,7 @@ impl<'p> Checker<'p> {
             return;
         };
         for target in self.iso_expando_targets(tx.file, ty) {
-            let said = self.iso_said(tx.file, Node::Expr(target), 9023);
+            let said = self.iso_said(tx.file, self.hir(tx.file).node(target), 9023);
             tx.said.push(said);
         }
     }
@@ -993,39 +637,26 @@ impl<'p> Checker<'p> {
     }
 
     /// `isChildOfBoundExpando`
-    fn iso_is_child_of_bound_expando(&mut self, tx: &Emit, node: Node) -> bool {
-        let (hir, bound) = (self.hir(tx.file), self.bound(tx.file));
-        let mut at = Some(node);
-        while let Some(n) = at {
-            match n {
-                Node::Stmt(s) => {
-                    // A block, the body of a function too.
-                    if matches!(hir[s].kind, StmtKind::Block(_))
-                        || matches!(bound.stmt_parent[s.idx()], Parent::FnBody(_))
-                    {
-                        return false;
-                    }
-                }
-                Node::Expr(e) | Node::Written(e) => {
-                    if self.iso_is_bound_expando(tx.file, e) {
-                        return true;
-                    }
-                }
-                _ => {}
+    fn iso_is_child_of_bound_expando(&mut self, file: FileId, node: Node) -> bool {
+        let hir = self.hir(file);
+        let expando = hir.find_ancestor_or_quit(node, |n| match (hir.kind(n), hir.data(n)) {
+            (Kind::SourceFile | Kind::Block, _) => ControlFlow::Break(false),
+            (_, NodeData::Expr(e)) if self.iso_is_bound_expando(file, e) => {
+                ControlFlow::Break(true)
             }
-            at = self.iso_parent(tx, n);
-        }
-        false
+            _ => ControlFlow::Continue(()),
+        });
+        expando.is_some()
     }
 
     /// `SymbolTrackerImpl.ReportInferenceFallback`, of a node of the file.
     pub(super) fn iso_report(&mut self, tx: &mut Emit, node: Node) {
-        if node == Node::Nowhere {
+        if node.is_none() {
             return;
         }
         self.iso_report_expandos(tx, node);
-        if !self.iso_is_child_of_bound_expando(tx, node) {
-            let said = self.iso_error_for(tx, node);
+        if !self.iso_is_child_of_bound_expando(tx.file, node) {
+            let said = self.iso_error_for(tx.file, node);
             tx.said.push(said);
         }
     }
@@ -1044,64 +675,46 @@ impl<'p> Checker<'p> {
     }
 
     /// `isContextuallyTyped`
-    fn iso_is_contextually_typed(&self, tx: &Emit, node: Node) -> bool {
-        let hir = self.hir(tx.file);
-        let mut at = self.iso_parent(tx, node);
-        while let Some(n) = at {
-            let is_typed = match n {
-                Node::Expr(e) => matches!(
-                    hir[e].kind,
-                    ExprKind::Call(_)
-                        | ExprKind::ImportCall { .. }
-                        | ExprKind::Satisfies { .. }
-                        | ExprKind::As { .. }
-                        | ExprKind::Jsx(_)
-                ),
-                Node::Var(d) => hir[d].ty.is_some(),
-                Node::Param(p) => hir[p].ty.is_some(),
-                Node::Member(m) => hir[m].kind == MemberKind::Property && hir[m].ty.is_some(),
-                _ => false,
-            };
-            if is_typed {
-                return true;
-            }
-            at = self.iso_parent(tx, n);
-        }
-        false
+    fn iso_is_contextually_typed(&self, file: FileId, node: Node) -> bool {
+        let hir = self.hir(file);
+        // By what the row is, not by `kind`, which asks for the parent of a member: this goes up to the file for every declaration without a type.
+        let typed = hir.find_ancestor(hir.parent(node), |n| match hir.data(n) {
+            // `as const` is apart. An expression in JSX is in a `JsxExpression`, which is no node here.
+            NodeData::Expr(e) => matches!(
+                hir[e].kind,
+                ExprKind::Call(_)
+                    | ExprKind::ImportCall { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::As { .. }
+                    | ExprKind::Jsx(_)
+            ),
+            // `IsVariableParameterOrProperty`
+            NodeData::VarDecl(d) => hir[d].ty.is_some(),
+            NodeData::Param(p) => hir[p].ty.is_some(),
+            NodeData::Member(m) => hir[m].kind == MemberKind::Property && hir[m].ty.is_some(),
+            _ => false,
+        });
+        typed.is_some()
     }
 
     /// `pseudochecker.IsInConstContext`
     fn iso_is_in_const_context(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            at = match bound.expr_parent[at.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::AsConst(_) => return true,
-                    ExprKind::Array(_)
-                    | ExprKind::Spread(_)
-                    | ExprKind::Unary {
-                        op:
-                            UnOp::Plus
-                            | UnOp::Minus
-                            | UnOp::BitNot
-                            | UnOp::Not
-                            | UnOp::PreInc
-                            | UnOp::PreDec,
-                        ..
-                    } => parent,
-                    _ => return false,
-                },
-                Parent::Prop(p) if matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    if owner.is_none() || !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return false;
-                    }
-                    owner
-                }
-                _ => return false,
-            };
-        }
+        let hir = self.hir(file);
+        // `isConstContextPropagatingKind`
+        let assertion = hir.find_ancestor(hir.parent(hir.node(e)), |n| {
+            !matches!(
+                hir.kind(n),
+                Kind::ArrayLiteralExpression
+                    | Kind::ObjectLiteralExpression
+                    | Kind::ParenthesizedExpression
+                    | Kind::SpreadElement
+                    | Kind::PropertyAssignment
+                    | Kind::ShorthandPropertyAssignment
+                    | Kind::TemplateSpan
+                    | Kind::PrefixUnaryExpression
+            )
+        });
+        matches!(hir.data(assertion), NodeData::Expr(a) if matches!(hir[a].kind, ExprKind::AsConst(_)))
     }
 
     /// `typeNodeCouldReferToUndefined`
@@ -1175,11 +788,10 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeFromExpression`
-    fn iso_pseudo_of_expr(&mut self, tx: &Emit, e: ExprId) -> Pseudo {
-        let file = tx.file;
+    fn iso_pseudo_of_expr(&mut self, file: FileId, e: ExprId) -> Pseudo {
         let hir = self.hir(file);
         if self.is_stack_low() {
-            return Self::iso_inferred(Node::Expr(e));
+            return Self::iso_inferred(hir.node(e));
         }
         match hir[e].kind {
             // `OmittedExpression`. What the parser makes up where an expression is missing is an identifier without a text.
@@ -1187,7 +799,7 @@ impl<'p> Checker<'p> {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
                     Pseudo::Undefined
                 }
-                _ => Self::iso_inferred(Node::Expr(e)),
+                _ => Self::iso_inferred(hir.node(e)),
             },
             ExprKind::Ident(known::undefined) => Pseudo::Undefined,
             ExprKind::Null => Pseudo::Null,
@@ -1197,8 +809,8 @@ impl<'p> Checker<'p> {
                 if full.is_some() {
                     return Pseudo::Direct(full);
                 }
-                let returns = self.iso_pseudo_of_return(tx, f);
-                let params = self.iso_pseudo_params(tx, f);
+                let returns = self.iso_pseudo_of_return(file, f);
+                let params = self.iso_pseudo_params(file, f);
                 Pseudo::Signature {
                     func: f,
                     params,
@@ -1206,7 +818,7 @@ impl<'p> Checker<'p> {
                 }
             }
             ExprKind::As { ty, .. } => Pseudo::Direct(ty),
-            ExprKind::AsConst(x) => self.iso_pseudo_of_expr(tx, x),
+            ExprKind::AsConst(x) => self.iso_pseudo_of_expr(file, x),
             // `typeFromPrimitiveLiteralPrefix`
             ExprKind::Unary { op, operand } if self.iso_is_primitive_literal(file, e, true) => {
                 let literal = Pseudo::Literal(if op == UnOp::Plus { operand } else { e });
@@ -1227,31 +839,31 @@ impl<'p> Checker<'p> {
                 };
                 if let Some(error) = error {
                     return Pseudo::Inferred {
-                        of: Node::Expr(e),
-                        errors: vec![Node::Expr(error)],
+                        of: hir.node(e),
+                        errors: vec![hir.node(error)],
                         is_signature_return: false,
                     };
                 }
-                if self.iso_is_contextually_typed(tx, Node::Expr(e)) {
-                    return Self::iso_inferred(Node::Expr(e));
+                if self.iso_is_contextually_typed(file, hir.node(e)) {
+                    return Self::iso_inferred(hir.node(e));
                 }
                 let mut elements = Vec::with_capacity(items.len());
                 for item in hir.ids(items) {
-                    elements.push(self.iso_pseudo_of_expr(tx, item));
+                    elements.push(self.iso_pseudo_of_expr(file, item));
                 }
                 Pseudo::Tuple(elements)
             }
-            ExprKind::Object(props) => self.iso_pseudo_of_object(tx, e, props),
+            ExprKind::Object(props) => self.iso_pseudo_of_object(file, e, props),
             ExprKind::Class(_) => Pseudo::Inferred {
-                of: Node::Expr(e),
-                errors: vec![Node::Expr(e)],
+                of: hir.node(e),
+                errors: vec![hir.node(e)],
                 is_signature_return: false,
             },
             ExprKind::Template { exprs, .. } if !exprs.is_empty() => {
                 if self.iso_is_in_const_context(file, e) {
-                    Self::iso_inferred(Node::Expr(e))
+                    Self::iso_inferred(hir.node(e))
                 } else {
-                    Self::iso_maybe_const(e, Self::iso_inferred(Node::Expr(e)), Pseudo::String)
+                    Self::iso_maybe_const(e, Self::iso_inferred(hir.node(e)), Pseudo::String)
                 }
             }
             ExprKind::Number(_) => Self::iso_maybe_const(e, Pseudo::Literal(e), Pseudo::Number),
@@ -1261,33 +873,32 @@ impl<'p> Checker<'p> {
             ExprKind::BigInt(_) => Self::iso_maybe_const(e, Pseudo::Literal(e), Pseudo::BigInt),
             ExprKind::True => Self::iso_maybe_const(e, Pseudo::True, Pseudo::Boolean),
             ExprKind::False => Self::iso_maybe_const(e, Pseudo::False, Pseudo::Boolean),
-            _ => Self::iso_inferred(Node::Expr(e)),
+            _ => Self::iso_inferred(hir.node(e)),
         }
     }
 
     /// `typeFromObjectLiteral`, `canGetTypeFromObjectLiteral`
-    fn iso_pseudo_of_object(&mut self, tx: &Emit, e: ExprId, props: Span<PropId>) -> Pseudo {
-        let file = tx.file;
+    fn iso_pseudo_of_object(&mut self, file: FileId, e: ExprId, props: Span<PropId>) -> Pseudo {
         let hir = self.hir(file);
         let mut errors = Vec::new();
         for p in props.iter() {
             let prop = &hir[p];
             match (prop.kind, prop.key) {
                 (PropKind::Shorthand | PropKind::Spread, _) | (_, PropKey::Private(_)) => {
-                    errors.push(Node::Prop(p))
+                    errors.push(hir.node(p))
                 }
                 (_, PropKey::Computed(name))
                     if is_parenthesized(self.hir(file), name)
                         || !self.iso_is_primitive_literal(file, name, false) =>
                 {
-                    errors.push(Node::PropName(p))
+                    errors.push(hir.node(p).with(Part::Name))
                 }
                 _ => {}
             }
         }
         if !errors.is_empty() {
             return Pseudo::Inferred {
-                of: Node::Expr(e),
+                of: hir.node(e),
                 errors,
                 is_signature_return: false,
             };
@@ -1295,15 +906,15 @@ impl<'p> Checker<'p> {
         let mut elements = Vec::with_capacity(props.len());
         for p in props.iter() {
             let prop = &hir[p];
-            let func = self.iso_fn_of_node(file, Node::Prop(p));
+            let func = hir.function_of(hir.node(p)).some();
             let kind = match (prop.kind, func) {
                 (PropKind::Method, Some(func)) => {
                     let full = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
                     if full.is_some() {
                         PseudoElementKind::Property(Pseudo::Direct(full))
                     } else {
-                        let params = self.iso_pseudo_params(tx, func);
-                        let returns = self.iso_pseudo_of_signature(tx, func);
+                        let params = self.iso_pseudo_params(file, func);
+                        let returns = self.iso_pseudo_of_signature(file, func);
                         PseudoElementKind::Method {
                             func,
                             params,
@@ -1312,10 +923,10 @@ impl<'p> Checker<'p> {
                     }
                 }
                 (PropKind::Init, _) if prop.value.is_some() => {
-                    PseudoElementKind::Property(self.iso_pseudo_of_expr(tx, prop.value))
+                    PseudoElementKind::Property(self.iso_pseudo_of_expr(file, prop.value))
                 }
                 (PropKind::Getter | PropKind::Setter, Some(func)) => {
-                    match self.iso_pseudo_accessor_member(tx, func) {
+                    match self.iso_pseudo_accessor_member(file, func) {
                         Some(kind) => kind,
                         None => continue,
                     }
@@ -1328,8 +939,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getAccessorMember`
-    fn iso_pseudo_accessor_member(&mut self, tx: &Emit, func: FnId) -> Option<PseudoElementKind> {
-        let file = tx.file;
+    fn iso_pseudo_accessor_member(
+        &mut self,
+        file: FileId,
+        func: FnId,
+    ) -> Option<PseudoElementKind> {
         let hir = self.hir(file);
         let (getter, setter) = self.iso_accessors(file, func);
         let is_getter = hir[func].kind == FnKind::Getter;
@@ -1343,10 +957,10 @@ impl<'p> Checker<'p> {
         {
             // Both say what they are, which need not be the same: both are kept.
             if is_getter {
-                let ty = self.iso_pseudo_of_accessor(tx, func);
+                let ty = self.iso_pseudo_of_accessor(file, func);
                 return Some(PseudoElementKind::Getter { ty });
             }
-            let param = self.iso_pseudo_params(tx, func).into_iter().next()?;
+            let param = self.iso_pseudo_params(file, func).into_iter().next()?;
             return Some(PseudoElementKind::Setter { param });
         }
         let other = if is_getter { setter } else { getter };
@@ -1355,13 +969,12 @@ impl<'p> Checker<'p> {
             return None;
         }
         Some(PseudoElementKind::Property(
-            self.iso_pseudo_of_accessor(tx, func),
+            self.iso_pseudo_of_accessor(file, func),
         ))
     }
 
     /// `typeFromAccessor`
-    pub(super) fn iso_pseudo_of_accessor(&mut self, tx: &Emit, func: FnId) -> Pseudo {
-        let file = tx.file;
+    pub(super) fn iso_pseudo_of_accessor(&mut self, file: FileId, func: FnId) -> Pseudo {
         let hir = self.hir(file);
         let (getter, setter) = self.iso_accessors(file, func);
         // `getTypeAnnotationFromAccessor`
@@ -1389,17 +1002,17 @@ impl<'p> Checker<'p> {
             return Pseudo::Direct(written);
         }
         let Some(getter) = getter else {
-            return Pseudo::NoResult(self.iso_node_of_fn(file, func));
+            return Pseudo::NoResult(hir.node(func));
         };
-        match self.iso_pseudo_of_signature(tx, getter) {
+        match self.iso_pseudo_of_signature(file, getter) {
             Pseudo::Inferred {
                 of,
                 errors,
                 is_signature_return,
             } if errors.is_empty() => {
-                let mut errors = vec![self.iso_node_of_fn(file, getter)];
+                let mut errors = vec![hir.node(getter)];
                 if let Some(setter) = setter {
-                    errors.push(self.iso_node_of_fn(file, setter));
+                    errors.push(hir.node(setter));
                 }
                 Pseudo::Inferred {
                     of,
@@ -1412,23 +1025,22 @@ impl<'p> Checker<'p> {
     }
 
     /// `GetReturnTypeOfSignature`
-    pub(super) fn iso_pseudo_of_return(&mut self, tx: &Emit, func: FnId) -> Pseudo {
-        if self.hir(tx.file)[func].kind == FnKind::Getter {
-            self.iso_pseudo_of_accessor(tx, func)
+    pub(super) fn iso_pseudo_of_return(&mut self, file: FileId, func: FnId) -> Pseudo {
+        if self.hir(file)[func].kind == FnKind::Getter {
+            self.iso_pseudo_of_accessor(file, func)
         } else {
-            self.iso_pseudo_of_signature(tx, func)
+            self.iso_pseudo_of_signature(file, func)
         }
     }
 
     /// `createReturnFromSignature`, `typeFromSingleReturnExpression`
-    fn iso_pseudo_of_signature(&mut self, tx: &Emit, func: FnId) -> Pseudo {
-        let file = tx.file;
+    fn iso_pseudo_of_signature(&mut self, file: FileId, func: FnId) -> Pseudo {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         if f.ret.is_some() {
             return Pseudo::Direct(f.ret);
         }
-        let node = self.iso_node_of_fn(file, func);
+        let node = hir.node(func);
         // `isValueSignatureDeclaration`
         let is_value = match f.kind {
             FnKind::Expr
@@ -1437,10 +1049,7 @@ impl<'p> Checker<'p> {
             | FnKind::Constructor
             | FnKind::Getter
             | FnKind::Setter => true,
-            FnKind::Method => match node {
-                Node::Member(m) => matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)),
-                _ => true,
-            },
+            FnKind::Method => hir.kind(node) == Kind::MethodDeclaration,
             _ => false,
         };
         if !is_value {
@@ -1472,8 +1081,8 @@ impl<'p> Checker<'p> {
         if candidate.is_none() {
             return of_signature;
         }
-        if !self.iso_is_contextually_typed(tx, Node::Expr(candidate)) {
-            return self.iso_pseudo_of_expr(tx, candidate);
+        if !self.iso_is_contextually_typed(file, hir.node(candidate)) {
+            return self.iso_pseudo_of_expr(file, candidate);
         }
         match hir[candidate].kind {
             ExprKind::As { ty, .. } if !is_parenthesized(self.hir(file), candidate) => {
@@ -1494,15 +1103,15 @@ impl<'p> Checker<'p> {
     }
 
     /// `cloneParameters`
-    fn iso_pseudo_params(&mut self, tx: &Emit, func: FnId) -> Vec<PseudoParam> {
-        let hir = self.hir(tx.file);
+    fn iso_pseudo_params(&mut self, file: FileId, func: FnId) -> Vec<PseudoParam> {
+        let hir = self.hir(file);
         let params = hir[func].params;
         let last_required = Self::iso_last_required(hir, params);
         let mut all = Vec::with_capacity(params.len());
         for (i, p) in params.iter().enumerate() {
             let is_optional = hir[p].flags.contains(Flags::OPTIONAL)
                 || hir[p].default.is_some() && i + 1 >= last_required;
-            let ty = self.iso_pseudo_of_param(tx, p);
+            let ty = self.iso_pseudo_of_param(file, p);
             all.push(PseudoParam {
                 param: p,
                 is_optional,
@@ -1513,16 +1122,15 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeFromParameter`, `typeFromParameterWorker`
-    fn iso_pseudo_of_param(&mut self, tx: &Emit, p: ParamId) -> Pseudo {
-        let file = tx.file;
+    fn iso_pseudo_of_param(&mut self, file: FileId, p: ParamId) -> Pseudo {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let param = &hir[p];
         let func = bound.param_fn[p.idx()];
         if func.is_none() {
-            return Pseudo::NoResult(Node::Param(p));
+            return Pseudo::NoResult(hir.node(p));
         }
         if hir[func].kind == FnKind::Setter {
-            return self.iso_pseudo_of_accessor(tx, func);
+            return self.iso_pseudo_of_accessor(file, func);
         }
         let is_strict = self.files().options.strict_null_checks;
         let params = hir[func].params;
@@ -1538,15 +1146,15 @@ impl<'p> Checker<'p> {
         }
         if param.default.is_none()
             || !matches!(hir[param.pat].kind, PatKind::Ident(_))
-            || self.iso_is_contextually_typed(tx, Node::Param(p))
+            || self.iso_is_contextually_typed(file, hir.node(p))
         {
-            return Pseudo::NoResult(Node::Param(p));
+            return Pseudo::NoResult(hir.node(p));
         }
-        let from_default = match self.iso_pseudo_of_expr(tx, param.default) {
+        let from_default = match self.iso_pseudo_of_expr(file, param.default) {
             // The error moves up to the parameter.
             Pseudo::Inferred { of, errors, .. } if errors.is_empty() => Pseudo::Inferred {
                 of,
-                errors: vec![Node::Param(p)],
+                errors: vec![hir.node(p)],
                 is_signature_return: false,
             },
             other => other,
@@ -1559,13 +1167,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `GetTypeOfDeclaration`
-    pub(super) fn iso_pseudo_of_declaration(&mut self, tx: &Emit, node: Node) -> Pseudo {
-        let file = tx.file;
+    pub(super) fn iso_pseudo_of_declaration(&mut self, file: FileId, node: Node) -> Pseudo {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match node {
-            Node::Param(p) => self.iso_pseudo_of_param(tx, p),
+        match hir.data(node) {
+            NodeData::Param(p) => self.iso_pseudo_of_param(file, p),
             // `typeFromVariable`
-            Node::Var(d) => {
+            NodeData::VarDecl(d) => {
                 let decl = &hir[d];
                 if decl.ty.is_some() {
                     return Pseudo::Direct(decl.ty);
@@ -1585,33 +1192,33 @@ impl<'p> Checker<'p> {
                     };
                 if decl.init.is_none()
                     || !is_declared_once
-                    || self.iso_is_contextually_typed(tx, node)
+                    || self.iso_is_contextually_typed(file, node)
                     || decl.kind == VarKind::Const
                         && self.iso_is_template_expression(file, decl.init)
                 {
                     return Pseudo::NoResult(node);
                 }
-                let from_initializer = self.iso_pseudo_of_expr(tx, decl.init);
+                let from_initializer = self.iso_pseudo_of_expr(file, decl.init);
                 if Self::iso_is_plainly_inferred(&from_initializer) {
                     return Pseudo::NoResult(node);
                 }
                 from_initializer
             }
             // `typeFromProperty`
-            Node::Member(m) => {
+            NodeData::Member(m) => {
                 let member = &hir[m];
                 if member.ty.is_some() {
                     return Pseudo::Direct(member.ty);
                 }
-                if !self.iso_is_property_declaration(file, m)
-                    || member.init.is_none()
-                    || self.iso_is_contextually_typed(tx, node)
+                if member.init.is_none()
+                    || hir.kind(node) != Kind::PropertyDeclaration
+                    || self.iso_is_contextually_typed(file, node)
                     || member.flags.contains(Flags::READONLY)
                         && self.iso_is_template_expression(file, member.init)
                 {
                     return Pseudo::NoResult(node);
                 }
-                let from_initializer = self.iso_pseudo_of_expr(tx, member.init);
+                let from_initializer = self.iso_pseudo_of_expr(file, member.init);
                 if Self::iso_is_plainly_inferred(&from_initializer) {
                     return Pseudo::NoResult(node);
                 }
@@ -1622,14 +1229,14 @@ impl<'p> Checker<'p> {
                 }
                 from_initializer
             }
-            Node::Stmt(s) => match hir[s].kind {
+            NodeData::Stmt(s) => match hir[s].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                    self.iso_pseudo_of_expr(tx, e)
+                    self.iso_pseudo_of_expr(file, e)
                 }
                 _ => Pseudo::NoResult(node),
             },
             // `typeFromExpandoProperty`
-            Node::Expr(e) => {
+            NodeData::Expr(e) => {
                 let written = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
                 if written.is_some() {
                     Pseudo::Direct(written)
@@ -1638,7 +1245,7 @@ impl<'p> Checker<'p> {
                 }
             }
             // `typeFromPropertyAssignment`
-            Node::Prop(p) => {
+            NodeData::Prop(p) => {
                 let written = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
                 if written.is_some() {
                     return Pseudo::Direct(written);
@@ -1646,7 +1253,7 @@ impl<'p> Checker<'p> {
                 if hir[p].kind != PropKind::Init || hir[p].value.is_none() {
                     return Pseudo::NoResult(node);
                 }
-                let from_initializer = self.iso_pseudo_of_expr(tx, hir[p].value);
+                let from_initializer = self.iso_pseudo_of_expr(file, hir[p].value);
                 if Self::iso_is_plainly_inferred(&from_initializer) {
                     return Pseudo::NoResult(node);
                 }
@@ -1760,12 +1367,12 @@ impl<'p> Checker<'p> {
                 is_signature_return: true,
                 ..
             } => {
-                let func = self.iso_fn_of_node(file, *of)?;
+                let func = self.hir(file).function_of(*of).some()?;
                 let sig = self.sig_of_fn(file, func);
                 self.sig_return(sig)
             }
             Pseudo::Inferred { of, .. } => {
-                let Node::Expr(e) = *of else {
+                let NodeData::Expr(e) = self.hir(file).data(*of) else {
                     return None;
                 };
                 let ty = self.type_of_expr(file, e);
@@ -1834,13 +1441,15 @@ impl<'p> Checker<'p> {
     /// `len(prop.Declarations)`
     fn iso_declaration_count(&mut self, prop: &Prop) -> usize {
         match &prop.source {
-            PropSource::Literal(file, p) => match self.iso_fn_of_node(*file, Node::Prop(*p)) {
-                Some(func) if self.hir(*file)[*p].kind != PropKind::Method => {
-                    let (getter, setter) = self.iso_accessors(*file, func);
-                    usize::from(getter.is_some()) + usize::from(setter.is_some())
+            PropSource::Literal(file, p) => {
+                match self.hir(*file).function_of(self.hir(*file).node(*p)).some() {
+                    Some(func) if self.hir(*file)[*p].kind != PropKind::Method => {
+                        let (getter, setter) = self.iso_accessors(*file, func);
+                        usize::from(getter.is_some()) + usize::from(setter.is_some())
+                    }
+                    _ => 1,
                 }
-                _ => 1,
-            },
+            }
             PropSource::Symbol(sym) => self.declarations_of_property(*sym).len(),
             PropSource::Copy(_, of, _) | PropSource::ReverseMapped(_, of) => {
                 of.iter().map(|p| self.iso_declaration_count(p)).sum()
@@ -1928,7 +1537,7 @@ impl<'p> Checker<'p> {
                 let Some(sig) = self.single_call_signature(stripped, false) else {
                     return false;
                 };
-                let node = self.iso_node_of_fn(file, *func);
+                let node = self.hir(file).node(*func);
                 if self.sig_type_params(sig).len() != self.hir(file)[*func].type_params.len() {
                     if reports {
                         tx.inference_fallbacks.push(node);
@@ -1985,7 +1594,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         for element in elements {
-            let node = Node::Prop(element.prop);
+            let node = hir.node(element.prop);
             let name = self.member_name(file, hir[element.prop].key);
             let target = props
                 .iter()
@@ -2089,7 +1698,8 @@ impl<'p> Checker<'p> {
                 || !self.iso_is_equivalent(tx, &param.ty, target.ty, param.is_optional, false)
             {
                 if reports {
-                    tx.inference_fallbacks.push(Node::Param(param.param));
+                    tx.inference_fallbacks
+                        .push(self.hir(tx.file).node(param.param));
                 }
                 return false;
             }
@@ -2135,38 +1745,21 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── what `pseudoTypeToNode` asks ─────────────────────────────
 
-    /// Of the expression of a `PseudoTypeInferred`: `node.Parent`, which is a pair of parentheses if there is one, and that again if
-    /// `IsDeclaration`.
-    pub(super) fn iso_parent_of_inferred(
-        &self,
-        tx: &Emit,
-        of: Node,
-    ) -> (Option<Node>, Option<Node>) {
-        let parent = match of {
-            Node::Expr(e) if !is_parenthesized(self.hir(tx.file), e) => self.iso_parent(tx, of),
-            _ => None,
-        };
-        let declaration = parent.filter(|&parent| self.iso_is_declaration(tx.file, parent));
-        (parent, declaration)
-    }
-
     /// What `pseudoTypeToNode` reports of a `PseudoTypeInferred`.
     pub(super) fn iso_error_nodes_of_inferred(
         &self,
-        tx: &Emit,
+        file: FileId,
         of: Node,
         errors: &[Node],
     ) -> Vec<Node> {
-        if !errors.is_empty() {
-            return errors.to_vec();
-        }
-        let hir = self.hir(tx.file);
-        match (of, self.iso_parent_of_inferred(tx, of).1) {
-            (Node::Expr(e), Some(declaration))
-                if matches!(hir[e].kind, ExprKind::Ident(_))
-                    || is_property_access_entity_name_expression(hir, e) =>
+        let hir = self.hir(file);
+        match hir.data(of) {
+            _ if !errors.is_empty() => errors.to_vec(),
+            NodeData::Expr(e)
+                if is_entity_name_expression(hir, e)
+                    && Self::iso_is_declaration(hir, hir.parent(of)) =>
             {
-                vec![declaration]
+                vec![hir.parent(of)]
             }
             _ => vec![of],
         }
@@ -2175,15 +1768,18 @@ impl<'p> Checker<'p> {
     /// `HasInferredType`
     pub(super) fn iso_has_inferred_type(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
-        match node {
-            Node::Param(_) | Node::Var(_) | Node::PatProp(_) | Node::PatElem(_) => true,
-            Node::Member(m) => hir[m].kind == MemberKind::Property,
-            Node::Prop(p) => matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand),
-            Node::Stmt(s) => matches!(
+        match hir.data(node) {
+            NodeData::Param(_)
+            | NodeData::VarDecl(_)
+            | NodeData::PatProp(_)
+            | NodeData::PatElem(_) => true,
+            NodeData::Member(m) => hir[m].kind == MemberKind::Property,
+            NodeData::Prop(p) => matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand),
+            NodeData::Stmt(s) => matches!(
                 hir[s].kind,
                 StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
             ),
-            Node::Expr(e) => matches!(
+            NodeData::Expr(e) => matches!(
                 hir[e].kind,
                 ExprKind::Assign { .. }
                     | ExprKind::Binary { .. }
@@ -2246,7 +1842,7 @@ impl<'p> Checker<'p> {
                     && files.decls_of(merged).iter().any(|&(of, _)| of == target)
             });
         if is_required {
-            let said = self.iso_said(file, Node::Stmt(s), 9026);
+            let said = self.iso_said(file, self.hir(file).node(s), 9026);
             tx.said.push(said);
         }
     }
@@ -2278,29 +1874,28 @@ impl<'p> Checker<'p> {
     /// `visitDeclarationSubtree`, of a member with a dynamic name under `isolatedDeclarations`: 9038, 9014. Whether it is left out.
     pub(super) fn iso_report_dynamic_name(&mut self, tx: &mut Emit, m: MemberId) -> bool {
         let file = tx.file;
-        let bound = self.bound(file);
-        if let Some(name) = self.iso_dynamic_name(file, self.hir(file)[m].key)
+        let hir = self.hir(file);
+        if let Some(name) = self.iso_dynamic_name(file, hir[m].key)
             && !self.iso_is_global_symbol_reference(file, name)
         {
-            let code = match bound.member_owner[m.idx()] {
-                MemberOwner::Class(c)
-                    if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) =>
-                {
-                    9038
-                }
-                MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_)
-                    if !is_entity_name_expression(self.hir(file), name) =>
+            let code = match hir.kind(hir.parent(hir.node(m))) {
+                Kind::ClassDeclaration => 9038,
+                Kind::InterfaceDeclaration | Kind::TypeLiteral
+                    if !is_entity_name_expression(hir, name) =>
                 {
                     9014
                 }
-                _ => 0,
+                _ => return false,
             };
-            if code != 0 {
-                let said = self.iso_said(file, Node::Member(m), code);
-                tx.said.push(said);
-                return true;
-            }
+            let said = self.iso_said(file, hir.node(m), code);
+            tx.said.push(said);
+            return true;
         }
         false
     }
+}
+
+/// `IsStatement`
+fn is_statement(hir: &hir::File, node: Node) -> bool {
+    matches!(hir.data(node), NodeData::Stmt(_))
 }

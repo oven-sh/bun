@@ -33,6 +33,12 @@ pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
     if scope.is_some() { scope } else { ScopeId(0) }
 }
 
+/// The scope the enum makes that `m` is a member of. `NONE`: the binder did not get there, so it has no owner.
+fn scope_of_enum_member(bound: &Bound, m: EnumMemberId) -> ScopeId {
+    let scope = bound.enum_scope.get(bound.enum_member_owner[m.idx()].idx());
+    scope.copied().unwrap_or(ScopeId::NONE)
+}
+
 impl Checker<'_> {
     /// `IsFunctionLikeDeclaration(enclosingDeclaration)`
     pub(super) fn is_function_like_declaration(&self, at: Enclosing) -> bool {
@@ -50,12 +56,6 @@ impl Checker<'_> {
                     | FnKind::Setter
                     | FnKind::Constructor
             ))
-    }
-
-    fn enclosing_scope_of_kind(&self, file: FileId, kind: ScopeKind) -> ScopeId {
-        let scopes = &self.bound(file).scopes;
-        let found = scopes.iter().position(|scope| scope.kind == kind);
-        found.map_or(ScopeId(0), |index| ScopeId(index as u32))
     }
 
     fn enclosing_scope_of_function(&self, file: FileId, f: FnId) -> ScopeId {
@@ -148,8 +148,7 @@ impl Checker<'_> {
                 Parent::MemberInit(m) => return self.enclosing_scope_of_member(file, m),
                 Parent::FnBody(f) => return self.enclosing_scope_of_function(file, f),
                 Parent::EnumInit(m) => {
-                    let owner = bound.enum_member_owner[m.idx()];
-                    return self.enclosing_scope_of_kind(file, ScopeKind::Enum(owner));
+                    return or_file_scope(scope_of_enum_member(bound, m));
                 }
                 Parent::Case(c) => {
                     let s = bound.case_stmt[c.idx()];
@@ -180,9 +179,7 @@ impl Checker<'_> {
                         }
                     };
                 }
-                Parent::Module(m) => {
-                    return self.enclosing_scope_of_kind(file, ScopeKind::Module(m));
-                }
+                Parent::Module(m) => return or_file_scope(bound.module_scope[m.idx()]),
                 Parent::Expr(_)
                 | Parent::Prop(_)
                 | Parent::Stmt(_)
@@ -243,12 +240,11 @@ impl Checker<'_> {
             Decl::Class(c) => bound.class_scope[c.idx()],
             Decl::Fn(f) => bound.fns[f.idx()].scope,
             Decl::Alias(a) => bound.alias_scope[a.idx()],
-            Decl::Interface(i) => self.enclosing_scope_of_kind(file, ScopeKind::Interface(i)),
+            Decl::Interface(i) => bound.interface_scope[i.idx()],
             Decl::TypeParam(p) => bound.type_param_scope[p.idx()],
-            Decl::Enum(e) => self.enclosing_scope_of_kind(file, ScopeKind::Enum(e)),
-            Decl::EnumMember(m) => self
-                .enclosing_scope_of_kind(file, ScopeKind::Enum(bound.enum_member_owner[m.idx()])),
-            Decl::Module(m) => self.enclosing_scope_of_kind(file, ScopeKind::Module(m)),
+            Decl::Enum(e) => bound.enum_scope[e.idx()],
+            Decl::EnumMember(m) => scope_of_enum_member(bound, m),
+            Decl::Module(m) => bound.module_scope[m.idx()],
             Decl::ImportEquals(i) => bound.import_equals_scope[i.idx()],
             Decl::ExportSpec(spec) => bound.export_scope[hir[spec].export.idx()],
             Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => {

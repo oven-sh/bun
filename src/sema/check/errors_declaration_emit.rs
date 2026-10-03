@@ -7,7 +7,7 @@
 //! (`checker/symbolaccessibility.go`, `checker/emitresolver.go`).
 
 use super::enclosing_declaration::Enclosing;
-use super::errors_isolated_declarations::{Emit, Node as SyntaxNode};
+use super::errors_isolated_declarations::Emit;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
     WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, to_valid_utf8,
@@ -30,6 +30,7 @@ use std::rc::Rc;
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Meaning {
     /// `SymbolFlagsNone`
+    #[cfg(feature = "baselines")]
     None,
     Value,
     /// `SymbolFlagsValue | SymbolFlagsExportValue`, which `getQualifiedLeftMeaning` does not take for `SymbolFlagsValue`.
@@ -54,6 +55,7 @@ impl Meaning {
 
     fn flags(self) -> SymFlags {
         match self {
+            #[cfg(feature = "baselines")]
             Meaning::None => SymFlags::empty(),
             Meaning::Value | Meaning::ValueOfName => SymFlags::VALUE,
             Meaning::Type => SymFlags::TYPE,
@@ -118,65 +120,17 @@ impl Access {
     }
 }
 
-/// `getSymbolAccessibilityDiagnostic`: the node whose message says that a name cannot be used.
+/// `GetSymbolAccessibilityDiagnostic`, by how it is made.
 #[derive(Copy, Clone)]
 enum Context {
-    /// Nothing is said.
-    None,
-    /// A variable declaration or a binding element, by its name.
-    Variable(PatId),
-    /// A property, or the name of an accessor.
-    Property(MemberId),
-    /// `f.name = value`, which declares a property of a function.
-    Assignment(ExprId),
-    /// A parameter property of a private constructor.
-    ParameterProperty(ParamId),
-    Accessor(MemberId),
-    /// `getMethodNameVisibilityDiagnosticMessage`
-    MethodName(MemberId),
-    /// What a signature returns.
-    Return(FnId),
-    Parameter(ParamId),
-    /// With the code, which goes by what it is a type parameter of.
-    TypeParameter(TypeParamId, u32),
-    /// `A<B>` in a heritage clause: the code, where the name of the class or interface is (nowhere if it has none), where the node is.
-    Heritage(u32, (u32, u32), (u32, u32)),
-    ImportEquals(ImportEqualsId, StmtId),
-    TypeAlias(AliasId),
-    /// `export default e`, `export = e`: where the statement is.
-    DefaultExport(u32, u32),
-    /// `Object.defineProperty(exports, "name", descriptor)`
-    DefinedExport(ExprId),
-}
-
-/// `errorNameNode`
-#[derive(Copy, Clone)]
-struct NameNode {
-    start: u32,
-    end: u32,
-    /// `ast.IsVariableDeclaration(location.Parent)`
-    of_variable: bool,
-}
-
-/// `errorFallbackNode`: where `GetErrorRangeForNode` puts it, where its name is (nowhere if it has none), and what it is called then.
-#[derive(Copy, Clone)]
-struct FallbackNode {
-    start: u32,
-    end: u32,
-    name: (u32, u32),
-    unnamed: &'static str,
-}
-
-/// What `ensureType` is asked for the type of.
-#[derive(Copy, Clone)]
-enum Typed {
-    Variable(VarDeclId),
-    /// A binding element, by its name.
-    Element(PatId),
-    Property(MemberId),
-    Parameter(ParamId),
-    Signature(FnId),
-    Export(StmtId, ExprId),
+    /// `createGetSymbolAccessibilityDiagnosticForNode`. With `NONE`, no diagnostic is reported.
+    ForNode(Node),
+    /// `createGetSymbolAccessibilityDiagnosticForNodeName`
+    ForNodeName(Node),
+    /// `transformExportAssignment`: 4082 at the statement.
+    DefaultExport(Node),
+    /// `transformClassDeclaration`, of a class that extends what is no name: 4020 at the `ExpressionWithTypeArguments`.
+    ExtendsClause(Node),
 }
 
 /// An error.
@@ -188,20 +142,14 @@ struct Found {
     related: Vec<Reported>,
 }
 
-/// Which statement of a file declares what.
-struct Statements {
-    imports: Vec<StmtId>,
-    exports: Vec<StmtId>,
-}
-
 /// `SymbolTrackerImpl` with its `SymbolTrackerSharedState` (tracker.go), which are two there so that the transformer can point at
 /// the second. It is handed the checker.
 struct SymbolTrackerImpl {
     current_source_file: FileId,
     diagnostics: Vec<Found>,
     get_symbol_accessibility_diagnostic: Context,
-    error_name_node: Option<NameNode>,
-    fallback_stack: Vec<FallbackNode>,
+    error_name_node: Node,
+    fallback_stack: Vec<Node>,
     late_marked_statements: Vec<StmtId>,
     /// `state.isolatedDeclarations`, with what `getIsolatedDeclarationError` goes by and has made.
     isolated_declarations: Option<Emit>,
@@ -245,7 +193,7 @@ impl<'p> Checker<'p> {
             return;
         }
         // All this is asked once everything is checked: a circle that goes through here is nobody's error.
-        let saved = (self.relation_gave_up, self.relation_too_complex);
+        let saved = self.relation_too_complex;
         self.eager.push(self.stack.len());
         let (found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
@@ -257,7 +205,7 @@ impl<'p> Checker<'p> {
             (emit.tracker.diagnostics, emit.tracker.isolated_declarations)
         };
         self.eager.pop();
-        (self.relation_gave_up, self.relation_too_complex) = saved;
+        self.relation_too_complex = saved;
         if let Some(isolated_declarations) = isolated_declarations {
             self.finish_isolated_declarations(isolated_declarations);
         }
@@ -269,10 +217,8 @@ impl<'p> Checker<'p> {
                 args,
                 related,
             } = error;
-            self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
-            if !related.is_empty() {
-                self.relate(start, code, |_| related);
-            }
+            self.add_diagnostic(Reported::new((file, start, end), code, held(args)))
+                .related_information = related;
         }
     }
 }
@@ -286,8 +232,8 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             tracker: SymbolTrackerImpl {
                 current_source_file: file,
                 diagnostics: Vec::new(),
-                get_symbol_accessibility_diagnostic: Context::None,
-                error_name_node: None,
+                get_symbol_accessibility_diagnostic: Context::ForNode(Node::NONE),
+                error_name_node: Node::NONE,
                 fallback_stack: Vec::new(),
                 late_marked_statements: Vec::new(),
                 isolated_declarations,
@@ -310,7 +256,6 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
 pub(super) struct EmitResolverLinks {
     /// `declarationLinks.isVisible`
     visibility: FxHashMap<(FileId, Decl), bool>,
-    statements: FxHashMap<FileId, Rc<Statements>>,
 
     // `symbolContainerLinks`, `symbolTableAliasCache`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
@@ -396,30 +341,6 @@ impl<'p> Checker<'p> {
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
         self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
             .is_some_and(|access| access.is_accessible())
-    }
-
-    /// `lookupSymbolChain` as `symbolToExpression` asks it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone, ..)`,
-    /// without `yieldModuleSymbol`: whether the chain starts with `globalThis`, and the rest of it. `is_parent`: `symbol` is the
-    /// parent of a symbol that is in no table, so `endOfChain` is false and the meaning is `SymbolFlagsNamespace`. The chain is
-    /// empty then if nothing is written for `symbol`.
-    pub(super) fn lookup_symbol_chain_for_symbol_to_string(
-        &mut self,
-        symbol: Sym,
-        is_parent: bool,
-        at: Enclosing,
-    ) -> (bool, Vec<Sym>) {
-        let (meaning, depth) = if is_parent {
-            (Meaning::Namespace, 1)
-        } else {
-            (Meaning::None, 0)
-        };
-        let mut chain = self.symbol_chain_ex(symbol, at, meaning, false, depth);
-        let starts_with_global_this =
-            chain.len() > 1 && chain[0] == self.files().global_this_symbol;
-        if starts_with_global_this {
-            chain.remove(0);
-        }
-        (starts_with_global_this, chain)
     }
 }
 
@@ -583,14 +504,6 @@ impl<'p> Checker<'p> {
             .then(|| files.file_symbol(file))
     }
 
-    /// `resolveSymbol`
-    fn resolve_symbol(&mut self, symbol: Sym) -> Sym {
-        if self.files().is_non_local_alias(symbol) {
-            return self.resolve_alias(symbol).symbol().unwrap_or(symbol);
-        }
-        symbol
-    }
-
     /// `getSymbolIfSameReference(a, b) != nil`
     fn is_same_reference(&mut self, a: Sym, b: Sym) -> bool {
         self.resolve_symbol(a) == self.resolve_symbol(b)
@@ -630,55 +543,16 @@ impl<'p> Checker<'p> {
 // ───────────────────────────── what is visible ─────────────────────────────
 
 impl<'p> Checker<'p> {
-    fn statements_of(&mut self, file: FileId) -> Rc<Statements> {
-        if let Some(known) = self.emit_resolver_links.statements.get(&file) {
-            return Rc::clone(known);
-        }
-        let hir = self.hir(file);
-        let mut statements = Statements {
-            imports: vec![StmtId::NONE; hir.imports.len()],
-            exports: vec![StmtId::NONE; hir.exports.len()],
-        };
-        for (i, statement) in hir.stmts.iter().enumerate() {
-            let s = StmtId(i as u32);
-            match statement.kind {
-                StmtKind::Import(id) => statements.imports[id.idx()] = s,
-                StmtKind::ExportNamed(id) => statements.exports[id.idx()] = s,
-                _ => {}
-            }
-        }
-        let statements = Rc::new(statements);
-        self.emit_resolver_links
-            .statements
-            .insert(file, Rc::clone(&statements));
-        statements
-    }
-
     /// The statement that is the declaration `decl`, or that an import or an export specifier is written in.
-    fn statement_of(&mut self, file: FileId, decl: Decl) -> Option<StmtId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let statement = match decl {
-            Decl::Fn(f) => match bound.fns[f.idx()].owner {
-                FnOwner::Stmt(s) => s,
-                _ => return None,
-            },
-            Decl::Class(c) => match bound.class_owner[c.idx()] {
-                ClassOwner::Stmt(s) => s,
-                ClassOwner::Expr(_) => return None,
-            },
-            Decl::Interface(i) => hir[i].stmt,
-            Decl::Alias(a) => hir[a].stmt,
-            Decl::Enum(e) => hir[e].stmt,
-            Decl::Module(m) => hir[m].stmt,
-            Decl::ImportEquals(i) => hir[i].stmt,
-            Decl::ImportDefault(i) | Decl::ImportNamespace(i) => {
-                self.statements_of(file).imports[i.idx()]
-            }
-            Decl::ImportSpec(s) => self.statements_of(file).imports[hir[s].import.idx()],
-            Decl::ExportSpec(s) => self.statements_of(file).exports[hir[s].export.idx()],
-            _ => return None,
-        };
-        statement.is_some().then_some(statement)
+    fn statement_of(&self, file: FileId, decl: Decl) -> Option<StmtId> {
+        let hir = self.hir(file);
+        match decl {
+            Decl::ImportDefault(i) | Decl::ImportNamespace(i) => hir[i].stmt.some(),
+            Decl::ImportSpec(s) => hir[hir[s].import].stmt.some(),
+            Decl::ExportSpec(s) => hir[hir[s].export].stmt.some(),
+            Decl::ExportExpr(_) | Decl::UmdGlobal(_) => None,
+            _ => self.files().statement_of_declaration(file, decl),
+        }
     }
 
     /// `isDeclarationVisible`, of what statements are written in: a file, the block of a namespace, or anything else.
@@ -1306,6 +1180,7 @@ impl<'p> Checker<'p> {
 
     /// `getAccessibleSymbolChain(property, enclosingDeclaration, SymbolFlagsNone, ..)`. A property is in no table, so the chain is
     /// an alias that resolves to it.
+    #[cfg(feature = "baselines")]
     pub(super) fn accessible_alias_of_property(
         &mut self,
         property: &Prop,
@@ -1529,8 +1404,12 @@ impl<'p> Checker<'p> {
         if results.is_empty() {
             for (index, module) in files.modules.iter().enumerate() {
                 let file = FileId(index as u32);
-                // What nothing refers to is only there while it is checked.
-                if !module.hir.has_module_syntax || module.is_transient && !file.is_local() {
+                // `hir` of a transient module is mutated by the thread that owns it (`Files::bring_in`, `AtHand::drop`). Test
+                // `is_transient`, which is immutable after loading, before reading `hir`.
+                if module.is_transient && !file.is_local() {
+                    continue;
+                }
+                if !module.hir.has_module_syntax {
                     continue;
                 }
                 let module = files.file_symbol(file);
@@ -1847,8 +1726,10 @@ impl<'p> Checker<'p> {
 // ───────────────────────────── `SymbolTracker` ─────────────────────────────
 
 impl SymbolTrackerImpl {
-    fn text(&self, c: &Checker<'_>, range: (u32, u32)) -> String {
-        c.source_text(self.current_source_file, range.0, range.1)
+    /// `GetTextOfNode`
+    fn text(&self, c: &Checker<'_>, node: Node) -> String {
+        let file = self.current_source_file;
+        c.source_text(file, c.hir(file).start(node), c.end_of_node(file, node))
     }
 
     fn add_diagnostic(&mut self, range: (u32, u32), code: u32, args: Vec<String>) {
@@ -1861,48 +1742,16 @@ impl SymbolTrackerImpl {
         });
     }
 
-    /// Whether the member `m` is static, and whether it is written in a class declaration.
-    fn place_of_member(&self, c: &Checker<'_>, m: MemberId) -> (bool, bool) {
-        let (hir, bound) = (
-            c.hir(self.current_source_file),
-            c.bound(self.current_source_file),
-        );
-        let is_in_class_declaration = matches!(bound.member_owner[m.idx()], MemberOwner::Class(c)
-            if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)));
-        (
-            hir[m].flags.contains(Flags::STATIC),
-            is_in_class_declaration,
-        )
-    }
-
-    fn name_range_of_member(&self, c: &Checker<'_>, m: MemberId) -> (u32, u32) {
-        (
-            c.hir(self.current_source_file)[m].name_pos,
-            c.end_of_member_name(self.current_source_file, m),
-        )
-    }
-
-    fn range_of_pat(&self, c: &Checker<'_>, pat: PatId) -> (u32, u32) {
-        (
-            c.hir(self.current_source_file)[pat].pos,
-            c.end_of_pat(self.current_source_file, pat),
-        )
-    }
-
-    /// `getSymbolAccessibilityDiagnostic`: the code, where the name the message starts with is written (nowhere if it starts with
-    /// none), and where `GetErrorRangeForNode` puts the error. `None`: nothing is said.
+    /// `getSymbolAccessibilityDiagnostic`: `diagnosticMessage`, `typeName`, `errorNode`. `None`: no diagnostic is reported.
     fn accessibility_diagnostic(
         &self,
         c: &Checker<'_>,
         access: &Access,
-    ) -> Option<(u32, (u32, u32), (u32, u32))> {
-        let (hir, bound) = (
-            c.hir(self.current_source_file),
-            c.bound(self.current_source_file),
-        );
+    ) -> Option<(u32, Node, Node)> {
+        let hir = c.hir(self.current_source_file);
         let has_module = !access.module_name.is_empty();
         // `selectDiagnosticBasedOnModuleName`
-        let by_module = |not_nameable: u32, private_module: u32, private_name: u32| {
+        let by_module = |[not_nameable, private_module, private_name]: [u32; 3]| {
             if !has_module {
                 private_name
             } else if access.accessibility == Accessibility::CannotBeNamed {
@@ -1912,186 +1761,140 @@ impl SymbolTrackerImpl {
             }
         };
         // `selectDiagnosticBasedOnModuleNameNoNameCheck`
-        let no_name_check = |private_module: u32, private_name: u32| {
-            if has_module {
-                private_module
+        let no_name_check = |[private_module, private_name]: [u32; 2]| match has_module {
+            true => private_module,
+            false => private_name,
+        };
+        // Of what is static, of what else is in a class declaration, of the rest.
+        let by_place = |member: Node, of_static: [u32; 3], in_class: [u32; 3], other: [u32; 2]| {
+            if hir.is_static(member) {
+                by_module(of_static)
+            } else if hir.kind(hir.parent(member)) == Kind::ClassDeclaration {
+                by_module(in_class)
             } else {
-                private_name
+                no_name_check(other)
             }
         };
-        let of_property = |is_static: bool, is_in_class: bool| {
-            if is_static {
-                by_module(4026, 4027, 4028)
-            } else if is_in_class {
-                by_module(4029, 4030, 4031)
-            } else {
-                no_name_check(4032, 4033)
+        let (node, is_for_name) = match self.get_symbol_accessibility_diagnostic {
+            Context::ForNode(node) => (node, false),
+            Context::ForNodeName(node) => (node, true),
+            Context::DefaultExport(node) => return Some((4082, Node::NONE, node)),
+            Context::ExtendsClause(node) => {
+                return Some((4020, hir.name(hir.parent(hir.parent(node))), node));
             }
         };
-        Some(match self.get_symbol_accessibility_diagnostic {
-            Context::None => return None,
-            Context::Variable(pat) => {
-                let name = self.range_of_pat(c, pat);
-                (by_module(4023, 4024, 4025), name, name)
+        let (kind, parent, name) = (
+            hir.kind(node),
+            hir.parent(node),
+            get_name_of_declaration(hir, node),
+        );
+        let of_property = || by_place(node, [4026, 4027, 4028], [4029, 4030, 4031], [4032, 4033]);
+        Some(match kind {
+            // `getVariableDeclarationTypeVisibilityDiagnosticMessage`
+            Kind::VariableDeclaration | Kind::BindingElement => {
+                (by_module([4023, 4024, 4025]), name, node)
             }
-            Context::Property(m) => {
-                let (is_static, is_in_class) = self.place_of_member(c, m);
-                let name = self.name_range_of_member(c, m);
-                (
-                    of_property(is_static, is_in_class),
-                    name,
-                    c.error_range_of_member(self.current_source_file, m),
-                )
+            Kind::PropertyDeclaration
+            | Kind::PropertySignature
+            | Kind::PropertyAccessExpression
+            | Kind::ElementAccessExpression
+            | Kind::BinaryExpression => (of_property(), name, node),
+            // `getAccessorNameVisibilityDiagnosticMessage`
+            Kind::GetAccessor | Kind::SetAccessor if is_for_name => (of_property(), name, node),
+            // `getMethodNameVisibilityDiagnosticMessage`
+            Kind::MethodDeclaration | Kind::MethodSignature if is_for_name => {
+                let code = by_place(node, [4095, 4096, 4097], [4098, 4099, 4100], [4101, 4102]);
+                (code, name, node)
             }
-            Context::Assignment(e) => {
-                let name = match hir[e].kind {
-                    ExprKind::Assign { target, .. } => match hir[target].kind {
-                        ExprKind::Dot { name_pos, .. } => (
-                            name_pos,
-                            c.end_of_name_at(self.current_source_file, name_pos),
-                        ),
-                        _ => (0, 0),
-                    },
-                    _ => (0, 0),
+            // `getAccessorDeclarationTypeVisibilityDiagnosticMessage`
+            Kind::SetAccessor if hir.is_static(node) => (no_name_check([4034, 4035]), name, name),
+            Kind::SetAccessor => (no_name_check([4036, 4037]), name, name),
+            Kind::GetAccessor if hir.is_static(node) => (by_module([4038, 4039, 4040]), name, name),
+            Kind::GetAccessor => (by_module([4041, 4042, 4043]), name, name),
+            // `getReturnTypeVisibilityDiagnosticMessage`, at the name or else at all of it.
+            Kind::ConstructSignature
+            | Kind::CallSignature
+            | Kind::IndexSignature
+            | Kind::MethodDeclaration
+            | Kind::MethodSignature
+            | Kind::FunctionDeclaration => {
+                let code = match kind {
+                    Kind::ConstructSignature => no_name_check([4044, 4045]),
+                    Kind::CallSignature => no_name_check([4046, 4047]),
+                    Kind::IndexSignature => no_name_check([4048, 4049]),
+                    Kind::FunctionDeclaration => by_module([4058, 4059, 4060]),
+                    _ => by_place(node, [4050, 4051, 4052], [4053, 4054, 4055], [4056, 4057]),
                 };
-                (
-                    of_property(false, false),
-                    name,
-                    (
-                        c.start_of(self.current_source_file, e),
-                        c.end_of_expr(self.current_source_file, e),
-                    ),
-                )
+                (code, Node::NONE, if name.is_some() { name } else { node })
             }
-            Context::ParameterProperty(p) => (
-                of_property(false, true),
-                self.range_of_pat(c, hir[p].pat),
-                (hir[p].pos, c.end_of_param(self.current_source_file, p)),
-            ),
-            Context::Accessor(m) => {
-                let (is_static, _) = self.place_of_member(c, m);
-                let code = match (hir[m].kind == MemberKind::Setter, is_static) {
-                    (true, true) => no_name_check(4034, 4035),
-                    (true, false) => no_name_check(4036, 4037),
-                    (false, true) => by_module(4038, 4039, 4040),
-                    (false, false) => by_module(4041, 4042, 4043),
-                };
-                let name = self.name_range_of_member(c, m);
-                (code, name, name)
+            // A parameter property of a private constructor.
+            Kind::Parameter
+                if hir.is_parameter_property_declaration(node)
+                    && hir.flags(parent).contains(Flags::PRIVATE) =>
+            {
+                (by_module([4029, 4030, 4031]), name, node)
             }
-            Context::MethodName(m) => {
-                let (is_static, is_in_class) = self.place_of_member(c, m);
-                let code = if is_static {
-                    by_module(4095, 4096, 4097)
-                } else if is_in_class {
-                    by_module(4098, 4099, 4100)
-                } else {
-                    no_name_check(4101, 4102)
-                };
-                (
-                    code,
-                    self.name_range_of_member(c, m),
-                    c.error_range_of_member(self.current_source_file, m),
-                )
-            }
-            Context::Return(f) => {
-                let code = match hir[f].kind {
-                    FnKind::ConstructSignature => no_name_check(4044, 4045),
-                    FnKind::CallSignature => no_name_check(4046, 4047),
-                    FnKind::IndexSignature => no_name_check(4048, 4049),
-                    FnKind::Method => match bound.fns[f.idx()].owner {
-                        FnOwner::Member(m) => match self.place_of_member(c, m) {
-                            (true, _) => by_module(4050, 4051, 4052),
-                            (false, true) => by_module(4053, 4054, 4055),
-                            (false, false) => no_name_check(4056, 4057),
-                        },
-                        _ => return None,
-                    },
-                    FnKind::Decl => by_module(4058, 4059, 4060),
+            // `getParameterDeclarationTypeVisibilityDiagnosticMessage`
+            Kind::Parameter => {
+                let code = match hir.kind(parent) {
+                    Kind::Constructor => by_module([4061, 4062, 4063]),
+                    Kind::ConstructSignature | Kind::ConstructorType => no_name_check([4064, 4065]),
+                    Kind::CallSignature => no_name_check([4066, 4067]),
+                    Kind::IndexSignature => no_name_check([4091, 4092]),
+                    Kind::MethodDeclaration | Kind::MethodSignature => {
+                        by_place(parent, [4068, 4069, 4070], [4071, 4072, 4073], [4074, 4075])
+                    }
+                    Kind::FunctionDeclaration | Kind::FunctionType => by_module([4076, 4077, 4078]),
+                    Kind::SetAccessor | Kind::GetAccessor => by_module([4108, 4107, 4106]),
                     _ => return None,
                 };
-                // The name, or else the whole of it.
-                let range = match bound.fns[f.idx()].owner {
-                    FnOwner::Member(m) if hir[f].kind == FnKind::Method => {
-                        self.name_range_of_member(c, m)
-                    }
-                    FnOwner::Member(m) => (hir[m].start, hir[m].loc.end),
-                    _ if hir[f].name.is_some() => (
-                        hir[f].name_pos,
-                        c.end_of_name_at(self.current_source_file, hir[f].name_pos),
-                    ),
-                    _ => c.error_range_of_fn(self.current_source_file, f),
-                };
-                (code, (0, 0), range)
+                (code, name, node)
             }
-            Context::Parameter(p) => {
-                let f = bound.param_fn[p.idx()];
-                let code = match hir[f].kind {
-                    FnKind::Constructor => by_module(4061, 4062, 4063),
-                    FnKind::ConstructSignature | FnKind::ConstructorType => {
-                        no_name_check(4064, 4065)
+            // `getTypeParameterConstraintVisibilityDiagnosticMessage`
+            Kind::TypeParameter => {
+                let code = match hir.kind(parent) {
+                    Kind::ClassDeclaration => 4002,
+                    Kind::InterfaceDeclaration => 4004,
+                    Kind::MappedType => 4103,
+                    Kind::ConstructorType | Kind::ConstructSignature => 4006,
+                    Kind::CallSignature => 4008,
+                    Kind::MethodDeclaration | Kind::MethodSignature if hir.is_static(parent) => {
+                        4010
                     }
-                    FnKind::CallSignature => no_name_check(4066, 4067),
-                    FnKind::IndexSignature => no_name_check(4091, 4092),
-                    FnKind::Method => match bound.fns[f.idx()].owner {
-                        FnOwner::Member(m) => match self.place_of_member(c, m) {
-                            (true, _) => by_module(4068, 4069, 4070),
-                            (false, true) => by_module(4071, 4072, 4073),
-                            (false, false) => no_name_check(4074, 4075),
-                        },
-                        _ => return None,
-                    },
-                    FnKind::Decl | FnKind::FunctionType => by_module(4076, 4077, 4078),
-                    FnKind::Getter | FnKind::Setter => by_module(4108, 4107, 4106),
+                    Kind::MethodDeclaration | Kind::MethodSignature => {
+                        match hir.kind(hir.parent(parent)) {
+                            Kind::ClassDeclaration => 4012,
+                            _ => 4014,
+                        }
+                    }
+                    Kind::FunctionType | Kind::FunctionDeclaration => 4016,
+                    Kind::InferType => 4085,
+                    Kind::TypeAliasDeclaration => 4083,
                     _ => return None,
                 };
-                (
-                    code,
-                    self.range_of_pat(c, hir[p].pat),
-                    (hir[p].pos, c.end_of_param(self.current_source_file, p)),
-                )
+                (code, name, node)
             }
-            Context::TypeParameter(_, 0) => return None,
-            Context::TypeParameter(tp, code) => {
-                let start = hir[tp].pos;
-                (
-                    code,
-                    (start, c.end_of_name_at(self.current_source_file, start)),
-                    (start, c.end_of_type_param(self.current_source_file, tp)),
-                )
+            Kind::ExpressionWithTypeArguments => {
+                let holder = hir.parent(parent);
+                let code = match (hir.kind(holder), parent.part()) {
+                    (Kind::ClassDeclaration, Some(Part::Implements)) => 4019,
+                    (Kind::ClassDeclaration, _) if hir.name(holder).is_some() => 4020,
+                    (Kind::ClassDeclaration, _) => 4021,
+                    _ => 4022,
+                };
+                (code, hir.name(holder), node)
             }
-            Context::Heritage(code, name, node) => (code, name, node),
-            Context::ImportEquals(i, statement) => (
-                4000,
-                (
-                    hir[i].name_pos,
-                    c.end_of_name_at(self.current_source_file, hir[i].name_pos),
-                ),
-                (
-                    hir[statement].start,
-                    c.end_of_stmt(self.current_source_file, statement),
-                ),
-            ),
-            Context::TypeAlias(a) => (
-                no_name_check(4084, 4081),
-                (
-                    hir[a].name_pos,
-                    c.end_of_name_at(self.current_source_file, hir[a].name_pos),
-                ),
-                (
-                    hir[hir[a].ty].pos,
-                    c.end_of_type_node(self.current_source_file, hir[a].ty),
-                ),
-            ),
-            Context::DefaultExport(start, end) => (4082, (0, 0), (start, end)),
-            Context::DefinedExport(e) => {
-                let (_, key) = crate::bind::define_property_call(hir, e)?;
-                let key = (
-                    c.start_of(self.current_source_file, key),
-                    c.end_of_expr(self.current_source_file, key),
-                );
-                (by_module(4023, 4024, 4025), key, key)
+            Kind::ImportEqualsDeclaration => (4000, name, node),
+            Kind::TypeAliasDeclaration => (no_name_check([4084, 4081]), name, hir.type_node(node)),
+            // `Object.defineProperty(exports, "name", descriptor)`
+            Kind::CallExpression => {
+                let NodeData::Expr(e) = hir.data(node) else {
+                    return None;
+                };
+                let key = hir.child(crate::bind::define_property_call(hir, e)?.1);
+                (by_module([4023, 4024, 4025]), key, key)
             }
+            _ => return None,
         })
     }
 
@@ -2116,30 +1919,40 @@ impl SymbolTrackerImpl {
             return false;
         };
         let mut args = Vec::with_capacity(3);
-        if type_name != (0, 0) {
+        if type_name.is_some() {
             args.push(self.text(c, type_name));
         }
         args.push(access.symbol_name);
         args.push(access.module_name);
+        let error_node = c.get_error_range_for_node(self.current_source_file, error_node);
         self.add_diagnostic(access.error_node.unwrap_or(error_node), code, args);
         true
     }
 
     /// `errorLocation`
-    fn error_location(&self) -> Option<(u32, u32)> {
-        match (self.error_name_node, self.fallback_stack.last()) {
-            (Some(name), _) => Some((name.start, name.end)),
-            (None, Some(node)) => Some((node.start, node.end)),
-            (None, None) => None,
+    fn error_location(&self) -> Node {
+        if self.error_name_node.is_some() {
+            return self.error_name_node;
         }
+        self.fallback_stack.last().copied().unwrap_or(Node::NONE)
     }
 
     /// `errorDeclarationNameWithFallback`
     fn error_declaration_name(&self, c: &Checker<'_>) -> String {
-        match (self.error_name_node, self.fallback_stack.last()) {
-            (Some(name), _) if name.start < name.end => self.text(c, (name.start, name.end)),
-            (None, Some(node)) if node.name != (0, 0) => self.text(c, node.name),
-            (None, Some(node)) => node.unnamed.to_owned(),
+        let hir = c.hir(self.current_source_file);
+        let location = self.error_location();
+        let name = match self.error_name_node.is_some() {
+            true => location,
+            false => hir.name(location),
+        };
+        // `DeclarationNameToString`
+        match (self.text(c, name), hir.data(location)) {
+            (text, _) if !text.is_empty() => text,
+            (_, NodeData::Stmt(s)) if name.is_none() => match hir[s].kind {
+                StmtKind::ExportAssign(_) => "export=".to_owned(),
+                StmtKind::ExportDefault(_) => "default".to_owned(),
+                _ => "(Missing)".to_owned(),
+            },
             _ => "(Missing)".to_owned(),
         }
     }
@@ -2175,10 +1988,13 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
 
     /// The six that `Report` stands for.
     fn report(&mut self, c: &mut Checker<'p>, report: Report) {
-        let Some(location) = self.error_location() else {
+        let (hir, location) = (c.hir(self.current_source_file), self.error_location());
+        if location.is_none() {
             return;
-        };
+        }
         let name = self.error_declaration_name(c);
+        let is_name_of_variable = hir.kind(hir.parent(location)) == Kind::VariableDeclaration;
+        let location = c.get_error_range_for_node(self.current_source_file, location);
         match report {
             Report::CyclicStructure => self.add_diagnostic(location, 5088, vec![name]),
             Report::InaccessibleThis => {
@@ -2196,9 +2012,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
             }
             Report::PrivateInBaseOfClassExpression(property) => {
                 self.add_diagnostic(location, 4094, vec![to_valid_utf8(property)]);
-                if self.error_name_node.is_some_and(|name| name.of_variable)
-                    && let Some(found) = self.diagnostics.last_mut()
-                {
+                if is_name_of_variable && let Some(found) = self.diagnostics.last_mut() {
                     found.related.push(c.new_diagnostic(
                         (self.current_source_file, location.0, location.1),
                         9027,
@@ -2210,14 +2024,16 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
     }
 
     /// `ReportTruncationError`, which does not wait.
-    fn report_truncation_error(&mut self, _: &mut Checker<'p>) {
-        if let Some(location) = self.error_location() {
+    fn report_truncation_error(&mut self, c: &mut Checker<'p>) {
+        if self.error_location().is_some() {
+            let location =
+                c.get_error_range_for_node(self.current_source_file, self.error_location());
             self.add_diagnostic(location, 7056, Vec::new());
         }
     }
 
     /// `ReportInferenceFallback`. What is in another file is reported for that file.
-    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: SyntaxNode) {
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: Node) {
         if let Some(isolated_declarations) = &mut self.isolated_declarations
             && file == self.current_source_file
         {
@@ -2287,7 +2103,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 continue;
             }
             // The function that is written for a variable.
-            let mut variable: Option<(VarDeclId, PatId, FnId)> = None;
+            let mut variable: Option<(VarDeclId, FnId)> = None;
             match declaration {
                 Decl::Var(pat) => {
                     let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
@@ -2301,7 +2117,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     let ExprKind::Fn(f) = hir[decl.init].kind else {
                         continue;
                     };
-                    variable = Some((d, pat, f));
+                    variable = Some((d, f));
                 }
                 Decl::Fn(f) => {
                     if hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_some() {
@@ -2362,16 +2178,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             // `transformExpandoHost`: it is written as a function, in the place of the whole statement. A function declaration says
             // the same when it is got to.
-            if let Some((d, pat, function)) = variable {
+            if let Some((d, function)) = variable {
                 let statement = bound.var_stmt[d.idx()];
                 if statement.is_some() && self.written.insert(statement) {
                     let saved = self.tracker.get_symbol_accessibility_diagnostic;
-                    self.tracker.get_symbol_accessibility_diagnostic = Context::Variable(pat);
+                    self.tracker.get_symbol_accessibility_diagnostic =
+                        Context::ForNode(hir.node(d));
                     self.transform_signature(function);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
                     if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                         self.c
-                            .iso_report_expandos(isolated_declarations, SyntaxNode::Var(d));
+                            .iso_report_expandos(isolated_declarations, hir.node(d));
                     }
                 }
             }
@@ -2379,7 +2196,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.tracker.error_name_node,
                 self.tracker.get_symbol_accessibility_diagnostic,
             );
-            self.tracker.get_symbol_accessibility_diagnostic = Context::Assignment(e);
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
             if let ExprKind::Ident(right) = hir[value].kind
                 && !is_parenthesized(hir, value)
             {
@@ -2388,9 +2205,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             } else {
                 let holder = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(holder, property) {
-                    self.tracker.error_name_node = None;
+                    self.tracker.error_name_node = Node::NONE;
                     self.create_type_of_declaration(
-                        Some(SyntaxNode::Expr(e)),
+                        Some(hir.node(e)),
                         ty,
                         DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     );
@@ -2493,7 +2310,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             (
                 self.tracker.error_name_node,
                 self.tracker.get_symbol_accessibility_diagnostic,
-            ) = (None, Context::DefinedExport(e));
+            ) = (Node::NONE, Context::ForNode(hir.node(e)));
             let ty = self.c.type_of_symbol(symbol);
             self.create_type_of_declaration(None, ty, DECLARATION_EMIT_NODE_BUILDER_FLAGS);
             (
@@ -2543,8 +2360,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     self.c.iso_transform_import(isolated_declarations, s, i);
                 }
             }
-            StmtKind::ExportDefault(e) => self.transform_export_assignment(s, e, false),
-            StmtKind::ExportAssign(e) => self.transform_export_assignment(s, e, true),
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                self.transform_export_assignment(s, e)
+            }
             StmtKind::Fn(_)
             | StmtKind::Class(_)
             | StmtKind::Interface(_)
@@ -2620,9 +2438,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let is_written = match kind {
             StmtKind::TypeAlias(a) => {
                 self.enter(bound.alias_scope[a.idx()]);
-                self.tracker.get_symbol_accessibility_diagnostic = Context::TypeAlias(a);
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 for tp in hir[a].type_params.iter() {
-                    self.visit_type_parameter(tp, 4083);
+                    self.visit_type_parameter(tp);
                 }
                 self.visit_type(hir[a].ty, true);
                 true
@@ -2630,14 +2448,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
             StmtKind::Interface(i) => {
                 self.enter(bound.interface_scope[i.idx()]);
                 for tp in hir[i].type_params.iter() {
-                    self.visit_type_parameter(tp, 4004);
+                    self.visit_type_parameter(tp);
                 }
-                let name = (
-                    hir[i].name_pos,
-                    self.c.end_of_name_at(self.file(), hir[i].name_pos),
-                );
                 for node in hir.ids(hir[i].extends) {
-                    self.visit_heritage_type(node, 4022, name);
+                    self.visit_heritage_type(node);
                 }
                 for m in hir[i].members.iter() {
                     self.visit_member(m);
@@ -2647,10 +2461,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
             StmtKind::Fn(f) => {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                     self.c
-                        .iso_report_expandos(isolated_declarations, SyntaxNode::Stmt(s));
+                        .iso_report_expandos(isolated_declarations, hir.node(s));
                 }
                 self.enter(bound.fns[f.idx()].scope);
-                self.tracker.get_symbol_accessibility_diagnostic = Context::Return(f);
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 self.transform_signature(f);
                 true
             }
@@ -2694,7 +2508,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && !names.is_empty()
         {
             let saved = self.tracker.get_symbol_accessibility_diagnostic;
-            self.tracker.get_symbol_accessibility_diagnostic = Context::ImportEquals(i, s);
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
             // The name comes after the `=`.
             let after_name = self.c.end_of_name_at(self.file(), hir[i].name_pos);
             let equals = self.c.skip_trivia_from(self.file(), after_name);
@@ -2763,11 +2577,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 ..Enclosing::at_scope(self.file(), scope)
             };
             if !self.suppresses_new_contexts {
-                self.tracker.get_symbol_accessibility_diagnostic = Context::Variable(pat);
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
             }
             if matches!(hir[pat].kind, PatKind::Ident(_)) {
                 self.suppresses_new_contexts = true;
-                self.ensure_type(Typed::Variable(d), false);
+                self.ensure_type(hir.node(d), false);
             } else {
                 self.recreate_binding_pattern(pat, true);
             }
@@ -2795,7 +2609,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             match hir[element].kind {
                 PatKind::Missing => {}
-                PatKind::Ident(_) => self.ensure_type(Typed::Element(element), false),
+                PatKind::Ident(_) => self.ensure_type(hir.parent(hir.node(element)), false),
                 _ => self.recreate_binding_pattern(element, only_visible),
             }
         }
@@ -2806,31 +2620,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let class = hir[c];
         self.enter(bound.class_scope[c.idx()]);
-        let name = if class.name.is_some() {
-            (
-                class.name_pos,
-                self.c.end_of_name_at(self.file(), class.name_pos),
-            )
-        } else {
-            (0, 0)
-        };
-        self.tracker.error_name_node = class.name.is_some().then_some(NameNode {
-            start: name.0,
-            end: name.1,
-            of_variable: false,
-        });
-        let (start, end) = self.c.error_range_of_stmt(self.file(), s);
-        self.tracker.fallback_stack.push(FallbackNode {
-            start,
-            end,
-            name,
-            unnamed: "(Missing)",
-        });
+        self.tracker.error_name_node = hir.name(hir.node(s));
+        self.tracker.fallback_stack.push(hir.node(s));
         for tp in class.type_params.iter() {
-            self.visit_type_parameter(tp, 4002);
+            self.visit_type_parameter(tp);
         }
         self.build_class_members(c);
-        self.visit_class_heritage(c, name, true);
+        self.visit_class_heritage(c);
         self.tracker.fallback_stack.pop();
     }
 
@@ -2843,17 +2639,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.in_class_expression = true;
         self.build_class_members(c);
         for tp in class.type_params.iter() {
-            self.visit_type_parameter(tp, 0);
+            self.visit_type_parameter(tp);
         }
-        let name = if class.name.is_some() {
-            (
-                class.name_pos,
-                self.c.end_of_name_at(self.file(), class.name_pos),
-            )
-        } else {
-            (0, 0)
-        };
-        self.visit_class_heritage(c, name, false);
+        self.visit_class_heritage(c);
         (self.enclosing, self.in_class_expression) = saved;
     }
 
@@ -2873,9 +2661,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 if !hir[p].flags.contains(Flags::PARAMETER_PROPERTY) {
                     continue;
                 }
-                self.tracker.get_symbol_accessibility_diagnostic = self.context_of_parameter(p);
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
                 match hir[hir[p].pat].kind {
-                    PatKind::Ident(_) => self.ensure_type(Typed::Parameter(p), false),
+                    PatKind::Ident(_) => self.ensure_type(hir.node(p), false),
                     _ => self.recreate_binding_pattern(hir[p].pat, false),
                 }
             }
@@ -2968,26 +2756,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// The heritage clauses of a class whose name is written at `name`. `is_declaration`: what it extends is written as a variable
-    /// of its type if it is no name.
-    fn visit_class_heritage(&mut self, c: ClassId, name: (u32, u32), is_declaration: bool) {
+    /// The heritage clauses of a class. What a class declaration extends is written as a variable of its type if it is no name.
+    fn visit_class_heritage(&mut self, c: ClassId) {
         let hir = self.c.hir(self.file());
-        let class = hir[c];
+        let (class, base) = (hir[c], hir.node(c).with(Part::Base));
         if class.extends.is_some() {
-            let node = (
-                self.c.start_of(self.file(), class.extends),
-                self.c.end_of_class_extends(self.file(), c),
-            );
-            if is_entity_name_expression(self.c.hir(self.file()), class.extends) {
+            if is_entity_name_expression(hir, class.extends) {
                 let saved = self.tracker.get_symbol_accessibility_diagnostic;
                 if !self.suppresses_new_contexts {
-                    let code = match (is_declaration, name != (0, 0)) {
-                        (false, _) => 4022,
-                        (true, true) => 4020,
-                        (true, false) => 4021,
-                    };
-                    self.tracker.get_symbol_accessibility_diagnostic =
-                        Context::Heritage(code, name, node);
+                    self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(base);
                 }
                 if let Some((first, start)) = self.c.first_identifier(self.file(), class.extends) {
                     self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
@@ -2996,11 +2773,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     self.visit_type(argument, false);
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = saved;
-            } else if is_declaration && !matches!(hir[class.extends].kind, ExprKind::Null) {
-                self.tracker.get_symbol_accessibility_diagnostic =
-                    Context::Heritage(4020, name, node);
+            } else if hir.kind(hir.node(c)) == Kind::ClassDeclaration
+                && !matches!(hir[class.extends].kind, ExprKind::Null)
+            {
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ExtendsClause(base);
                 let file = self.file();
-                let expression = self.c.iso_written(file, class.extends);
+                let expression = hir.child(class.extends);
                 self.tracker
                     .report_inference_fallback(self.c, file, expression);
                 self.create_type_of_expression(class.extends);
@@ -3009,28 +2787,24 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 }
             }
         }
-        let code = if is_declaration { 4019 } else { 4022 };
         for node in hir.ids(class.implements) {
-            self.visit_heritage_type(node, code, name);
+            self.visit_heritage_type(node);
         }
     }
 
     /// `transformExpressionWithTypeArguments`, of what a class implements or an interface extends.
-    fn visit_heritage_type(&mut self, node: TypeNodeId, code: u32, name: (u32, u32)) {
+    fn visit_heritage_type(&mut self, node: TypeNodeId) {
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
-            let range = (
-                self.c.hir(self.file())[node].pos,
-                self.c.end_of_type_node(self.file(), node),
-            );
-            self.tracker.get_symbol_accessibility_diagnostic = Context::Heritage(code, name, range);
+            let node = self.c.hir(self.file()).node(node);
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(node);
         }
         self.visit_type(node, false);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
     }
 
     /// `transformExportAssignment`
-    fn transform_export_assignment(&mut self, s: StmtId, e: ExprId, is_export_equals: bool) {
+    fn transform_export_assignment(&mut self, s: StmtId, e: ExprId) {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         if matches!(hir[e].kind, ExprKind::Ident(_))
             && !is_parenthesized(self.c.hir(self.file()), e)
@@ -3058,118 +2832,57 @@ impl<'p> DeclarationEmit<'_, 'p> {
             ExprKind::Fn(f) => return self.transform_signature(f),
             _ => {}
         }
-        let (start, end) = (hir[s].start, self.c.end_of_stmt(self.file(), s));
-        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(start, end);
+        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(hir.node(s));
         // `IsPrimitiveLiteralValue`: it is written as it is.
         if self.c.iso_is_primitive_literal(self.file(), e, true) {
             return;
         }
-        self.tracker.fallback_stack.push(FallbackNode {
-            start,
-            end,
-            name: (0, 0),
-            unnamed: if is_export_equals {
-                "export="
-            } else {
-                "default"
-            },
-        });
-        self.ensure_type(Typed::Export(s, e), false);
+        self.tracker.fallback_stack.push(hir.node(s));
+        self.ensure_type(hir.node(s), false);
         self.tracker.fallback_stack.pop();
     }
 
     // ───────────────────────────── members and signatures ─────────────────────────────
 
-    /// `IsImplementationOfOverload`
+    /// `IsImplementationOfOverload`. `getSignaturesOfSymbol` has one for each declaration that is a function, but for the implementation.
     fn is_implementation_of_overload(&self, f: FnId) -> bool {
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        if matches!(hir[f].body, FnBody::None) {
+        let symbol = match bound.fns[f.idx()].owner {
+            FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
+            // What has a computed name has its symbol from late binding.
+            FnOwner::Member(m) if !matches!(hir[m].key, PropKey::Computed(_)) => {
+                bound.member_symbol[m.idx()]
+            }
+            _ => return false,
+        };
+        let is_function_like = |&&(file, decl): &&(FileId, Decl)| match decl {
+            Decl::Fn(_) => true,
+            Decl::Member(m) => self.c.hir(file)[m].func.is_some(),
+            _ => false,
+        };
+        if symbol.is_none() || matches!(hir[f].body, FnBody::None) {
             return false;
         }
-        match bound.fns[f.idx()].owner {
-            FnOwner::Stmt(_) => {
-                let symbol = bound.fn_symbol[f.idx()];
-                symbol.is_some()
-                    && files
-                        .decls_of(files.sym(self.file(), symbol))
-                        .iter()
-                        .filter(|d| matches!(d.1, Decl::Fn(_)))
-                        .count()
-                        > 1
-            }
-            FnOwner::Member(m) => {
-                let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                    return false;
-                };
-                let member = hir[m];
-                hir[c]
-                    .members
-                    .iter()
-                    .filter(|&other| {
-                        let other = &hir[other];
-                        other.kind == member.kind
-                            && other.key == member.key
-                            && other.flags.contains(Flags::STATIC)
-                                == member.flags.contains(Flags::STATIC)
-                    })
-                    .count()
-                    > 1
-            }
-            _ => false,
-        }
+        let declarations = files.decls_of(files.sym(self.file(), symbol));
+        declarations.iter().filter(is_function_like).count() > 1
     }
 
     /// `GetEffectiveDeclarationFlags(node, ModifierFlagsPrivate) != 0`, of what has parameters.
     fn is_private_function(&self, f: FnId) -> bool {
-        match self.c.bound(self.file()).fns[f.idx()].owner {
-            FnOwner::Member(m) => self.c.hir(self.file())[m].flags.contains(Flags::PRIVATE),
-            _ => false,
-        }
-    }
-
-    /// `createGetSymbolAccessibilityDiagnosticForNode`, of a parameter.
-    fn context_of_parameter(&self, p: ParamId) -> Context {
-        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        let f = bound.param_fn[p.idx()];
-        if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-            && hir[f].kind == FnKind::Constructor
-            && self.is_private_function(f)
-        {
-            Context::ParameterProperty(p)
-        } else {
-            Context::Parameter(p)
-        }
-    }
-
-    /// `getTypeParameterConstraintVisibilityDiagnosticMessage`, of a type parameter of `f`. 0: there is none.
-    fn type_parameter_code(&self, f: FnId) -> u32 {
-        match self.c.hir(self.file())[f].kind {
-            FnKind::ConstructorType | FnKind::ConstructSignature => 4006,
-            FnKind::CallSignature => 4008,
-            FnKind::Method => match self.c.bound(self.file()).fns[f.idx()].owner {
-                FnOwner::Member(m) => match self.tracker.place_of_member(self.c, m) {
-                    (true, _) => 4010,
-                    (false, true) => 4012,
-                    (false, false) => 4014,
-                },
-                _ => 0,
-            },
-            FnKind::FunctionType | FnKind::Decl => 4016,
-            _ => 0,
-        }
+        let hir = self.c.hir(self.file());
+        hir.flags(hir.node(f)).contains(Flags::PRIVATE)
     }
 
     /// `ensureTypeParams`, `updateParamList`, `ensureType`
     fn transform_signature(&mut self, f: FnId) {
         if !self.is_private_function(f) {
-            let code = self.type_parameter_code(f);
             for tp in self.c.hir(self.file())[f].type_params.iter() {
-                self.visit_type_parameter(tp, code);
+                self.visit_type_parameter(tp);
             }
         }
         self.update_param_list(f);
-        self.ensure_type(Typed::Signature(f), false);
+        self.ensure_type(self.c.hir(self.file()).node(f), false);
     }
 
     /// `updateParamList`
@@ -3186,12 +2899,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `ensureParameter`
     fn ensure_parameter(&mut self, p: ParamId) {
+        let hir = self.c.hir(self.file());
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
-            self.tracker.get_symbol_accessibility_diagnostic = self.context_of_parameter(p);
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
         }
-        self.visit_binding_name(self.c.hir(self.file())[p].pat);
-        self.ensure_type(Typed::Parameter(p), true);
+        self.visit_binding_name(hir[p].pat);
+        self.ensure_type(hir.node(p), true);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
     }
 
@@ -3219,15 +2933,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `visitDeclarationSubtree`, of a type parameter. `code`: of the error if what it extends cannot be named.
-    fn visit_type_parameter(&mut self, tp: TypeParamId, code: u32) {
+    /// `visitDeclarationSubtree`, of a type parameter.
+    fn visit_type_parameter(&mut self, tp: TypeParamId) {
+        let hir = self.c.hir(self.file());
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
-            self.tracker.get_symbol_accessibility_diagnostic = Context::TypeParameter(tp, code);
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(tp));
         }
-        let parameter = self.c.hir(self.file())[tp];
-        self.visit_type(parameter.constraint, false);
-        self.visit_type(parameter.default, false);
+        self.visit_type(hir[tp].constraint, false);
+        self.visit_type(hir[tp].default, false);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
     }
 
@@ -3287,18 +3001,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.enter(bound.fns[f.idx()].scope);
         }
         if !self.suppresses_new_contexts {
-            self.tracker.get_symbol_accessibility_diagnostic = match member.kind {
-                MemberKind::Property => Context::Property(m),
-                MemberKind::Getter | MemberKind::Setter => Context::Accessor(m),
-                MemberKind::Constructor => Context::None,
-                _ => Context::Return(f),
-            };
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(m));
         }
         let is_private = member.flags.contains(Flags::PRIVATE);
         let is_written = !matches!(member.key, PropKey::Private(_));
         if is_written {
             match member.kind {
-                MemberKind::Property => self.ensure_type(Typed::Property(m), false),
+                MemberKind::Property => self.ensure_type(hir.node(m), false),
                 // `omitPrivateMethodType`
                 MemberKind::Method if is_private => {}
                 MemberKind::Method | MemberKind::CallSignature | MemberKind::ConstructSignature => {
@@ -3309,7 +3018,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     if !is_private {
                         self.visit_type(hir[f].this_ty(hir), false);
                     }
-                    self.ensure_type(Typed::Signature(f), false);
+                    self.ensure_type(hir.node(m), false);
                 }
                 // `updateAccessorParamList`
                 MemberKind::Setter => {
@@ -3333,11 +3042,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && let Some((first, start)) = self.c.first_identifier(self.file(), key)
         {
             if !self.suppresses_new_contexts {
-                self.tracker.get_symbol_accessibility_diagnostic = match member.kind {
-                    MemberKind::Getter | MemberKind::Setter => Context::Property(m),
-                    MemberKind::Method => Context::MethodName(m),
-                    _ => self.tracker.get_symbol_accessibility_diagnostic,
-                };
+                self.tracker.get_symbol_accessibility_diagnostic =
+                    Context::ForNodeName(hir.node(m));
             }
             self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
         }
@@ -3414,9 +3120,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             TypeNodeKind::Fn(f) => {
                 let saved = self.enclosing;
                 self.enter(bound.fns[f.idx()].scope);
-                let code = self.type_parameter_code(f);
                 for tp in hir[f].type_params.iter() {
-                    self.visit_type_parameter(tp, code);
+                    self.visit_type_parameter(tp);
                 }
                 self.update_param_list(f);
                 self.visit_type(hir[f].ret, false);
@@ -3444,14 +3149,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.enclosing = saved;
                 self.visit_type(no, false);
             }
-            TypeNodeKind::Infer(tp) => self.visit_type_parameter(tp, 4085),
+            TypeNodeKind::Infer(tp) => self.visit_type_parameter(tp),
             TypeNodeKind::Mapped(m) => {
                 let mapped = hir[m];
                 let saved = (self.enclosing, self.suppresses_new_contexts);
                 self.enter(bound.type_param_scope[mapped.param.idx()]);
                 self.suppresses_new_contexts |= !is_alias_body;
                 self.visit_type(mapped.ty, false);
-                self.visit_type_parameter(mapped.param, 4103);
+                self.visit_type_parameter(mapped.param);
                 self.visit_type(mapped.name_ty, false);
                 (self.enclosing, self.suppresses_new_contexts) = saved;
             }
@@ -3474,13 +3179,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
     // ───────────────────────────── types that are not ─────────────────────────────
 
     /// `shouldPrintWithInitializer`: the literal type of a constant that is written with its value.
-    fn literal_const_type(&mut self, node: Typed) -> Option<TypeId> {
+    fn literal_const_type(&mut self, node: Node) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
-        let ty = match node {
-            Typed::Variable(d) if hir[d].kind == VarKind::Const && hir[d].init.is_some() => {
+        let ty = match hir.data(node) {
+            NodeData::VarDecl(d) if hir[d].kind == VarKind::Const && hir[d].init.is_some() => {
                 self.c.type_of_pat(self.file(), hir[d].pat)
             }
-            Typed::Property(m)
+            NodeData::Member(m)
                 if hir[m].flags.contains(Flags::READONLY) && hir[m].init.is_some() =>
             {
                 self.c.iso_type_of_member(self.file(), m)
@@ -3491,34 +3196,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `ensureType`
-    fn ensure_type(&mut self, node: Typed, ignores_private: bool) {
-        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        let member_of = |f: FnId| match bound.fns[f.idx()].owner {
-            FnOwner::Member(m) => Some(m),
-            _ => None,
-        };
-        let modifiers = match node {
-            Typed::Property(m) => hir[m].flags,
-            Typed::Parameter(p) => hir[p].flags,
-            Typed::Signature(f) => member_of(f).map_or(Flags::empty(), |m| hir[m].flags),
-            _ => Flags::empty(),
-        };
+    fn ensure_type(&mut self, node: Node, ignores_private: bool) {
+        let file = self.file();
+        let hir = self.c.hir(file);
         // What is private has no type, but for the parameter of a private parameter property.
-        if !ignores_private && modifiers.contains(Flags::PRIVATE) {
+        if !ignores_private && hir.flags(node).contains(Flags::PRIVATE) {
             return;
         }
         if let Some(literal) = self.literal_const_type(node) {
-            let file = self.file();
-            let declaration = match node {
-                Typed::Variable(d) => Some((SyntaxNode::Var(d), hir[d].init)),
-                Typed::Property(m) => Some((SyntaxNode::Member(m), hir[m].init)),
-                _ => None,
+            // `unwrapParenthesizedExpression(node.Initializer())`: the stored expression id excludes the parentheses.
+            let initializer = match hir.data(node) {
+                NodeData::VarDecl(d) => hir[d].init,
+                NodeData::Member(m) => hir[m].init,
+                _ => ExprId::NONE,
             };
-            if let Some((declaration, initializer)) = declaration
-                && !self.c.iso_is_primitive_literal(file, initializer, true)
-            {
-                self.tracker
-                    .report_inference_fallback(self.c, file, declaration);
+            if initializer.is_some() && !self.c.iso_is_primitive_literal(file, initializer, true) {
+                self.tracker.report_inference_fallback(self.c, file, node);
             }
             // `CreateLiteralConstValue`: a member of an enum is named.
             if let TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } =
@@ -3529,16 +3222,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             return;
         }
-        let annotation = match node {
-            Typed::Variable(d) => hir[d].ty,
-            Typed::Property(m) => hir[m].ty,
-            Typed::Parameter(p) => hir[p].ty,
-            Typed::Signature(f) => hir[f].ret,
-            Typed::Element(_) | Typed::Export(..) => TypeNodeId::NONE,
-        };
-        let file = self.file();
-        if annotation.is_some()
-            && !matches!(node, Typed::Parameter(p)
+        // An export assignment and a binding element have none.
+        if let NodeData::Type(annotation) = hir.data(hir.type_node(node))
+            && !matches!(hir.data(node), NodeData::Param(p)
                 if self.c.requires_adding_implicit_undefined(file, p, Some(self.enclosing)))
         {
             return self.visit_type(annotation, false);
@@ -3547,86 +3233,38 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.tracker.error_name_node,
             self.tracker.get_symbol_accessibility_diagnostic,
         );
-        let name = match node {
-            Typed::Variable(d) => Some(self.tracker.range_of_pat(self.c, hir[d].pat)),
-            Typed::Element(pat) => Some(self.tracker.range_of_pat(self.c, pat)),
-            Typed::Property(m) => Some(self.tracker.name_range_of_member(self.c, m)),
-            Typed::Parameter(p) => Some(self.tracker.range_of_pat(self.c, hir[p].pat)),
-            Typed::Signature(f) => match member_of(f) {
-                Some(m) => matches!(
-                    hir[m].kind,
-                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-                )
-                .then(|| self.tracker.name_range_of_member(self.c, m)),
-                None => hir[f].name.is_some().then(|| {
-                    (
-                        hir[f].name_pos,
-                        self.c.end_of_name_at(self.file(), hir[f].name_pos),
-                    )
-                }),
-            },
-            Typed::Export(..) => None,
-        };
-        self.tracker.error_name_node = name.map(|(start, end)| NameNode {
-            start,
-            end,
-            of_variable: matches!(node, Typed::Variable(_)),
-        });
-        if !self.suppresses_new_contexts {
-            self.tracker.get_symbol_accessibility_diagnostic = match node {
-                Typed::Variable(d) => Context::Variable(hir[d].pat),
-                Typed::Element(pat) => Context::Variable(pat),
-                Typed::Property(m) => Context::Property(m),
-                Typed::Parameter(p) => self.context_of_parameter(p),
-                Typed::Signature(f) => match (hir[f].kind, member_of(f)) {
-                    (FnKind::Getter | FnKind::Setter, Some(m)) => Context::Accessor(m),
-                    (FnKind::Constructor, _) => Context::None,
-                    (FnKind::Expr | FnKind::Arrow, _) => {
-                        self.tracker.get_symbol_accessibility_diagnostic
-                    }
-                    _ => Context::Return(f),
-                },
-                Typed::Export(..) => self.tracker.get_symbol_accessibility_diagnostic,
-            };
+        self.tracker.error_name_node = hir.name(node);
+        if !self.suppresses_new_contexts && can_produce_diagnostics(hir.kind(node)) {
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(node);
         }
         let flags = if self.in_class_expression {
             DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
         } else {
             DECLARATION_EMIT_NODE_BUILDER_FLAGS
         };
-        let file = self.file();
-        match node {
+        let ty = match hir.data(node) {
+            NodeData::Stmt(s) => match hir[s].kind {
+                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                    Some(self.type_of_export_assignment(s, e))
+                }
+                _ => None,
+            },
+            _ if self.c.iso_has_inferred_type(file, node) => {
+                self.c.iso_type_of_declared(file, node)
+            }
+            _ => None,
+        };
+        if let Some(ty) = ty {
+            self.create_type_of_declaration(Some(node), ty, flags);
+        } else if let Some(f) = hir.function_of(node).some() {
             // `CreateReturnTypeOfSignatureDeclaration`
-            Typed::Signature(f) => {
-                self.c.serialize_return_type_for_signature(
-                    file,
-                    f,
-                    self.enclosing,
-                    flags,
-                    &mut self.tracker,
-                );
-            }
-            Typed::Variable(d) => {
-                let ty = self.c.type_of_pat(file, hir[d].pat);
-                self.create_type_of_declaration(Some(SyntaxNode::Var(d)), ty, flags);
-            }
-            Typed::Element(pat) => {
-                let ty = self.c.type_of_pat(file, pat);
-                let element = self.c.iso_owner_of_pattern(file, pat);
-                self.create_type_of_declaration(element, ty, flags);
-            }
-            Typed::Property(m) => {
-                let ty = self.c.iso_type_of_member(file, m);
-                self.create_type_of_declaration(Some(SyntaxNode::Member(m)), ty, flags);
-            }
-            Typed::Parameter(p) => {
-                let ty = self.c.type_of_param(file, p);
-                self.create_type_of_declaration(Some(SyntaxNode::Param(p)), ty, flags);
-            }
-            Typed::Export(s, e) => {
-                let ty = self.type_of_export_assignment(s, e);
-                self.create_type_of_declaration(Some(SyntaxNode::Stmt(s)), ty, flags);
-            }
+            self.c.serialize_return_type_for_signature(
+                file,
+                f,
+                self.enclosing,
+                flags,
+                &mut self.tracker,
+            );
         }
         self.tracker.error_name_node = saved.0;
         if !self.suppresses_new_contexts {
@@ -3661,12 +3299,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `CreateTypeOfDeclaration`, of a declaration of this file whose symbol has the type `ty`.
-    fn create_type_of_declaration(
-        &mut self,
-        declaration: Option<SyntaxNode>,
-        ty: TypeId,
-        flags: u32,
-    ) {
+    fn create_type_of_declaration(&mut self, declaration: Option<Node>, ty: TypeId, flags: u32) {
         let file = self.file();
         self.c.serialize_type_for_declaration(
             file,
@@ -3777,7 +3410,7 @@ fn normalized_name(path: &[u8]) -> Vec<u8> {
 fn package_name_from_types_package_name(name: &[u8]) -> Vec<u8> {
     match name.strip_prefix(b"@types/") {
         Some(mangled) => match mangled.split_once_str(b"__") {
-            Some((scope, rest)) => [&b"@"[..], &scope[..], b"/", &rest[..]].concat(),
+            Some((scope, rest)) => [&b"@"[..], scope, b"/", rest].concat(),
             None => mangled.to_vec(),
         },
         None => name.to_vec(),
@@ -4422,7 +4055,7 @@ impl<'p> Checker<'p> {
         };
         // `tryGetModuleNameFromPackageJsonImports` is not ported: nothing is called by a `#name` yet.
         let maybe_non_relative = self.try_get_module_name_from_paths(
-            &relative_normalized::<Posix, true>(base_directory, module_file_name).to_vec(),
+            relative_normalized::<Posix, true>(base_directory, module_file_name),
             allowed_endings,
             base_directory,
         );
@@ -4676,7 +4309,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSymbolChain`. `endOfChain`: `depth` is 0.
-    fn symbol_chain_ex(
+    pub(super) fn symbol_chain_ex(
         &mut self,
         symbol: Sym,
         at: Enclosing,
@@ -4777,5 +4410,46 @@ impl<'p> Checker<'p> {
             }
         }
         (specifier, mode)
+    }
+}
+
+/// `canProduceDiagnostics`
+fn can_produce_diagnostics(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::VariableDeclaration
+            | Kind::PropertyDeclaration
+            | Kind::PropertySignature
+            | Kind::BindingElement
+            | Kind::SetAccessor
+            | Kind::GetAccessor
+            | Kind::ConstructSignature
+            | Kind::CallSignature
+            | Kind::MethodDeclaration
+            | Kind::MethodSignature
+            | Kind::FunctionDeclaration
+            | Kind::Parameter
+            | Kind::TypeParameter
+            | Kind::ExpressionWithTypeArguments
+            | Kind::ImportEqualsDeclaration
+            | Kind::TypeAliasDeclaration
+            | Kind::Constructor
+            | Kind::IndexSignature
+            | Kind::PropertyAccessExpression
+            | Kind::ElementAccessExpression
+            | Kind::BinaryExpression
+            | Kind::CallExpression
+    )
+}
+
+/// `GetNameOfDeclaration`
+fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
+    match hir.data(node) {
+        NodeData::Expr(e) => match hir[e].kind {
+            // `GetElementOrPropertyAccessName`
+            ExprKind::Assign { target, .. } => hir.name(hir.node(target)),
+            _ => hir.name(node),
+        },
+        _ => hir.name(node),
     }
 }

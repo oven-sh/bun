@@ -149,6 +149,9 @@ pub struct Request<'a> {
     pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
     pub only: Option<&'a [u8]>,
+    /// Files are started in the order of rank * `order` (mod 2^32). 1 = program order. Any other odd number is a fixed permutation.
+    /// The output does not depend on it. For tests of that property.
+    pub order: u32,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
     /// As `tsc` does: if something does not parse, that is all that is said. If the options do not go together, that is. Only then come the
@@ -844,9 +847,9 @@ fn check_what_is_named(
     if is_true(b"listFilesOnly") && request.stops_where_tsc_does {
         to_check.clear();
     }
-    // `program.files`: what is imported comes before what imports it, so a file's own walk is the first to come to what it declares.
-    // Who asks first is a fact of the program: neither the name of a directory nor a clock has a say.
-    to_check.sort_by_key(|&f| program.files.rank_of_file(f));
+    // Program order (`program.files`): an imported file precedes its importers. The start order is determined by the program, not by
+    // paths or timing.
+    to_check.sort_by_key(|&f| program.files.rank_of_file(f).wrapping_mul(request.order));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     if let Some(progress) = request.progress {
@@ -858,6 +861,8 @@ fn check_what_is_named(
         progress.to_check.store(to_check.len(), Ordering::Relaxed);
     }
     let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    // `GetDeclarationDiagnostics`
+    let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // The text of the default library is not kept.
@@ -869,7 +874,7 @@ fn check_what_is_named(
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
     };
-    let show = |file: FileId, errors: Vec<Explained>| {
+    let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Diagnostic>>| {
         if errors.is_empty() {
             return;
         }
@@ -933,6 +938,17 @@ fn check_what_is_named(
         checker.set_stack_limit(bun_core::StackCheck::init().remaining());
         checker
     };
+    let finish_file = |checker: &mut bun_sema::check::Checker<'_>, file, mut checked: Checked| {
+        let declaration = checked.take_declaration_diagnostics();
+        show(file, checker.finish_file(file, checked), &found);
+        if let Some(declaration) = declaration {
+            show(
+                file,
+                checker.finish_file(file, declaration),
+                &emit_diagnostics,
+            );
+        }
+    };
     // What was found in the files that the checker of another file may still report in.
     let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
     let check_file = |file: FileId, only_syntax: bool| {
@@ -953,7 +969,7 @@ fn check_what_is_named(
         }
         // Nothing refers to a file that is only at hand for now, and what does not parse is nobody else's business.
         if only_syntax || module.is_transient {
-            show(file, checker.finish_file(file, checked));
+            finish_file(&mut checker, file, checked);
         } else {
             unfinished.lock().push((file, checked));
         }
@@ -967,7 +983,7 @@ fn check_what_is_named(
         for_each_parallel(threads, unfinished.len(), &|i| {
             let (file, checked) = unfinished[i].lock().take().unwrap();
             if !program.has_nothing_to_finish(file, &checked) {
-                show(file, new_checker(false).finish_file(file, checked));
+                finish_file(&mut new_checker(false), file, checked);
             }
         });
     };
@@ -990,6 +1006,27 @@ fn check_what_is_named(
     // `GetDiagnosticsOfAnyProgram`: TypeScript's command line goes on to the next kind of error only if there is none of the last. What
     // does not parse, or is checked under options that make no sense, gives errors that are not worth reading.
     let stops = request.stops_where_tsc_does;
+    let check_files = || {
+        for_each_parallel(threads, to_check.len(), &take);
+        finish_files();
+    };
+    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the declaration transformer
+    // reports under `noEmit` too (`emitDeclarationFile`). `HandleNoEmitOnError` skips `Emit`, and so does `noEmit` on an incremental
+    // program. Every `tsc -b` program is incremental. Otherwise this models `tsc -p --noEmit`.
+    let options = &program.files.options;
+    let emits_despite_errors = options.emits_declarations
+        && !options.no_emit_on_error
+        && !match owned_elsewhere {
+            Some(_) => options.no_emit,
+            None => options.is_incremental,
+        };
+    let emit_on_early_exit = || -> Vec<Diagnostic> {
+        if emits_despite_errors {
+            check_files();
+            found.lock().clear();
+        }
+        std::mem::take(&mut *emit_diagnostics.lock())
+    };
     'stages: {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
@@ -1001,10 +1038,11 @@ fn check_what_is_named(
                 .map(|i| FileId(i as u32))
                 .collect();
             for_each_parallel(threads, suspects.len(), &|i| check_file(suspects[i], true));
-            let mut found = found.lock();
-            if !found.is_empty() {
-                report.diagnostics.append(&mut found);
+            let syntactic = std::mem::take(&mut *found.lock());
+            if !syntactic.is_empty() {
+                report.diagnostics.extend(syntactic);
                 report.files_checked = 0;
+                report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
         }
@@ -1013,13 +1051,21 @@ fn check_what_is_named(
             report.diagnostics.extend(global_errors());
             if report.diagnostics.len() > said_at_any_rate {
                 report.files_checked = 0;
+                report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
         }
-        for_each_parallel(threads, to_check.len(), &take);
-        finish_files();
+        check_files();
         report.diagnostics.append(&mut found.lock());
         report.diagnostics.extend(global_errors());
+        // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
+        let is_error = |d: &Diagnostic| d.category == Category::Error;
+        if !stops
+            || emits_despite_errors
+            || !report.diagnostics[said_at_any_rate..].iter().any(is_error)
+        {
+            report.diagnostics.append(&mut emit_diagnostics.lock());
+        }
         // `iterateBaseline`: whoever writes something for every file does so for the files that are not checked as well.
         if let Some(after_file) = request.after_file {
             let mut is_checked = vec![false; program.files.modules.len()];

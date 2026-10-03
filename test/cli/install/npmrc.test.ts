@@ -550,6 +550,149 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
 
+  test("an inline comment is not part of the registry url or the auth token", () => {
+    // ini cuts an unquoted value at the first unescaped `;` or `#`. With the
+    // comment left in, the registry URL no longer matched its `//host/` credential.
+    expect(
+      loadNpmrc(`
+registry=http://127.0.0.1:4873/ ; default registry
+//127.0.0.1:4873/:_authToken=SECRET # token
+`),
+    ).toEqual({
+      default_registry_url: "http://127.0.0.1:4873/",
+      default_registry_token: "SECRET",
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    });
+  });
+
+  // npm (nopt Boolean): a bare key or an empty value is true, `false`, `null`,
+  // `undefined` and a numeric zero are false, and every other string is true
+  test.each([
+    ["ignore-scripts", true],
+    ["ignore-scripts=", true],
+    ["ignore-scripts=true", true],
+    ["ignore-scripts='true'", true],
+    ["ignore-scripts=1", true],
+    ["ignore-scripts=2", true],
+    ["ignore-scripts=True", true],
+    ["ignore-scripts=TRUE", true],
+    ["ignore-scripts=yes", true],
+    ["ignore-scripts=on", true],
+    ["ignore-scripts=no", true],
+    ["ignore-scripts=off", true],
+    ["ignore-scripts=False", true],
+    ["ignore-scripts=false", false],
+    ['ignore-scripts="false"', false],
+    ["ignore-scripts=null", false],
+    ["ignore-scripts=0", false],
+    ["ignore-scripts=00", false],
+    ["ignore-scripts=0.0", false],
+    ["ignore-scripts=-0", false],
+    // a numeric string is `!!Number(value)`
+    ["ignore-scripts=0x0", false],
+    ["ignore-scripts=0o0", false],
+    ["ignore-scripts=0b0", false],
+    ["ignore-scripts=0e5", false],
+    ["ignore-scripts=0x1", true],
+    ["ignore-scripts=-0x0", true],
+    ["ignore-scripts=Infinity", true],
+    ["ignore-scripts=undefined", false],
+    ["ignore-scripts= 0 ", false],
+    ["ignore-scripts= 1 ", true],
+    ['ignore-scripts=" 0x0 "', false],
+    // ini JSON-parses a single-quoted value, so these reach the loader as numbers
+    ["ignore-scripts='1'", true],
+    ["ignore-scripts='0'", false],
+    ['ignore-scripts="1"', true],
+    ['ignore-scripts="0"', false],
+    ["ignore-scripts='null'", false],
+    ["ignore-scripts='{}'", true],
+    ["ignore-scripts='[]'", undefined],
+    // npm trims the value first
+    ['ignore-scripts=" false "', false],
+    ['ignore-scripts=" null "', false],
+    ['ignore-scripts="\\u000b"', true],
+    // the inline comment is cut before the value is coerced
+    ["ignore-scripts=false ; allow scripts", false],
+    ["ignore-scripts=0 # allow scripts", false],
+    ["ignore-scripts=true ; no scripts", true],
+    ["ignore-scripts = ; bare", true],
+  ])("boolean option: %s", (line, expected) => {
+    expect(loadNpmrc(line + "\n").ignore_scripts).toBe(expected);
+  });
+
+  // npm reads a literal empty value and a literal `undefined` before it expands
+  // ${VAR}. The same text from a variable goes through the numeric rule.
+  test.each([
+    ["ignore-scripts=${EMPTY}", false],
+    ["ignore-scripts=${EMPTY?}", false],
+    ["ignore-scripts=${EMPTY}${EMPTY}", false],
+    ['ignore-scripts="${EMPTY}"', false],
+    ["ignore-scripts=${EMPTY} ; comment", false],
+    ["ignore-scripts=${UNSET?}", false],
+    ['ignore-scripts="${UNSET?}"', false],
+    ["ignore-scripts=${BLANK}", false],
+    ['ignore-scripts="${BLANK}"', false],
+    ["ignore-scripts=${PADDED_FALSE}", false],
+    ["ignore-scripts=${UNDEFINED}", true],
+    ["ignore-scripts=${UNSET}", true],
+    ["ignore-scripts=${FALSE}", false],
+    ["ignore-scripts=${NULL}", false],
+    ["ignore-scripts=${ZERO}", false],
+    ["ignore-scripts=${HEX_ZERO}", false],
+    ["ignore-scripts=${ONE}", true],
+    ["ignore-scripts=${TRUE}", true],
+    // ini decodes the JSON escape, so this is a reference too
+    ['ignore-scripts="\\u0024{EMPTY}"', false],
+    ['ignore-scripts="\\u0024{UNDEFINED}"', true],
+    // a single-quoted value that is not JSON keeps its text and still expands
+    ["ignore-scripts='${EMPTY}'", false],
+    ["ignore-scripts='${UNDEFINED}'", true],
+    // the reference is in the comment, so the value is a literal
+    ["ignore-scripts= ; ${EMPTY}", true],
+    ["ignore-scripts=undefined ; ${EMPTY}", false],
+  ])("boolean option from the environment: %s", (line, expected) => {
+    const env = {
+      EMPTY: "",
+      BLANK: " ",
+      PADDED_FALSE: " false ",
+      UNDEFINED: "undefined",
+      FALSE: "false",
+      NULL: "null",
+      ZERO: "0",
+      HEX_ZERO: "0x0",
+      ONE: "1",
+      TRUE: "true",
+    };
+    expect(loadNpmrc(line + "\n", env).ignore_scripts).toBe(expected);
+  });
+
+  test("a value from a variable does not change how the other values in the file are read", () => {
+    const npmrc = 'ignore-scripts=${EMPTY}\nsave-exact=""\nhoist="${EMPTY}"\nlink-workspace-packages=\n';
+    expect(loadNpmrc(npmrc, { EMPTY: "" })).toMatchObject({
+      ignore_scripts: false,
+      save_exact: true,
+      hoist: false,
+      link_workspace_packages: true,
+    });
+  });
+
+  test("every boolean option uses the same coercion", () => {
+    expect(loadNpmrc("save-exact=1\nlink-workspace-packages=0\nhoist=TRUE\n")).toMatchObject({
+      save_exact: true,
+      link_workspace_packages: false,
+      hoist: true,
+    });
+    expect(loadNpmrc("registry=https://somehost.com/\n")).toMatchObject({
+      ignore_scripts: undefined,
+      save_exact: undefined,
+      link_workspace_packages: undefined,
+      hoist: undefined,
+    });
+  });
+
   describe("credentials keyed to a bracketed IPv6 host", () => {
     // The `//` is stripped off the key before it is parsed as a URL, leaving
     // `[::1]:4873/`. A leading `[` used to parse to an empty host, so these keys

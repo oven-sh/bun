@@ -120,9 +120,16 @@ impl IniTestingAPIs {
             default_registry_username: BunString,
             default_registry_password: BunString,
             default_registry_email: BunString,
+            ignore_scripts: Option<bool>,
+            link_workspace_packages: Option<bool>,
+            save_exact: Option<bool>,
+            hoist: Option<bool>,
+        }
+        fn optional_bool(b: Option<bool>) -> JSValue {
+            b.map_or(JSValue::UNDEFINED, JSValue::js_boolean)
         }
         impl bun_jsc::js_object::PojoFields for Pojo {
-            const FIELD_COUNT: usize = 5;
+            const FIELD_COUNT: usize = 9;
             fn put_fields(
                 &self,
                 global: &JSGlobalObject,
@@ -148,6 +155,13 @@ impl IniTestingAPIs {
                     b"default_registry_email",
                     self.default_registry_email.to_js(global)?,
                 )?;
+                put(b"ignore_scripts", optional_bool(self.ignore_scripts))?;
+                put(
+                    b"link_workspace_packages",
+                    optional_bool(self.link_workspace_packages),
+                )?;
+                put(b"save_exact", optional_bool(self.save_exact))?;
+                put(b"hoist", optional_bool(self.hoist))?;
                 Ok(())
             }
         }
@@ -157,6 +171,10 @@ impl IniTestingAPIs {
             default_registry_username,
             default_registry_password,
             default_registry_email,
+            ignore_scripts: install.ignore_scripts,
+            link_workspace_packages: install.link_workspace_packages,
+            save_exact: install.exact,
+            hoist: install.hoist,
         };
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }

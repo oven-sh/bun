@@ -31,87 +31,6 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
-/// `[dir]` of an output that is named after a file in `dir`.
-fn dir_placeholder(this: &LinkerContext, dir: &[u8]) -> crate::Result<Box<[u8]>> {
-    // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-    let dir_path: &[u8] = if !dir.is_empty() { dir } else { b"." };
-    let mut real_path_buf = bun_paths::path_buffer_pool::get();
-    let real_dir: &[u8] = 'dir: {
-        let Ok(dir_file) = bun_sys::File::openat(
-            bun_sys::Fd::cwd(),
-            dir_path,
-            bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-            0,
-        ) else {
-            break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                dir_path,
-                &mut real_path_buf.0,
-            );
-        };
-
-        match dir_file.get_path(&mut real_path_buf) {
-            Ok(p) => break 'dir p,
-            Err(err) => {
-                // Split-borrow — see `LinkerContext::log_disjoint`.
-                this.log_disjoint().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{}: Failed to get full path for directory '{}'",
-                        bstr::BStr::new(err.name()),
-                        bstr::BStr::new(dir_path)
-                    ),
-                );
-                return Err(crate::Error::BuildFailed);
-            }
-        }
-    };
-
-    let root_dir = &this.resolver().opts.root_dir;
-    Ok(resolve_path::relative_alloc(root_dir, real_dir)?)
-}
-
-/// The chunk of the user's entry point is written into the directory of the chunks that are no entry point's.
-pub(crate) fn entry_point_is_beside_chunks(
-    this: &LinkerContext,
-    (entry_naming, chunk_naming): (&[u8], &[u8]),
-    entry_point_id: usize,
-) -> crate::Result<bool> {
-    let output_paths = this.graph.entry_points.items_output_path();
-    let directory = |naming: &[u8], entry_point_id: usize| -> crate::Result<Option<Vec<u8>>> {
-        let pathname = bun_fs::PathName::init(output_paths[entry_point_id].slice());
-        let mut template = PathTemplate {
-            data: naming.into(),
-            placeholder: Placeholder {
-                name: pathname.base.into(),
-                ext: Box::from(&b"js"[..]),
-                ..Default::default()
-            },
-        };
-        // Not known yet.
-        if template.needs(PlaceholderField::Target)
-            || crate::options::path_template_needs(
-                bun_fs::PathName::init(naming).dir,
-                PlaceholderField::Hash,
-            )
-        {
-            return Ok(None);
-        }
-        if template.needs(PlaceholderField::Dir) {
-            template.placeholder.dir = dir_placeholder(this, pathname.dir)?;
-        }
-        let mut path: Vec<u8> = Vec::new();
-        template.print(&mut path, true).expect("write to Vec<u8>");
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        let path = resolve_path::normalize_buf::<bun_paths::platform::Auto>(&path, &mut buffer.0);
-        Ok(Some(
-            resolve_path::dirname::<bun_paths::platform::Auto>(path).to_vec(),
-        ))
-    };
-    let chunks = directory(chunk_naming, 0)?;
-    Ok(chunks.is_some() && chunks == directory(entry_naming, entry_point_id)?)
-}
-
 #[inline(never)]
 pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
@@ -359,17 +278,8 @@ pub(crate) fn compute_chunks(
         }
     }
     if code_splitting && this.options.fold_chunks {
-        // SAFETY: `this` is the `linker` field of the `BundleV2`; only `transpiler` is read.
-        let options = unsafe {
-            &(*LinkerContext::bundle_v2_ptr(this_ptr))
-                .transpiler()
-                .options
-        };
-        // A build with chunks for two targets has two sets of names.
-        let naming = (!could_be_browser_target_from_server_build && !has_server_html_imports)
-            .then_some((&*options.entry_naming, &*options.chunk_naming));
         let min_chunk_size = this.options.min_chunk_size;
-        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size, naming)?;
+        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size)?;
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
@@ -785,8 +695,75 @@ pub(crate) fn compute_chunks(
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {
-            chunk.template.placeholder.dir = dir_placeholder(this, pathname.dir)?;
+            // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+            let dir_path: &[u8] = if !pathname.dir.is_empty() {
+                pathname.dir
+            } else {
+                b"."
+            };
+            let mut real_path_buf = bun_paths::path_buffer_pool::get();
+            let dir: &[u8] = 'dir: {
+                let Ok(dir_file) = bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    dir_path,
+                    bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+                    0,
+                ) else {
+                    break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
+                        dir_path,
+                        &mut real_path_buf.0,
+                    );
+                };
+
+                match dir_file.get_path(&mut real_path_buf) {
+                    Ok(p) => break 'dir p,
+                    Err(err) => {
+                        // Split-borrow — see `LinkerContext::log_disjoint`.
+                        this.log_disjoint().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "{}: Failed to get full path for directory '{}'",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(dir_path)
+                            ),
+                        );
+                        return Err(crate::Error::BuildFailed);
+                    }
+                }
+            };
+
+            let root_dir = &this.resolver().opts.root_dir;
+            chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
+    }
+
+    // The files of an early chunk stay in the directory of their entry point's chunk, so a relative path in their code keeps its meaning.
+    for chunk_index in 0..chunks.len() {
+        if !this.is_early_entry_file(chunks[chunk_index].entry_point.source_index()) {
+            continue;
+        }
+        let entry_point_id = chunks[chunk_index].entry_bits().find_first_set();
+        let entry_chunk = chunks
+            .iter()
+            .find(|chunk| {
+                chunk.entry_point.is_entry_point()
+                    && matches!(chunk.content, chunk::Content::Javascript(_))
+                    && Some(chunk.entry_point.entry_point_id() as usize) == entry_point_id
+            })
+            .expect("an early chunk has the key of its entry point's chunk");
+        let PathTemplate { data, placeholder } = entry_chunk.template.clone();
+        let ext = bun_fs::PathName::init(&data).ext;
+        chunks[chunk_index].template = PathTemplate {
+            data: [
+                &data[..data.len() - ext.len()],
+                b"-[hash]",
+                if ext.is_empty() { b".[ext]" } else { ext },
+            ]
+            .concat()
+            .into_boxed_slice(),
+            placeholder,
+        };
     }
 
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`

@@ -156,28 +156,6 @@ impl NodeModulesFolder {
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
-    #[inline(never)]
-    pub(crate) fn has_scripts_pending_mark(
-        &self,
-        root_node_modules_dir: &Dir,
-        file_path: &ZStr,
-    ) -> bool {
-        if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-            return lockfile::package::scripts::is_scripts_pending_mark(
-                root_node_modules_dir.fd(),
-                join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
-            );
-        }
-
-        let dir = match self.open_dir(root_node_modules_dir) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        lockfile::package::scripts::is_scripts_pending_mark(dir.fd(), file_path)
-    }
-
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn open_file_without_opening_directories(
@@ -1010,6 +988,20 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// The name of `alias` in the pending-scripts journal: its directory relative to the
+    /// project root.
+    fn pending_scripts_key(&self, alias: &[u8]) -> Vec<u8> {
+        let root_len =
+            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+        let dir = self.node_modules.path.as_slice();
+        let dir = dir.get(root_len..).unwrap_or(dir);
+        let mut key = Vec::with_capacity(dir.len() + 1 + alias.len());
+        key.extend_from_slice(dir);
+        key.push(SEP);
+        key.extend_from_slice(alias);
+        key
+    }
+
     /// Check if a tree is ready to start running lifecycle scripts
     fn can_run_scripts(&self, scripts_tree_id: lockfile::tree::Id) -> bool {
         let deps = self
@@ -1578,33 +1570,20 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let (is_trusted, is_trusted_through_update_request) = 'brk: {
-            if self
-                .trusted_dependencies_from_update_requests
-                .contains(&package_id)
-            {
-                break 'brk (true, true);
-            }
-            if self.lockfile().has_trusted_dependency(
-                alias.slice(string_buf!()),
-                pkg_name.slice(string_buf!()),
-                resolution,
-            ) {
-                break 'brk (true, false);
-            }
-            break 'brk (false, false);
-        };
+        // An earlier install linked this package and then failed or died before its lifecycle
+        // scripts finished.
+        let left_pending = self.manager().pending_scripts.has_stale()
+            && self
+                .manager()
+                .pending_scripts
+                .is_stale(&self.pending_scripts_key(alias.slice(string_buf!())));
 
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
-            || !installer.verify(resolution, &self.root_node_modules_folder)
-            // only a trusted package has a mark; `--ignore-scripts` leaves it for a later install to honor
-            || (is_trusted
-                && resolution.tag.can_enqueue_install_task()
-                && self.manager().options.do_.run_scripts()
-                && installer.has_pending_scripts(&self.root_node_modules_folder));
+            || left_pending
+            || !installer.verify(resolution, &self.root_node_modules_folder);
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1845,6 +1824,38 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
+            let (is_trusted, is_trusted_through_update_request) = 'brk: {
+                if self
+                    .trusted_dependencies_from_update_requests
+                    .contains(&package_id)
+                {
+                    break 'brk (true, true);
+                }
+                if self.lockfile().has_trusted_dependency(
+                    alias.slice(string_buf!()),
+                    pkg_name.slice(string_buf!()),
+                    resolution,
+                ) {
+                    break 'brk (true, false);
+                }
+                break 'brk (false, false);
+            };
+
+            // Written before the package is linked: from here until its last script exits 0 the
+            // package is verifiable but not finished.
+            let pending_key = if left_pending || (is_trusted && resolution.tag.can_enqueue_install_task()) {
+                self.pending_scripts_key(alias.slice(string_buf!()))
+            } else {
+                Vec::new()
+            };
+            let journaled = is_trusted
+                && resolution.tag.can_enqueue_install_task()
+                && self.manager_mut().pending_scripts.begin(&pending_key);
+            if left_pending && !journaled {
+                // no longer trusted: no script will run for it
+                self.manager_mut().pending_scripts.done(&pending_key);
+            }
+
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
                     installer.install_from_link(self.skip_delete, &destination_dir)
@@ -2004,11 +2015,8 @@ impl<'a> PackageInstaller<'a> {
                                         bstr::BStr::new(pkg_name.slice(string_buf!())),
                                     );
                                 }
-                                // nothing will run: drop a mark the package itself may have shipped
-                                if resolution.tag.can_enqueue_install_task() {
-                                    lockfile::package::scripts::clear_scripts_pending(
-                                        folder_path.slice(),
-                                    );
+                                if journaled {
+                                    self.manager_mut().pending_scripts.done(&pending_key);
                                 }
                                 break 'enqueue_lifecycle_scripts;
                             }
@@ -2020,6 +2028,7 @@ impl<'a> PackageInstaller<'a> {
                                 package_id,
                                 dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                                 resolution,
+                                journaled.then_some(pending_key.as_slice()),
                             ) {
                                 if is_trusted_through_update_request {
                                     let (trusted_name, trusted_name_hash) =
@@ -2329,6 +2338,7 @@ impl<'a> PackageInstaller<'a> {
                         package_id,
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
+                        None,
                     ) {
                         let (trusted_name, trusted_name_hash) =
                             if resolution.tag == resolution::Tag::Npm {
@@ -2383,6 +2393,8 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// returns true if scripts are enqueued
+    /// `pending_key`: the package's record in the pending-scripts journal, when it has one. It is
+    /// closed here if there is nothing to run, and by the script runner otherwise.
     fn enqueue_lifecycle_scripts(
         &mut self,
         folder_name: &[u8],
@@ -2391,6 +2403,7 @@ impl<'a> PackageInstaller<'a> {
         package_id: PackageID,
         optional: bool,
         resolution: &Resolution,
+        pending_key: Option<&[u8]>,
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile().packages.items_scripts()[package_id as usize];
@@ -2434,11 +2447,6 @@ impl<'a> PackageInstaller<'a> {
                     }
                 }
 
-                // the scripts could not even be listed: leave the package marked so the next install retries it
-                if resolution.tag.can_enqueue_install_task() {
-                    lockfile::package::scripts::mark_scripts_pending(package_path.slice());
-                }
-
                 if self.manager().options.enable.fail_early() {
                     Global::exit(1);
                 }
@@ -2449,10 +2457,9 @@ impl<'a> PackageInstaller<'a> {
             }
         };
 
-        let Some(scripts_list) = scripts_list else {
-            // no scripts: drop a mark the package itself may have shipped under that name
-            if resolution.tag.can_enqueue_install_task() {
-                lockfile::package::scripts::clear_scripts_pending(package_path.slice());
+        let Some(mut scripts_list) = scripts_list else {
+            if let Some(key) = pending_key {
+                self.manager_mut().pending_scripts.done(key);
             }
             return false;
         };
@@ -2463,6 +2470,9 @@ impl<'a> PackageInstaller<'a> {
             .do_
             .contains(Options::Do::RUN_SCRIPTS)
         {
+            if let Some(key) = pending_key {
+                scripts_list.pending_key = Box::from(key);
+            }
             // Bind once: two sequential `manager_mut()` derives would each
             // create a fresh Unique from the raw root under SB, popping the
             // first while `scripts_node` (derived through it) is still live.
@@ -2484,8 +2494,6 @@ impl<'a> PackageInstaller<'a> {
                         + scripts_list.total as usize,
                 );
             }
-            // now, not at spawn time: the scripts wait for the tree's dependencies to install
-            scripts_list.mark_scripts_pending();
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {
                 list: scripts_list,
                 tree_id: self.current_tree_id,

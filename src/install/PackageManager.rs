@@ -382,6 +382,7 @@ pub struct PackageManager {
     pub(crate) total_scripts: usize,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
+    pub(crate) pending_scripts: crate::pending_scripts::PendingScripts,
 
     pub(crate) node_gyp_tempdir_name: Box<[u8]>,
 
@@ -2115,6 +2116,7 @@ pub fn init(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
+        wr!(pending_scripts, Default::default());
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(postinstall_optimizer, Default::default());
@@ -2577,6 +2579,7 @@ fn init_with_runtime_once(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
+        wr!(pending_scripts, Default::default());
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(postinstall_optimizer, Default::default());

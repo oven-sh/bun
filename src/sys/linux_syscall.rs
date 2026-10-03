@@ -216,6 +216,13 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
     retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
 }
 
+/// `flock(fd, LOCK_EX | LOCK_NB)`.
+#[inline]
+pub(crate) fn flock_exclusive_nonblocking(fd: Fd) -> Result<(), i32> {
+    let fd = fd.as_borrowed_fd();
+    retry(|| rustix::fs::flock(fd, rustix::fs::FlockOperation::NonBlockingLockExclusive))
+}
+
 /// Map rustix's kernel `struct stat` → `libc::stat`.
 ///
 /// On Bun's tier-1 Linux targets (x86_64, aarch64 — gnu/musl/bionic alike),

@@ -889,10 +889,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            // later scripts run as a new subprocess after `Binaries`; none left means done
-                            if self.scripts.items[1..].iter().all(Option::is_none) {
-                                self.scripts.clear_scripts_pending();
-                            }
                             let installer = ctx.installer_mut();
                             let previous_step = installer.store.entries.items_step()
                                 [ctx.entry_id.get() as usize]
@@ -943,7 +939,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     );
                 }
 
-                self.scripts.clear_scripts_pending();
+                self.pending_scripts_done();
 
                 if let Some(ctx) = &self.ctx {
                     let installer = ctx.installer_mut();
@@ -1048,7 +1044,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// The hoisted installer records the package in the pending-scripts journal under
+    /// `scripts.pending_key`; the isolated installer closes its record in `on_task_complete`.
+    fn pending_scripts_done(&self) {
+        if self.scripts.pending_key.is_empty() {
+            return;
+        }
+        // SAFETY: lifecycle scripts exit on the main install thread, and nothing else holds a
+        // borrow of this field across the exit callback.
+        unsafe { (*self.manager.as_ptr()).pending_scripts.done(&self.scripts.pending_key) };
+    }
+
     pub(crate) fn deinit_and_delete_package(&mut self) {
+        // nothing is left to retry for an optional dependency that is given up
+        self.pending_scripts_done();
         // a workspace or `link:` package's cwd is the user's own directory (on Windows the resolved link target)
         if !self.scripts.cwd_is_created_by_bun() {
             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.

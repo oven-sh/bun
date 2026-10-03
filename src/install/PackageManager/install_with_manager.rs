@@ -861,6 +861,15 @@ pub fn install_with_manager(
             break 'install_summary PackageInstallSummary::default();
         }
 
+        // `--ignore-scripts` runs no scripts, and the install that precedes `bun patch <pkg>` must
+        // reach `prepare_patch` even when that package's script is what is broken.
+        let retries_pending_scripts = manager.options.do_.run_scripts()
+            && !matches!(
+                manager.options.patch_features,
+                Options::PatchFeatures::Patch
+            );
+        manager.pending_scripts.load(retries_pending_scripts);
+
         let mut linker = manager.options.node_linker;
         loop {
             match linker {
@@ -913,6 +922,8 @@ pub fn install_with_manager(
             }
         }
     };
+
+    manager.pending_scripts.finish();
 
     if log_level != Options::LogLevel::Silent {
         manager

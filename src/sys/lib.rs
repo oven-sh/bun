@@ -2922,6 +2922,20 @@ mod posix_impl {
             unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
+    /// Take an exclusive `flock(2)` on `fd` without blocking. `false` when another open
+    /// file description holds the lock or the filesystem has none. The kernel releases it
+    /// when the descriptor closes, which includes the death of the process.
+    pub fn try_flock_exclusive(fd: Fd) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            super::linux_syscall::flock_exclusive_nonblocking(fd).is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // SAFETY: `fd` is a live descriptor; `flock` takes no pointers.
+            unsafe { libc::flock(fd.native(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+        }
+    }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {

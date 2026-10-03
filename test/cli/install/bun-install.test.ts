@@ -11924,4 +11924,34 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // A short string is stored inline, and the inline form ends at the first NUL.
+  it("installs a dependency whose version has a NUL byte after it", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, urls, installed } = await installFrom(ctx, {
+        bar: manifestOf(ctx, "bar", "0.0.2", { dependencies: { baz: "0.0.3\u0000x" } }),
+        baz: manifestOf(ctx, "baz", "0.0.3"),
+      });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(installed).toEqual(["bar", "baz"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("installs without an optional dependency whose name has a NUL byte", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, installed } = await installFrom(ctx, {
+        bar: manifestOf(ctx, "bar", "0.0.2", { optionalDependencies: { "no\u0000pe": "0.0.3" } }),
+      });
+      expect(err).not.toContain("error:");
+      expect(installed).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
 });

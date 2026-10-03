@@ -1260,11 +1260,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Invoke the JS-side
     /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
-    /// then drive the returned promise / [`NodeHTTPResponse`] through the
+    /// then drive its [`NodeHTTPResponse`] through the
     /// completion / abort / error paths.
     ///
     /// receiver is `*mut Self` (not `&mut self`) — the body
-    /// re-enters JS (`drain_microtasks`, `then2`) which may call back into
+    /// re-enters JS (`drain_microtasks`) which may call back into
     /// other server methods, so a long-lived `&mut Self` would alias. Each use
     /// site below derives a short-lived borrow that ends before the next
     /// re-entry point.
@@ -1339,7 +1339,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let any_server_packed = this_ref.any_server_packed;
 
         let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
-        let mut is_async = false;
 
         let on_request_ffi = if SSL {
             ffi::NodeHTTPServer__onRequest_https
@@ -1377,12 +1376,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         enum HttpResult {
-            Rejection(JSValue),
             Exception(JSValue),
             Success,
-            Pending,
         }
-        let mut strong_promise = jsc::StrongOptional::empty();
         let mut needs_to_drain = true;
 
         let http_result = 'brk: {
@@ -1390,94 +1386,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 break 'brk HttpResult::Exception(err);
             }
 
-            if let Some(promise) = result.as_any_promise() {
-                // One `status()` read; only re-read after `drain_microtasks`
-                // (which can settle a pending promise) actually runs.
-                let mut status = promise.status();
-                if status == jsc::js_promise::Status::Pending {
-                    strong_promise.set(global, result);
-                    needs_to_drain = false;
-                    // SAFETY: `vm` is the process-static VirtualMachine.
-                    unsafe { (*vm).drain_microtasks() };
-                    // The drain ran script: an exception it left (a termination
-                    // request landing in it) ends this dispatch like a throw
-                    // from the handler; nothing below may enter script over it.
-                    if global.has_exception() {
-                        break 'brk HttpResult::Exception(
-                            global.take_error(bun_jsc::JsError::Thrown),
-                        );
-                    }
-                    status = promise.status();
+            // SAFETY: non-null (checked above), alive until the `deref()` below; its state is `Cell`/`JsCell`.
+            let nhr = unsafe { &*node_http_response };
+            let nhr_flags = nhr.flags.get();
+            // Current and not complete: its promise jobs and ticks run first, so a response that ends in them is never armed.
+            if nhr_flags.contains(NhrFlags::CURRENT)
+                && !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+            {
+                needs_to_drain = false;
+                // SAFETY: `vm` is the process-static VirtualMachine.
+                unsafe { (*vm).drain_microtasks() };
+                // An exception that the drain left (a termination request) ends the dispatch like a throw from the handler.
+                if global.has_exception() {
+                    break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
                 }
-
-                match status {
-                    jsc::js_promise::Status::Fulfilled => {
-                        let _ = global.handle_rejected_promises();
-                        break 'brk HttpResult::Success;
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        promise.set_handled(global.vm());
-                        break 'brk HttpResult::Rejection(promise.result(global.vm()));
-                    }
-                    jsc::js_promise::Status::Pending => {
-                        let _ = global.handle_rejected_promises();
-                        if !node_http_response.is_null() {
-                            // SAFETY: out-param written by `on_request_ffi`;
-                            // owned ref held until `deref()` below. Shared —
-                            // `NodeHTTPResponse` state is `Cell`/`JsCell`.
-                            let nhr = unsafe { &*node_http_response };
-                            // Single `Cell` load for all three flag checks (no
-                            // re-entry between them).
-                            let nhr_flags = nhr.flags.get();
-                            if nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                                || nhr_flags.contains(NhrFlags::SOCKET_CLOSED)
-                                || nhr_flags.contains(NhrFlags::UPGRADED)
-                            {
-                                strong_promise.deinit();
-                                break 'brk HttpResult::Success;
-                            }
-
-                            let strong_self = nhr.get_this_value();
-                            if strong_self.is_empty_or_undefined_or_null() {
-                                strong_promise.deinit();
-                                break 'brk HttpResult::Success;
-                            }
-
-                            nhr.promise.set(core::mem::replace(
-                                &mut strong_promise,
-                                jsc::StrongOptional::empty(),
-                            ));
-                            // `#[host_fn(export = …)]` emits its
-                            // C-ABI shim as `__jsc_host_<fn>`; the export name
-                            // is link-only.
-                            result.then2(
-                                global,
-                                strong_self,
-                                node_http_response::__jsc_host_node_http_request_on_resolve,
-                                node_http_response::__jsc_host_node_http_request_on_reject,
-                            );
-                            is_async = true;
-                        }
-
-                        break 'brk HttpResult::Pending;
-                    }
-                }
+                // Like Node, 'unhandledRejection' for what the listener left comes before the timers and the next connection.
+                let _ = global.handle_rejected_promises();
             }
 
             HttpResult::Success
         };
 
         match &http_result {
-            HttpResult::Exception(err) | HttpResult::Rejection(err) => {
+            HttpResult::Exception(err) => {
                 // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
                 // scoped to this call.
-                let _ = unsafe {
-                    (*vm).uncaught_exception(
-                        global,
-                        *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
-                    )
-                };
+                let _ = unsafe { (*vm).uncaught_exception(global, *err, false) };
 
                 // A pipelined response stays queued: the connection's state describes the one ahead of it.
                 let threw_while_queued = !node_http_response.is_null()
@@ -1517,54 +1451,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
             }
-            HttpResult::Success | HttpResult::Pending => {}
+            HttpResult::Success => {}
         }
 
         if !node_http_response.is_null() {
             // SAFETY: see `nhr` above.
-            let nhr = unsafe { &*node_http_response };
-            let nhr_flags = nhr.flags.get();
-            if !nhr_flags.contains(NhrFlags::UPGRADED) {
-                if let Some(raw) = nhr.reader() {
-                    if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                        && raw.state().is_response_pending()
-                    {
-                        nhr.set_on_aborted_handler();
-                    }
-                    // If we ended the response without attaching an ondata handler, we discard the body read stream
-                    else if !matches!(http_result, HttpResult::Pending) {
-                        let this_value = nhr.get_this_value();
-                        nhr.maybe_stop_reading_body(this_value);
-                    }
-                }
-                if nhr_flags.contains(NhrFlags::TUNNELED) {
-                    // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
-                    // release the pending-request accounting now - a half-open
-                    // tunnel never closes, which stranded `pending_requests`.
-                    nhr.mark_request_as_done_if_necessary();
-                }
-            } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
-                // The socket was adopted by the WebSocket context inside the
-                // handler; the connection is gone and no further uws abort/end
-                // callback will fire on it, so the IS_REQUEST_PENDING ref
-                // (one of the initial 3) would otherwise strand and leak the
-                // box. Release it now and balance the server's
-                // pending-request counter via `mark_request_as_done()`.
-                // `should_request_be_pending()` returns false once UPGRADED
-                // is set, so this reaches `mark_request_as_done()`.
-                nhr.on_request_complete();
-            }
+            unsafe { &*node_http_response }.on_dispatch_returned();
         }
 
         // Cleanup, hoisted out of scopeguards (no early
-        // returns above). Reverse-decl order: strong_promise, drain, deref.
-        strong_promise.deinit();
+        // returns above). Reverse-decl order: drain, deref.
         if needs_to_drain {
             // SAFETY: `vm` is the process-static VirtualMachine.
             unsafe { (*vm).drain_microtasks() };
         }
-        if !is_async && !node_http_response.is_null() {
-            // SAFETY: out-param ref taken in C++; synchronous path drops it.
+        if !node_http_response.is_null() {
+            // SAFETY: out-param ref taken in C++; the dispatch drops it.
             unsafe { &*node_http_response }.deref();
         }
     }

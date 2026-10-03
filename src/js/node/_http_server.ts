@@ -1,6 +1,5 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { Stream } = require("node:stream");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -43,9 +42,7 @@ const {
   NodeHTTPHeaderState,
   kPendingCallbacks,
   kRequest,
-  kCloseCallback,
   NodeHTTPResponseFlags,
-  callCloseCallback,
   emitCloseNT,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
@@ -143,24 +140,23 @@ function emitCloseNTServer(this: Server, generation) {
   process.nextTick(markListenerGenerationClosed, this, generation);
 }
 
-function setCloseCallback(self, callback) {
-  if (callback === self[kCloseCallback]) {
-    return;
-  }
-  if (self[kCloseCallback]) {
-    throw new Error("Close callback already set");
-  }
-  self[kCloseCallback] = callback;
-}
-
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
-  setCloseCallback(socket, onServerResponseClose);
   self.socket = socket;
   self.emit("socket", socket);
+}
+
+// Node's socketOnClose -> abortIncoming: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L902-L914
+function abortIncoming(req) {
+  if (!req || req.destroyed) return;
+  if (req.listenerCount("error") > 0) {
+    req.destroy(new ConnResetException("aborted"));
+  } else {
+    req.destroy();
+  }
 }
 
 function onServerResponseClose() {
@@ -829,14 +825,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               // Like 'upgrade' below. Native would end the pending response, here the one ahead.
               process.nextTick(rethrowUncaught, err);
             }
-            // Native would tie a returned promise to the socket's current response, the one in flight.
-            if (isPipelined) return;
-            // Attach the internal close listener after the user's "connect"
-            // handler ran: Node.js hands the socket over with no listeners and
-            // tests assert socket.listenerCount("close") === 0 there.
-            const promise = $newPromise();
-            socket.once("close", resolveHandoffPromise.bind(undefined, promise));
-            return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
             socketHandle.close();
@@ -913,9 +901,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         drainMicrotasks();
 
-        let pendingPromise: Promise<void> | undefined;
-        let didFinish = false;
-
         if (isSocketNew) {
           server.emit("connection", socket);
         }
@@ -963,9 +948,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node.js's connectionListener registers socketOnClose, which frees
           // the parser - even a manually emitted 'close' stops parsing of any
           // pipelined requests still in the buffer.
-          if (!socket[kStopParsingOnCloseListener]) {
-            socket[kStopParsingOnCloseListener] = true;
-            socket.on("close", onSocketCloseStopParsing);
+          if (!socket[kSocketOnCloseListener]) {
+            socket[kSocketOnCloseListener] = true;
+            socket.on("close", socketOnClose);
           }
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -973,14 +958,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           } else {
             http_res.assignSocket(socket);
           }
-        }
-        function onClose() {
-          didFinish = true;
-          if (pendingPromise) $resolvePromiseWithFirstResolvingFunctionCallCheck(pendingPromise, undefined);
-        }
-
-        if (!isPipelined) {
-          setCloseCallback(http_res, onClose);
         }
         // Node traces every parsed request before Expect/limit routing
         // (parserOnIncoming); upgrades never reach that path.
@@ -1069,14 +1046,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
             // listener is installed: Node.js destroys the socket.
             socket.destroy();
-            return;
           }
-          // Like CONNECT: the connection is detached from the HTTP request
-          // machinery; hold the native callback open until the raw socket
-          // closes.
-          const upgradePromise = $newPromise();
-          socket.once("close", resolveHandoffPromise.bind(undefined, upgradePromise));
-          return upgradePromise;
+          return;
         } else if (rejectMissingHost) {
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
@@ -1112,9 +1083,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           return;
         }
 
-        if (handle.finished || didFinish) {
-          handle = undefined;
-          http_res[kCloseCallback] = undefined;
+        // A response that is still open leaves the socket from its 'finish' listener (emitResponseFinish).
+        if (handle.finished) {
           // Set in time only because end() defers the 'finish' emit to a
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
@@ -1123,12 +1093,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
           }
-          return;
         }
-
-        pendingPromise = $newPromise();
-
-        return pendingPromise;
       },
     });
 
@@ -1458,9 +1423,6 @@ function detachSocketListenersForHandoff(socket) {
   // Like Node's onParserExecuteCommon: a flowing socket would drop tunnel bytes that arrive before the listener attaches a reader.
   socket.readableFlowing = null;
 }
-function resolveHandoffPromise(promise) {
-  $resolvePromise(promise, undefined);
-}
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 // destroySoon() was called: native lets the read that is being parsed reach the request, then closes right behind the FIN.
@@ -1489,7 +1451,7 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 // responses. Reads are paused while it is at or above the high water mark.
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
-const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
+const kSocketOnCloseListener = Symbol("kSocketOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
 const kDispatcherDetached = Symbol("kDispatcherDetached");
@@ -1761,11 +1723,7 @@ function getNodeHTTPServerSocket() {
     }
     #closeHandle(handle, callback, err?: Error) {
       this[kHandle] = undefined;
-      // Capture the in-flight response before detachSocket() can clear it: a
-      // synchronous res.destroy() inside the request handler runs detachSocket()
-      // between here and the native close delivering #onClose. The abort itself
-      // is deferred to #onClose so the dispatch promise resolves only after the
-      // native on_abort has released the pending-request ref.
+      // A res.destroy() in the request handler detaches the response before the native close runs #onClose, which aborts it.
       this.#pendingAbortMessage = this._httpMessage;
       handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {
@@ -2681,11 +2639,20 @@ function onResponseFinishHandleSocket(server, socket, res) {
   }
 }
 
-// Node.js's socketOnClose frees the parser, which aborts parsing of any
-// pipelined requests still sitting in the current buffer - even when 'close'
-// was emitted manually by user code.
-function onSocketCloseStopParsing(this: NodeHTTPServerSocket) {
-  this[kHandle]?.stopParsing?.();
+// Node.js's socketOnClose for a 'close' that user code emitted: it frees the parser and aborts the requests that wait for a response.
+function socketOnClose(this: NodeHTTPServerSocket) {
+  const handle = this[kHandle];
+  // The native close path clears kHandle before its 'close': #onClose did this work.
+  if (!handle) return;
+  handle.stopParsing?.();
+  const httpMessage = this._httpMessage;
+  abortIncoming(httpMessage?.req);
+  const queued = this[kPipelinedResponses];
+  if (queued) {
+    for (let i = 0; i < queued.length; i++) abortIncoming(queued[i].req);
+  }
+  // Node's next listener is onServerResponseClose. A socket that was assigned internally has none.
+  if (httpMessage) emitCloseNT(httpMessage);
 }
 
 // The second half of Node's read gate (lib/_http_server.js): uWS already pauses
@@ -3562,7 +3529,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.emit("prefinish");
 
   if (draining) {
-    // Native calls back once the body is out; a dying connection finishes from emit("close").
+    // Native calls back once the body is out; the close path of a dying connection finishes it before its 'close'.
     this[kPendingFinish] = callback ?? null;
     handle.onwritable = flushPendingFinish.bind(this);
   } else {
@@ -3809,7 +3776,6 @@ ServerResponse.prototype.detachSocket = function (socket) {
   // socket can be null when the stream destroyer detached the request's
   // socket (req.socket = null) before the response finished.
   if (socket && socket._httpMessage === this) {
-    if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
     // Drop the request reference so a kept-alive idle connection does not
@@ -4000,27 +3966,6 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   }
   return this;
 };
-
-ServerResponse.prototype.emit = function (event) {
-  if (event === "close") {
-    const callback = this[kPendingFinish];
-    if (callback !== undefined) {
-      // The connection died mid-drain: like Node.js, the response still finishes, then closes.
-      this[kPendingFinish] = undefined;
-      this._closed = true;
-      this._callPendingCallbacks();
-      process.nextTick(emitResponseFinishedThenClose, this, callback);
-      return false;
-    }
-    callCloseCallback(this);
-  }
-  return Stream.prototype.emit.$apply(this, arguments);
-};
-
-function emitResponseFinishedThenClose(res, callback) {
-  emitResponseFinished(res, callback);
-  res.emit("close");
-}
 
 ServerResponse.prototype.flushHeaders = function () {
   if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) return; // Should be idempotent.

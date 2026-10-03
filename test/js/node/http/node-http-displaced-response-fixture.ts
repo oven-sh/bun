@@ -51,7 +51,6 @@ function handleOf(object: object) {
 
 const triggers: Record<string, (req: http.IncomingMessage, res: http.ServerResponse) => void> = {
   "detachSocket": (req, res) => res.detachSocket(req.socket),
-  "emit-close": (_req, res) => void res.emit("close"),
   "emit-finish": (_req, res) => void res.emit("finish"),
   "clear-httpMessage": req => void ((req.socket as any)._httpMessage = null),
 };
@@ -234,48 +233,6 @@ async function connected(trigger: string) {
   return { trigger, late, pending, regranted, thirdQueued, bodies: received_bodies, errors };
 }
 
-// A response that native code completed because its dispatch settled, and that did not end in
-// JS: it still waits for a close. The next request is not pipelined and takes its slot.
-async function completedButPending() {
-  const first = Promise.withResolvers<http.ServerResponse>();
-  const server = createServer((req, res) => {
-    res.on("error", () => {});
-    if (req.url === "/first") {
-      res.detachSocket(req.socket);
-      first.resolve(res);
-      return;
-    }
-    res.end("second-body");
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  const client = await connect(server);
-  let received = "";
-  const firstAnswer = Promise.withResolvers<void>();
-  const secondBody = Promise.withResolvers<void>();
-  client.on("data", chunk => {
-    received += chunk.toString("latin1");
-    firstAnswer.resolve();
-    if (received.includes("second-body")) secondBody.resolve();
-  });
-  client.write(request("/first"));
-  const res = await first.promise;
-  const handle = handleOf(res);
-  await turn();
-  // The dispatch settles here.
-  res.emit("close");
-  await firstAnswer.promise;
-  const completed = handle.finished === true;
-  client.write(request("/second"));
-  await secondBody.promise;
-
-  const closed = once(client, "close");
-  client.destroy();
-  await closed;
-  server.close();
-  server.closeAllConnections();
-  return { completed, secondBody: received.includes("second-body"), pending: isPending(handle) };
-}
-
 // Request 1 upgrades to a WebSocket while response 2 is queued behind it. The socket of the
 // connection is a WebSocket then, and response 2 is used.
 async function adopted(use: string) {
@@ -454,8 +411,6 @@ if (suite === "displaced") {
   for (const trigger of Object.keys(triggers)) {
     results.push(await connected(trigger));
   }
-} else if (suite === "completed-but-pending") {
-  results.push(await completedButPending());
 } else if (suite === "adopted") {
   results = await all(Object.keys(uses), adopted);
 } else if (suite === "queued") {

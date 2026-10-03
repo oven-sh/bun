@@ -830,6 +830,12 @@ pub fn install_with_manager(
         }
     }
 
+    if manager.options.enable.frozen_lockfile() && !manager.options.do_.save_lockfile() {
+        if let Some(source) = load_result.migrated().source_lockfile_name() {
+            note_migrated_lockfile_not_saved(manager, source);
+        }
+    }
+
     // BACKREF: `manager.lockfile` is a `Box<Lockfile>` whose allocation is
     // never replaced for the remainder of this function (only its fields
     // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
@@ -941,7 +947,7 @@ pub fn install_with_manager(
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
     // existing `bun.lock` keeps the version it was written with.
-    let should_save_lockfile = saves_migrated_lockfile(&load_result, save_format)
+    let should_save_lockfile = converts_binary_lockfile_to_text(&load_result, save_format)
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -955,6 +961,7 @@ pub fn install_with_manager(
                 || manager.options.enable.force_save_lockfile()));
 
     if should_save_lockfile {
+        super::package_json_write_back::record_migrated_root(manager);
         save_lockfile(
             manager,
             &load_result,
@@ -1451,7 +1458,9 @@ fn overrides_field_name(
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
-    if load_result.loaded_from_binary_lockfile() {
+    if let Some(source) = load_result.migrated().source_lockfile_name() {
+        source
+    } else if load_result.loaded_from_binary_lockfile() {
         "bun.lockb"
     } else {
         "bun.lock"
@@ -2161,8 +2170,11 @@ fn run_security_scanner(
     }
 }
 
-// bun.lockb / package-lock.json / yarn.lock / pnpm-lock.yaml -> bun.lock is written even under --frozen-lockfile.
-fn saves_migrated_lockfile(
+// The documented bun.lockb -> bun.lock recipe (`--save-text-lockfile --frozen-lockfile --lockfile-only`) is the one
+// write that happens while `Do::SAVE_LOCKFILE` is off (--frozen-lockfile, --dry-run, --no-save). A migrated
+// package-lock.json / yarn.lock / pnpm-lock.yaml is saved through `FORCE_SAVE_LOCKFILE` like any other change, so
+// those flags keep it in memory. (A migrated load can report `Format::Binary` too, hence the `migrated` check.)
+fn converts_binary_lockfile_to_text(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,
 ) -> bool {
@@ -2170,8 +2182,28 @@ fn saves_migrated_lockfile(
         && matches!(
             load_result,
             lockfile::LoadResult::Ok(ok)
-                if ok.format == lockfile::Format::Binary || ok.migrated != lockfile::Migrated::None
+                if ok.format == lockfile::Format::Binary && ok.migrated == lockfile::Migrated::None
         )
+}
+
+#[cold]
+#[inline(never)]
+fn note_migrated_lockfile_not_saved(manager: &PackageManager, source: &str) {
+    if manager.options.log_level.is_silent() {
+        return;
+    }
+    Output::flush();
+    let files = if manager.migrated_package_json_moves.is_empty() {
+        "bun.lock"
+    } else {
+        "bun.lock and package.json"
+    };
+    bun_core::note!(
+        "the lockfile is frozen, so the migration from {} was not written to {}; run 'bun install' and commit the result",
+        source,
+        files,
+    );
+    Output::flush();
 }
 
 #[cold]
@@ -2187,8 +2219,8 @@ fn save_lockfile_only(
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    if (manager.options.enable.frozen_lockfile()
-        && !saves_migrated_lockfile(load_result, save_format))
+    if (!manager.options.do_.save_lockfile()
+        && !converts_binary_lockfile_to_text(load_result, save_format))
         || (manager.subcommand == Subcommand::Dedupe && manager.dedupe_report.is_none())
     {
         Output::flush();
@@ -2201,6 +2233,7 @@ fn save_lockfile_only(
         packages_len_before_install,
     )?;
 
+    super::package_json_write_back::record_migrated_root(manager);
     let saved = save_lockfile(
         manager,
         load_result,
@@ -2210,6 +2243,7 @@ fn save_lockfile_only(
         packages_len_before_install,
         log_level,
     )?;
+    super::package_json_write_back::flush(manager)?;
 
     if manager.subcommand == Subcommand::Dedupe {
         if manager.options.do_.summary() {

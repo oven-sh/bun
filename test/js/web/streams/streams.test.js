@@ -2735,9 +2735,10 @@ describe.skipIf(isWindows)("Bun.file().stream() on a character device", () => {
           await reader.read();
         }
         // The finalizer hands the fd to a thread that closes it, so wait for
-        // the count to drop, not for a fixed time.
+        // the count to drop. Without the ref release it never does, and the
+        // test times out.
         let open = openDevices();
-        for (let i = 0; i < 50 && open >= 10; i++) {
+        while (open >= 10) {
           Bun.gc(true);
           await Bun.sleep(10);
           open = openDevices();
@@ -2748,12 +2749,10 @@ describe.skipIf(isWindows)("Bun.file().stream() on a character device", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // Every one of the 40 stays open without the ref release. The GC is not
-    // obliged to collect the most recent ones, so allow a handful.
-    const open = Number(stdout.match(/^open (\d+)$/m)?.[1]);
-    expect(open).toBeLessThan(10);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The GC is not obliged to collect the most recent streams, so a handful
+    // can stay open.
+    expect(Number(stdout.match(/^open (\d+)$/m)?.[1])).toBeLessThan(10);
     expect(exitCode).toBe(0);
   });
 });

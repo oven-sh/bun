@@ -31,7 +31,7 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
-    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
+    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned; [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
 }
 

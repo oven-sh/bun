@@ -67,6 +67,7 @@ void EventListenerMap::clear()
     }
 
     m_entries.clear();
+    m_entryPositions.clear();
 }
 
 Vector<AtomString> EventListenerMap::eventTypes() const
@@ -103,6 +104,15 @@ RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<
     auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
     auto* result = registeredListener.ptr();
     m_entries.append({ eventType, EventListenerVector { WTF::move(registeredListener) } });
+
+    if (!m_entryPositions.isEmpty())
+        m_entryPositions.add(positionKey(eventType), static_cast<unsigned>(m_entries.size() - 1));
+    else if (m_entries.size() > maxEntriesForLinearSearch) [[unlikely]] {
+        m_entryPositions.reserveInitialCapacity(m_entries.size());
+        for (unsigned i = 0; i < m_entries.size(); ++i)
+            m_entryPositions.add(positionKey(m_entries[i].first), i);
+    }
+
     return result;
 }
 
@@ -122,26 +132,55 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
-    for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener, useCapture);
-            if (m_entries[i].second.isEmpty())
-                m_entries.removeAt(i);
-            return wasRemoved;
-        }
+    size_t position = findEntryPosition(eventType);
+    if (position == notFound)
+        return false;
+
+    bool wasRemoved = removeListenerFromVector(m_entries[position].second, listener, useCapture);
+    if (m_entries[position].second.isEmpty())
+        removeEntryAt(position);
+    return wasRemoved;
+}
+
+// Fills the hole with the last entry instead of shifting, so removing a type is
+// O(1). Nothing relies on the order of m_entries.
+void EventListenerMap::removeEntryAt(size_t position)
+{
+    size_t last = m_entries.size() - 1;
+
+    if (!m_entryPositions.isEmpty()) {
+        m_entryPositions.remove(positionKey(m_entries[position].first));
+        if (position != last)
+            m_entryPositions.set(positionKey(m_entries[last].first), static_cast<unsigned>(position));
     }
 
-    return false;
+    if (position != last)
+        m_entries[position] = WTF::move(m_entries[last]);
+    m_entries.removeLast();
+
+    if (m_entries.size() < maxEntriesForLinearSearch / 2)
+        m_entryPositions.clear();
+}
+
+size_t EventListenerMap::findEntryPosition(const AtomString& eventType) const
+{
+    if (!m_entryPositions.isEmpty()) {
+        ASSERT(m_entryPositions.size() == m_entries.size());
+        auto it = m_entryPositions.find(positionKey(eventType));
+        return it == m_entryPositions.end() ? notFound : it->value;
+    }
+
+    for (size_t i = 0; i < m_entries.size(); ++i) {
+        if (m_entries[i].first == eventType)
+            return i;
+    }
+    return notFound;
 }
 
 EventListenerVector* EventListenerMap::find(const AtomString& eventType)
 {
-    for (auto& entry : m_entries) {
-        if (entry.first == eventType)
-            return &entry.second;
-    }
-
-    return nullptr;
+    size_t position = findEntryPosition(eventType);
+    return position == notFound ? nullptr : &m_entries[position].second;
 }
 
 } // namespace WebCore

@@ -409,14 +409,20 @@ describe("ansi output is a well-formed SGR sequence", () => {
     expect(color("white", "ansi-16")).toBe("\u001b[97m");
   });
 
+  // No expect() per color: with BUN_GARBAGE_COLLECTOR_LEVEL=1 every matcher call starts a collection, and
+  // 2197 of them ran past the 90 s per-test timeout of the macOS x64 parallel batch.
   test("ansi-16 never emits a 256-color escape", () => {
-    for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
-      for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
-        for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
-          expect(color({ r, g, b }, "ansi-16")).toMatch(/^\u001b\[(3[0-7]|9[0-7])m$/);
+    const sgr16 = /^\u001b\[(3[0-7]|9[0-7])m$/;
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
+            const escape = color({ r, g, b }, "ansi-16");
+            if (!sgr16.test(escape!)) throw new Error(`color(${r},${g},${b}, "ansi-16") = ${JSON.stringify(escape)}`);
+          }
         }
       }
-    }
+    });
   });
 
   test("ansi-256 and ansi-16m keep their documented shapes", () => {

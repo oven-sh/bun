@@ -354,9 +354,7 @@ impl Framework {
         }
 
         if let Some(rfr) = resolve_or_null(resolver, b"react-refresh/runtime") {
-            fw.react_fast_refresh = Some(ReactFastRefresh {
-                import_source: Cow::Owned(rfr),
-            });
+            fw.react_fast_refresh = Some(ReactFastRefresh { import_source: rfr });
         } else if resolve_or_null(resolver, b"react").is_some() {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: Cow::Borrowed(b"react-refresh/runtime/index.js"),
@@ -866,10 +864,10 @@ fn literals(list: &[&'static [u8]]) -> Vec<Cow<'static, [u8]>> {
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Vec<u8>> {
+fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Cow<'static, [u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        Ok(res) => Some(res.path_const().unwrap().text.to_vec()),
+        Ok(res) => Some(super::resolved_path(res.path_const().unwrap().text)),
         Err(_) => {
             r.log_mut().reset();
             None

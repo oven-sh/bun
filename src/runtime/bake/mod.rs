@@ -77,8 +77,8 @@ impl Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// In this and the types below, `Cow::Borrowed` is a literal default and
-/// `Cow::Owned` came from the user's configuration or the resolver.
+/// In this and the types below, `Cow::Borrowed` is a literal default or a path
+/// the resolver interned, and `Cow::Owned` came from the user's configuration.
 #[derive(Clone)]
 pub(crate) struct ServerComponents {
     pub(crate) separate_ssr_graph: bool,
@@ -143,6 +143,13 @@ pub(crate) struct Framework {
     pub(crate) server_components: Option<ServerComponents>,
     pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+}
+
+pub(crate) fn resolved_path(text: &[u8]) -> Cow<'static, [u8]> {
+    match bun_resolver::fs::as_interned_path(text) {
+        Some(interned) => Cow::Borrowed(interned),
+        None => Cow::Owned(text.to_vec()),
+    }
 }
 
 impl Framework {
@@ -304,7 +311,7 @@ impl Framework {
         match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
             Ok(mut result) => {
                 let p = result.path().expect("just resolved");
-                *path = Cow::Owned(p.text.to_vec());
+                *path = resolved_path(p.text);
             }
             Err(err) => {
                 // This routes through `Output::err` (stderr), not

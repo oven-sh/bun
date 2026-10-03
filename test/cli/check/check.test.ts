@@ -2052,6 +2052,37 @@ export const made = new C(1);
       expect(exitCode).toBe(1);
     });
 
+    test("patterns inherited through `extends` are relative to the extending file", async () => {
+      using dir = project({
+        "pkg/tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [], "lib": ["esnext"] }, "exclude": ["dist", "__tests__"] }
+`,
+        "pkg/same.json": `{ "extends": "./tsconfig.json", "include": ["./missing.tsx"] }
+`,
+        "pkg/inner/parent.json": `{ "extends": "../tsconfig.json", "include": ["./missing.tsx"] }
+`,
+        "shared/base.json": `{ "compilerOptions": { "noEmit": true, "types": [], "lib": ["esnext"] }, "include": ["lib/none/*.ts"], "exclude": ["out/**/*"] }
+`,
+        "shared/deep/mid.json": `{ "extends": "../base.json" }
+`,
+        "pkg/chain.json": `{ "extends": "../shared/deep/mid.json" }
+`,
+      });
+      const specified = async (config: string) => {
+        const { stdout } = await check(dir, ["-p", config]);
+        expect(stdout).toContain("error TS18003: No inputs were found in config file");
+        return stdout.slice(stdout.indexOf("Specified"));
+      };
+      expect(await specified("pkg/same.json")).toBe(
+        `Specified 'include' paths were '["./missing.tsx"]' and 'exclude' paths were '["dist","__tests__"]'.`,
+      );
+      expect(await specified("pkg/inner/parent.json")).toBe(
+        `Specified 'include' paths were '["./missing.tsx"]' and 'exclude' paths were '["../dist","../__tests__"]'.`,
+      );
+      expect(await specified("pkg/chain.json")).toBe(
+        `Specified 'include' paths were '["../shared/deep/../lib/none/*.ts"]' and 'exclude' paths were '["../shared/deep/../out/**/*"]'.`,
+      );
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

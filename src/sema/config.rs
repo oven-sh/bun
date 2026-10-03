@@ -361,16 +361,21 @@ fn parse_config(
         };
         // A property the extending file does not specify itself takes the value from the last of
         // the extended files, relative to that file's directory.
+        // `relativeDifference`: from the directory of the extending file. 18003 prints the result.
         let extended_dir = dirname::<Posix>(&extended_path);
+        let relative_difference = relative_normalized::<Posix, true>(base, extended_dir).to_vec();
         let rebase = |specs: Vec<Vec<u8>>| -> Vec<Vec<u8>> {
             specs
                 .into_iter()
                 .map(|spec| {
-                    if starts_with_config_dir_template(&spec) || spec.starts_with(b"/") {
+                    if starts_with_config_dir_template(&spec)
+                        || spec.starts_with(b"/")
+                        || relative_difference.is_empty()
+                    {
                         spec
                     } else {
                         // Not normalized: `..` after `**` is an error that is still to be reported.
-                        [extended_dir, b"/", &spec[..]].concat()
+                        [&relative_difference[..], b"/", &spec[..]].concat()
                     }
                 })
                 .collect()

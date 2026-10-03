@@ -41,7 +41,6 @@ pub use bun_uws::MaybeAnySocket as Socket;
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub(crate) wrapper: Option<ProxyTunnelWrapper>,
-    pub(crate) shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub(crate) socket: Socket,
     pub(crate) write_buffer: bun_io::StreamBuffer,
@@ -64,7 +63,6 @@ impl Default for ProxyTunnel {
     fn default() -> Self {
         Self {
             wrapper: None,
-            shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
@@ -113,27 +111,6 @@ impl ProxyTunnel {
         unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
-    /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
-    /// `wrapper`). Callers use `.get()`/`.set()` — no `&mut` needed.
-    #[inline]
-    fn shutdown_err_of<'a>(this: NonNull<Self>) -> &'a Cell<Error> {
-        // SAFETY: see [`Self::socket_of`].
-        unsafe { &*addr_of!((*this.as_ptr()).shutdown_err) }
-    }
-
-    /// Callback-safe close: sets `shutdown_err` then drives `wrapper.shutdown()`.
-    /// Takes `NonNull<Self>` so the SSLWrapper close callback (which reenters
-    /// `on_close` and reborrows tunnel fields via the disjoint accessors above)
-    /// does not alias a held `&mut ProxyTunnel`.
-    ///
-    /// Module-level INVARIANT: `this` is a live intrusive-refcounted tunnel and
-    /// the caller's `&mut HTTPClient`/`&mut ProxyTunnel` borrows are NLL-dead
-    /// before this call (every callsite in this module follows that shape).
-    #[inline]
-    fn close_from_callback(this: NonNull<Self>, err: Error) {
-        Self::close_raw(this, err);
-    }
-
     #[inline]
     fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
         Self::wrapper_ref(this.as_ptr()).and_then(|w| w.ssl.get())
@@ -174,7 +151,7 @@ impl ProxyTunnel {
 /// `*mut HTTPClient` registered in [`ProxyTunnel::start`]/`adopt`. The client
 /// is embedded in its `AsyncHTTP` and outlives the tunnel. Each callback's
 /// outer `&mut HTTPClient` must be NLL-dead before any reentrant call that
-/// re-derives it via raw ptr (`close_from_callback`, `progress_update_*`,
+/// re-derives it via raw ptr (`fail_request`, `progress_update_*`,
 /// `on_writable`); call sites are shaped accordingly.
 #[inline]
 fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
@@ -249,7 +226,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // SAFETY: see on_open. `&mut HTTPClient` is disjoint from the caller's
     // `&SSLWrapper` (HTTPClient holds the tunnel only by pointer). NLL
     // ends this borrow before any reentrant call below that re-derives
-    // `&mut *ctx` (close → on_close, progress_update).
+    // `&mut *ctx` (fail_request, progress_update).
     let this = client_from_ctx(ctx);
     let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
         return;
@@ -260,8 +237,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // arriving here is unexpected.
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
-        // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
+        // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+        fail_request(ctx, proxy_nn, crate::Error::UnexpectedData);
         return;
     }
     match this.state.response_stage {
@@ -273,10 +250,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
-                    // `this` is dead (NLL); reenter via raw ptr so on_close's
-                    // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
-                    // SAFETY: tunnel pinned by ref_raw above.
-                    ProxyTunnel::close_from_callback(proxy_nn, err);
+                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                    fail_request(ctx, proxy_nn, err);
                     return;
                 }
             };
@@ -295,8 +270,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: see Body arm.
-                    ProxyTunnel::close_from_callback(proxy_nn, err);
+                    // `this` dead (NLL); see Body arm.
+                    fail_request(ctx, proxy_nn, err);
                     return;
                 }
             };
@@ -327,8 +302,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
-            // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
+            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+            fail_request(ctx, proxy_nn, crate::Error::UnexpectedData);
         }
     }
 }
@@ -357,9 +332,8 @@ fn on_handshake(
         // only reject the connection if reject_unauthorized == true
         if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
-            // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
-            // fresh `&mut *ctx` does not alias us.
-            ProxyTunnel::close_from_callback(proxy_nn, err);
+            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+            fail_request(ctx, proxy_nn, err);
             return;
         }
         if this.wants_server_identity_check() {
@@ -428,12 +402,12 @@ fn on_handshake(
         });
         if this.flags.reject_unauthorized && peer_sent_certificate && handshake_error.error_no > 0 {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
-            // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, err);
+            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+            fail_request(ctx, proxy_nn, err);
             return;
         }
-        // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::TLSHandshakeFailed);
+        // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+        fail_request(ctx, proxy_nn, crate::Error::TLSHandshakeFailed);
         return;
     }
 }
@@ -478,10 +452,10 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
 }
 
 fn on_close(ctx: *mut HTTPClient) {
-    // on_close is fired from inside SSLWrapper::shutdown (via close_raw) whose
-    // caller may itself be a callback that already held `&mut *ctx`; that
-    // outer borrow is required to be NLL-dead before close_raw is invoked
-    // (see on_data/on_handshake), so this fresh `&mut` is sole.
+    // The SSLWrapper reports that the inner TLS connection ended. It is never
+    // how the client fails a request: `fail_request` and `HTTPClient::fail`
+    // detach the tunnel before the wrapper shuts down, so the close they
+    // cause returns at `proxy_tunnel_ptr` below.
     let this = client_from_ctx(ctx);
     scoped_log!(
         http_proxy_tunnel,
@@ -517,24 +491,37 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
 
-    // Otherwise, treat as failure. `close_and_fail` de-tags the outer socket
-    // before `fail()` frees the AsyncHTTP that embeds `self` (the uSockets ext
-    // still points here until then).
-    let err = fail_err.unwrap_or_else(|| ProxyTunnel::shutdown_err_of(proxy_nn).get());
-    match ProxyTunnel::socket_of(proxy_nn) {
-        &Socket::Ssl(socket) => {
-            this.close_and_fail::<true>(err, socket);
-        }
-        &Socket::Tcp(socket) => {
-            this.close_and_fail::<false>(err, socket);
-        }
-        Socket::None => {
-            if fail_err.is_some() {
-                this.fail(err);
-            }
-        }
+    // Otherwise the connection ended before the response did.
+    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+    fail_request(
+        ctx,
+        proxy_nn,
+        fail_err.unwrap_or(crate::Error::ConnectionClosed),
+    );
+}
+
+/// Fails the request with `err` and closes the outer socket. Every error a
+/// callback finds ends here, so the request fails with that error whatever
+/// state the response body is in.
+///
+/// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
+/// `&mut ProxyTunnel` across this call, and must not touch the client after
+/// it: `fail()` runs the result callback, which frees the AsyncHTTP that
+/// embeds the client.
+fn fail_request(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>, err: Error) {
+    // Released on the next loop tick. The SSLWrapper method that called the
+    // callback is still on the stack and lives in the tunnel, and
+    // `ProxyTunnel::start` holds no ref of its own across it.
+    let keepalive = ProxyTunnel::ref_guard(proxy);
+    let this = client_from_ctx(ctx);
+    // `close_and_fail` de-tags the outer socket before `fail()` frees the
+    // client (the uSockets ext still points at it until then).
+    match ProxyTunnel::socket_of(proxy) {
+        &Socket::Ssl(socket) => this.close_and_fail::<true>(err, socket),
+        &Socket::Tcp(socket) => this.close_and_fail::<false>(err, socket),
+        Socket::None => this.fail(err),
     }
-    ProxyTunnel::set_socket(proxy_nn, Socket::None);
+    ProxyTunnel::set_socket(proxy, Socket::None);
     crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
@@ -650,29 +637,6 @@ impl ProxyTunnel {
         } else {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
             wrapper.start();
-        }
-    }
-
-    /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.
-    /// Takes `NonNull<Self>` so the SSLWrapper close callback (which reenters
-    /// on_close and reborrows tunnel fields via raw projection) does not alias
-    /// a held `&mut ProxyTunnel`.
-    ///
-    /// All field access goes through the disjoint-field accessors
-    /// ([`Self::shutdown_err_of`], [`Self::wrapper_ref`]), which already
-    /// encode the module INVARIANT that `this` is a live intrusive-refcounted
-    /// tunnel and no whole-struct `&mut ProxyTunnel` is held across the call.
-    /// Callers satisfy that by construction (see [`Self::close_from_callback`]).
-    pub(crate) fn close_raw(this: NonNull<Self>, err: Error) {
-        // `shutdown_err` is a `Cell<Error>` disjoint from `wrapper`; safe set.
-        Self::shutdown_err_of(this).set(err);
-        // shutdown() fires on_close synchronously, which accesses only
-        // disjoint tunnel fields via `addr_of!` (see on_close), so the
-        // `&SSLWrapper` from `wrapper_ref` is never aliased by a `&mut`
-        // across the reentrant call.
-        if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
-            // fast shutdown the connection
-            let _ = wrapper.shutdown(true);
         }
     }
 

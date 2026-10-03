@@ -1,5 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
+import { randomBytes } from "crypto";
+import { once } from "events";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
@@ -13,11 +15,15 @@ import {
   runBunInstall,
   tempDir,
   textLockfile,
+  tls as tlsCert,
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
+import { type AddressInfo, createServer as createTcpServer, connect as tcpConnect } from "net";
 import { basename, join, resolve, sep } from "path";
+import { createServer as createTlsServer } from "tls";
+import { gzipSync } from "zlib";
 import {
   createTestContext,
   destroyTestContext,
@@ -503,6 +509,96 @@ describe.concurrent("bun-install", () => {
           proxy.stop(true);
         }
       });
+    });
+  });
+
+  it("does not use a manifest whose gzip checksum is wrong, through a CONNECT tunnel", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const requests: string[] = [];
+      // Big and incompressible, so the last chunk reaches the client in a later read than the response head.
+      const readme = randomBytes(300_000).toString("base64");
+      const registry = createTlsServer(tlsCert, socket => {
+        socket.on("error", () => {});
+        socket.once("data", data => {
+          const requestLine = data.toString("latin1").split("\r\n", 1)[0];
+          requests.push(requestLine);
+          if (requestLine !== "GET /bar HTTP/1.1") {
+            socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+          }
+          const manifest = gzipSync(
+            JSON.stringify({
+              name: "bar",
+              "dist-tags": { latest: "0.0.2" },
+              versions: {
+                "0.0.2": { name: "bar", version: "0.0.2", dist: { tarball: `${registryUrl}bar-0.0.2.tgz` } },
+              },
+              readme,
+            }),
+          );
+          // One bit of the CRC-32 in the gzip trailer. The HTTP framing around the stream is whole.
+          manifest[manifest.length - 5] ^= 1;
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n",
+          );
+          socket.write(`${manifest.length.toString(16)}\r\n`);
+          socket.write(manifest);
+          socket.end("\r\n0\r\n\r\n");
+        });
+      });
+      registry.listen(0, "127.0.0.1");
+      await once(registry, "listening");
+      const registryPort = (registry.address() as AddressInfo).port;
+      const registryUrl = `https://localhost:${registryPort}/`;
+
+      // A forward proxy that only speaks CONNECT.
+      const proxy = createTcpServer(client => {
+        client.on("error", () => {});
+        client.once("data", () => {
+          const upstream = tcpConnect(registryPort, "127.0.0.1", () => {
+            client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+            client.pipe(upstream);
+            upstream.pipe(client);
+          });
+          upstream.on("error", () => client.destroy());
+          client.on("close", () => upstream.destroy());
+        });
+      });
+      proxy.listen(0, "127.0.0.1");
+      await once(proxy, "listening");
+
+      try {
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: registryUrl } }),
+        );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--ca", tlsCert.cert],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...env,
+            HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+            https_proxy: undefined,
+            NO_PROXY: undefined,
+            no_proxy: undefined,
+            BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+          },
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).toContain("error: ZlibError downloading package manifest bar");
+        // The tarball that the manifest names is never requested.
+        expect(requests).toEqual(["GET /bar HTTP/1.1"]);
+        expect(exitCode).toBe(1);
+      } finally {
+        registry.close();
+        proxy.close();
+      }
     });
   });
 

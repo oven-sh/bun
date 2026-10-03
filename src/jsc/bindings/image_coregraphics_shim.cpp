@@ -592,14 +592,4 @@ int64_t bun_coregraphics_clipboard_change_count()
 
 } // extern "C"
 
-#else
-// Non-Apple: stubs so the link succeeds; callers only reference these on
-// macOS so they're dead code, but LTO needs the definitions.
-extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
-extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
-extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
-extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
-extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
-extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
-extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
-#endif
+#endif // defined(__APPLE__)

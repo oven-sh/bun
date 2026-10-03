@@ -438,11 +438,11 @@ impl WorkspaceMap {
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     cwd,
-                    false,
-                    false,
-                    false,
-                    false,
-                    true,
+                    /* dot: */ false,
+                    /* absolute: */ false,
+                    /* follow_symlinks: */ true,
+                    /* error_on_broken_symlinks: */ false,
+                    /* only_files: */ true,
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,

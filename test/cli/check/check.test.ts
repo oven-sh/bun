@@ -97,7 +97,12 @@ async function inTerminal(cwd: string, cmd: string[]) {
     },
   });
   const exitCode = await child.exited;
-  return { output: Bun.stripANSI(output), hasColors: output.includes("\x1b[3"), exitCode, signalCode: child.signalCode };
+  return {
+    output: Bun.stripANSI(output),
+    hasColors: output.includes("\x1b[3"),
+    exitCode,
+    signalCode: child.signalCode,
+  };
 }
 
 describe.concurrent("bun check", () => {
@@ -630,7 +635,8 @@ describe.concurrent("bun check", () => {
         "packages/loose/index.ts": implicitAny,
         "packages/strict/tsconfig.json": tsconfig,
         // A file imported from another package is checked by that package's project.
-        "packages/strict/index.ts": `import { f as loose } from "../loose/index";\nexport const a: string = loose(1);\n` + implicitAny,
+        "packages/strict/index.ts":
+          `import { f as loose } from "../loose/index";\nexport const a: string = loose(1);\n` + implicitAny,
         "packages/left-out/tsconfig.json": loose,
         "packages/left-out/index.ts": implicitAny,
         "tools/tsconfig.json": loose,
@@ -1103,10 +1109,12 @@ const kind: number = Shape.kind;
           "two/index.js": index("two"),
         });
         const { stdout } = await check(dir);
-        expect(stdout.split("\n").filter(line => line.includes("TS6307")).map(line => line.slice(0, 40))).toEqual([
-          "one/index.js(1,26): error TS6307: File '",
-          "two/index.js(1,26): error TS6307: File '",
-        ]);
+        expect(
+          stdout
+            .split("\n")
+            .filter(line => line.includes("TS6307"))
+            .map(line => line.slice(0, 40)),
+        ).toEqual(["one/index.js(1,26): error TS6307: File '", "two/index.js(1,26): error TS6307: File '"]);
       });
 
       test("is imported without allowJs where an untyped import is no error", async () => {
@@ -1465,7 +1473,9 @@ export {};
 `,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(9,7): error TS2322: Type '{ k: "a"; }' is not assignable to type '1'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(9,7): error TS2322: Type '{ k: "a"; }' is not assignable to type '1'."`,
+      );
     });
 
     test("constraint of a distributive conditional type over an inferred type parameter", async () => {
@@ -2368,11 +2378,13 @@ export const a: number = big;
         }),
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '{ env: { builtin: boolean; }; globals: { global0: string; global1: string; global2: string; global3: string; global4: string; global5: string; global6: string; global7: string; global8: string; global9: string; global10: string; global11: string; global12: string; global13: string; global14: string; global15: string...' is not assignable to type 'number'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,14): error TS2322: Type '{ env: { builtin: boolean; }; globals: { global0: string; global1: string; global2: string; global3: string; global4: string; global5: string; global6: string; global7: string; global8: string; global9: string; global10: string; global11: string; global12: string; global13: string; global14: string; global15: string...' is not assignable to type 'number'."`,
+      );
       expect(exitCode).toBe(1);
     });
 
-    test("the replacement suggested for `baseUrl: \"..\"` starts with `./`", async () => {
+    test('the replacement suggested for `baseUrl: ".."` starts with `./`', async () => {
       using dir = project({
         "sub/tsconfig.json": `{ "compilerOptions": { "baseUrl": "..", "noEmit": true, "types": [], "lib": ["esnext"] }, "files": ["../a.ts"] }
 `,
@@ -2455,7 +2467,9 @@ export const wrong: number = { a: make() };
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(8,14): error TS2322: Type '{ a: Rec; }' is not assignable to type 'number'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(8,14): error TS2322: Type '{ a: Rec; }' is not assignable to type 'number'."`,
+      );
       expect(exitCode).toBe(1);
     });
 
@@ -2822,7 +2836,10 @@ export function f<T>(rest: T) {
 
     test("missing path arguments are reported before the project is loaded", async () => {
       // The invalid tsconfig.json and the missing lib files are never read.
-      using dir = project({ "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` }, { withTypeScript: false });
+      using dir = project(
+        { "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` },
+        { withTypeScript: false },
+      );
       const { stdout, stderr, exitCode } = await check(dir, ["nope.ts", "src/nope"]);
       expect(stdout).toMatchInlineSnapshot(`
         "error TS6053: File '<dir>/nope.ts' not found.
@@ -2893,7 +2910,7 @@ describe.concurrent("@types/bun", () => {
   // Matches `tsc` since TypeScript 6.0 and the editor.
   test.each([
     ["has no `types`", withoutTypes],
-    ["has `types` without \"bun\"", tsconfig],
+    ['has `types` without "bun"', tsconfig],
   ])("is not included when tsconfig.json %s, and the hint explains the fix", async (_, config) => {
     using dir = project({ ...bunTypes, "tsconfig.json": config });
     const { stdout, stderr, exitCode } = await check(dir);
@@ -3051,7 +3068,8 @@ describe.concurrent("--check", () => {
   });
 
   test("bun build --check checks the scripts of an HTML entry point", async () => {
-    const page = (script: string) => `<!doctype html>\n<script src="https://example.com/cdn.js"></script>\n<script type="module" src="${script}"></script>\n`;
+    const page = (script: string) =>
+      `<!doctype html>\n<script src="https://example.com/cdn.js"></script>\n<script type="module" src="${script}"></script>\n`;
     using dir = project({
       "good/index.html": page("./main.ts"),
       "good/main.ts": `const good: number = 1;\nconsole.log(good);\n`,

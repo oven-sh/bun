@@ -1807,6 +1807,62 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    test("an import shadowed by a variable counts as used where `a.b` is resolved as an entity name", async () => {
+      const file = (returned: string, type: string) => `import { policy, used } from "./a";
+export function f(s: { data: ${type} }) {
+  const policy = s.data;
+  return ${returned};
+}
+export const u = used;
+`;
+      using dir = project({
+        "a.ts": `export const policy = { name: "x" };\nexport const used = 1;\n`,
+        // To see whether this is a member of an enum, `policy.in` is resolved as an entity name, and `policy` as a namespace.
+        "b.ts": file("policy.in.x", "{ in: { x: number } }"),
+        "c.ts": file("policy.name", "{ name: string }"),
+      });
+      const { stdout, exitCode } = await check(dir, ["--noUnusedLocals", "true"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"c.ts(1,10): error TS6133: 'policy' is declared but its value is never read."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("exactOptionalPropertyTypes only restricts writes to optional properties", async () => {
+      using dir = project({
+        "a.ts": `interface Box<T> {
+  current: T;
+}
+declare function box<T>(x: T): Box<T>;
+declare const p: { id?: string };
+const b = box(p.id);
+b.current = undefined;
+const o = { x: p.id };
+o.x = undefined;
+p.id = undefined;
+class A {
+  #s?: string;
+  t?: string;
+  m() {
+    this.#s = undefined;
+    this.t = undefined;
+  }
+}
+declare function shot(options?: { mask?: A[] }): void;
+declare const mask: string[] | undefined;
+shot({ mask });
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--exactOptionalPropertyTypes", "true"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,1): error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
+        a.ts(15,5): error TS2322: Type 'undefined' is not assignable to type 'string'.
+        a.ts(16,5): error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
+        a.ts(21,8): error TS2412: Type 'string[] | undefined' is not assignable to type 'A[] | undefined' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("without strictNullChecks, [] and [undefined] are assignable to never[]", async () => {
       using dir = project({
         "a.ts": `const a: never[] = [];

@@ -2030,7 +2030,7 @@ impl<'p> Checker<'p> {
     /// `isConstantVariable(symbol)` and the conditions `evaluateEntity` checks on its
     /// `ValueDeclaration`: a constant declared by an identifier, whose type is inferred from its
     /// initializer, declared before `location`.
-    fn constant_variable_declaration(
+    pub(super) fn constant_variable_declaration(
         &mut self,
         symbol: Sym,
         location: Location,

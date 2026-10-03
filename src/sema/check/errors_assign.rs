@@ -162,6 +162,7 @@ impl Checker<'_> {
                     continue;
                 }
             }
+            let head = self.exact_optional_head_message(file, target, source);
             self.check_assignable_with_end(
                 file,
                 source,
@@ -169,7 +170,7 @@ impl Checker<'_> {
                 self.start_of(file, target),
                 self.end_of_expr(file, target),
                 value,
-                2322,
+                head.unwrap_or(2322),
             );
         }
     }
@@ -1618,21 +1619,15 @@ impl Checker<'_> {
         } else {
             actual
         };
-        let apparent = self.apparent_type(target);
-        let target_is_optional = self
-            .prop_of(apparent, name)
-            .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
         let mut diags = Vec::new();
-        if target_is_optional && self.is_exact_optional_property_mismatch(actual, target, name) {
+        if self.is_exact_optional_property_mismatch(actual, expected) {
             diags.push(self.new_diagnostic(prop, 2412, &[Arg::Type(actual), Arg::Type(expected)]));
         } else {
-            // An optional property is not treated as including `undefined`.
-            let expected =
-                if target_is_optional && self.p.files.options.exact_optional_property_types {
-                    self.without_undefined(expected)
-                } else {
-                    expected
-                };
+            let apparent = self.apparent_type(target);
+            let target_is_optional = self
+                .prop_of(apparent, name)
+                .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
+            let expected = self.remove_missing_type(expected, target_is_optional);
             let output = Some(&mut diags);
             self.check_type_assignable_to_ex(actual, expected, Some(prop), error_message, output);
         }
@@ -1647,19 +1642,14 @@ impl Checker<'_> {
         true
     }
 
-    /// `isExactOptionalPropertyMismatch`, under exactOptionalPropertyTypes: `actual` may be
-    /// `undefined`, and the optional property `name` of `target` is not declared to accept it
-    /// (`containsMissingType`).
-    fn is_exact_optional_property_mismatch(
-        &mut self,
-        actual: TypeId,
+    /// `isExactOptionalPropertyMismatch`. Only exactOptionalPropertyTypes has a missing type.
+    pub(super) fn is_exact_optional_property_mismatch(
+        &self,
+        source: TypeId,
         target: TypeId,
-        name: Atom,
     ) -> bool {
-        self.p.files.options.exact_optional_property_types
-            && self.some_type(actual, |_, m| m.is_undefined())
-            && super::errors_operators::exact_optional_write_type(self, target, name)
-                .is_some_and(|written| !self.some_type(written, |_, m| m.is_undefined()))
+        self.maybe_type_of_kind(source, |_, t| t.is_undefined())
+            && self.contains_missing_type(target)
     }
 
     /// `getExactOptionalUnassignableProperties`, whether there are any.
@@ -1674,9 +1664,9 @@ impl Checker<'_> {
             return false;
         }
         for prop in &self.properties_of_type(target) {
-            if prop.flags.contains(PropFlags::OPTIONAL)
-                && let Some(actual) = self.type_of_property(source, prop.name)
-                && self.is_exact_optional_property_mismatch(actual, target, prop.name)
+            if let Some(of_source) = self.type_of_property_of_type(source, prop.name)
+                && let Some(of_target) = self.type_of_property_of_type(target, prop.name)
+                && self.is_exact_optional_property_mismatch(of_source, of_target)
             {
                 return true;
             }

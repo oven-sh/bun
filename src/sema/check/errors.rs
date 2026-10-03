@@ -2449,6 +2449,37 @@ impl Checker<'_> {
         false
     }
 
+    /// `headMessage` of `checkAssignmentOperator`. The property is looked up in the type of the
+    /// object itself: one that is possibly `undefined` or `null` has no such property. It is looked
+    /// up by `left.Name().Text()`, which is not the name a private member is stored under.
+    pub(super) fn exact_optional_head_message(
+        &mut self,
+        file: FileId,
+        left: ExprId,
+        right_type: TypeId,
+    ) -> Option<u32> {
+        let hir = self.hir(file);
+        let ExprKind::Dot {
+            obj,
+            name,
+            name_pos,
+            ..
+        } = hir[left].kind
+        else {
+            return None;
+        };
+        if !self.p.files.options.exact_optional_property_types
+            || is_parenthesized(hir, left)
+            || is_private_name_at(hir, name_pos)
+        {
+            return None;
+        }
+        let object = self.type_of_expr(file, obj);
+        let target = self.type_of_property_of_type(object, name)?;
+        self.is_exact_optional_property_mismatch(right_type, target)
+            .then_some(2412)
+    }
+
     /// `checkAssignmentOperator` for `left op= right`: 2364 2779, or 2322 2412 if `right_type` is
     /// not assignable to the target.
     /// `left_type`: `checkExpression(left)`, for an arithmetic operator with `null` and `undefined`
@@ -2492,22 +2523,7 @@ impl Checker<'_> {
         if !self.check_reference_expression(file, left, 2364, 2779) {
             return;
         }
-        // `isExactOptionalPropertyMismatch`. The property is looked up in the type of the object itself: one that is possibly
-        // `undefined` or `null` has no such property.
-        let mut head_message = None;
-        if self.p.files.options.exact_optional_property_types
-            && !is_parenthesized(hir, left)
-            && let ExprKind::Dot { obj, name, .. } = hir[left].kind
-            && self.maybe_type_of_kind(right_type, |_, t| t.is_undefined())
-        {
-            let object = self.type_of_expr(file, obj);
-            if self
-                .type_of_property_of_type(object, name)
-                .is_some_and(|declared| self.contains_missing_type(declared))
-            {
-                head_message = Some(2412);
-            }
-        }
+        let head_message = self.exact_optional_head_message(file, left, right_type);
         // `AssignmentKindDefinite` uses the declared type of the target. For a target that is read
         // first, a literal type is replaced by its base type: `checkIdentifier`,
         // `getFlowTypeOfAccessExpression`.

@@ -4,6 +4,7 @@
 //! Follows `checkUnusedIdentifiers` and its callees in TypeScript 7.0.2's checker.go. They record
 //! references during checking. Here one pass over the file collects them.
 
+use super::errors_enums_names::Location;
 use super::*;
 use crate::bind::{
     Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
@@ -117,6 +118,7 @@ impl Checker<'_> {
                 }
             }
         }
+        self.note_entity_name_expressions(file, &index, &mut u);
         self.note_jsdoc_links(file, &mut u);
         if !hir.jsx.is_empty() {
             self.note_jsx_factories(file, &index, &mut u);
@@ -125,6 +127,156 @@ impl Checker<'_> {
             self.note_private_reads(file, &mut u);
         }
         self.check_unused_identifiers(&u);
+    }
+
+    /// The expressions that tsgo resolves with `resolveEntityName` besides checking them. In `a.b`
+    /// that resolves `a` as a namespace: see `note_namespace`.
+    fn note_entity_name_expressions(&mut self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_checked = |u: &Unused, e: ExprId| !bound.is_unchecked(e.idx()) && !u.is_unchecked(e);
+        // `isValidConstAssertionArgument(e)` resolves the object of a property or element access.
+        for &e in index
+            .of(ExprTag::Dot)
+            .iter()
+            .chain(index.of(ExprTag::Index))
+        {
+            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+                continue;
+            };
+            if !is_property_access_entity_name_expression(hir, obj) || !is_checked(u, e) {
+                continue;
+            }
+            let has_inferred_return_type = |f: FnId| hir[f].ret.is_none();
+            let is_in_such_a_function =
+                || (self.get_containing_function(file, e)).is_some_and(has_inferred_return_type);
+            // `isConstContext(e)`
+            let is_tested = match bound.expr_parent[e.idx()] {
+                // `checkExpressionForMutableLocation`, `checkAssertion`,
+                // `checkAndAggregateYieldOperandTypes`
+                Parent::Expr(parent) => match hir[parent].kind {
+                    ExprKind::Array(_) | ExprKind::AsConst(_) => true,
+                    ExprKind::Yield { .. } => is_in_such_a_function(),
+                    _ => false,
+                },
+                Parent::Prop(prop) => matches!(hir[prop].kind, PropKind::Init),
+                // `getReturnTypeFromBody`
+                Parent::FnBody(f) => has_inferred_return_type(f),
+                // `checkAndAggregateReturnExpressionTypes`
+                Parent::Stmt(s) if matches!(hir[s].kind, StmtKind::Return(_)) => {
+                    is_in_such_a_function()
+                }
+                _ => false,
+            };
+            if is_tested {
+                self.note_qualified_name(file, u, obj);
+            }
+        }
+        // `checkTemplateExpression`
+        for &e in index.of(ExprTag::Template) {
+            let is_tagged = matches!(bound.expr_parent[e.idx()], Parent::Expr(parent)
+                if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir[call].template == e));
+            if !is_tagged && is_checked(u, e) {
+                self.note_evaluated(file, u, e, Location::Expr(file, e), 0);
+            }
+        }
+        // `checkBinaryLikeExpression`: the right operand of a shift.
+        for &e in index
+            .of(ExprTag::Binary)
+            .iter()
+            .chain(index.of(ExprTag::Assign))
+        {
+            let (ExprKind::Binary { op, right, .. }
+            | ExprKind::Assign {
+                op: Some(op),
+                value: right,
+                ..
+            }) = hir[e].kind
+            else {
+                continue;
+            };
+            if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) && is_checked(u, e) {
+                self.note_evaluated(file, u, right, Location::Expr(file, right), 0);
+            }
+        }
+        // `computeConstantEnumMemberValue`
+        for (i, member) in hir.enum_members.iter().enumerate() {
+            if member.init.is_some() {
+                let location = Location::Member(file, EnumMemberId(i as u32));
+                self.note_evaluated(file, u, member.init, location, 0);
+            }
+        }
+    }
+
+    /// `resolveEntityName(e, SymbolFlagsValue)` for `e` of the form `a.b`.
+    fn note_qualified_name(&self, file: FileId, u: &mut Unused, e: ExprId) {
+        let hir = self.hir(file);
+        let mut first = e;
+        while let ExprKind::Dot { obj, .. } = hir[first].kind {
+            first = obj;
+        }
+        if let ExprKind::Ident(name) = hir[first].kind {
+            u.note_namespace(self.enclosing_scope_of_expr(file, first), name);
+        }
+    }
+
+    /// The names that `evaluate(e, location)` resolves. It visits what `evaluate` visits.
+    fn note_evaluated(
+        &mut self,
+        file: FileId,
+        u: &mut Unused,
+        e: ExprId,
+        location: Location,
+        depth: u32,
+    ) {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Unary {
+                op:
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::PreInc | UnOp::PreDec,
+                operand,
+            } => self.note_evaluated(file, u, operand, location, depth),
+            ExprKind::Binary { left, right, .. }
+            | ExprKind::Assign {
+                target: left,
+                value: right,
+                ..
+            } => {
+                self.note_evaluated(file, u, left, location, depth);
+                self.note_evaluated(file, u, right, location, depth);
+            }
+            // `evaluateTemplateExpression` stops at the first span without a value.
+            ExprKind::Template { exprs } => {
+                for span in hir.ids(exprs) {
+                    self.note_evaluated(file, u, span, location, depth);
+                    if self.evaluate(file, span, location).value.is_none() {
+                        break;
+                    }
+                }
+            }
+            ExprKind::Index { obj, index, .. } => {
+                if is_string_literal_like(hir, index)
+                    && !is_parenthesized(hir, index)
+                    && !is_parenthesized(hir, obj)
+                    && is_property_access_entity_name_expression(hir, obj)
+                {
+                    self.note_qualified_name(file, u, obj);
+                }
+            }
+            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
+                self.note_qualified_name(file, u, e);
+            }
+            // The initializer of a constant.
+            ExprKind::Ident(_) if depth < 16 => {
+                if let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
+                    && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
+                    && of == file
+                {
+                    let location = Location::Variable(of, d);
+                    self.note_evaluated(file, u, hir[d].init, location, depth + 1);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `markJsxAliasReferenced`: a tag is a call of the factory, which must be in scope at the tag,
@@ -833,16 +985,10 @@ impl Unused<'_> {
             } else {
                 (SymFlags::NAMESPACE, NAMESPACE)
             };
-            // `resolveEntityName`: a name that does not resolve to a namespace is looked up again,
-            // as an alias, with `isUse`.
-            if self.note_name(scope, first, meaning, bit).is_none()
-                && meaning == SymFlags::NAMESPACE
-                && self
-                    .files
-                    .resolve_name(self.file, scope, first, meaning)
-                    .is_none()
-            {
-                self.note_name(scope, first, SymFlags::ALIAS, ALIAS);
+            if meaning == SymFlags::NAMESPACE {
+                self.note_namespace(scope, first);
+            } else {
+                self.note_name(scope, first, meaning, bit);
             }
         }
         for (i, s) in hir.stmts.iter().enumerate() {
@@ -1019,6 +1165,18 @@ impl Unused<'_> {
             MemberOwner::Interface(id) => bound.interface_scope[id.idx()],
             MemberOwner::TypeLiteral(t) => bound.type_scope[t.idx()],
             MemberOwner::None => ScopeId::NONE,
+        }
+    }
+
+    /// `resolveEntityName(name, SymbolFlagsNamespace)`: a name that does not resolve to a namespace
+    /// is looked up again, as an alias, with `isUse`. That lookup passes over a variable of the
+    /// name, so it marks an import that the variable shadows.
+    fn note_namespace(&mut self, scope: ScopeId, name: Atom) {
+        let meaning = SymFlags::NAMESPACE;
+        if self.note_name(scope, name, meaning, NAMESPACE).is_none()
+            && (self.files.resolve_name(self.file, scope, name, meaning)).is_none()
+        {
+            self.note_name(scope, name, SymFlags::ALIAS, ALIAS);
         }
     }
 

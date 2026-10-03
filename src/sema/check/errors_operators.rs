@@ -23,13 +23,11 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::Assign) {
             if let ExprKind::Assign {
-                op: None,
-                target,
-                value,
+                op: None, target, ..
             } = hir[e].kind
                 && !bound.is_unchecked(e.idx())
             {
-                check_plain_assignment(self, file, target, value);
+                check_plain_assignment(self, file, target);
             }
         }
     }
@@ -116,24 +114,6 @@ pub(super) fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprI
     text[..end].ends_with(b"...").then(|| end as u32 - 3)
 }
 
-// ───────────────────────────── kinds of types ─────────────────────────────
-
-/// `TypeFlagsUndefined`
-fn is_undefined(_: &Checker<'_>, ty: TypeId) -> bool {
-    ty.is_undefined()
-}
-
-/// The types of two operands, if both were fully resolved.
-fn operand_types(
-    c: &mut Checker<'_>,
-    file: FileId,
-    left: ExprId,
-    right: ExprId,
-) -> Option<(TypeId, TypeId)> {
-    let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
-    Some((l, r))
-}
-
 // ───────────────────────────── binary operators ─────────────────────────────
 
 /// `isLiteralExpressionOfObject`
@@ -188,88 +168,18 @@ pub(super) fn why_no_reference(
 
 /// `a = b`, as in `checkBinaryLikeExpression`. A pattern is handled by
 /// `checkDestructuringAssignment`.
-fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId, value: ExprId) {
+fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId) {
     let hir = c.hir(file);
     if !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
         || is_parenthesized(hir, target)
     {
-        check_assignment_operator(c, file, target, value);
+        check_assignment_operator(c, file, target);
     }
 }
 
-/// `checkAssignmentOperator`. `value`: the assigned expression, or `NONE` where the operator
-/// transforms it first.
-fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, value: ExprId) {
-    if !check_reference_expression(c, file, target, 2364, 2779)
-        || value.is_none()
-        || !c.p.files.options.exact_optional_property_types
-    {
-        return;
-    }
-    // An optional property does not thereby accept `undefined`.
-    let hir = c.hir(file);
-    let ExprKind::Dot { obj, name, .. } = hir[target].kind else {
-        return;
-    };
-    let Some((object, source)) = operand_types(c, file, obj, value) else {
-        return;
-    };
-    if c.is_any(object) {
-        return;
-    }
-    // A target that cannot be assigned has the error type, to which anything is assignable.
-    let left = c.type_of_expr(file, target);
-    if c.is_error_type(left) {
-        return;
-    }
-    let there = c.non_nullable(object);
-    let Some(expected) = exact_optional_write_type(c, there, name) else {
-        return;
-    };
-    // `isExactOptionalPropertyMismatch`. Only an unparenthesized property access changes the head message. The property is looked
-    // up in the type of `obj` itself: an object that is possibly `undefined` or `null` has no such property.
-    let is_mismatch = !is_parenthesized(hir, target)
-        && c.maybe_type_of_kind(source, is_undefined)
-        && c.type_of_property_of_type(object, name)
-            .is_some_and(|declared| c.contains_missing_type(declared));
-    let at = c.start_of(file, target);
-    if !c.check_assignable_with_end(
-        file,
-        source,
-        expected,
-        at,
-        error_end(c, file, target),
-        value,
-        if is_mismatch { 2412 } else { 2322 },
-    ) && is_mismatch
-    {
-        c.reported.retain(|d| d.start != at || d.code != 2322);
-    }
-}
-
-/// The type an assignment to the property `name` of `object` must fit: the type of the property without the missing type
-/// (`removeMissingType` in `getFlowTypeOfAccessExpression`). `None` if the property is not optional in any member of `object`, or
-/// if some member lacks it.
-pub(super) fn exact_optional_write_type(
-    c: &mut Checker<'_>,
-    object: TypeId,
-    name: Atom,
-) -> Option<TypeId> {
-    let object = c.reduced(object);
-    let mut types = Vec::new();
-    // `createUnionOrIntersectionProperty`: a property of a union is optional if it is optional in any member.
-    let mut is_optional = false;
-    for &part in c.parts(object) {
-        let apparent = c.apparent_type(part);
-        let (prop, mapper) = c.prop_of(apparent, name)?;
-        is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
-        types.push(c.type_of_prop(&prop, mapper));
-    }
-    if !is_optional {
-        return None;
-    }
-    let ty = c.union(&types);
-    Some(c.remove_missing_type(ty, true))
+/// `checkAssignmentOperator`: the reference check. `check_assignments` compares the types.
+fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId) {
+    check_reference_expression(c, file, target, 2364, 2779);
 }
 
 // ───────────────────────────── unary operators ─────────────────────────────

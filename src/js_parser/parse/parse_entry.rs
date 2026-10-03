@@ -462,7 +462,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
-        // What the parser only logs is an error all the same: the statements are its best guess.
+        // What the parser only logs is still an error: the statements are its best guess.
         if p.log().errors > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }

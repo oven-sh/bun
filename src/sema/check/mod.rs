@@ -1840,8 +1840,8 @@ impl<'p> Checker<'p> {
         };
         self.add_diagnostic_of(None, Reported::bare(at, code));
         // A query that began under an instantiation had less depth left than the same query has
-        // from depth 0, where a finite type does not reach the limit. tsgo stores its result all
-        // the same, and which types that breaks depends on the order in which it checks files.
+        // from depth 0, where a finite type does not reach the limit. tsgo stores its result
+        // regardless, and which types that breaks depends on the order in which it checks files.
         if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
             self.mark_tainted_from(from);
         }

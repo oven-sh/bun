@@ -3998,10 +3998,9 @@ impl<'p> Checker<'p> {
         error_node: Place,
         target: TargetKind,
     ) -> TypeId {
-        // `removeMissingType`. `missingType` is not added to a type obtained from an index
-        // signature either.
         if target.definite {
-            return self.filter(prop_type, |_, m| m != TypeId::MISSING);
+            let is_optional = prop.is_some_and(|prop| prop.flags.contains(PropFlags::OPTIONAL));
+            return self.remove_missing_type(prop_type, is_optional);
         }
         if let Some(prop) = prop
             && !self.is_variable_property_or_accessor(prop)

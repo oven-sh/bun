@@ -356,18 +356,13 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     let parts_live = &c.graph.parts_live[source_index as usize];
-    const NAMESPACE_EXPORT: usize = bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize;
-    // The namespace export part is ahead of the `import` statements. What it names goes after what they import.
-    for index in (NAMESPACE_EXPORT + 1..parts.len())
-        .chain(parts.get(NAMESPACE_EXPORT).map(|_| NAMESPACE_EXPORT))
-    {
+    // The namespace export part (index 0) counts last: what it names goes after what the `import` statements import.
+    const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);
+    for part_index in 1..=parts.len() {
+        let index = part_index % parts.len();
         let part = &parts[index];
         let runs_here = runs && parts_live.is_set(index);
-        let part_index = if index == NAMESPACE_EXPORT {
-            parts.len()
-        } else {
-            index
-        } as u32;
+        let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
             if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || runs_here) {

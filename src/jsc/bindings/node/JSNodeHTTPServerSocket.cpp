@@ -135,8 +135,7 @@ static bool upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody, bool em
          * switch into tunnel mode once the message completes (Node 26 delivers
          * the body through the request before raw data starts flowing). */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
-        /* A socket that shut down leaves the parser at the end of this dispatch: the rest of its read is not parsed. */
-        if (emitWhenReadParsed && !us_socket_is_shut_down(socket) && uWS::HttpContext<SSL>::getSocketContextDataS(socket)->isParsing(socket)) {
+        if (emitWhenReadParsed && uWS::HttpContext<SSL>::getSocketContextDataS(socket)->isParsing(socket)) {
             httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
             return true;
         }

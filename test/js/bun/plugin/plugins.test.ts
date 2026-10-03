@@ -197,6 +197,25 @@ plugin({
   },
 });
 
+declare global {
+  var bufferSourceContents: any;
+}
+
+plugin({
+  name: "buffer source contents",
+  setup(builder) {
+    globalThis.bufferSourceContents = "";
+    builder.onResolve({ filter: /.*/, namespace: "buffer-source" }, ({ path }) => ({
+      namespace: "buffer-source",
+      path,
+    }));
+    builder.onLoad({ filter: /.*/, namespace: "buffer-source" }, () => ({
+      contents: globalThis.bufferSourceContents,
+      loader: "js",
+    }));
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -328,6 +347,141 @@ describe("dynamic import", () => {
     const result = await import("async-obj:hello42");
     expect(result.foo).toBe(42);
     expect(result.default).toBe(43);
+  });
+});
+
+describe("onLoad contents accepts BufferSource", () => {
+  const source = new TextEncoder().encode("export default 'hello';");
+
+  it("accepts ArrayBuffer", async () => {
+    const ab = new ArrayBuffer(source.byteLength);
+    new Uint8Array(ab).set(source);
+    globalThis.bufferSourceContents = ab;
+    const result = await import("buffer-source:arraybuffer");
+    expect(result.default).toBe("hello");
+  });
+
+  it("accepts SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = sab;
+    const result = await import("buffer-source:sharedarraybuffer");
+    expect(result.default).toBe("hello");
+  });
+
+  it("accepts Uint8Array backed by SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = new Uint8Array(sab);
+    const result = await import("buffer-source:u8-over-sab");
+    expect(result.default).toBe("hello");
+  });
+
+  it("rejects plain objects", async () => {
+    globalThis.bufferSourceContents = { byteLength: 3 };
+    await expect(import("buffer-source:bad-object")).rejects.toThrow(
+      'Expected "contents" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer',
+    );
+  });
+});
+
+// The transpiler reads the source of a module until it has printed the module.
+// JS runs in that time, and another thread can write a SharedArrayBuffer. So
+// the transpiler reads a copy of the bytes of a buffer `contents`.
+describe.concurrent("onLoad contents in a buffer", () => {
+  async function fixture(...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), resolve(import.meta.dir, "plugin-buffer-contents-fixture.ts"), ...args],
+      // A debug build then aborts on an exception that no scope checked.
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A debug build logs each macro call to stdout first.
+    const last = stdout.trim().split("\n").at(-1)!;
+    let result: unknown = last;
+    try {
+      result = JSON.parse(last);
+    } catch {}
+    return { result, stderr: stderr.trim(), exitCode };
+  }
+
+  // What JS can do to each kind of `contents` while the transpiler reads the module.
+  const mutations: Record<string, string[]> = {
+    "Buffer": ["overwrite"],
+    "Uint8Array": ["overwrite", "transfer", "resize"],
+    "DataView": ["overwrite", "transfer", "resize"],
+    "ArrayBuffer": ["overwrite", "transfer"],
+    "resizable ArrayBuffer": ["overwrite", "transfer", "resize"],
+    "SharedArrayBuffer": ["overwrite"],
+    "growable SharedArrayBuffer": ["overwrite"],
+  };
+  for (const [kind, hows] of Object.entries(mutations)) {
+    it(`${kind}: transpiles the bytes it was given when a macro or an onResolve hook changes them`, async () => {
+      const transpiled: Record<string, unknown> = {};
+      for (const how of hows) {
+        for (const by of ["macro", "onResolve"]) {
+          for (const form of [
+            "onLoad import",
+            "onLoad require",
+            "async onLoad import",
+            "build.module import",
+            "build.module require",
+          ]) {
+            transpiled[`${how} by ${by}, ${form}`] = { during: how, after: "after the mutation", mutated: true };
+          }
+        }
+      }
+      expect(await fixture("mutate", kind, ...hows)).toEqual({ result: transpiled, stderr: "", exitCode: 0 });
+    });
+  }
+
+  for (const kind of ["SharedArrayBuffer", "Uint8Array"]) {
+    const name = kind === "Uint8Array" ? "Uint8Array on a SharedArrayBuffer" : kind;
+    it(`${name}: transpiles the bytes while a worker writes them`, async () => {
+      expect(await fixture("worker", kind)).toEqual({ result: { overlapped: 50 }, stderr: "", exitCode: 0 });
+    });
+  }
+
+  for (const kind of ["Buffer", "ArrayBuffer"]) {
+    it(`${kind}: takes the bytes after it read the whole result, and leaves the buffer as it was`, async () => {
+      expect(await fixture("order", kind)).toEqual({
+        result: {
+          "loader getter": "second",
+          "promise reaction": "second",
+          "scratch": ["one", "two"],
+          "scratch after the loads": { byteLength: 64, text: 'export const which = "two";' },
+          "zero length": [],
+          "detached": [],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it(`${kind}: rejects the import when the copy cannot be allocated`, async () => {
+      expect(await fixture("oom", kind)).toEqual({
+        result: {
+          "onLoad import": "RangeError: Out of memory",
+          "onLoad require": "RangeError: Out of memory",
+          "async onLoad import": "RangeError: Out of memory",
+          "build.module require": "RangeError: Out of memory",
+          "with the limit lifted": [],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+
+  it("string: stays alive while the transpiler reads it", async () => {
+    const transpiled = { during: "collected 512", intact: true };
+    expect(await fixture("string")).toEqual({
+      result: { flat: transpiled, rope: transpiled, substring: transpiled },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

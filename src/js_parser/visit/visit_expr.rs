@@ -42,6 +42,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            // The caller keeps running and reads `e` as a visited expression, and an unvisited
+            // identifier has no symbol yet. A substitution revisit walks visited nodes, and it
+            // can be inside a `define` value that later parses share.
+            if !self.is_revisit_for_substitution {
+                e.data = Data::EMissing(E::Missing {});
+            }
             self.report_stack_overflow(e.loc);
             return;
         }

@@ -7433,6 +7433,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                 }
+                                // The visit skipped this method after a stack overflow, so the parse fails.
+                                js_ast::ExprData::EMissing(_) => {}
                                 _ => unreachable!(),
                             }
                         }
@@ -7795,6 +7797,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) {
         use js_ast::g::PropertyKind;
+
+        // The visit skipped this method after a stack overflow, so the parse fails.
+        if prop.value.is_some_and(|value| value.is_missing()) {
+            return;
+        }
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
         // pulled out of the per-arm code to cut a ~3x repetition.

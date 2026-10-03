@@ -98,6 +98,23 @@ describe("bundler", () => {
         const u16 = Buffer.from("abc", "ucs2");
         console.log(u16.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
         console.log(u16.includes(new Uint8Array([0x63, 0x00]), 0, "ucs2"));
+        // UTF-16 on an odd-length haystack: Node.js truncates the unit counts,
+        // so the trailing odd byte is never a match position.
+        const odd = Buffer.from([0x61, 0x62, 0x63]);
+        console.log(odd.indexOf("c", 0, "ucs2"), odd.includes("c", 0, "ucs2"));
+        console.log(odd.lastIndexOf("c", 0, "ucs2"), odd.indexOf("c", 0, "utf16le"));
+        // Odd-length haystack plus a Uint8Array value: Node.js marks "not found"
+        // by comparing the byte result against the unrounded haystack length, so
+        // it reports the last unit rather than -1. Truncating the bounds without
+        // reproducing that marker turns these into -1. The trailing odd byte of
+        // the *value* is dropped, so 0x63 0x01 reads as 0x63 0x00.
+        const odd5 = Buffer.from([0x61, 0x62, 0x63, 0x61, 0x62]);
+        console.log(odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"), odd5.includes(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
+        console.log(odd5.indexOf(new Uint8Array([0x63, 0x01]), 0, "ucs2"), odd5.indexOf(new Uint8Array([0xff, 0xff]), 0, "ucs2"));
+        console.log(odd5.lastIndexOf(new Uint8Array([0x00, 0x61]), 0, "ucs2"), odd5.lastIndexOf(new Uint8Array([0x00, 0x61, 0x00, 0x62]), 0, "ucs2"));
+        console.log(odd5.indexOf(new Uint8Array([0x00, 0x61, 0x00, 0x62, 0x00]), 0, "ucs2"));
+        // Odd-length value: the trailing byte is not half-compared.
+        console.log(odd.indexOf(new Uint8Array([0x00, 0x61, 0x62]), 0, "ucs2"));
         // Scope note: lastIndexOf(val, undefined, "utf16le") returns 5 where
         // Node returns 10. That is pre-existing on main (reproducible without
         // this change, with a plain Buffer value) and is left alone here.
@@ -135,6 +152,13 @@ describe("bundler", () => {
         1
         2
         true
+        -1 false
+        -1 -1
+        4 true
+        4 4
+        4 4
+        4
+        2
         -1 2
         3
         ERR_INVALID_ARG_TYPE The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received an instance of Object

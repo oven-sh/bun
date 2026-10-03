@@ -1730,6 +1730,7 @@ impl QuicEndpoint {
             endpoint_handle,
             null_mut(),
             true,
+            self.application(true),
         )?;
         let applied = self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
@@ -1809,6 +1810,13 @@ impl QuicEndpoint {
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
+        // lsquic promotes a server conn once its handshake is complete and
+        // never calls `on_hsk_done` for it, so this callback is where a
+        // server session learns of its handshake.
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+            return null_mut();
+        };
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(conn);
         let provisional = self.provisional.with_mut(|v| {
@@ -1820,7 +1828,7 @@ impl QuicEndpoint {
         if let Some(session) = provisional {
             if let Some(live) = self.live_session(session) {
                 live.bind_conn(conn);
-                live.push_event(session::SessionEvent::HandshakeDone { ok: true });
+                live.note_handshake_ok(handshaken);
                 return session;
             }
         }
@@ -1884,6 +1892,7 @@ impl QuicEndpoint {
             endpoint_handle,
             conn,
             true,
+            self.application(true),
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
@@ -1893,7 +1902,7 @@ impl QuicEndpoint {
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
-                unsafe { (*session).push_event(session::SessionEvent::HandshakeDone { ok: true }) };
+                unsafe { (*session).note_handshake_ok(handshaken) };
                 session
             }
             Err(e) => {
@@ -1928,6 +1937,16 @@ impl QuicEndpoint {
             self.server_is_http.get()
         } else {
             self.client_is_http.get()
+        }
+    }
+
+    /// The application of every session of the server engine, or of the
+    /// client engine.
+    fn application(&self, is_server: bool) -> session::Application {
+        if self.is_http(is_server) {
+            session::Application::Http3
+        } else {
+            session::Application::Default
         }
     }
 
@@ -2353,6 +2372,7 @@ impl QuicEndpoint {
             frame.this(),
             null_mut(),
             false,
+            self.application(false),
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
@@ -2443,6 +2463,7 @@ impl QuicEndpoint {
             this_value,
             null_mut(),
             false,
+            session::Application::None,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];

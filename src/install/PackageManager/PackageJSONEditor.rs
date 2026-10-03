@@ -16,9 +16,7 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::Do;
-use super::workspace_package_json_cache::{
-    GetJSONOptions, GetResult, WorkspacePackageJSONCache,
-};
+use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;

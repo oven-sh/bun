@@ -516,6 +516,32 @@ test("vitest compatibility", () => {
 
 You can port tests from Vitest without rewriting your mocks.
 
+### Waiting for a condition
+
+`vi.waitFor` calls a callback until it stops throwing, then resolves with the callback's return value. `vi.waitUntil` calls a callback until it returns a truthy value, and rejects as soon as the callback throws.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+test("waits for a condition", async () => {
+  let isReady = false;
+  setTimeout(() => {
+    isReady = true;
+  }, 100);
+
+  await vi.waitFor(() => {
+    if (!isReady) throw new Error("not ready");
+  });
+
+  const ready = await vi.waitUntil(() => isReady, { timeout: 500, interval: 10 });
+  expect(ready).toBe(true);
+});
+```
+
+Both functions accept a timeout in milliseconds, or an object with `timeout` and `interval`. The defaults are 1000 ms and 50 ms. When the callback returns a promise, the next check waits until that promise settles.
+
+Under fake timers, each check first advances the fake clock by `interval`. The timeout is measured on the fake clock, so a condition that depends on a fake `setTimeout` resolves without waiting in real time.
+
 ## Implementation Details
 
 ### Cache Interaction

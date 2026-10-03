@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { isMacOS } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -286,6 +287,91 @@ devTest("directory cache bust case #17576", {
       `,
     );
     await c.expectMessage(456);
+  },
+});
+// The dev server asks the HMR runtimes for a module by the id that the bundler
+// registered it under. On Windows the cwd keeps the spelling it was given, so
+// it can differ from the spelling of a module path in letter case only.
+devTest("server module ids with the cwd in another letter case than on disk", {
+  skip: ["linux", "darwin"],
+  files: {
+    "bun.app.ts": `
+      import { realpathSync, symlinkSync } from "node:fs";
+      import { join } from "node:path";
+      const root = realpathSync.native(import.meta.dir);
+      process.chdir(root.toUpperCase());
+      // The resolver reports a path below a junction as the OS spells it.
+      symlinkSync(join(root, "fw-real"), join(root, "fw"), "junction");
+      export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./fw/server.ts" }],
+          },
+        },
+      };
+    `,
+    "fw-real/server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "routes/index.ts": `export default () => new Response("index");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+  },
+});
+devTest("client module ids with the cwd in another letter case than on disk", {
+  skip: ["linux", "darwin"],
+  htmlFiles: [],
+  files: {
+    "bun.app.ts": `
+      import { realpathSync } from "node:fs";
+      import { join } from "node:path";
+      const root = realpathSync.native(import.meta.dir);
+      process.chdir(root.toUpperCase());
+      // The page keeps the on-disk spelling of its path.
+      const { default: html } = await import(join(root, "index.html"));
+      export default {
+        static: { "/*": html },
+        fetch: () => new Response("Not Found", { status: 404 }),
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `console.log("client loaded");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("client loaded");
+  },
+});
+// The id of a module outside of the root has one "../" for each root segment.
+// The dev server gave up on the id when `path + 2 * root` reached
+// MAX_PATH_BYTES (4096 on Linux, 1024 on macOS). `longDir` is in the path and
+// in the root, and it alone is more than a third of that limit.
+const longDir = new Array(isMacOS ? 3 : 7).fill(Buffer.alloc(isMacOS ? 150 : 200, "d").toString()).join("/");
+devTest("module ids in a project with a long root", {
+  skip: ["win32"],
+  cwd: longDir + "/app",
+  files: {
+    "bun.app.ts": `
+      export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "../fw/server.ts" }],
+          },
+        },
+      };
+    `,
+    [longDir + "/fw/server.ts"]: `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    [longDir + "/app/routes/index.ts"]: `export default () => new Response("index");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
   },
 });
 devTest("deleting imported file shows error then recovers", {

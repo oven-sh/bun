@@ -1,4 +1,4 @@
-//! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
+//! libjpeg-turbo (TurboJPEG 3 API) decode/encode/transform for `Bun.Image`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
 use core::ffi::{c_int, c_void};
@@ -10,7 +10,7 @@ use crate::encoded_wrap_free;
 #[allow(non_camel_case_types)]
 type tjhandle = *mut c_void;
 
-// TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
+// TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1, TJINIT_TRANSFORM=2.
 unsafe extern "C" {
     fn tj3Init(init_type: c_int) -> tjhandle;
     fn tj3Destroy(h: tjhandle);
@@ -37,6 +37,15 @@ unsafe extern "C" {
         out_len: *mut usize,
     ) -> c_int;
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
+    fn tj3Transform(
+        h: tjhandle,
+        src: *const u8,
+        src_len: usize,
+        n: c_int,
+        dst_bufs: *mut *mut u8,
+        dst_sizes: *mut usize,
+        transforms: *const Transform,
+    ) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
     pub(crate) fn tj3Free(ptr: *mut c_void);
@@ -125,6 +134,50 @@ struct CropRegion {
     h: c_int,
 }
 
+/// turbojpeg.h `tjtransform.customFilter`; always `None` here, declared so
+/// the struct below has the layout libjpeg-turbo expects.
+type CustomFilter = unsafe extern "C" fn(
+    coeffs: *mut i16,
+    array_region: CropRegion,
+    plane_region: CropRegion,
+    component_id: c_int,
+    transform_id: c_int,
+    transform: *mut Transform,
+) -> c_int;
+
+/// turbojpeg.h `tjtransform`.
+#[repr(C)]
+struct Transform {
+    r: CropRegion,
+    op: c_int,
+    options: c_int,
+    data: *mut c_void,
+    custom_filter: Option<CustomFilter>,
+}
+
+/// The seven non-identity members of turbojpeg.h's `enum TJXOP`.
+#[derive(Clone, Copy)]
+pub(crate) enum Xform {
+    /// Mirror left-to-right (`Bun.Image`'s `flop`).
+    Hflip = 1,
+    /// Mirror top-to-bottom (`Bun.Image`'s `flip`).
+    Vflip = 2,
+    /// Mirror about the top-left/bottom-right diagonal.
+    Transpose = 3,
+    /// Mirror about the top-right/bottom-left diagonal.
+    Transverse = 4,
+    Rot90 = 5,
+    Rot180 = 6,
+    Rot270 = 7,
+}
+
+impl Xform {
+    /// Whether the output's axes are the input's, swapped.
+    fn swaps_axes(self) -> bool {
+        matches!(self, Xform::Transpose | Xform::Transverse | Xform::Rot90 | Xform::Rot270)
+    }
+}
+
 /// TJSCALED: ceil(dim * num / denom).
 #[inline]
 fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
@@ -147,6 +200,12 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 /// skips the rest). Must be set BEFORE `tj3DecompressHeader` so the marker
 /// parser keeps the profile around for `tj3GetICCProfile`.
 const TJPARAM_SAVEMARKERS: c_int = 25;
+/// `tj3Init` initType for a handle that both reads and writes JPEG
+/// (turbojpeg.h `enum TJINIT`); `tj3Transform` requires it.
+const TJINIT_TRANSFORM: c_int = 2;
+/// Fail the transform rather than leave a partial iMCU untransformed on an
+/// edge (turbojpeg.h `TJXOPT_PERFECT`).
+const TJXOPT_PERFECT: c_int = 1 << 0;
 const TJPF_RGBA: c_int = 7;
 const TJPF_CMYK: c_int = 11;
 const TJCS_CMYK: c_int = 3;
@@ -405,4 +464,99 @@ pub(crate) fn encode(
         },
         free: encoded_wrap_free!(tj3Free),
     })
+}
+
+/// Rotate or mirror a JPEG by moving its DCT coefficients into a new stream,
+/// with no IDCT/FDCT pair, so the output holds the source's exact
+/// coefficients. Returns the JPEG and its dimensions.
+///
+/// `Ok(None)` is libjpeg-turbo declining, which the caller answers by
+/// decoding and re-encoding. Transforms move whole iMCUs, so a side that is
+/// not a whole number of them leaves a partial iMCU on an edge that cannot
+/// move to the top or left (turbojpeg.h `TJXOPT_PERFECT`), and the
+/// alternatives it offers are an untransformed strip or a silent crop. A
+/// stream that is damaged past its header lands here too, and the decode
+/// path then reports whatever it reports today. An unparseable header is an
+/// `Err`: that is the same `DecodeFailed` the decode would have raised.
+pub(crate) fn transform(
+    bytes: &[u8],
+    max_pixels: u64,
+    op: Xform,
+) -> Result<Option<(codecs::Encoded, u32, u32)>, codecs::Error> {
+    let handle = Handle::init(TJINIT_TRANSFORM).ok_or(codecs::Error::OutOfMemory)?;
+    let h = handle.as_ptr();
+    // 4 = keep the APP2 ICC profile, drop every other marker — the marker set
+    // `encode` above produces. Copying them all (the default) would keep the
+    // source Exif, whose Orientation tag a viewer then applies a second time.
+    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
+    unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 4) };
+    let (src_w, src_h) = handle.read_header(bytes)?;
+    codecs::guard(src_w, src_h, max_pixels)?;
+    // `bytes` may alias a JS ArrayBuffer, and tj3Transform parses the header
+    // again; bound that parse to the pixel count this one saw, as `decode`
+    // does. Nothing of ours is written through here — libjpeg-turbo owns the
+    // output buffer — so this caps the allocation, not a write.
+    // SAFETY: `h` is live; tj3Set only writes handle state.
+    unsafe {
+        tj3Set(
+            h,
+            TJPARAM_MAXPIXELS,
+            c_int::try_from(u64::from(src_w) * u64::from(src_h)).unwrap_or(c_int::MAX),
+        )
+    };
+
+    let t = Transform {
+        r: CropRegion {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        },
+        op: op as c_int,
+        options: TJXOPT_PERFECT,
+        data: core::ptr::null_mut(),
+        custom_filter: None,
+    };
+    let mut out_ptr: *mut u8 = core::ptr::null_mut();
+    let mut out_len: usize = 0;
+    // SAFETY: `h` is live and was initialised for transformation; src ptr/len
+    // come from a valid `&[u8]`; `dst_bufs`/`dst_sizes` are one-element arrays
+    // matching `n == 1`, and a null `dst_bufs[0]` asks libjpeg-turbo to
+    // allocate the output and store it back through the same pointer.
+    let rc = unsafe {
+        tj3Transform(
+            h,
+            bytes.as_ptr(),
+            bytes.len(),
+            1,
+            &raw mut out_ptr,
+            &raw mut out_len,
+            &t,
+        )
+    };
+    if rc != 0 {
+        // Owned by the caller on any return, allocated or not.
+        if !out_ptr.is_null() {
+            // SAFETY: `out_ptr` was allocated by libjpeg-turbo's allocator;
+            // tj3Free is its matching deallocator.
+            unsafe { tj3Free(out_ptr.cast()) };
+        }
+        return Ok(None);
+    }
+    let (w, ht) = if op.swaps_axes() {
+        (src_h, src_w)
+    } else {
+        (src_w, src_h)
+    };
+    Ok(Some((
+        codecs::Encoded {
+            // SAFETY: tj3Transform succeeded; out_ptr is non-null and owns `out_len` bytes.
+            bytes: unsafe {
+                NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))
+            },
+            free: encoded_wrap_free!(tj3Free),
+        },
+        w,
+        ht,
+    )))
 }

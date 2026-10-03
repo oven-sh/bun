@@ -588,7 +588,9 @@ Without a connection URL, Bun checks these individual parameters:
 | `PGDATABASE`         | -                            | username      | Database name                                                                  |
 | `PGSSLMODE`          | -                            | `disable`     | SSL mode (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`) |
 
-`PGSSLMODE` also applies when a connection URL is set. A URL from `TLS_POSTGRES_DATABASE_URL` or `TLS_DATABASE_URL` uses at least the `require` SSL mode. `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that mode and verify the server certificate. An `sslmode` parameter in the URL takes priority over the variable name and over `PGSSLMODE`.
+`PGSSLMODE` also applies when a connection URL is set. A URL from `TLS_POSTGRES_DATABASE_URL` or `TLS_DATABASE_URL` uses at least the `require` SSL mode. `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that mode and verify the server certificate. For a certificate from a private CA, pass the CA in the `tls` option: see [Custom CA Certificates](#custom-ca-certificates).
+
+An `sslmode`, `ssl` or `tls` parameter in the URL takes priority over the variable name and over `PGSSLMODE`. An explicit `tls` or `ssl` option takes priority over all three.
 
 ### SQLite Environment Variables
 

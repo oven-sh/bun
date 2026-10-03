@@ -108,6 +108,8 @@ function pgEnv(port: number, extra: Record<string, string> = {}) {
   for (const key of Object.keys(env)) {
     if (/^(PG|PG_|POSTGRES_|DATABASE_|TLS_|MYSQL|MARIADB|SQLITE)/.test(key)) delete env[key];
   }
+  // `0` in the runner's shell turns the certificate check off for a verify-* mode.
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED;
   env.PGHOST = "127.0.0.1";
   env.PGPORT = String(port);
   env.PGUSER = "u";

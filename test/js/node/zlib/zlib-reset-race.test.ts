@@ -186,7 +186,8 @@ const resizableWriteFixture = (which: "in" | "out") => /* js */ `
 
 test("async write() rejects an output buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
   const { stdout, exitCode } = await run(resizableWriteFixture("out"));
-  const expected = 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer';
+  const expected =
+    'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory';
   expect(stdout.trim()).toBe([expected, expected, expected].join("\n"));
   expect(exitCode).toBe(0);
 });

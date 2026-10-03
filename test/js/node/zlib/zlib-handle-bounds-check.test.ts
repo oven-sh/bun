@@ -466,7 +466,8 @@ describe.concurrent("zlib native handle argument validation", () => {
          catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       ),
     ).toEqual({
-      stdout: 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer',
+      stdout:
+        'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory',
       exitCode: 0,
     });
   });

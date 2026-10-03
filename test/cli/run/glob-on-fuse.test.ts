@@ -6,7 +6,7 @@
  */
 import { spawn, type ReadableSubprocess } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { isLinux, tmpdirSync } from "harness";
+import { isLinux, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 
@@ -90,5 +90,26 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
     const symlink = results.find(d => d.name === "main-symlink.js");
     expect(symlink).toBeDefined();
     expect(symlink!.isSymbolicLink()).toBe(true);
+  });
+
+  // The native recursive copy reads the entry types from readdir. With
+  // DT_UNKNOWN it has to lstat each entry, or it copies `sub` as a file.
+  test("fs.cpSync and fs.promises.cp copy a tree from a FUSE mount", async () => {
+    using dest = tempDir("cp-from-fuse", {});
+    const copies = { cpSync: join(String(dest), "sync"), cp: join(String(dest), "async") };
+    fs.cpSync(mountpoint, copies.cpSync, { recursive: true });
+    await fs.promises.cp(mountpoint, copies.cp, { recursive: true });
+
+    for (const copy of Object.values(copies)) {
+      expect({
+        main: fs.readFileSync(join(copy, "main.js"), "utf8"),
+        nested: fs.readFileSync(join(copy, "sub", "nested.js"), "utf8"),
+        symlink: fs.readlinkSync(join(copy, "main-symlink.js")),
+      }).toEqual({
+        main: 'console.log("hello world");\n',
+        nested: 'console.log("hello world");\n',
+        symlink: join(mountpoint, "main.js"),
+      });
+    }
   });
 });

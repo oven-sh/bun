@@ -1468,23 +1468,24 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
 
 // Bun.serve writes Content-Length for a Bun.file body from the fstat it takes
 // when the response starts. When the file then yields fewer bytes, the
-// response used to end as if the body were whole and the connection stayed
-// open: the client waited for the missing bytes until the idle timeout
-// (forever with idleTimeout: 0). A body that ends short of the committed
-// length must close the connection.
+// response used to end like a complete one and the connection stayed open:
+// the client waited for the missing bytes until the idle timeout (forever
+// with idleTimeout: 0). A body that ends short of the committed length must
+// take the connection down with it: the bytes that exist, then the end.
 //
-// The end of the file reaches the server in three shapes, each handled in its
-// own place: sendfile(2) returns 0 (plain TCP on Linux, bodies of 1 MiB and
-// up), the reader reports the end with no data (the file now ends before the
-// reader's offset), or the reader delivers a last short chunk with the end.
+// The end of the file reaches the server in three shapes: sendfile(2) returns
+// 0 (plain TCP on Linux, bodies of 1 MiB and up), the reader reports the end
+// with no data (the file now ends before the reader's offset), or the reader
+// delivers a last short chunk with the end.
 describe("Bun.file body that ends short of its Content-Length", () => {
   // A wait that never ends is how these tests fail, and then nothing scoped
   // to a test body is released. This hook still runs.
   const resources = new DisposableStack();
   afterAll(() => resources.dispose());
 
-  // One raw GET. `closed` settles when the server hangs up, and `seen` says
-  // how far the response got. `onBodyStarted` runs once, with the first body
+  // One raw GET on its own connection. `closed` settles when the server ends
+  // the connection, and `seen` is what arrived until then (`bodyStart` keeps
+  // the first 4096 body bytes). `onBodyStarted` runs once, with the first body
   // bytes; its `settle` ends the wait when the test cannot go on.
   function getUntilClosed(
     server: ReturnType<typeof Bun.serve>,
@@ -1492,15 +1493,14 @@ describe("Bun.file body that ends short of its Content-Length", () => {
     pathname: string,
     onBodyStarted: (settle: () => void) => void = () => {},
   ) {
-    const seen = { contentLength: -1, bodyBytes: 0 };
+    const seen = { head: "", contentLength: -1, bodyBytes: 0, bodyStart: "", error: undefined as string | undefined };
     const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
     let waiting = true;
     const settle = () => {
       waiting = false;
       resolve();
     };
-    let head = "";
-    let bodyStarted = false;
+    let received = "";
 
     const port = server.port!;
     const socket = useTls
@@ -1510,29 +1510,36 @@ describe("Bun.file body that ends short of its Content-Length", () => {
     // Runs before the server stops: say where a wait that never ended stood.
     resources.defer(() => {
       if (waiting) {
-        console.error("the server did not close the connection:", {
+        console.error("the server did not end the connection:", {
           pathname,
           useTls,
-          ...seen,
+          contentLength: seen.contentLength,
+          bodyBytes: seen.bodyBytes,
           pendingRequests: server.pendingRequests,
         });
       }
     });
 
-    // The close under test is a reset, which the socket reports as an error first.
-    socket.on("error", () => {});
+    // The server ends the connection in order, so a reset is part of the result.
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      seen.error = error.code ?? error.message;
+    });
     socket.on("close", settle);
     socket.on("data", (chunk: Buffer) => {
       if (seen.contentLength < 0) {
-        head += chunk.toString("latin1");
-        const headEnd = head.indexOf("\r\n\r\n");
+        received += chunk.toString("latin1");
+        const headEnd = received.indexOf("\r\n\r\n");
         if (headEnd < 0) return;
-        seen.contentLength = Number(/^content-length:\s*(\d+)/im.exec(head.slice(0, headEnd))?.[1]);
-        chunk = Buffer.from(head.slice(headEnd + 4), "latin1");
+        seen.head = received.slice(0, headEnd);
+        seen.contentLength = Number(/^content-length:\s*(\d+)/im.exec(seen.head)?.[1]);
+        chunk = Buffer.from(received.slice(headEnd + 4), "latin1");
       }
+      const bodyStarted = seen.bodyBytes > 0;
       seen.bodyBytes += chunk.length;
+      if (seen.bodyStart.length < 4096) {
+        seen.bodyStart += chunk.toString("latin1", 0, 4096 - seen.bodyStart.length);
+      }
       if (seen.bodyBytes > 0 && !bodyStarted) {
-        bodyStarted = true;
         try {
           onBodyStarted(settle);
         } catch (error) {
@@ -1558,7 +1565,7 @@ describe("Bun.file body that ends short of its Content-Length", () => {
     { via: "file route", pathname: "/route", transport: "plain" },
     { via: "directory route", pathname: "/dir/big.bin", transport: "tls" },
   ] as const)("from a $via over $transport, when the file shrinks mid-body", ({ pathname, transport }) => {
-    test("closes the connection instead of leaving the client waiting for the missing bytes", async () => {
+    test("ends the connection instead of leaving the client waiting for the missing bytes", async () => {
       const dir = resources.use(tempDir("serve-file-shrinks", {}));
       const filePath = join(String(dir), "big.bin");
       writeFileSync(filePath, "");
@@ -1579,7 +1586,7 @@ describe("Bun.file body that ends short of its Content-Length", () => {
       );
 
       // The client sends nothing after its request, so a server that treats
-      // the short body as complete never closes.
+      // the short body as complete never ends the connection.
       let inFlightWhenShrunk = false;
       const { closed, seen } = getUntilClosed(server, transport === "tls", pathname, settle => {
         // The head is on the wire with the full size and the body has started.
@@ -1593,7 +1600,8 @@ describe("Bun.file body that ends short of its Content-Length", () => {
         inFlightWhenShrunk,
         contentLength: seen.contentLength,
         bodyShort: seen.bodyBytes < seen.contentLength,
-      }).toEqual({ inFlightWhenShrunk: true, contentLength: SHRINKING_FILE_SIZE, bodyShort: true });
+        error: seen.error,
+      }).toEqual({ inFlightWhenShrunk: true, contentLength: SHRINKING_FILE_SIZE, bodyShort: true, error: undefined });
     });
   });
 
@@ -1601,25 +1609,33 @@ describe("Bun.file body that ends short of its Content-Length", () => {
   // a read returns only its few bytes. The committed length is wrong before
   // anything shrinks, and the end of the file arrives with the only chunk.
   // Other platforms have no regular file like it.
-  test.concurrent.skipIf(!isLinux)("closes the connection when the stat size overstates the content", async () => {
-    const attribute = "/sys/devices/system/cpu/online";
-    const statSize = statSync(attribute).size;
-    expect(statSize).toBeGreaterThan(readFileSync(attribute).length);
+  test.concurrent.skipIf(!isLinux)(
+    "sends what a file has when its stat size overstates it, then ends the connection",
+    async () => {
+      const attribute = "/sys/devices/system/cpu/online";
+      const content = readFileSync(attribute).toString("latin1");
+      const statSize = statSync(attribute).size;
+      expect(statSize).toBeGreaterThan(content.length);
 
-    const server = resources.use(
-      Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        idleTimeout: 0,
-        fetch: () => new Response(Bun.file(attribute)),
-      }),
-    );
+      const server = resources.use(
+        Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          fetch: () => new Response(Bun.file(attribute)),
+        }),
+      );
 
-    const { closed, seen } = getUntilClosed(server, false, "/online");
-    await closed;
-    // The reset can reach the client before the head, so there may be no Content-Length to compare with.
-    expect(seen.bodyBytes).toBeLessThan(statSize);
-  });
+      const { closed, seen } = getUntilClosed(server, false, "/online");
+      await closed;
+      expect({
+        contentLength: seen.contentLength,
+        connection: /^connection:\s*(.+)$/im.exec(seen.head)?.[1],
+        body: seen.bodyStart,
+        error: seen.error,
+      }).toEqual({ contentLength: statSize, connection: "close", body: content, error: undefined });
+    },
+  );
 });
 
 // A request that declares a body arms the request-body (onData) callback on

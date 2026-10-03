@@ -549,7 +549,7 @@ impl FileResponseStream {
     }
 
     /// The one way a body ends without an abort or an error; `end` hands it to uWS.
-    /// A body that still owes bytes is not one the connection can be reused after.
+    /// A body that still owes bytes takes the connection down once it has drained.
     fn complete(&self, end: impl FnOnce(AnyResponse, bool)) {
         self.insert_state(State::RESPONSE_DONE);
         self.detach_resp();

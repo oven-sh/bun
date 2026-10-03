@@ -10,7 +10,9 @@ use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{self, Platform, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{
+    self, Platform, join_abs_string_buf, join_abs_string_buf_checked, platform,
+};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -337,14 +339,20 @@ fn restore_order(updates: &mut [UpdateRequest], before: &[PackageNameHash]) {
 
 /// The `(prefix, path)` of a positional naming a local path, which is relative to the invoking cwd.
 pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [u8], &[u8])> {
-    let literal = request.version.literal.slice(request.version_buf());
+    let buf = request.version_buf();
+    let literal = request.version.literal.slice(buf);
+    let file_prefix: &'static [u8] = if literal.starts_with(b"file:") {
+        b"file:"
+    } else {
+        b""
+    };
+    // The parsed path, not the literal: `file:/../lib`, `file://../lib` and `file:///../lib` all name `../lib`.
     let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
-        dependency::Tag::Folder | dependency::Tag::Tarball => {
-            match literal.strip_prefix(b"file:") {
-                Some(path) => (b"file:", path),
-                None => (b"", literal),
-            }
-        }
+        dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
+        dependency::Tag::Tarball => match &request.version.tarball().uri {
+            dependency::tarball::Uri::Local(path) => (file_prefix, path.slice(buf)),
+            dependency::tarball::Uri::Remote(_) => return None,
+        },
         dependency::Tag::Symlink => (b"link:", literal.strip_prefix(b"link:")?),
         _ => return None,
     };
@@ -354,14 +362,34 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
         .then_some((prefix, path))
 }
 
+#[cold]
+fn local_path_too_long(request: &UpdateRequest) -> ! {
+    let typed = request.version.literal.slice(request.version_buf());
+    Output::err(
+        "ENAMETOOLONG",
+        "local path \"{}\" is too long",
+        (BStr::new(typed),),
+    );
+    Global::crash();
+}
+
 fn spell_relative_to(
-    target: &WorkspaceTarget,
+    package_json_path: &[u8],
     request: &UpdateRequest,
     prefix: &[u8],
     abs: &[u8],
 ) -> Vec<u8> {
     let mut buf = path_buffer_pool::get();
-    let target_dir = resolve_path::dirname::<platform::Auto>(&target.package_json_path);
+    let target_dir = resolve_path::dirname::<platform::Auto>(package_json_path);
+    // `rel` is at most one `../` for each component of `target_dir`, then `abs`.
+    let components = target_dir
+        .iter()
+        .filter(|&&c| Platform::AUTO.is_separator(c))
+        .count()
+        + 1;
+    if abs.len() + components * b"../".len() >= buf.0.len() {
+        local_path_too_long(request);
+    }
     let rel =
         resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs);
     let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 3);
@@ -378,7 +406,58 @@ fn spell_relative_to(
     }
     positional.extend_from_slice(rel);
     resolve_path::platform_to_posix_in_place(&mut positional[path_start..]);
+    // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+    let typed = request.version.literal.slice(request.version_buf());
+    if typed.ends_with(b"/") && !positional.ends_with(b"/") {
+        positional.push(b'/');
+    }
     positional
+}
+
+/// The absolute form of a `local_relative_path`.
+fn resolve_from_cwd<'a>(
+    original_cwd: &'a [u8],
+    buf: &'a mut bun_paths::PathBuffer,
+    request: &UpdateRequest,
+    path: &[u8],
+) -> &'a [u8] {
+    join_abs_string_buf_checked::<platform::Auto>(original_cwd, &mut buf.0, &[path])
+        .unwrap_or_else(|| local_path_too_long(request))
+}
+
+/// Without --filter the one target is the nearest package.json; from a directory below it, a local path is re-spelled relative to it.
+pub(super) fn respell_local_paths(
+    manager: &mut PackageManager,
+    original_cwd: &[u8],
+    updates: Vec<UpdateRequest>,
+) -> Vec<UpdateRequest> {
+    let package_json_path: Box<[u8]> = manager.original_package_json_path.as_bytes().into();
+    // With -g, `init` records `original_cwd` after it enters the global directory, so it is not where the user typed the path.
+    if manager.options.global
+        || resolve_path::dirname::<platform::Auto>(&package_json_path) == original_cwd
+    {
+        return updates;
+    }
+    let mut buf = path_buffer_pool::get();
+    let mut requests: Vec<UpdateRequest> = Vec::with_capacity(updates.len());
+    for request in updates {
+        let Some((prefix, path)) = local_relative_path(&request) else {
+            requests.push(request);
+            continue;
+        };
+        let abs = resolve_from_cwd(original_cwd, &mut buf, &request, path);
+        let positional = spell_relative_to(&package_json_path, &request, prefix, abs);
+        let log = manager.log_mut();
+        let subcommand = manager.subcommand;
+        UpdateRequest::parse(
+            Some(&mut *manager),
+            log,
+            &[positional.as_slice()],
+            &mut requests,
+            subcommand,
+        );
+    }
+    requests
 }
 
 /// The requests to install and, per target, the ones it receives; a local path becomes one request per distinct spelling.
@@ -401,12 +480,11 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> =
-            join_abs_string_buf::<platform::Auto>(original_cwd, &mut buf.0, &[path]).into();
+        let abs: Box<[u8]> = resolve_from_cwd(original_cwd, &mut buf, &request, path).into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()
-                .map(|target| spell_relative_to(target, &request, prefix, &abs))
+                .map(|target| spell_relative_to(&target.package_json_path, &request, prefix, &abs))
                 .collect(),
         ));
     }

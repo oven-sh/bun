@@ -17,7 +17,12 @@ run.sh           bash run.sh <head|w|z|all>: the scratch of ../top-down/run.sh, 
 build.sh         sh build.sh <clippy|link> <root2|root3> <file> <tag>: clippy-driver or the test binary of a scratch copy, through the lock
 generated/       the section of API.md for three sets of cases (main named as fa467dcae2)
 results/         cargo-test.head-b882bfc32f.txt: `cargo test -p bun_js_parser --lib` at HEAD, 70 passed (60 minutes: the disk of the
-                 machine was saturated). The runs of build.sh, where they finished.
+                 machine was saturated).
+                 clippy.w.root3.txt: clippy-driver with cargo's arguments over root3 and the file of state w: no finding in
+                 grammar_rows_tests.rs; the three findings are in files of the crate as they are at HEAD (p.rs:7996,
+                 parse/erased_tests.rs:147, parse/generics.rs:719).
+                 run.w.root3.75-passed.txt: the test binary of root3 with the file of state w, no cap on the lints: 75 passed, 0 failed.
+                 The runs of state head on root2 are here where they finished.
 
 States of the generated file (each is `bash run.sh <state>`):
   head   round 1 as it stands with ../top-down/data/import-type-rest.p1.diff: the three exports with `with` on the next line are taken

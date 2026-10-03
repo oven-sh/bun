@@ -576,6 +576,17 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const consoleTableSizes = $newRustFunction("ConsoleObject.rs", "tableSizesForTesting", 0) as () => {
+  timerEntries: number;
+  timerCapacity: number;
+  countEntries: number;
+  countCapacity: number;
+};
+/** `maxComparisons`: the most stored entries that a lookup of an absent key is compared against. */
+export const hashMapChurnProbe = $newRustFunction("runtime/hash_map_testing.rs", "churnProbe", 2) as (
+  live: number,
+  cycles: number,
+) => { capacity: number; length: number; maxComparisons: number };
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

@@ -440,8 +440,8 @@ impl<T, const N: usize> SmallList<T, N> {
 // ──────────────────────────────────────────────────────────────────────────
 // HashMap
 //
-// Linear-probe layout (open-addressing, tombstones, power-of-two cap,
-// 80% load) with deterministic iteration order — required by callers that
+// Linear-probe layout (open-addressing, backward-shift delete, power-of-two
+// cap, 80% load) with deterministic iteration order — required by callers that
 // snapshot the iteration sequence (lockfile debug stringify, etc.). The `Ctx`
 // type parameter is load-bearing: `AutoHashContext` wyhashes the key,
 // `IdentityContext<K>` uses `k as u64` so pre-hashed keys aren't re-hashed.

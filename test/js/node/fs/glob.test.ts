@@ -2,8 +2,9 @@
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
+import { fsGlobInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 
 let tmp: string;
@@ -293,5 +294,171 @@ describe("fs.globSync exclude with withFileTypes", () => {
     const inners = results.filter(d => d.name === "inner.txt");
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});
+
+// fs.glob compiles a pattern such as "src/**/*.ts" on its own and loads the
+// vendored minimatch only for a pattern that needs it. The result of the two
+// compilers must be the same.
+describe("fs.glob plain patterns", () => {
+  const { compilePlainPattern, createMatcher } = fsGlobInternals;
+  const names = [
+    "a",
+    "A",
+    "a.txt",
+    "A.TXT",
+    "a.tx",
+    "txt",
+    ".txt",
+    ".a.txt",
+    "a.",
+    "a.b.c",
+    ".a",
+    ".",
+    "..",
+    "",
+    "a+b",
+  ];
+
+  function describePart(part: unknown) {
+    if (typeof part === "symbol") return "**";
+    if (typeof part === "string") return JSON.stringify(part);
+    // A part that is not a string or "**" is used only through test().
+    return names.map(name => (part as { test(name: string): boolean }).test(name));
+  }
+  function describeMatcher(matcher: { set: unknown[][]; globParts: string[][] }) {
+    return { set: matcher.set.map(parts => parts.map(describePart)), globParts: matcher.globParts };
+  }
+
+  const plain = [
+    "*",
+    "***",
+    "*.txt",
+    "**.txt",
+    "*.test.ts",
+    "*a",
+    "*.*",
+    "**.**",
+    ".*",
+    ".**",
+    "**",
+    "a",
+    ".a",
+    "a.b",
+    "a b",
+    "a+b@c!d",
+    "!a",
+    "#a",
+    "a}",
+    "a]",
+    "a)",
+    "a|b",
+    "a,b",
+    "a$^b",
+    "\u00e9.txt",
+    "src/**/*.ts",
+    "**/*",
+    "**/a/**",
+    "a/*/b/.*/**/*.*",
+    "node_modules/.bin/*",
+  ];
+  if (!isWindows) plain.push("a:b", "c:/a");
+
+  describe.each(plain)("%j", pattern => {
+    it("compiles like minimatch", () => {
+      const compiled = compilePlainPattern(pattern);
+      expect(compiled).toBeDefined();
+      expect(describeMatcher(compiled)).toEqual(describeMatcher(createMatcher(pattern)));
+    });
+  });
+
+  const notPlain = [
+    "",
+    "/a",
+    "a/",
+    "a//b",
+    "./a",
+    "a/./b",
+    "../a",
+    "a/../b",
+    "**/**/a",
+    "a\\b",
+    "{a,b}",
+    "a{",
+    "[ab]",
+    "a[",
+    "a?",
+    "+(a|b)",
+    "a(b",
+    "a*",
+    "*a*",
+    "a*.txt",
+    "*.t+t",
+    "*.t@t",
+    "*.t!t",
+    ".*a",
+    "*.*.*",
+  ];
+  if (isWindows) notPlain.push("a:b", "c:/a");
+
+  describe.each(notPlain)("%j", pattern => {
+    it("is left to minimatch", () => {
+      expect(compilePlainPattern(pattern)).toBeUndefined();
+    });
+  });
+
+  it("leaves a pattern that is too long to minimatch, which throws", () => {
+    const pattern = Buffer.alloc(65537, "x").toString();
+    expect(compilePlainPattern(pattern)).toBeUndefined();
+    expect(() => fs.globSync(pattern, { cwd: tmp })).toThrow("pattern is too long");
+  });
+
+  it("compiles every pattern of up to two segments like minimatch or leaves it to minimatch", () => {
+    const segments = ["**", "*", "***", "*.txt", "*.*", ".*", "a", ".a", "a.b", "*a", "*.", "a*", "*+", "", ".", ".."];
+    const patterns = [...segments, ...segments.flatMap(first => segments.map(second => `${first}/${second}`))];
+    let compiledCount = 0;
+    for (const pattern of patterns) {
+      const compiled = compilePlainPattern(pattern);
+      if (compiled === undefined) continue;
+      compiledCount++;
+      expect({ pattern, ...describeMatcher(compiled) }).toEqual({
+        pattern,
+        ...describeMatcher(createMatcher(pattern)),
+      });
+    }
+    // 11 of the 16 segments are plain, and "**/**" is not.
+    expect(compiledCount).toBe(11 + 11 * 11 - 1);
+  });
+
+  it("loads minimatch only for a pattern that needs it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { fsGlobInternals } = require("bun:internal-for-testing");
+          const fs = require("node:fs");
+          const cwd = process.argv[1];
+          const loaded = [];
+          const results = [];
+          results.push(fs.globSync("*.txt", { cwd }));
+          results.push(await Array.fromAsync(fs.promises.glob("a/**/*.js", { cwd })));
+          loaded.push(fsGlobInternals.isMinimatchLoaded());
+          results.push(fs.globSync("*.{txt,js}", { cwd }));
+          loaded.push(fsGlobInternals.isMinimatchLoaded());
+          console.log(JSON.stringify({ loaded, results }));
+        `,
+        tmp,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      loaded: [false, true],
+      results: [["foo.txt"], [isWindows ? "a\\baz.js" : "a/baz.js"], ["foo.txt"]],
+    });
+    expect(exitCode).toBe(0);
   });
 });

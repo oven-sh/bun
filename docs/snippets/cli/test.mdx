@@ -38,10 +38,62 @@ bun test <patterns>
   Maximum number of concurrent tests to execute at once (default 20)
 </ParamField>
 
+<ParamField path="--no-orphans" type="boolean">
+  Exit when the parent process dies, and on exit kill every descendant process
+</ParamField>
+
+### Parallel & Isolated Runs
+
+<ParamField path="--parallel" type="number">
+  Run test files in parallel using <code>N</code> worker processes. Implies <code>--isolate</code>. Defaults to the CPU
+  core count
+</ParamField>
+
+<ParamField path="--parallel-delay" type="number" default="5">
+  Milliseconds the first <code>--parallel</code> worker must be busy before Bun spawns the rest. <code>0</code> spawns
+  all workers immediately
+</ParamField>
+
+<ParamField path="--isolate" type="boolean">
+  Run each test file in a fresh global object. Leaked handles from one file cannot affect another
+</ParamField>
+
+<ParamField path="--no-isolate" type="boolean">
+  With <code>--parallel</code>: let each worker keep one global and module registry across the files it runs (faster,
+  but files can see each other's leftovers)
+</ParamField>
+
+<ParamField path="--shard" type="string">
+  Run a subset of test files, e.g. <code>--shard=1/3</code> runs the first of three shards. Useful for splitting tests
+  across multiple CI jobs
+</ParamField>
+
+<ParamField path="--timings" type="string">
+  JSON file(s) of per-file durations in milliseconds. Bun merges several files, e.g. one per CI shard. Balances
+  <code>--shard</code> by total time and makes <code>--parallel</code> start the slowest files first
+</ParamField>
+
+<ParamField path="--update-timings" type="boolean">
+  After the run, write the measured per-file durations to the first <code>--timings</code> file. Under{" "}
+  <code>--shard</code> Bun writes only the files that shard ran. Otherwise it merges them with what it read
+</ParamField>
+
 ### Test Filtering
 
 <ParamField path="--todo" type="boolean">
   Include tests that are marked with <code>test.todo()</code>
+</ParamField>
+
+<ParamField path="--only" type="boolean">
+  Run only tests that are marked with <code>test.only()</code> or <code>describe.only()</code>
+</ParamField>
+
+<ParamField path="--path-ignore-patterns" type="string">
+  Glob patterns for test file paths to ignore
+</ParamField>
+
+<ParamField path="--changed" type="string">
+  Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against
 </ParamField>
 
 <ParamField path="--test-name-pattern" type="string">
@@ -61,6 +113,10 @@ bun test <patterns>
 
 <ParamField path="--dots" type="boolean">
   Enable dots reporter. Shorthand for --reporter=dots
+</ParamField>
+
+<ParamField path="--only-failures" type="boolean">
+  Only display test failures, hiding passing tests
 </ParamField>
 
 ### Coverage

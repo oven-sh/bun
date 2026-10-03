@@ -32,6 +32,10 @@ bun outdated <filter>
   Don't log anything
 </ParamField>
 
+<ParamField path="--quiet" type="boolean">
+  Disable the progress bar
+</ParamField>
+
 <ParamField path="--verbose" type="boolean">
   Excessively verbose logging
 </ParamField>
@@ -116,6 +120,14 @@ bun outdated <filter>
   Ignore manifest cache entirely
 </ParamField>
 
+<ParamField path="--offline" type="boolean">
+  Never touch the network: resolve and install only from the local cache
+</ParamField>
+
+<ParamField path="--prefer-offline" type="boolean">
+  Use cached package metadata regardless of age and only fetch what is missing
+</ParamField>
+
 ### Execution Behavior
 
 <ParamField path="--dry-run" type="boolean">
@@ -137,6 +149,24 @@ bun outdated <filter>
 <ParamField path="--backend" type="string">
   Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
   macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
+</ParamField>
+
+<ParamField path="--linker" type="string">
+  Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
+</ParamField>
+
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
+<ParamField path="--cpu" type="string">
+  Override CPU architecture for optional dependencies (e.g., <code>x64</code>, <code>arm64</code>, <code>*</code> for
+  all)
+</ParamField>
+
+<ParamField path="--os" type="string">
+  Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
+  all)
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">

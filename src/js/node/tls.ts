@@ -24,7 +24,14 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const {
+  kArmHandshakeTimeout,
+  kPreHandshakeWrite,
+  kSecureConnectDone,
+  kStandaloneWrap,
+  kUpgradeClientTLS,
+  kVerifyError,
+} = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -829,15 +836,6 @@ function TLSSocket(socket?, options?) {
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
-
-    if (isNetSocketOrDuplex && !this.isServer) {
-      this._handle = socket;
-      // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
-      this._handle._parentWrap = this;
-    }
-    // For the server wrap, _handle is assigned the upgraded TLS handle by the
-    // server-upgrade method below; leaving it unset until then means a synchronous
-    // teardown during upgradeTLS won't call close() on the bare net.Socket.
   }
   // Internal path: keep the per-digest cache (the user-facing constructors,
   // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
@@ -853,12 +851,21 @@ function TLSSocket(socket?, options?) {
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   this[ksession] = options.session || null;
 
-  // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
-  // handshake over the provided socket via net.ts's native upgrade path (reaches
-  // the module-private kupgraded + the shared ServerHandlers). Client-side wraps
-  // go through the connect path elsewhere.
-  if (isNetSocketOrDuplex && this.isServer) {
-    this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
+  // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
+  if (isNetSocketOrDuplex) {
+    if (isServer) {
+      this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
+    } else {
+      // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
+      this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
+        ? options.rejectUnauthorized !== false
+        : !getAllowUnauthorized();
+      this[kStandaloneWrap] = true;
+      this[kUpgradeClientTLS](socket, options.servername);
+      // http2-wrapper reads `new TLSSocket(new PassThrough())._handle._parentWrap.constructor` as its JSStreamSocket.
+      const handle = this._handle;
+      if (handle) handle._parentWrap = this;
+    }
   }
 }
 $toClass(TLSSocket, "TLSSocket", NetSocket);
@@ -917,8 +924,7 @@ TLSSocket.prototype._destroySSL = function _destroySSL() {
 };
 
 TLSSocket.prototype._start = function _start() {
-  // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
-  this.connect();
+  // Node sends the ClientHello of a constructor wrap here (the mysql driver calls it). Ours went out in the constructor.
 };
 
 TLSSocket.prototype._final = function _final(callback) {
@@ -1074,6 +1080,8 @@ TLSSocket.prototype.setServername = function setServername(name) {
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
+  // A wrap sent its ClientHello in the constructor, and BoringSSL aborts the process on a session set after that.
+  if (this[kStandaloneWrap]) return;
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);
@@ -1152,7 +1160,6 @@ TLSSocket.prototype[buntls] = function (port, host) {
     servername = host && !net.isIP(host) ? host : "";
   }
   return {
-    socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],

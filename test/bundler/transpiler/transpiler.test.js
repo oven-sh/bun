@@ -5340,6 +5340,31 @@ describe.concurrent("minify.identifiers on an empty source or a data loader", ()
   });
 });
 
+// The printer aborted the process on this input, so it runs in a subprocess.
+it.concurrent('a data loader source whose only key is "default" is only `export default`', async () => {
+  const result = await bunRun([
+    "-e",
+    `const transpiler = new Bun.Transpiler({ minify: { whitespace: true } });
+    const output = [];
+    for (const [loader, source] of [
+      ["json", '{"default": 1}'],
+      ["jsonc", '{"default": 1} // comment'],
+      ["json5", "{default: 1}"],
+      ["toml", "default = 1"],
+      ["yaml", "default: 1"],
+      ["xml", "<default>1</default>"],
+    ]) {
+      output.push([loader, transpiler.transformSync(source, loader), await transpiler.transform(source, loader)]);
+    }
+    console.log(JSON.stringify(output));`,
+  ]);
+  const number = "export default {default:1};";
+  const string = 'export default {default:"1"};';
+  const expected = ["json", "jsonc", "json5", "toml", "yaml"].map(loader => [loader, number, number]);
+  expected.push(["xml", string, string]);
+  expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0, signalCode: null });
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });

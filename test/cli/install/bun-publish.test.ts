@@ -895,6 +895,24 @@ describe.concurrent("credentials in the registry url", () => {
     },
   );
 
+  test('bunfig registry = "$VAR" with user:pass@ publishes with Basic auth', async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("userinfo-bunfig-env-pkg");
+    await write(join(packageDir, "bunfig.toml"), `[install]\nregistry = "$PUBLISH_REGISTRY"\n`);
+
+    const { out, err, exitCode } = await publish(
+      { ...env, PUBLISH_REGISTRY: `http://pubuser:hunter2@localhost:${mock.port}/` },
+      packageDir,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+    expect(out).toContain(" + userinfo-bunfig-env-pkg@1.0.0");
+    expect(out).not.toContain("hunter2");
+    expect(err).not.toContain("hunter2");
+    expect(mock.requests).toEqual([{ method: "PUT", pathname: "/userinfo-bunfig-env-pkg", authorization: basicAuth }]);
+    expect(exitCode).toBe(0);
+  });
+
   test("no credentials at all fails before sending a request", async () => {
     using mock = registryMock();
     const packageDir = await packageDirFor("no-credentials-pkg");

@@ -7759,6 +7759,546 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  // Inside `@supports`, the features that the condition tests for need no
+  // fallbacks. Ported from lightningcss (`test_skip_generating_unnecessary_fallbacks`
+  // and the `@supports` cases next to each property's fallback tests).
+  describe("@supports scope", () => {
+    function unchanged(source: string, targets: Parameters<typeof prefix_test>[2]) {
+      prefix_test(source, source, targets);
+    }
+
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          border: var(--border-width) solid lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-shadow: var(--foo) 12px lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          background: var(--image) lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: var(--foo, lab(40% 56.6 39));
+        }
+      }
+    `,
+      { safari: Some(14 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: env(--brand-color, color(display-p3 0 1 0));
+        }
+      }
+    `,
+      { safari: Some(15 << 16), chrome: Some(90 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) and (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+
+        .bar {
+          color: color(display-p3 .643308 .192455 .167712);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: lab(40% 56.6 39)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (background-color: lab(40% 56.6 39)) {
+        .foo {
+          background-color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: oklab(0% 0 0)) {
+        .foo {
+          color: oklab(59.686% .1009 .1192);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    unchanged(
+      `
+      @supports (color: color(rec2020 0 0 0)) {
+        .foo {
+          color: color(rec2020 .5 .5 .5);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // A color inside a function, after a url(), and inside light-dark().
+    unchanged(
+      `
+      @supports (filter: drop-shadow(0 0 2px lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (background: url(foo.png) lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: light-dark(red, lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // The condition also applies to the rules in a nested at-rule.
+    unchanged(
+      `
+      @supports (color: lab(0% 0 0)) {
+        @media (min-width: 100px) {
+          .foo {
+            color: lab(40% 56.6 39);
+          }
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // An inner `@supports` keeps what the outer condition tests for, and the
+    // outer block does not get what only the inner condition tests for.
+    prefix_test(
+      `
+      @supports (color: lab(0% 0 0)) {
+        @supports (color: color(display-p3 0 0 0)) {
+          .foo {
+            color: lab(40% 56.6 39);
+            background-color: color(display-p3 0 1 0);
+          }
+        }
+
+        .bar {
+          color: color(display-p3 0 1 0);
+          background-color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      `
+      @supports (color: lab(0% 0 0)) {
+        @supports (color: color(display-p3 0 0 0)) {
+          .foo {
+            color: lab(40% 56.6 39);
+            background-color: color(display-p3 0 1 0);
+          }
+        }
+
+        .bar {
+          color: #00f942;
+          color: color(display-p3 0 1 0);
+          background-color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // The condition stops applying after the block.
+    prefix_test(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      .bar {
+        color: lab(40% 56.6 39);
+      }
+    `,
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      .bar {
+        color: #b32323;
+        color: lab(40% 56.6 39);
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // `@supports` nested in a style rule.
+    prefix_test(
+      `
+      .foo {
+        color: lab(40% 56.6 39);
+
+        @supports (color: lab(0% 0 0)) {
+          color: lab(50% 56.6 39);
+
+          .bar {
+            color: lab(60% 56.6 39);
+          }
+        }
+
+        .baz {
+          color: lab(70% 56.6 39);
+        }
+      }
+    `,
+      `
+      .foo {
+        color: #b32323;
+        color: lab(40% 56.6 39);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: lab(50% 56.6 39);
+        }
+
+        .foo .bar {
+          color: lab(60% 56.6 39);
+        }
+      }
+
+      .foo .baz {
+        color: #ff8472;
+        color: lab(70% 56.6 39);
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // Nothing is inferred from a condition with `not` or `or`, so the
+    // fallbacks stay.
+    prefix_test(
+      `
+      @supports (color: lab(0% 0 0)) and (not (color: color(display-p3 0 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+
+        .bar {
+          color: color(display-p3 .643308 .192455 .167712);
+        }
+      }
+    `,
+      `
+      @supports (color: lab(0% 0 0)) and (not (color: color(display-p3 0 0 0))) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+
+        .bar {
+          color: #b32323;
+          color: color(display-p3 .643308 .192455 .167712);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `
+      @supports (color: lab(0% 0 0)) or (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+
+        .bar {
+          color: color(display-p3 .643308 .192455 .167712);
+        }
+      }
+    `,
+      `
+      @supports (color: lab(0% 0 0)) or (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+
+        .bar {
+          color: #b32323;
+          color: color(display-p3 .643308 .192455 .167712);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      `
+      @supports not (color: lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      `
+      @supports not (color: lab(0% 0 0)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    // Every browser with custom properties accepts a value with var() or
+    // env(), and any value for a custom property. Such a condition does not
+    // test for the color, so the fallbacks stay.
+    prefix_test(
+      `
+      @supports (color: var(--foo, lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: env(--foo, lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (--foo: lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      `
+      @supports (color: var(--foo, lab(0% 0 0))) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: env(--foo, lab(0% 0 0))) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (--foo: lab(0% 0 0)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // A condition that is not a declaration tests for nothing.
+    prefix_test(
+      `
+      @supports lab(0% 0 0) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (foo lab(0% 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      `
+      @supports lab(0% 0 0) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (foo lab(0% 0 0)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // The printer lowers the space separated notation. The condition turns
+    // that off inside the block only. A condition with var() tests for nothing.
+    prefix_test(
+      `
+      @supports (color: rgb(none 0 0)) {
+        .foo {
+          color: rgb(1 2 3 / var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / attr(data-alpha number))) {
+        .foo {
+          color: hsl(120 50% 50% / var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / var(--a))) {
+        .foo {
+          color: rgb(1 2 3 / var(--a));
+        }
+      }
+
+      .bar {
+        color: rgb(1 2 3 / var(--a));
+      }
+    `,
+      `
+      @supports (color: rgb(none 0 0)) {
+        .foo {
+          color: rgb(1 2 3 / var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / attr(data-alpha number))) {
+        .foo {
+          color: hsl(120 50% 50% / var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / var(--a))) {
+        .foo {
+          color: rgba(1, 2, 3, var(--a));
+        }
+      }
+
+      .bar {
+        color: rgba(1, 2, 3, var(--a));
+      }
+    `,
+      { chrome: Some(4 << 16) },
+    );
+
+    // The fallbacks that bun prints for an unparsed value do not change when
+    // bun processes its own output again.
+    const printed_fallbacks = `
+      .foo {
+        box-shadow: 2s #ffbdbf;
+      }
+
+      @supports (color: color(display-p3 0 0 0)) {
+        .foo {
+          box-shadow: 2s color(display-p3 1.07105 .698578 .711009);
+        }
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          box-shadow: 2s lab(83% 44.1656 16.0749);
+        }
+      }
+    `;
+    prefix_test(".foo { box-shadow: 2s lch(83% 47 20) }", printed_fallbacks, {
+      chrome: Some(87 << 16),
+      safari: Some(14 << 16),
+    });
+    unchanged(printed_fallbacks, { chrome: Some(87 << 16), safari: Some(14 << 16) });
+
+    // A merge of same-query @media rules minifies the merged list again. That
+    // list holds the @supports rules that bun added for the first rule.
+    prefix_test(
+      `
+      @media (min-width: 100px) {
+        .foo {
+          box-shadow: 2s lab(40% 56.6 39);
+        }
+      }
+
+      @media (min-width: 100px) {
+        .bar {
+          color: red;
+        }
+      }
+    `,
+      `
+      @media (min-width: 100px) {
+        .foo {
+          box-shadow: 2s #b32323;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            box-shadow: 2s lab(40% 56.6 39);
+          }
+        }
+
+        .bar {
+          color: red;
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

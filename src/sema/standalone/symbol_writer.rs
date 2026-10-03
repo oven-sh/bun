@@ -936,7 +936,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 symbol.is_some().then(|| self.c.files().sym(file, symbol))
             }
             // `getRestType`: the symbol of the binding element.
-            TypeData::Synth(ref shape) => shape.symbol_declared_at.and_then(|(of, pos)| {
+            TypeData::Synth(ref shape) => shape.symbol_declared_at.and_then(|(of, pos, _)| {
                 let mut pats = self.c.hir(of).pats.iter();
                 let pat =
                     pats.position(|it| it.pos == pos && matches!(it.kind, PatKind::Ident(_)))?;

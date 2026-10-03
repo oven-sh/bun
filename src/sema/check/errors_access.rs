@@ -7,11 +7,13 @@
 //! `getPropertyTypeForIndexType`, and `checkVariableLikeDeclaration` with
 //! `getBindingElementTypeFromParentType` for binding elements, of TypeScript 7.0.2's checker.go.
 
+use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
+use super::errors_names_and_exports::fully_qualified_name;
 use super::explain::Line;
 use super::sink::held;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use bun_core::strings;
 use smallvec::SmallVec;
 
@@ -343,7 +345,7 @@ impl Checker<'_> {
             };
             self.error_at(at_access, 7052, &[Arg::Type(object), Arg::Bytes(&call)]);
         } else {
-            let under = self.lines_under_implicit_any_element(object, key).pop();
+            let under = (self.lines_under_implicit_any_element(file, object, key)).pop();
             let under = under.map(|line| Reported::new(at_access, line.code, line.args));
             let args = [Arg::Type(keys), Arg::Type(object)];
             let diagnostic = self.new_diagnostic_chain(under, at_access, 7053, &args);
@@ -352,11 +354,42 @@ impl Checker<'_> {
     }
 
     /// The messages `getPropertyTypeForIndexType` chains under 7053.
-    fn lines_under_implicit_any_element(&mut self, object: TypeId, key: TypeId) -> Vec<Line> {
+    fn lines_under_implicit_any_element(
+        &mut self,
+        file: FileId,
+        object: TypeId,
+        key: TypeId,
+    ) -> Vec<Line> {
         let (code, first) = match *self.data(key) {
             TypeData::EnumLit { .. } => (2339, cat!(b"[", self.type_to_string(key), b"]")),
-            TypeData::UniqueSymbol { name, .. } => {
-                (2339, cat!(b"[", self.atoms().bytes(name), b"]"))
+            TypeData::UniqueSymbol { symbol, name } => {
+                // `getFullyQualifiedName` of the symbol, as seen from the access.
+                let at = Some(Enclosing::at_scope(file, ScopeId(0)));
+                let parent = match symbol {
+                    UniqueSymbolDeclaration::Variable(variable) => {
+                        self.files().symbol_parent(variable)
+                    }
+                    UniqueSymbolDeclaration::Member(file, member) => {
+                        self.symbol_of_member_owner(file, member)
+                    }
+                    UniqueSymbolDeclaration::SymbolConstructor => {
+                        self.global_type_symbol(known::SymbolConstructor)
+                    }
+                };
+                let name = self.atom_text(name);
+                (
+                    2339,
+                    match parent {
+                        Some(parent) => cat!(
+                            b"[",
+                            fully_qualified_name(self, parent, at),
+                            b".",
+                            name,
+                            b"]"
+                        ),
+                        None => cat!(b"[", name, b"]"),
+                    },
+                )
             }
             TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
                 match self.property_name_of_type(key) {

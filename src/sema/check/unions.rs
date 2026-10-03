@@ -590,11 +590,7 @@ impl<'p> Checker<'p> {
         {
             return union;
         }
-        // A large set is not compared pairwise, unless it is large enough to reach the count below.
         let len = members.len();
-        if len > 40 && len * (len - 1) <= 100_000 {
-            return union;
-        }
         let mut members: Vec<TypeId> = members.to_vec();
         let mut actual: Vec<TypeId> = Vec::with_capacity(len);
         for &ty in types {
@@ -674,15 +670,11 @@ impl<'p> Checker<'p> {
                     continue;
                 }
                 let target = members[j];
-                if count == 100_000 {
-                    // At this rate the total exceeds a million comparisons: too complex to
-                    // represent, so the result is the error type.
-                    if (count / (len - i)) * len > 1_000_000 {
-                        self.error_at_current_node(2590);
-                        return TypeId::ERROR;
-                    }
-                    // TypeScript continues. Here it is handled like the large sets above.
-                    return union;
+                // At this rate the total exceeds a million comparisons: too complex to represent, so
+                // the result is the error type.
+                if count == 100_000 && (count / (len - i)) * len > 1_000_000 {
+                    self.error_at_current_node(2590);
+                    return TypeId::ERROR;
                 }
                 count += 1;
                 if let Some((name, unit)) = key_property
@@ -1550,7 +1542,7 @@ impl<'p> Checker<'p> {
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
             TypeData::Synth(ref shape) => shape
                 .symbol_declared_at
-                .and_then(|(file, pos)| at(file, pos)),
+                .and_then(|(file, pos, _)| at(file, pos)),
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
             TypeData::UniqueSymbol { symbol, .. } => match symbol {
@@ -1572,8 +1564,19 @@ impl<'p> Checker<'p> {
     }
 
     /// `t.symbol.Declarations[0]` of an object type: the file and the position.
-    pub(super) fn symbol_declaration_of_object_type(&self, ty: TypeId) -> Option<(FileId, u32)> {
-        self.sort_place(ty).map(|place| (place.1, place.2))
+    pub(super) fn symbol_declaration_of_object_type(
+        &self,
+        ty: TypeId,
+    ) -> Option<(FileId, u32, ExprId)> {
+        let literal = match *self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(_, e, ..) | Origin::WidenedLiteral(_, e, ..),
+                ..
+            } => e,
+            TypeData::Synth(ref shape) => shape.symbol_declared_at.map_or(ExprId::NONE, |it| it.2),
+            _ => ExprId::NONE,
+        };
+        self.sort_place(ty).map(|place| (place.1, place.2, literal))
     }
 
     /// `compareTypeLists`

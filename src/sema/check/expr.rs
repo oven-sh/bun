@@ -2620,23 +2620,29 @@ impl<'p> Checker<'p> {
 
     /// `getSpreadType(left, right, symbol, objectFlags, readonly)`: `ty`, the resulting type of the
     /// literal `e` that contains a spread, has the symbol of the literal, and
-    /// `ObjectFlagsContainsWideningType` if a member in the source has it.
-    fn with_propagated_widening_flag(&mut self, file: FileId, e: ExprId, ty: TypeId) -> TypeId {
+    /// `ObjectFlagsContainsWideningType` if a member in the source has it (`contains_widening_type`).
+    fn with_symbol_of_literal(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        ty: TypeId,
+        contains_widening_type: bool,
+    ) -> TypeId {
         match self.data(ty) {
-            TypeData::Union(_) => {
-                self.map_type(ty, |c, m| c.with_propagated_widening_flag(file, e, m))
-            }
+            TypeData::Union(_) => self.map_type(ty, |c, m| {
+                c.with_symbol_of_literal(file, e, m, contains_widening_type)
+            }),
             // A generic type is not spread: `getIntersectionType([left, right])`.
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&part| self.with_propagated_widening_flag(file, e, part))
+                    .map(|&part| self.with_symbol_of_literal(file, e, part, contains_widening_type))
                     .collect();
                 self.intersection(&parts)
             }
             TypeData::Synth(shape) if shape.literal.is_of_expression() => self.synth(Shape {
-                contains_widening_type: true,
-                symbol_declared_at: Some((file, self.hir(file)[e].pos)),
+                contains_widening_type: contains_widening_type || shape.contains_widening_type,
+                symbol_declared_at: Some((file, self.hir(file)[e].pos, e)),
                 ..(**shape).clone()
             }),
             _ => ty,
@@ -2792,7 +2798,8 @@ impl<'p> Checker<'p> {
         let in_pattern = self.is_assignment_target(file, e);
         let context = self.apparent_type_of_contextual_type(file, e, ContextFlags::empty());
         let in_tuple_context = self.is_in_tuple_context(file, e, context);
-        let expects_tuple = is_const || in_pattern || in_tuple_context;
+        let is_forced = self.check_mode().contains(CheckMode::FORCE_TUPLE);
+        let expects_tuple = is_const || in_pattern || in_tuple_context || is_forced;
         let exact = self.p.files.options.exact_optional_property_types;
         // `hasOmittedExpression`
         let mut has_hole = false;
@@ -3180,9 +3187,8 @@ impl<'p> Checker<'p> {
         ) {
             result = self.spread_in_literal(result, segment, is_const);
         }
-        if object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE) {
-            result = self.with_propagated_widening_flag(file, e, result);
-        }
+        let contains_widening_type = object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE);
+        result = self.with_symbol_of_literal(file, e, result, contains_widening_type);
         self.with_propagated_non_inferrable_flag(result)
     }
 

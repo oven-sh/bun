@@ -152,7 +152,7 @@ impl Checker<'_> {
             && !(self.enclosing_classes(file, hir[c].extends).into_iter())
                 .any(|around| self.class_sym(file, around) == class)
         {
-            let name = super::errors_names_and_exports::fully_qualified_name(self, class);
+            let name = super::errors_names_and_exports::fully_qualified_name(self, class, None);
             self.error(
                 file,
                 hir.node(c).with(Part::Base),

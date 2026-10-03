@@ -1341,6 +1341,7 @@ impl Checker<'_> {
             ExprKind::Array(items) => {
                 return self.elaborate_array_literal(
                     file,
+                    e,
                     items,
                     source,
                     target,
@@ -1414,6 +1415,7 @@ impl Checker<'_> {
     fn elaborate_array_literal(
         &mut self,
         file: FileId,
+        node: ExprId,
         items: IdList<ExprId>,
         source: TypeId,
         target: TypeId,
@@ -1427,11 +1429,14 @@ impl Checker<'_> {
         let source = if self.is_tuple(source) {
             source
         } else {
-            match self.forced_tuple(file, items, false) {
-                Some(tuple) if self.is_tuple(tuple) => tuple,
-                // `[...xs]` is an array type even when checked as a tuple.
-                _ => return false,
+            // The mode reaches the arrays in it, also through the object literals in it.
+            let mode = CheckMode::FORCE_TUPLE;
+            let tuple = self.check_expression_with_contextual_type(file, node, target, None, mode);
+            // `[...xs]` is an array type even when checked as a tuple.
+            if !self.is_tuple(tuple) {
+                return false;
             }
+            tuple
         };
         // A tuple-like type does not constrain the indexes it has no property for. Not checked for
         // a union, where the index signature of one member substitutes for the property of another
@@ -1462,66 +1467,6 @@ impl Checker<'_> {
                 self.elaborate_element(source, target, at, check_node, true, name, None, output);
         }
         reported
-    }
-
-    /// `checkArrayLiteral` with `CheckModeForceTuple`: the literal as the tuple of its elements.
-    /// `None`: unknown.
-    /// `is_spread`: it is spread into another literal, so its elements have no contextual type.
-    fn forced_tuple(
-        &mut self,
-        file: FileId,
-        items: IdList<ExprId>,
-        is_spread: bool,
-    ) -> Option<TypeId> {
-        let hir = self.hir(file);
-        let (mut elems, mut flags) = (
-            Vec::with_capacity(items.len()),
-            Vec::with_capacity(items.len()),
-        );
-        for item in hir.ids(items) {
-            match hir[item].kind {
-                ExprKind::Spread(inner) => {
-                    // The spread operand is checked in the same mode.
-                    let spread = match hir[inner].kind {
-                        ExprKind::Array(inner_items) => {
-                            self.forced_tuple(file, inner_items, true)?
-                        }
-                        _ => self.type_of_expr(file, inner),
-                    };
-                    if self.is_array_like(spread) {
-                        elems.push(spread);
-                        flags.push(ElemFlags::VARIADIC);
-                    } else {
-                        // `checkIteratedTypeOrElementType`
-                        let element = self.iterated_type(spread, false);
-                        elems.push(element);
-                        flags.push(ElemFlags::REST);
-                    }
-                }
-                // The check mode propagates to the elements.
-                ExprKind::Array(inner_items) if !self.is_const_context(file, item) => {
-                    elems.push(self.forced_tuple(file, inner_items, is_spread)?);
-                    flags.push(ElemFlags::REQUIRED);
-                }
-                _ => {
-                    // `checkExpressionForMutableLocation`: a literal type is preserved only where
-                    // the contextual type expects one.
-                    let ty = self.type_of_expr(file, item);
-                    elems.push(if is_spread {
-                        self.widen_literal_for_context(ty, None)
-                    } else if self.is_const_context(file, item) {
-                        self.regular(ty)
-                    } else if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
-                        ty
-                    } else {
-                        let expected = self.contextual_type(file, item, ContextFlags::empty());
-                        self.widen_literal_for_context(ty, expected)
-                    });
-                    flags.push(ElemFlags::REQUIRED);
-                }
-            }
-        }
-        Some(self.normalized_tuple(&elems, &flags, false))
     }
 
     /// `getIndexedAccessTypeOrUndefined` with `AccessFlagsNone`, by the name of a property or an element
@@ -1599,7 +1544,10 @@ impl Checker<'_> {
                     let spread = self.type_of_expr(file, inner);
                     self.iterated_type(spread, false)
                 }
-                _ => self.type_of_expr(file, next),
+                _ => {
+                    let mode = CheckMode::empty();
+                    self.check_expression_with_contextual_type(file, next, actual, None, mode)
+                }
             };
             let specific = if self.is_const_context(file, next) {
                 self.regular(written)

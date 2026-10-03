@@ -1074,8 +1074,11 @@ impl<'p> Checker<'p> {
                                 return None;
                             };
                             let owner = self.bound(file).prop_owner[p.idx()];
-                            (owner.is_some() && literal == Some((file, self.hir(file)[owner].pos)))
-                                .then_some((file, p))
+                            (owner.is_some()
+                                && literal.is_some_and(|it| {
+                                    (it.0, it.1) == (file, self.hir(file)[owner].pos)
+                                }))
+                            .then_some((file, p))
                         });
                     if let Some((file, p)) = written {
                         let start = self.hir(file)[p].pos;
@@ -2300,7 +2303,7 @@ impl<'p> Checker<'p> {
             let value = self.instantiate(info.value, members.mapper);
             shape.index.push(IndexInfo { value, ..*info });
             // Read by `getApplicableIndexSymbol`: `symbol.Parent = t.symbol`.
-            shape.symbol_declared_at = symbol;
+            shape.symbol_declared_at = symbol.map(|(file, pos)| (file, pos, ExprId::NONE));
         }
         self.synth(shape)
     }

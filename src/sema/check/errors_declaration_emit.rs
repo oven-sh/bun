@@ -1425,6 +1425,9 @@ impl<'p> Checker<'p> {
 
     /// `someSymbolTableInScope`: the tables, innermost first.
     fn tables_in_scope(&self, at: Enclosing) -> Vec<Table> {
+        if at.is_none() {
+            return vec![Table::Globals];
+        }
         let files = self.files();
         let bound = self.bound(at.file);
         let mut tables = Vec::new();
@@ -1716,7 +1719,7 @@ impl<'p> Checker<'p> {
         ignores_qualification: bool,
         is_local_name_lookup: bool,
     ) -> Vec<Sym> {
-        let is_in_module = self.hir(at.file).has_module_syntax;
+        let is_in_module = !at.is_none() && self.hir(at.file).has_module_syntax;
         let mut aliases = Vec::new();
         for &(name, alias) in self.aliases_in_table(table).iter() {
             if name == known::export_equals || name == known::default {
@@ -2054,10 +2057,11 @@ impl<'p> Checker<'p> {
             additional.push(module);
         }
         let reexports = match symbol {
-            Some(symbol) => self.alternative_containing_modules(symbol, at),
-            None => Rc::default(),
+            Some(symbol) if !at.is_none() => self.alternative_containing_modules(symbol, at),
+            _ => Rc::default(),
         };
-        let is_in_scope = self.flags_of(container).intersects(meaning.left().flags())
+        let is_in_scope = !at.is_none()
+            && self.flags_of(container).intersects(meaning.left().flags())
             && !self
                 .accessible_symbol_chain(container, at, Meaning::Namespace)
                 .is_empty();
@@ -6111,6 +6115,9 @@ impl<'p> Checker<'p> {
         importing: FileId,
         mode: ResolutionMode,
     ) -> Vec<u8> {
+        if importing == Enclosing::NONE.file {
+            return self.specifier_of_module(symbol);
+        }
         let resolution_mode = self.resolution_mode_for_specifier(importing, mode);
         if let Some(known) =
             self.emit_resolver_links

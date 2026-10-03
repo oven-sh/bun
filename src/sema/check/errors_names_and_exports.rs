@@ -7,6 +7,7 @@
 //! 7.0.2's checker.go and grammarchecks.go, `IsValidTypeOnlyAliasUseSite` of its ast/utilities.go,
 //! and the errors `declareSymbolEx` of its binder.go reports for default exports.
 
+use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::*;
 use crate::bind::{PatParent, ScopeId};
@@ -155,7 +156,7 @@ impl Checker<'_> {
                     let get_name = |candidate: &(Atom, Sym)| self.atoms().bytes(candidate.0);
                     let suggested =
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
-                    let arg0 = fully_qualified_name(self, resolved);
+                    let arg0 = fully_qualified_name(self, resolved, None);
                     let arg1 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
                     let args = [Arg::Bytes(&arg0), Arg::Atom(name), arg1];
                     self.error(file, right, 2724, &args);
@@ -190,7 +191,7 @@ impl Checker<'_> {
                     return;
                 }
             }
-            let arg0 = fully_qualified_name(self, resolved);
+            let arg0 = fully_qualified_name(self, resolved, None);
             self.error(file, right, 2694, &[Arg::Bytes(&arg0), Arg::Atom(name)]);
             return;
         }
@@ -410,18 +411,24 @@ pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node)
 }
 
 /// `getFullyQualifiedName`
-pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> Vec<u8> {
-    let name = c.symbol_to_string(sym);
+pub(super) fn fully_qualified_name(
+    c: &mut Checker<'_>,
+    sym: Sym,
+    containing_location: Option<Enclosing>,
+) -> Vec<u8> {
     match c.files().symbol_parent(sym) {
-        Some(parent) => cat!(fully_qualified_name(c, parent), b".", name),
-        None => name,
+        Some(parent) => {
+            let parent = fully_qualified_name(c, parent, containing_location);
+            cat!(parent, b".", c.symbol_to_string(sym))
+        }
+        None => c.symbol_to_string_at(sym, containing_location),
     }
 }
 
 /// `getFullyQualifiedName` for an `AliasTarget`. A synthesized property (of a union, an intersection, a mapped type, a tuple) has no `Parent`.
 pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) -> Vec<u8> {
     let (object, name) = match symbol {
-        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol),
+        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol, None),
         AliasTarget::Property(object, name, _) => (object, name),
         AliasTarget::Unknown => return b"unknown".to_vec(),
     };
@@ -433,7 +440,7 @@ pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) 
         prop = &of[0];
     }
     let mut qualified = match prop.source {
-        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol),
+        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol, None),
         PropSource::Literal(file, property) => {
             let owner = c.bound(file).prop_owner[property.idx()];
             let mut parent = c.name_of_object_literal(file, owner);

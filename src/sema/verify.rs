@@ -267,7 +267,11 @@ pub fn verify_compiler_options(
     if specified(b"baseUrl") {
         removed(&mut out, b"baseUrl", b"");
         if !config_path.is_empty() {
-            let relative = relative_from_file(config_path, text(b"baseUrl"));
+            let mut relative = relative_from_file(config_path, text(b"baseUrl"));
+            // So `..` becomes `./..`.
+            if !(relative.starts_with(b"./") || relative.starts_with(b"../")) {
+                relative.splice(0..0, *b"./");
+            }
             let suggestion = without_trailing_slash(&relative);
             let instead = [b"\"paths\": {\"*\": [\"", suggestion, b"/*\"]}"].concat();
             out.last_mut().unwrap().chain.push((1, 5106, vec![instead]));

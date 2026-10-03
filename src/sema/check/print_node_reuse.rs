@@ -12,16 +12,16 @@ use super::*;
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
 
 impl<'p> Printer<'_, 'p> {
-    /// Whether the types of the declarations in `file` are derived from their syntax. False for a
-    /// JSON file, whose nodes have no positions.
-    fn reuses_nodes_of(&self, file: FileId) -> bool {
-        self.enclosing_declaration.is_some() && self.c.hir(file).kind != FileKind::Json
+    /// `b.ctx.enclosingDeclaration != nil`: whether the type of a declaration is derived from its
+    /// syntax.
+    fn reuses_nodes(&self) -> bool {
+        self.enclosing_declaration.is_some()
     }
 
     /// `symbolToParameterDeclaration`: the type of `parameter`.
     pub(super) fn serialize_type_of_parameter(&mut self, parameter: &Parameter) -> Node {
         match parameter.declaration {
-            Some((file, declaration)) if self.reuses_nodes_of(file) => self
+            Some((file, declaration)) if self.reuses_nodes() => self
                 .serialize_type_for_declaration(
                     file,
                     self.c.hir(file).node(declaration),
@@ -41,7 +41,7 @@ impl<'p> Printer<'_, 'p> {
         this: TypeId,
     ) -> Node {
         if let Some((file, func, _)) = self.c.sig_decl(declared_by)
-            && self.reuses_nodes_of(file)
+            && self.reuses_nodes()
         {
             let written = self.c.hir(file)[func].this_ty(self.c.hir(file));
             if written.is_some() && self.c.type_from_node(file, written) == this {
@@ -58,9 +58,8 @@ impl<'p> Printer<'_, 'p> {
         prop: &Prop,
         ty: TypeId,
     ) -> Node {
-        if self.enclosing_declaration.is_some()
+        if self.reuses_nodes()
             && let Some((file, declaration)) = self.value_declaration_of_property(prop)
-            && self.reuses_nodes_of(file)
         {
             // The properties of an unwidened object literal are unwidened too.
             let is_unwidened = matches!(
@@ -112,9 +111,8 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => None,
         };
-        if self.enclosing_declaration.is_some()
+        if self.reuses_nodes()
             && let Some((file, declaration)) = declaration
-            && self.reuses_nodes_of(file)
         {
             return self.serialize_type_for_declaration(file, declaration, ty, true, false, false);
         }
@@ -129,7 +127,7 @@ impl<'p> Printer<'_, 'p> {
         returned: TypeId,
     ) -> Option<Vec<u8>> {
         let (file, func, _) = self.c.sig_decl(signature)?;
-        if !self.reuses_nodes_of(file) {
+        if !self.reuses_nodes() {
             return None;
         }
         let pt = self.c.iso_pseudo_of_return(file, func);

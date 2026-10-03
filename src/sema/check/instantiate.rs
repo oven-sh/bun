@@ -286,8 +286,8 @@ impl<'p> Checker<'p> {
         if mapper == MapperId::IDENTITY {
             return ty;
         }
-        let (data, flags) = self.types().get_with_flags(ty);
-        if !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES) {
+        let (data, could_contain_type_variables) = self.types().get_for_instantiation(ty);
+        if !could_contain_type_variables {
             return ty;
         }
         // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter

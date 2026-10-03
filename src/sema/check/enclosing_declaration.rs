@@ -20,6 +20,18 @@ pub(super) struct Enclosing {
 }
 
 impl Enclosing {
+    /// `enclosingDeclaration == nil`: only the globals are in scope.
+    pub(super) const NONE: Enclosing = Enclosing {
+        file: super::explain::NOWHERE.0,
+        scope: ScopeId::NONE,
+        variable: VarDeclId::NONE,
+        fake_scope: 0,
+    };
+
+    pub(super) fn is_none(self) -> bool {
+        self.file == super::explain::NOWHERE.0
+    }
+
     pub(super) fn at_scope(file: FileId, scope: ScopeId) -> Enclosing {
         Enclosing {
             file,

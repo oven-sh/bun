@@ -570,11 +570,11 @@ pub enum InstantiationExpression {
 /// The members of an object type.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Shape {
-    /// `symbol.Declarations[0]` of a synthesized type that preserves the symbol of an object
-    /// literal (`getWidenedTypeOfObjectLiteral`), or has the symbol of a binding element
-    /// (`getRestType`, when there is an index signature): the file and the position. `CompareTypes`
-    /// orders by it.
-    pub symbol_declared_at: Option<(FileId, u32)>,
+    /// `symbol.Declarations[0]` of a synthesized type that has the symbol of an object literal
+    /// (`getSpreadType`, `getWidenedTypeOfObjectLiteral`), or of a binding element (`getRestType`,
+    /// when there is an index signature): the file and the position, by which `CompareTypes`
+    /// orders, and the object literal, if it is one.
+    pub symbol_declared_at: Option<(FileId, u32, ExprId)>,
     /// In declaration order, own before inherited.
     pub props: Vec<Prop>,
     pub call: Vec<SigId>,
@@ -911,6 +911,10 @@ pub struct TypeRecord {
     /// `Type.flags`: `tf`.
     flags: u32,
     object_flags: ObjectFlags,
+    /// A union or an intersection without type variables whose alias type arguments could contain
+    /// some: `type Brand<T> = number & {}`. `instantiateTypeWithAlias` instantiates it, and
+    /// `couldContainTypeVariables` is false for it.
+    has_type_variables_in_alias_only: bool,
     /// See `Types::mark_from_type_node`.
     is_from_type_node: AtomicBool,
     /// See `Types::mark_ordered_by_id`.
@@ -1466,10 +1470,15 @@ impl<'p> Types<'p> {
         self.record(id).object_flags
     }
 
+    /// With it: the first test of `instantiateTypeWithAlias`, whether the type or its alias type
+    /// arguments could contain type variables.
     #[inline]
-    pub fn get_with_flags(&self, id: TypeId) -> (&'p TypeData, ObjectFlags) {
+    pub fn get_for_instantiation(&self, id: TypeId) -> (&'p TypeData, bool) {
         let record = self.record(id);
-        (&record.created.0, record.object_flags)
+        let could_contain_type_variables = (record.object_flags)
+            .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
+            || record.has_type_variables_in_alias_only;
+        (&record.created.0, could_contain_type_variables)
     }
 
     /// `Type.flags`
@@ -1698,15 +1707,19 @@ impl<'p> Types<'p> {
             _ => false,
         };
         let mut flags = self.object_flags_of(data);
+        let has_type_variables_in_alias = (created.1.as_ref())
+            .and_then(|provenance| provenance.alias.as_ref())
+            .is_some_and(|(_, type_arguments)| {
+                type_arguments.iter().any(|&t| {
+                    self.object_flags(t)
+                        .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
+                })
+            });
+        let is_union_or_intersection =
+            matches!(data, TypeData::Union(_) | TypeData::Intersection(_));
         // `getObjectTypeInstantiation`: for a target with alias type arguments no outer type
         // parameter is omitted.
-        if !matches!(data, TypeData::Union(_) | TypeData::Intersection(_))
-            && let Some((_, type_arguments)) = created.1.as_ref().and_then(|p| p.alias.as_ref())
-            && type_arguments.iter().any(|&t| {
-                self.object_flags(t)
-                    .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
-            })
-        {
+        if has_type_variables_in_alias && !is_union_or_intersection {
             flags |= ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES;
         }
         // Unlike the others, it is not propagated from the type's constituents.
@@ -1725,6 +1738,9 @@ impl<'p> Types<'p> {
         TypeRecord {
             flags: Self::flags_of(&created),
             object_flags: flags,
+            has_type_variables_in_alias_only: has_type_variables_in_alias
+                && is_union_or_intersection
+                && !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
             is_from_type_node: AtomicBool::new(false),
             is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
             created,

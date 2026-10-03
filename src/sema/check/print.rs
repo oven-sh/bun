@@ -179,6 +179,10 @@ impl Checker<'_> {
                 ..
             } => matches!(self.hir(file)[e].kind, ExprKind::Object(_))
                 .then(|| (file, e, self.enclosing_scope_of_expr(file, e))),
+            TypeData::Synth(ref shape) => {
+                let (file, _, e) = shape.symbol_declared_at.filter(|it| it.2.is_some())?;
+                Some((file, e, self.enclosing_scope_of_expr(file, e)))
+            }
             TypeData::Anon {
                 origin: Origin::ClassStatic(class),
                 ..
@@ -237,6 +241,41 @@ impl Checker<'_> {
     /// `symbolToString`
     pub fn symbol_to_string(&mut self, symbol: Sym) -> Vec<u8> {
         self.printed(|c, out| c.write_symbol(out, symbol))
+    }
+
+    /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
+    pub(super) fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
+        let files = self.files();
+        let decls = files.decls(symbol);
+        if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
+            return remove_file_extension(&files.module(file).path).to_owned();
+        }
+        for &(file, decl) in &decls {
+            if let Decl::Module(m) = decl
+                && let ModuleName::String(name) = self.hir(file)[m].name
+            {
+                return self.atom_text(name);
+            }
+        }
+        Vec::new()
+    }
+
+    /// `symbol.Parent` of the member `m`, if a class or an interface declares it.
+    pub(super) fn symbol_of_member_owner(&self, file: FileId, m: MemberId) -> Option<Sym> {
+        let bound = self.bound(file);
+        let container = match bound.member_owner[m.idx()] {
+            MemberOwner::Class(class) => bound.class_symbol[class.idx()],
+            MemberOwner::Interface(interface) => bound.interface_symbol[interface.idx()],
+            _ => return None,
+        };
+        container
+            .is_some()
+            .then(|| self.files().sym(file, container))
+    }
+
+    /// `symbolToStringEx` with `SymbolFormatFlagsDoNotIncludeSymbolChain`
+    pub(super) fn symbol_to_string_at(&mut self, symbol: Sym, at: Option<Enclosing>) -> Vec<u8> {
+        with_printer(self, at, None, IGNORE_ERRORS, |p| p.symbol_to_text(symbol))
     }
 
     /// `getNameOfSymbolAsWritten` for the symbol of the function expression or arrow function `e`,
@@ -1617,23 +1656,6 @@ impl<'p> Printer<'_, 'p> {
 
     // ───────────────────────────── symbols ─────────────────────────────
 
-    /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
-    fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
-        let files = self.c.files();
-        let decls = files.decls(symbol);
-        if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return remove_file_extension(&files.module(file).path).to_owned();
-        }
-        for &(file, decl) in &decls {
-            if let Decl::Module(m) = decl
-                && let ModuleName::String(name) = self.c.hir(file)[m].name
-            {
-                return self.text(name);
-            }
-        }
-        Vec::new()
-    }
-
     /// Whether `symbol.Name` is `default`. An unnamed class declaration that is not a default
     /// export is stored under that name too, and has no parent.
     fn is_default_export(&self, symbol: Sym) -> bool {
@@ -1805,53 +1827,24 @@ impl<'p> Printer<'_, 'p> {
     fn symbol_to_text(&mut self, symbol: Sym) -> Vec<u8> {
         let name = self.name_of_symbol_as_written(symbol, true);
         if matches!(name.first(), Some(b'"' | b'\'')) && self.c.is_external_module_symbol(symbol) {
-            return quoted(&self.specifier_of_module(symbol), b'"', true);
+            return quoted(&self.import_type_specifier(symbol).0, b'"', true);
         }
         name
     }
 
-    /// `getSymbolChain` without an enclosing declaration: only globals are in scope.
-    fn symbol_chain(
-        &self,
+    /// `lookupSymbolChain` without an enclosing declaration
+    fn lookup_symbol_chain(
+        &mut self,
         symbol: Sym,
-        is_end_of_chain: bool,
+        is_value: bool,
         yields_module: bool,
-        depth: u32,
-    ) -> Option<Vec<Sym>> {
-        let files = self.c.files();
-        let is_module = self.c.is_external_module_symbol(symbol);
-        let name = files.symbol(symbol).name;
-        let is_global = name.is_some() && files.globals.get(name) == Some(&symbol);
-        if is_global && !is_module {
-            return Some(vec![symbol]);
+    ) -> (bool, Vec<Sym>) {
+        let flags = self.c.files().flags(symbol);
+        if flags.contains(SymFlags::TYPE_PARAMETER) || self.flags & USE_FULLY_QUALIFIED_TYPE == 0 {
+            return (false, vec![symbol]);
         }
-        if depth < 32
-            && let Some(parent) = files.parent_of_symbol(symbol)
-            && let Some(mut chain) = self.symbol_chain(parent, false, yields_module, depth + 1)
-        {
-            chain.push(symbol);
-            return Some(chain);
-        }
-        if !is_end_of_chain && !yields_module && is_module {
-            return None;
-        }
-        Some(vec![symbol])
-    }
-
-    /// `lookupSymbolChain`
-    fn lookup_symbol_chain(&self, symbol: Sym, yields_module: bool) -> Vec<Sym> {
-        let is_type_parameter = self
-            .c
-            .files()
-            .flags(symbol)
-            .contains(SymFlags::TYPE_PARAMETER);
-        if !is_type_parameter
-            && self.flags & USE_FULLY_QUALIFIED_TYPE != 0
-            && let Some(chain) = self.symbol_chain(symbol, true, yields_module, 0)
-        {
-            return chain;
-        }
-        vec![symbol]
+        let at = Enclosing::NONE;
+        (self.c).lookup_symbol_chain_at(symbol, is_value, yields_module, at, Vec::new())
     }
 
     /// `lookupSymbolChain` from `at`, which may be a synthetic block created by `enterNewScope`.
@@ -1921,7 +1914,7 @@ impl<'p> Printer<'_, 'p> {
         self.track_symbol(symbol, SymFlags::VALUE);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
             Some(at) => self.lookup_symbol_chain_from(symbol, true, false, at),
-            None => (false, self.lookup_symbol_chain(symbol, false)),
+            None => self.lookup_symbol_chain(symbol, true, false),
         };
         // `createExpressionFromSymbolChain`
         let mut expression = if starts_with_global_this {
@@ -1940,16 +1933,7 @@ impl<'p> Printer<'_, 'p> {
     /// which has no `Sym`. `None`: it is a member of something else, or there is no enclosing
     /// declaration to resolve from.
     fn member_to_expression(&mut self, file: FileId, m: MemberId, name: Atom) -> Option<Vec<u8>> {
-        let bound = self.c.bound(file);
-        let container = match bound.member_owner[m.idx()] {
-            MemberOwner::Class(class) => bound.class_symbol[class.idx()],
-            MemberOwner::Interface(interface) => bound.interface_symbol[interface.idx()],
-            _ => return None,
-        };
-        if container.is_none() {
-            return None;
-        }
-        let container = self.c.files().sym(file, container);
+        let container = self.c.symbol_of_member_owner(file, m)?;
         self.member_of_to_expression(container, name)
     }
 
@@ -1996,7 +1980,7 @@ impl<'p> Printer<'_, 'p> {
             Some(at) if !is_type_parameter => {
                 self.lookup_symbol_chain_from(symbol, is_type_of, yields_module, at)
             }
-            _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
+            _ => self.lookup_symbol_chain(symbol, is_type_of, yields_module),
         };
         self.symbol_chain_to_type_node(
             symbol,
@@ -2094,7 +2078,7 @@ impl<'p> Printer<'_, 'p> {
                 return (specifier, attributes);
             }
         }
-        (self.specifier_of_module(module), Vec::new())
+        (self.c.specifier_of_module(module), Vec::new())
     }
 
     // ───────────────────────────── lists of types ─────────────────────────────
@@ -2154,34 +2138,52 @@ impl<'p> Printer<'_, 'p> {
         result
     }
 
-    /// The symbol or alias of a type that is printed as a name.
-    fn symbol_of_reference(&mut self, ty: TypeId) -> Option<Sym> {
-        if let Some(alias) = self.c.alias_symbol_of_type(ty) {
-            return Some(alias);
-        }
+    /// `t.symbol` of a type that is printed as a name, as something to compare: a symbol, or the
+    /// node that declares one.
+    fn symbol_of_reference(&mut self, ty: TypeId) -> Option<(FileId, u32, u8)> {
+        let of_symbol = |symbol: Sym| (symbol.file, symbol.id.0, 0);
         match self.c.data(ty) {
-            TypeData::Ref { target, .. } => Some(*target),
-            TypeData::Union(members) => self.enum_of_members(ty, members),
-            TypeData::EnumLit { member, .. } => self.c.files().parent_of_symbol(*member),
-            TypeData::Enum { symbol, .. } => Some(*symbol),
+            TypeData::Ref { target, .. } => Some(of_symbol(*target)),
+            TypeData::Union(members) => self.enum_of_members(ty, members).map(of_symbol),
+            TypeData::EnumLit { member, .. } => {
+                self.c.files().parent_of_symbol(*member).map(of_symbol)
+            }
+            TypeData::Enum { symbol, .. } => Some(of_symbol(*symbol)),
+            TypeData::TypeParam(file, parameter, _) => Some((*file, parameter.0, 1)),
+            TypeData::Fns { decls, .. } => decls.first().map(|it| (it.0, it.1.0, 2)),
+            TypeData::Synth(shape) => shape.symbol_declared_at.map(|it| (it.0, it.1, 3)),
+            TypeData::Anon { origin, .. } => match *origin {
+                Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
+                    Some((file, node.0, 4))
+                }
+                Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
+                    Some((file, e.0, 5))
+                }
+                Origin::ClassStatic(symbol)
+                | Origin::Function(symbol)
+                | Origin::EnumObject(symbol)
+                | Origin::Module(symbol) => Some(of_symbol(symbol)),
+                Origin::Namespace {
+                    originating_import, ..
+                } => Some(of_symbol(originating_import)),
+                Origin::GlobalThis => None,
+            },
             _ => None,
         }
     }
 
-    /// `typesAreSameReference`
+    /// `typesAreSameReference`. `a.alias == b.alias` compares two pointers: an alias includes its
+    /// type arguments. So two instantiations of an alias for a union are not the same reference.
     fn are_same_reference(&mut self, a: TypeId, b: TypeId) -> bool {
         if a == b {
             return true;
         }
-        if let (TypeData::TypeParam(f, t, _), TypeData::TypeParam(g, u, _)) =
-            (self.c.data(a), self.c.data(b))
-        {
-            return (f, t) == (g, u);
+        let symbol = self.symbol_of_reference(a);
+        if symbol.is_some() && symbol == self.symbol_of_reference(b) {
+            return true;
         }
-        match (self.symbol_of_reference(a), self.symbol_of_reference(b)) {
-            (Some(x), Some(y)) => x == y,
-            _ => false,
-        }
+        let alias = self.c.alias_of_type(a);
+        alias.is_some() && alias == self.c.alias_of_type(b)
     }
 
     // ───────────────────────────── references ─────────────────────────────
@@ -3604,7 +3606,7 @@ impl<'p> Printer<'_, 'p> {
                     .global_type_symbol(known::SymbolConstructor)
                     .and_then(|container| self.member_of_to_expression(container, name))
                     .or_else(|| self.computed_key_text(prop))
-                    .unwrap_or_else(|| cat!(b"Symbol.", self.text(name))),
+                    .unwrap_or_else(|| self.text(name)),
             };
             self.enclosing_declaration = outer;
             self.approximate_length += expression.len() + 1;

@@ -21,6 +21,7 @@ use super::sink::held;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use bun_core::strings;
+use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
 /// `PseudoType`
@@ -1507,9 +1508,9 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `getTypeOfExpression(of)` returns another type than `ty` each time. It checks the
-    /// expression again, and `checkObjectLiteral` creates a type on every call. Here that type is
-    /// identified by the literal, or by its members if the literal has a spread. An array, a tuple
-    /// or a reference is identified by its type arguments.
+    /// expression again, and `checkObjectLiteral` creates a type on every call. So does
+    /// `getWidenedType` for a member of a union. Here that type is identified by the literal. An
+    /// array, a tuple or a reference is identified by its type arguments.
     fn iso_is_created_by_checking(&mut self, file: FileId, of: Node, ty: TypeId) -> bool {
         let hir = self.hir(file);
         let mut innermost = hir.data(of);
@@ -1521,29 +1522,71 @@ impl<'p> Checker<'p> {
                 _ => break,
             };
         }
-        self.iso_has_type_of_literal_in(file, of, ty)
+        self.iso_has_type_of_literal_in(file, of, ty, &mut SmallVec::new())
     }
 
-    /// Whether `ty` is identified by the type of an object literal in `of`.
-    fn iso_has_type_of_literal_in(&mut self, file: FileId, of: Node, ty: TypeId) -> bool {
-        match self.data(ty) {
+    /// Whether `ty` is identified by the type of an object literal in `of`. `seen`: the references
+    /// on the way to `ty`, whose type arguments can refer to them again.
+    fn iso_has_type_of_literal_in(
+        &mut self,
+        file: FileId,
+        of: Node,
+        ty: TypeId,
+        seen: &mut SmallVec<[TypeId; 8]>,
+    ) -> bool {
+        let (literal_file, literal) = match *self.data(ty) {
             TypeData::Anon {
                 origin:
                     Origin::ObjectLiteral(literal_file, literal, ..)
                     | Origin::WidenedLiteral(literal_file, literal, ..),
                 ..
-            } => {
-                let hir = self.hir(file);
-                *literal_file == file
-                    && hir.find_ancestor(hir.node(*literal), |n| n == of).is_some()
-            }
+            } => (literal_file, literal),
+            TypeData::Synth(ref shape) => match shape.symbol_declared_at {
+                Some((literal_file, _, literal)) if literal.is_some() => (literal_file, literal),
+                _ => return false,
+            },
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                if seen.contains(&ty) {
+                    return false;
+                }
+                seen.push(ty);
                 let arguments = self.type_arguments(ty);
-                (arguments.iter())
-                    .any(|&argument| self.iso_has_type_of_literal_in(file, of, argument))
+                // Two unions are compared by `compareTypesIdentical`, but not inside another type.
+                let found = arguments.iter().any(|&argument| {
+                    let members = self.parts(argument).to_vec();
+                    (members.iter())
+                        .any(|&member| self.iso_has_type_of_literal_in(file, of, member, seen))
+                });
+                seen.pop();
+                return found;
             }
-            _ => false,
+            _ => return false,
+        };
+        if literal_file != file {
+            return false;
         }
+        // The resolved signature of a call and the return type of a function are cached: what is
+        // inside them is not checked again.
+        let hir = self.hir(file);
+        let mut node = hir.node(literal);
+        while node.is_some() && node != of {
+            node = hir.parent(node);
+            if matches!(
+                hir.kind(node),
+                Kind::CallExpression
+                    | Kind::NewExpression
+                    | Kind::TaggedTemplateExpression
+                    | Kind::FunctionExpression
+                    | Kind::ArrowFunction
+                    | Kind::MethodDeclaration
+                    | Kind::GetAccessor
+                    | Kind::SetAccessor
+                    | Kind::ClassExpression
+            ) {
+                return false;
+            }
+        }
+        node.is_some()
     }
 
     /// `pseudoTypeEquivalentToType`

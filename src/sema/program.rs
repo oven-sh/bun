@@ -1925,34 +1925,50 @@ fn explain_source_files(
         if is_reported[first.idx()] && is_root[first.idx()] {
             reasons[first.idx()].push(IncludeReason::RootFile);
         }
-        // (file, how many of its edges have been followed)
-        let mut stack: Vec<(FileId, usize)> = Vec::new();
+        // (file, how many of its edges have been followed, how many of its references have been
+        // passed, whether it refers to a reported file)
+        let refers_to_reported =
+            |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_reported[edge.idx()]);
+        let mut stack: Vec<(FileId, usize, usize, bool)> = Vec::new();
         if !std::mem::replace(&mut seen[first.idx()], true) {
-            stack.push((first, 0));
+            stack.push((first, 0, 0, refers_to_reported(first)));
         }
         while let Some(top) = stack.last_mut() {
-            let (file, next) = *top;
+            let (file, next, _, refers_to_reported_file) = *top;
             let edges = &modules[file.idx()].edges;
-            let Some(&edge) = edges.get(next) else {
+            let edge = edges.get(next).copied();
+            // `subTasks` has a task for each reference. The reason of one that repeats an earlier
+            // reference of the file is added when the traversal gets to it.
+            if refers_to_reported_file {
+                let found = locations.entry(file).or_insert_with(|| {
+                    reference_locations(host, options, atoms, by_path, &modules[file.idx()])
+                });
+                while let Some(&(target, code, start, end)) = found.get(top.2) {
+                    let is_repeated = edges[..next].contains(&target);
+                    if !is_repeated && Some(target) != edge {
+                        break;
+                    }
+                    top.2 += 1;
+                    if is_reported[target.idx()] {
+                        reasons[target.idx()].push(IncludeReason::Reference {
+                            code,
+                            from: file,
+                            start,
+                            end,
+                        });
+                    }
+                    if !is_repeated {
+                        break;
+                    }
+                }
+            }
+            let Some(edge) = edge else {
                 stack.pop();
                 continue;
             };
             top.1 += 1;
-            if is_reported[edge.idx()] && !edges[..next].contains(&edge) {
-                let found = locations.entry(file).or_insert_with(|| {
-                    reference_locations(host, options, atoms, by_path, &modules[file.idx()])
-                });
-                reasons[edge.idx()].extend(found.iter().filter(|location| location.0 == edge).map(
-                    |&(_, code, start, end)| IncludeReason::Reference {
-                        code,
-                        from: file,
-                        start,
-                        end,
-                    },
-                ));
-            }
             if !std::mem::replace(&mut seen[edge.idx()], true) {
-                stack.push((edge, 0));
+                stack.push((edge, 0, 0, refers_to_reported(edge)));
             }
         }
     }

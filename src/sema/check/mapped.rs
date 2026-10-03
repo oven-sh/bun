@@ -840,12 +840,17 @@ impl<'p> Checker<'p> {
                             return Some(TypeId::UNDEFINED);
                         }
                         if let Some(index_node) = index_node {
-                            let args =
-                                [Arg::Type(object), Arg::Number(flags.len()), Arg::Atom(name)];
+                            let printed = self.apparent_type_of_intersection(object);
+                            let args = [
+                                Arg::Type(printed),
+                                Arg::Number(flags.len()),
+                                Arg::Atom(name),
+                            ];
                             self.error_at(index_node, 2493, &args);
                         }
                     } else if let Some(index_node) = index_node {
-                        self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(object)]);
+                        let printed = self.apparent_type_of_intersection(object);
+                        self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                     }
                 }
                 if at >= 0.0 {
@@ -957,7 +962,8 @@ impl<'p> Checker<'p> {
                         && let Some(name) = name
                     {
                         let at = self.place_inside_parentheses(file, e);
-                        self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(object)]);
+                        let printed = self.apparent_type_of_intersection(object);
+                        self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                         return Some(TypeId::UNDEFINED);
                     }
                     if index == TypeId::STRING || index == TypeId::NUMBER {
@@ -980,11 +986,13 @@ impl<'p> Checker<'p> {
                     && self.is_block_scoped_global(name)
                 {
                     let at = self.place_inside_parentheses(file, e);
-                    self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(object)]);
+                    let printed = self.apparent_type_of_intersection(object);
+                    self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                 } else if no_implicit_any
                     && !access_flags.contains(AccessFlags::SUPPRESS_NO_IMPLICIT_ANY_ERROR)
                 {
-                    self.report_implicit_any_element((file, e), object, (index, full_index), name);
+                    let printed = self.apparent_type_of_intersection(object);
+                    self.report_implicit_any_element((file, e), printed, (index, full_index), name);
                 }
                 return None;
             }
@@ -1014,9 +1022,11 @@ impl<'p> Checker<'p> {
             } else if self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
                 && let Some(name) = name
             {
-                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(object)]);
+                let printed = self.apparent_type_of_intersection(object);
+                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
             } else if index == TypeId::STRING || index == TypeId::NUMBER {
-                self.error_at(index_node, 2537, &[Arg::Type(object), Arg::Type(index)]);
+                let printed = self.apparent_type_of_intersection(object);
+                self.error_at(index_node, 2537, &[Arg::Type(printed), Arg::Type(index)]);
             } else {
                 self.error_at(index_node, 2538, &[Arg::Type(index)]);
             }

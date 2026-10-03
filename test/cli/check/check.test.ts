@@ -19,6 +19,10 @@ const tsconfig = JSON.stringify({
   },
 });
 
+const withResolveJsonModule = JSON.stringify({
+  compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, resolveJsonModule: true },
+});
+
 function project(files: Record<string, string>, { withTypeScript = true } = {}) {
   const dir = tempDir("bun-check", {
     "tsconfig.json": tsconfig,
@@ -93,12 +97,7 @@ async function inTerminal(cwd: string, cmd: string[]) {
     },
   });
   const exitCode = await child.exited;
-  return {
-    output: Bun.stripANSI(output),
-    hasColors: output.includes("\x1b[3"),
-    exitCode,
-    signalCode: child.signalCode,
-  };
+  return { output: Bun.stripANSI(output), hasColors: output.includes("\x1b[3"), exitCode, signalCode: child.signalCode };
 }
 
 describe.concurrent("bun check", () => {
@@ -631,8 +630,7 @@ describe.concurrent("bun check", () => {
         "packages/loose/index.ts": implicitAny,
         "packages/strict/tsconfig.json": tsconfig,
         // A file imported from another package is checked by that package's project.
-        "packages/strict/index.ts":
-          `import { f as loose } from "../loose/index";\nexport const a: string = loose(1);\n` + implicitAny,
+        "packages/strict/index.ts": `import { f as loose } from "../loose/index";\nexport const a: string = loose(1);\n` + implicitAny,
         "packages/left-out/tsconfig.json": loose,
         "packages/left-out/index.ts": implicitAny,
         "tools/tsconfig.json": loose,
@@ -1105,12 +1103,10 @@ const kind: number = Shape.kind;
           "two/index.js": index("two"),
         });
         const { stdout } = await check(dir);
-        expect(
-          stdout
-            .split("\n")
-            .filter(line => line.includes("TS6307"))
-            .map(line => line.slice(0, 40)),
-        ).toEqual(["one/index.js(1,26): error TS6307: File '", "two/index.js(1,26): error TS6307: File '"]);
+        expect(stdout.split("\n").filter(line => line.includes("TS6307")).map(line => line.slice(0, 40))).toEqual([
+          "one/index.js(1,26): error TS6307: File '",
+          "two/index.js(1,26): error TS6307: File '",
+        ]);
       });
 
       test("is imported without allowJs where an untyped import is no error", async () => {
@@ -1469,9 +1465,7 @@ export {};
 `,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(9,7): error TS2322: Type '{ k: "a"; }' is not assignable to type '1'."`,
-      );
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(9,7): error TS2322: Type '{ k: "a"; }' is not assignable to type '1'."`);
     });
 
     test("constraint of a distributive conditional type over an inferred type parameter", async () => {
@@ -2083,6 +2077,388 @@ export const made = new C(1);
       );
     });
 
+    test("two instantiations of an alias for a union are printed again, which counts towards the length limit", async () => {
+      using dir = project({
+        "a.ts": `type Base<I, O, C> = { input: I; output: O; context: C; execute?: () => void; needsApproval?: boolean; onInputAvailable?: () => void };
+type FunctionTool<I, O, C> = Base<I, O, C> & { type?: "function" };
+type DynamicTool<I, O, C> = Base<I, O, C> & { type: "dynamic" };
+type DefinedTool<I, O, C> = Base<I, O, C> & { type: "defined"; id: string };
+type ExecutedTool<I, O, C> = Base<I, O, C> & { type: "executed"; id: string };
+type Tool<I = any, O = any, C = any> = FunctionTool<I, O, C> | DynamicTool<I, O, C> | DefinedTool<I, O, C> | ExecutedTool<I, O, C>;
+type ToolSet = Record<string, (Tool<never, never, any> | Tool<any, any, any> | Tool<any, never, any> | Tool<never, any, any>) & Pick<Tool<any, any, any>, "execute" | "needsApproval" | "onInputAvailable">>;
+declare const s: ToolSet;
+export const n: number = s["x"];
+export function f<T extends ToolSet[keyof ToolSet]>(t: T) { const p: number = t; return p; }
+type U = { x: Tool<never, never, any> | Tool<any, any, any> | Tool<any, never, any> | Tool<never, any, any> };
+declare const u: U;
+export const q: number = u.x;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,14): error TS2322: Type '(Tool<any, any, any> | Tool<any, never, any> | Tool<...> | Tool<...>) & Pick<...>' is not assignable to type 'number'.
+          Type 'Base<any, any, any> & { type?: "function" | undefined; } & Pick<Tool<any, any, any>, "execute" | "needsApproval" | "onInputAvailable">' is not assignable to type 'number'.
+        a.ts(10,67): error TS2322: Type '(Tool<any, any, any> | Tool<any, never, any> | Tool<...> | Tool<...>) & Pick<...>' is not assignable to type 'number'.
+          Type 'Base<any, any, any> & { type?: "function" | undefined; } & Pick<Tool<any, any, any>, "execute" | "needsApproval" | "onInputAvailable">' is not assignable to type 'number'.
+        a.ts(13,14): error TS2322: Type 'Tool<any, any, any> | Tool<any, never, any> | Tool<...> | Tool<...>' is not assignable to type 'number'.
+          Type 'DefinedTool<any, any, any>' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an array in an object in an array that is explained is a tuple", async () => {
+      using dir = project({
+        "a.ts": `interface GError { message: string; path: ReadonlyArray<string | number>; locations: number; nodes: number; source: number; positions: number; a: 1; b: 1 }
+declare function enqueue(chunk: { completed: { id: string; errors: GError[] }[]; hasNext: boolean }): void;
+enqueue({ completed: [{ id: "0", errors: [{ message: "m", path: ["greeting", "recipient"] }] }], hasNext: false });
+interface Case { codec: number; accepts: readonly unknown[]; rejects: readonly unknown[]; extra: number }
+export const cases: Case[] = [{ codec: 1, accepts: ["a", "b"], rejects: [1, null, "x"] }];
+export const nested: { x: { y: number[] }[] }[] = [{ x: [{ y: ["s"] }] }];
+export const cond: { v: number[]; w: number }[] = [{ v: true ? [1, 2] : [3] }];
+export const spread: { v: number[]; w: number }[] = [{ ...{ v: [1, 2] } }];
+export const fn: { v: () => number[]; w: number }[] = [{ v: () => [1, 2] }];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,43): error TS2740: Type '{ message: string; path: [string, string]; }' is missing the following properties from type 'GError': locations, nodes, source, positions, and 2 more.
+        a.ts(5,31): error TS2741: Property 'extra' is missing in type '{ codec: number; accepts: [string, string]; rejects: [number, null, string]; }' but required in type 'Case'.
+        a.ts(6,64): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(7,52): error TS2741: Property 'w' is missing in type '{ v: [number] | [number, number]; }' but required in type '{ v: number[]; w: number; }'.
+        a.ts(8,54): error TS2741: Property 'w' is missing in type '{ v: number[]; }' but required in type '{ v: number[]; w: number; }'.
+        a.ts(9,56): error TS2741: Property 'w' is missing in type '{ v: () => number[]; }' but required in type '{ v: () => number[]; w: number; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a \`unique symbol\` that is no key of a type is named with its module", async () => {
+      using dir = project({
+        "a.ts": `import { KEY, NS, C } from "./lib/deep/keys";
+import * as all from "./lib/deep/keys";
+const LOCAL = Symbol("l");
+declare const o: { a: number };
+export const r1 = o[KEY];
+export const r2 = o[NS.INNER];
+export const r3 = o[C.S];
+export const r4 = o[LOCAL];
+export const r5 = o[all.KEY];
+export const r6 = o[Symbol.iterator];
+`,
+        "lib/deep/keys.ts": `export const KEY = Symbol("k");
+export namespace NS { export const INNER = Symbol("i"); }
+export class C { static readonly S: unique symbol = Symbol("s"); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '["./lib/deep/keys".KEY]' does not exist on type '{ a: number; }'.
+        a.ts(6,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '["./lib/deep/keys".NS.INNER]' does not exist on type '{ a: number; }'.
+        a.ts(7,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '["./lib/deep/keys".C.S]' does not exist on type '{ a: number; }'.
+        a.ts(8,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '[LOCAL]' does not exist on type '{ a: number; }'.
+        a.ts(9,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '["./lib/deep/keys".KEY]' does not exist on type '{ a: number; }'.
+        a.ts(10,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type '{ a: number; }'.
+          Property '[SymbolConstructor.iterator]' does not exist on type '{ a: number; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("two types with one name are told apart by their modules", async () => {
+      using dir = project({
+        "a.ts": `import { use } from "one";
+import { plugin, options } from "two";
+import * as ts1 from "ns1";
+import * as ts2 from "ns2";
+use(plugin, options);
+ts1.take(ts2.checker);
+`,
+        "node_modules/one/package.json": `{ "name": "one", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/one/index.d.ts": `interface Plugin<A = any> { name: string; one: A }
+type Option = Plugin | false;
+export { type Plugin, type Option };
+export declare function use(p: Plugin, o: Option[]): void;
+`,
+        "node_modules/two/package.json": `{ "name": "two", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/two/index.d.ts": `interface Plugin<A = any> { name: string; two: A }
+type Option = Plugin | false;
+export { type Plugin, type Option };
+export declare const plugin: Plugin;
+export declare const options: Option[];
+`,
+        "node_modules/ns1/package.json": `{ "name": "ns1", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/ns1/index.d.ts": `declare namespace ts { interface Checker { a: number } function take(c: Checker): void; }
+export = ts;
+`,
+        "node_modules/ns2/package.json": `{ "name": "ns2", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/ns2/index.d.ts": `declare namespace ts { interface Checker { b: number } const checker: Checker; }
+export = ts;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.replace(/import\("[^"]*\/node_modules\//g, 'import("')).toMatchInlineSnapshot(`
+        "a.ts(5,5): error TS2741: Property 'one' is missing in type 'import("two/index").Plugin<any>' but required in type 'import("one/index").Plugin<any>'.
+        a.ts(6,10): error TS2741: Property 'a' is missing in type 'import("ns2/index").Checker' but required in type 'import("ns1/index").Checker'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a well-known symbol is named without \`Symbol.\` where no declaration names it", async () => {
+      using dir = project({
+        "a.ts": `type S = { [Symbol.toStringTag]: string; [Symbol.iterator]?: number };
+declare function asClause<T>(): { [K in keyof T as K]: "x" };
+declare function byKeys<K extends PropertyKey>(): { [P in K]: "x" };
+declare function homomorphic<T>(): { [K in keyof T]: "x" };
+declare function exclude<T>(): { [K in Exclude<keyof T, "none">]: "x" };
+export const a: number = asClause<S>();
+export const b: number = byKeys<keyof S>();
+export const c: number = homomorphic<S>();
+export const d: number = exclude<S>();
+export const e: number = byKeys<typeof Symbol.unscopables>();
+export const f: number = asClause<string[]>();
+declare const own: unique symbol;
+export const g: number = byKeys<typeof own>();
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(6,14): error TS2322: Type '{ [Symbol.toStringTag]: "x"; [Symbol.iterator]?: "x" | undefined; }' is not assignable to type 'number'.
+        a.ts(7,14): error TS2322: Type '{ [iterator]: "x"; [toStringTag]: "x"; }' is not assignable to type 'number'.
+        a.ts(8,14): error TS2322: Type '{ [Symbol.toStringTag]: "x"; [Symbol.iterator]?: "x" | undefined; }' is not assignable to type 'number'.
+        a.ts(9,14): error TS2322: Type '{ [iterator]: "x"; [toStringTag]: "x"; }' is not assignable to type 'number'.
+        a.ts(10,14): error TS2322: Type '{ [unscopables]: "x"; }' is not assignable to type 'number'.
+        a.ts(11,14): error TS2322: Type '{ [x: number]: "x"; length: "x"; toString: "x"; toLocaleString: "x"; pop: "x"; push: "x"; concat: "x"; join: "x"; reverse: "x"; shift: "x"; slice: "x"; sort: "x"; splice: "x"; unshift: "x"; indexOf: "x"; lastIndexOf: "x"; ... 25 more ...; with: "x"; }' is not assignable to type 'number'.
+        a.ts(13,14): error TS2322: Type '{ [own]: "x"; }' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an alias that does not use its type parameter is instantiated", async () => {
+      using dir = project({
+        "a.ts": `type H<T> = string | number;
+declare const pair: H<1>[] & H<2>[];
+export const y: boolean = pair;
+type Brand<T> = number & {};
+declare const brands: [Brand<"a">, Brand<"b">];
+export const z: boolean = brands;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type 'H<1>[] & H<2>[]' is not assignable to type 'boolean'.
+        a.ts(6,14): error TS2322: Type '[number, number]' is not assignable to type 'boolean'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the type of an object literal with a spread is printed from the literal", async () => {
+      using dir = project({
+        "a.ts": `interface Many { adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; p6?: number; p7?: number; p8?: number; p9?: number }
+declare const many: Many;
+declare const annotated: { f?: () => Promise<string>; g: (x: Map<string, number>) => void; h: Promise<string>; i: Array<Promise<string>> };
+declare function take(x: { required: number; [key: string]: unknown }): void;
+take({ last: annotated.f, ...many });
+take({ last: annotated.g, ...many });
+take({ last: annotated.h, ...many });
+take({ last: annotated.i, ...many });
+const inferred = () => Promise.resolve("s");
+take({ last: inferred, ...many });
+function generic<T>(): () => Promise<T> { return null!; }
+take({ last: generic<string>(), ...many });
+declare const literal: { adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; p6?: number; p7?: number; p8?: number; p9?: number; last: Promise<string> };
+take(literal);
+declare const quoted: { kind: 'single'; other: Missing; method(x: Map<string, number>): Promise<string>; get acc(): Promise<string> };
+take(quoted);
+class K { adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; p6?: number; p7?: number; p8?: number; p9?: number; last!: Promise<string> }
+take({ ...new K() });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (() => Promise<string>) | undefined; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(6,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (x: Map<string, number>) => void; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(7,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(8,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>[]; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(10,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(12,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(14,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(15,48): error TS2304: Cannot find name 'Missing'.
+        a.ts(16,6): error TS2741: Property 'required' is missing in type '{ kind: "single"; other: Missing; method(x: Map<string, number>): Promise<string>; readonly acc: Promise<string>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(18,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<string>; }' but required in type '{ [key: string]: unknown; required: number; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an aliased intersection with a class is named by its members where it is indexed", async () => {
+      using dir = project({
+        "a.ts": `class User { id = 1 }
+declare const s1: unique symbol;
+type Loaded<T> = T & {} & { [s1]?: T };
+declare const u: Loaded<User>;
+declare const k: any;
+export const r1 = u[k];
+type Plain<T> = T & { x: 1 };
+declare const p: Plain<{ y: 2 }>;
+export const r2 = p[k];
+declare const q: Plain<User>;
+export const r3 = q[k];
+export const r4 = q["nope"];
+export type T1 = Plain<User>["nope"];
+export type T2 = Plain<User>[number];
+export const r5 = q[0];
+q["nope"] = 1;
+declare const sym: unique symbol;
+export const r6 = q[sym];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(6,19): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'User & { [s1]?: User | undefined; }'.
+        a.ts(9,19): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Plain<{ y: 2; }>'.
+        a.ts(11,19): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'User & { x: 1; }'.
+        a.ts(12,19): error TS7053: Element implicitly has an 'any' type because expression of type '"nope"' can't be used to index type 'User & { x: 1; }'.
+          Property 'nope' does not exist on type 'User & { x: 1; }'.
+        a.ts(13,30): error TS2339: Property 'nope' does not exist on type 'User & { x: 1; }'.
+        a.ts(14,30): error TS2537: Type 'User & { x: 1; }' has no matching index signature for type 'number'.
+        a.ts(15,19): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type 'User & { x: 1; }'.
+          Property '0' does not exist on type 'User & { x: 1; }'.
+        a.ts(16,1): error TS7053: Element implicitly has an 'any' type because expression of type '"nope"' can't be used to index type 'User & { x: 1; }'.
+          Property 'nope' does not exist on type 'User & { x: 1; }'.
+        a.ts(18,19): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type 'User & { x: 1; }'.
+          Property '[sym]' does not exist on type 'User & { x: 1; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a union of more than forty object types is reduced", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "a.ts": `import big from "./big.json";
+export const b: number = big.versions[0][0];
+`,
+        "big.json": JSON.stringify({
+          versions: Array.from({ length: 60 }, (_, i) => [`v${i}`, { chrome: `${i}`, firefox: "x" }]),
+        }),
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,14): error TS2322: Type 'string | { chrome: string; firefox: string; }' is not assignable to type 'number'.
+          Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the type of a JSON file is printed from its text", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "a.ts": `import big from "./big.json";
+export const a: number = big;
+`,
+        "big.json": JSON.stringify({
+          env: { builtin: true },
+          globals: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`global${i}`, "readonly"])),
+          rules: { r1: "off" },
+        }),
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '{ env: { builtin: boolean; }; globals: { global0: string; global1: string; global2: string; global3: string; global4: string; global5: string; global6: string; global7: string; global8: string; global9: string; global10: string; global11: string; global12: string; global13: string; global14: string; global15: string...' is not assignable to type 'number'."`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the replacement suggested for `baseUrl: \"..\"` starts with `./`", async () => {
+      using dir = project({
+        "sub/tsconfig.json": `{ "compilerOptions": { "baseUrl": "..", "noEmit": true, "types": [], "lib": ["esnext"] }, "files": ["../a.ts"] }
+`,
+        "a.ts": `export const a = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["-p", "sub/tsconfig.json"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "sub/tsconfig.json(1,24): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+          Use '"paths": {"*": ["./../*"]}' instead."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an object literal is not printed from its text if an array in it has objects of several shapes", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "obj.json": `{ "obj": { "items": [{ "x": 12 }, { "x": 12, "y": 12 }, { "x": 0, "err": true }] } }
+`,
+        "obj.ts": `export const obj = { obj: { items: [{ x: 12 }, { x: 12, y: 12 }, { x: 0, err: true }] } };
+`,
+        "a.ts": `import j from "./obj.json";
+import { obj } from "./obj";
+export const a: number = j;
+export const b: number = obj;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type '{ obj: { items: ({ x: number; y?: undefined; err?: undefined; } | { x: number; y: number; err?: undefined; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'.
+        a.ts(4,14): error TS2322: Type '{ obj: { items: ({ y?: undefined; err?: undefined; x: number; } | { err?: undefined; x: number; y: number; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a file that is imported twice by one file has the second reason where the second import is", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "rootDir": "in", "outDir": "dist", "types": [], "lib": ["esnext"], "module": "esnext", "moduleResolution": "bundler" }, "include": ["in"] }
+`,
+        "in/main.ts": `import { a } from "../out/shared";
+import { m } from "./middle";
+import type { A } from "../out/shared";
+import { l } from "./last";
+export const x: A = a + m + l;
+`,
+        "in/middle.ts": `import { a } from "../out/shared";
+export const m = a;
+`,
+        "in/last.ts": `import { a } from "../out/shared";
+export const l = a;
+`,
+        "out/shared.ts": `export const a = 1;
+export type A = number;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.replaceAll("<dir>/", "")).toMatchInlineSnapshot(`
+        "in/last.ts(1,19): error TS6059: File 'out/shared.ts' is not under 'rootDir' 'in'. 'rootDir' is expected to contain all source files.
+          The file is in the program because:
+            Imported via "../out/shared" from file 'in/last.ts'
+            Imported via "../out/shared" from file 'in/main.ts'
+            Imported via "../out/shared" from file 'in/middle.ts'
+            Imported via "../out/shared" from file 'in/main.ts'"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a reference whose type arguments refer to it in a union is compared with its syntax", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "declaration": true, "emitDeclarationOnly": true, "outDir": "dist", "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true } }
+`,
+        "a.ts": `interface Box<T> {
+  next: T;
+}
+type Rec = Box<Rec | string>;
+declare function make(): Rec;
+export const made = make();
+export const list = [make()];
+export const wrong: number = { a: make() };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(8,14): error TS2322: Type '{ a: Rec; }' is not assignable to type 'number'."`);
+      expect(exitCode).toBe(1);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {
@@ -2446,10 +2822,7 @@ export function f<T>(rest: T) {
 
     test("missing path arguments are reported before the project is loaded", async () => {
       // The invalid tsconfig.json and the missing lib files are never read.
-      using dir = project(
-        { "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` },
-        { withTypeScript: false },
-      );
+      using dir = project({ "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` }, { withTypeScript: false });
       const { stdout, stderr, exitCode } = await check(dir, ["nope.ts", "src/nope"]);
       expect(stdout).toMatchInlineSnapshot(`
         "error TS6053: File '<dir>/nope.ts' not found.
@@ -2520,7 +2893,7 @@ describe.concurrent("@types/bun", () => {
   // Matches `tsc` since TypeScript 6.0 and the editor.
   test.each([
     ["has no `types`", withoutTypes],
-    ['has `types` without "bun"', tsconfig],
+    ["has `types` without \"bun\"", tsconfig],
   ])("is not included when tsconfig.json %s, and the hint explains the fix", async (_, config) => {
     using dir = project({ ...bunTypes, "tsconfig.json": config });
     const { stdout, stderr, exitCode } = await check(dir);
@@ -2678,8 +3051,7 @@ describe.concurrent("--check", () => {
   });
 
   test("bun build --check checks the scripts of an HTML entry point", async () => {
-    const page = (script: string) =>
-      `<!doctype html>\n<script src="https://example.com/cdn.js"></script>\n<script type="module" src="${script}"></script>\n`;
+    const page = (script: string) => `<!doctype html>\n<script src="https://example.com/cdn.js"></script>\n<script type="module" src="${script}"></script>\n`;
     using dir = project({
       "good/index.html": page("./main.ts"),
       "good/main.ts": `const good: number = 1;\nconsole.log(good);\n`,

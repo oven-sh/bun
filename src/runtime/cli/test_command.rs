@@ -3042,11 +3042,10 @@ impl TestCommand {
                     debug_assert!(false);
                     break 'blk;
                 };
-                let buntest = buntest_strong.get();
 
                 // Automatically execute bun_test tests
-                if buntest.result_queue.readable_length() == 0 {
-                    buntest.add_result(bun_test::ResultMsg::Start);
+                if buntest_strong.result_queue.readable_length() == 0 {
+                    buntest_strong.get().add_result(bun_test::ResultMsg::Start);
                 }
                 // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
                 // local `buntest_strong` survives for the post-run drain loop and
@@ -3057,13 +3056,13 @@ impl TestCommand {
                 vm.event_loop_ref().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest.phase != bun_test::Phase::Done {
-                    if buntest.wants_wakeup {
-                        buntest.wants_wakeup = false;
+                while buntest_strong.phase != bun_test::Phase::Done {
+                    if buntest_strong.wants_wakeup {
+                        buntest_strong.get().wants_wakeup = false;
                         vm.wakeup();
                     }
                     vm.event_loop_ref().auto_tick();
-                    if buntest.phase == bun_test::Phase::Done {
+                    if buntest_strong.phase == bun_test::Phase::Done {
                         break;
                     }
                     vm.event_loop_ref().tick();

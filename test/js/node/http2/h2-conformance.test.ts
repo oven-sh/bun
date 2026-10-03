@@ -1333,9 +1333,10 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
 
   /**
    * A bun server stream that the handler does not read, and the raw client that uploads on it.
-   * The first 65535 bytes come back as window. They leave the readable buffer one byte below its
-   * high-water mark, so the `more` bytes behind them pause the stream. `counted` is what the
-   * server has then counted and not returned. `onSession` runs before the first stream.
+   * The client fills the readable buffer to one byte below its high-water mark (16 KiB on Windows,
+   * 64 KiB elsewhere), so the `more` bytes behind that pause the stream. `sent` is what the client
+   * sent, and `counted` is the part that the server has not returned as window. `onSession` runs
+   * before the first stream.
    */
   async function pausedUpload(more: number, onSession: (session: http2.Http2Session) => void = () => {}) {
     const opened = Promise.withResolvers<http2.ServerHttp2Stream>();
@@ -1354,7 +1355,10 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     raw.send(Buffer.concat([settingsAck, encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"))]));
     const stream = await opened.promise;
     const data = (bytes: number) => encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(bytes, 0x61));
-    await errorsAfter(raw, data(16384), data(16384), data(16384), data(16383));
+    const fill = stream.readableHighWaterMark - 1;
+    const filler: Buffer[] = [];
+    for (let left = fill; left > 0; left -= 16384) filler.push(data(Math.min(left, 16384)));
+    await errorsAfter(raw, ...filler);
     await errorsAfter(raw, data(more));
     await errorsAfter(raw);
     const returned = raw.frames.reduce(
@@ -1364,7 +1368,8 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     return {
       raw,
       stream,
-      counted: DEFAULT_WINDOW + more - returned,
+      sent: fill + more,
+      counted: fill + more - returned,
       [Symbol.dispose]() {
         raw.destroy();
         server.close();
@@ -1392,7 +1397,7 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
   // in flight until the client sends the ACK, and a paused stream returns none of them.
   test("an empty END_STREAM frame is accepted on a paused stream that holds more than a lowered initialWindowSize", async () => {
     using paused = await pausedUpload(1000, session => session.settings({ initialWindowSize: 1 }));
-    const { raw, stream, counted } = paused;
+    const { raw, stream, sent, counted } = paused;
     const errors = [
       ...(await errorsAfter(raw, settingsAck)),
       ...(await errorsAfter(raw, encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1))),
@@ -1402,7 +1407,7 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     const ended = Promise.withResolvers<number>();
     stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
     stream.on("end", () => ended.resolve(bytes));
-    expect(await ended.promise).toBe(DEFAULT_WINDOW + 1000);
+    expect(await ended.promise).toBe(sent);
   });
 
   // The client cannot know of the lower value when it sends the 2000 bytes of stream 3. Its ACK

@@ -433,38 +433,36 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
-it.skipIf(isWindows)(
-  "IPC to the parent survives a --watch reload",
-  async () => {
-    using dir = tempDir("watch-ipc-reload", {
-      "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
-    });
+// Windows has no execve: a watcher manager process spawns the real process
+// and must hand it the inherited fd block, or the channel is lost (#42925).
+it("IPC to the parent survives a --watch reload", async () => {
+  using dir = tempDir("watch-ipc-reload", {
+    "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
+  });
 
-    const messages: string[] = [];
-    watchee = spawn({
-      cmd: [bunExe(), "--watch", "app.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-      ipc(message) {
-        messages.push(String(message));
-      },
-    });
+  const messages: string[] = [];
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    ipc(message) {
+      messages.push(String(message));
+    },
+  });
 
-    const deadline = Date.now() + 20000;
-    while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter first");
+  const deadline = Date.now() + 20000;
+  while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter first");
 
-    await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
-    while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter second");
+  await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
+  while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter second");
 
-    watchee.kill("SIGKILL");
-    await watchee.exited;
-  },
-  30000,
-);
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}, 30000);
 
 // The files and directories a process holds open, as (fd, path) pairs. Linux
 // reads /proc, macOS asks lsof (the kernel has no per-process fd listing

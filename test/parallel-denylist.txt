@@ -164,6 +164,7 @@ js/third_party/pnpm/pnpm.test.ts
 js/third_party/postgres/postgres.test.ts
 js/third_party/socket.io/socket.io-handshake.test.ts
 js/third_party/stripe/stripe.test.ts
+js/web/clipboard/clipboard.test.ts
 js/web/console/console-log.test.ts
 js/web/explicit-resource-management.test.ts
 js/web/fetch/fetch-proxy-tls-intern-race.test.ts

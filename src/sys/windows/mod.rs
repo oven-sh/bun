@@ -29,8 +29,11 @@ pub use bun_windows_sys::ws2_32;
 pub mod kernel32 {
     use super::{
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
-        LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, ULONG, ULONG_PTR,
+        LPOVERLAPPED_COMPLETION_ROUTINE, LPVOID, OVERLAPPED, SRWLOCK, UINT, ULONG, ULONG_PTR,
     };
+
+    pub const GMEM_MOVEABLE: UINT = 0x0002;
+    pub const GMEM_ZEROINIT: UINT = 0x0040;
     pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
     pub use bun_windows_sys::kernel32::*;
@@ -89,6 +92,40 @@ pub mod kernel32 {
 
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
+
+        // safe: by-value arguments.
+        pub safe fn Sleep(dwMilliseconds: DWORD);
+
+        // ── movable global memory ──
+        // safe: by-value arguments; failure is NULL / 0.
+        pub safe fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HANDLE;
+        pub safe fn GlobalSize(hMem: HANDLE) -> usize;
+        pub fn GlobalFree(hMem: HANDLE) -> HANDLE;
+        pub fn GlobalLock(hMem: HANDLE) -> LPVOID;
+        pub fn GlobalUnlock(hMem: HANDLE) -> BOOL;
+    }
+}
+
+/// https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard
+pub mod user32 {
+    use super::{BOOL, DWORD, HANDLE, UINT};
+    use core::ffi::c_char;
+
+    pub const CF_UNICODETEXT: UINT = 13;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        // safe: by-value arguments; failure is FALSE / NULL.
+        pub safe fn OpenClipboard(hWndNewOwner: HANDLE) -> BOOL;
+        pub safe fn GetClipboardData(uFormat: UINT) -> HANDLE;
+        pub safe fn IsClipboardFormatAvailable(uFormat: UINT) -> BOOL;
+        pub safe fn GetClipboardSequenceNumber() -> DWORD;
+        // Each of these can free memory that `GetClipboardData` handles point to.
+        pub fn CloseClipboard() -> BOOL;
+        pub fn EmptyClipboard() -> BOOL;
+        /// On success the system owns `hMem`.
+        pub fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
+        pub fn RegisterClipboardFormatA(lpszFormat: *const c_char) -> UINT;
     }
 }
 
@@ -163,7 +200,6 @@ pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
 pub use bun_windows_sys::advapi32;
 pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
-pub use bun_windows_sys::user32;
 pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
 pub use bun_windows_sys::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};

@@ -1109,6 +1109,11 @@ impl BunTest {
         let this: *mut BunTest = this_strong.as_ptr();
         let vm = global_this.bun_vm();
 
+        if global_this.has_exception() {
+            // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
+            unsafe { (*this).take_exception_left_pending(global_this) };
+        }
+
         // Don't use Option<JSValue> to make it harder for the conservative stack
         // scanner to miss it.
         let mut done_arg: JSValue = JSValue::ZERO;
@@ -1130,12 +1135,15 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
+        // Called directly, with no `run_callback*` gate in between: a gate that declines to call
+        // has no answer the runner could tell from the callback's own return.
+        let result: JSValue = match cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice).and_then(|result| {
+            result.ensure_still_alive();
+            vm.event_loop_mut()
+                .drain_microtasks_with_global(global_this, vm.jsc_vm())
+                .map_err(|stopped| stopped.throw(global_this))?;
+            Ok(result)
+        }) {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();
@@ -1287,6 +1295,33 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        self.print_uncaught_exception(global_this, exception, handle_status);
+    }
+
+    /// An exception already pending when the runner is about to call a callback was left by
+    /// native code that ran since the last one (a server's response path, say). It is no
+    /// test's: reported between tests, it is not charged to the entry that is about to run,
+    /// and that entry's callback is still called.
+    #[cold]
+    #[inline(never)]
+    fn take_exception_left_pending(&mut self, global_this: &JSGlobalObject) {
+        global_this.clear_termination_exception();
+        if let Some(exception) = global_this.try_take_exception() {
+            self.print_uncaught_exception(
+                global_this,
+                exception,
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests,
+            );
+        }
+    }
+
+    /// The print half of a report: `handle_status` is the heading `exception` goes under.
+    fn print_uncaught_exception(
+        &mut self,
+        global_this: &JSGlobalObject,
+        exception: JSValue,
+        handle_status: HandleUncaughtExceptionResult,
+    ) {
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
                 break 'ctx core::ptr::null_mut();
@@ -1328,7 +1363,7 @@ impl BunTest {
                 Some(crate::cli::test_command::TestFailure::record_cb);
             vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
-        vm.run_error_handler(exception, None);
+        print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
@@ -1342,6 +1377,40 @@ impl BunTest {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
+        Output::flush();
+    }
+}
+
+/// The runner's print of an error. The printer runs the error's own code (accessors, inspect
+/// hooks) and returns nothing, so what that code throws is still pending when it returns. That
+/// exception belongs to this report: it is taken and printed here, and never meets the next
+/// callback the runner calls.
+pub(crate) fn print_error(
+    vm: &mut VirtualMachine,
+    global_this: &JSGlobalObject,
+    error: JSValue,
+    exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
+) {
+    vm.run_error_handler(error, exception_list);
+    if global_this.has_exception() {
+        print_exception_left_by_print(vm, global_this);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn print_exception_left_by_print(vm: &mut VirtualMachine, global_this: &JSGlobalObject) {
+    // A termination is `BunTest::run`'s and `run_test_callback`'s to clear.
+    if global_this.has_pending_termination_exception() {
+        return;
+    }
+    let Some(left) = global_this.try_take_exception() else {
+        return;
+    };
+    vm.run_error_handler(left, None);
+    if global_this.has_exception() && !global_this.has_pending_termination_exception() {
+        let _ = global_this.try_take_exception();
+        bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
     }
 }

@@ -224,6 +224,11 @@ export function pgBindComplete(): Buffer {
   return pgRaw("2", Buffer.alloc(0));
 }
 
+// PostgreSQL FE/BE protocol §55.7 NoData: Byte1('n') Int32(4)
+export function pgNoData(): Buffer {
+  return pgRaw("n", Buffer.alloc(0));
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
 export function pgParameterDescription(typeOids: number[]): Buffer {
   const body = Buffer.alloc(2 + 4 * typeOids.length);

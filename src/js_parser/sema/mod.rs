@@ -629,10 +629,18 @@ impl<'a> TypeSyntax<'a> {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    crate::P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     #[inline(always)]
     pub(crate) fn preserves_type_syntax(&self) -> bool {
-        TYPESCRIPT && self.type_syntax.is_some()
+        SEMA && self.type_syntax.is_some()
+    }
+
+    /// Whether syntax errors are recovered from as TypeScript's parser does. Always false in an ordinary build, at compile time.
+    #[inline(always)]
+    pub(crate) fn is_tolerant(&self) -> bool {
+        SEMA && self.lexer.tolerant
     }
 
     /// `E::JSXElement::syntax`
@@ -646,7 +654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         type_arguments: ts::Types,
     ) -> bun_ast::ts_syntax::JsxId {
         match &mut self.type_syntax {
-            Some(syntax) if TYPESCRIPT => {
+            Some(syntax) if SEMA => {
                 let kept = syntax.b.ts.add_jsx(ts::Jsx {
                     closing_tag,
                     opening_end,
@@ -664,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     #[cold]
     #[inline(never)]
     pub(crate) fn ts_checker_error(&mut self, r: bun_ast::Range, code: u32) {
-        if self.lexer.tolerant && !self.lexer.is_log_disabled {
+        if self.is_tolerant() && !self.lexer.is_log_disabled {
             self.log()
                 .add_range_error_fmt(Some(self.source), r, format_args!("TC{code}"));
         }
@@ -675,7 +683,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     #[inline]
     pub(crate) fn pos_for_jsdoc(&self) -> bun_ast::Loc {
         match &self.type_syntax {
-            Some(syntax) if TYPESCRIPT && syntax.has_jsdoc => self.lexer.full_start(),
+            Some(syntax) if SEMA && syntax.has_jsdoc => self.lexer.full_start(),
             _ => bun_ast::Loc::EMPTY,
         }
     }

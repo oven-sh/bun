@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 
 pub(crate) struct Lower<'p, 'a> {
     pub(super) b: Builder<'a>,
-    pub(super) p: &'p P<'a, true, false>,
+    pub(super) p: &'p P<'a, true, false, true>,
     /// The parser's side notes about AST nodes.
     noted: Notes,
     /// `TypeSyntax::class_index_signatures`
@@ -61,7 +61,7 @@ pub(crate) struct Lower<'p, 'a> {
 
 impl<'p, 'a> Lower<'p, 'a> {
     pub(crate) fn run(
-        p: &'p mut P<'a, true, false>,
+        p: &'p mut P<'a, true, false, true>,
         syntax: TypeSyntax<'a>,
         stmts: &[Stmt],
         is_declaration_file: bool,
@@ -73,7 +73,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         } else {
             (syntax, Comments::default())
         };
-        let p: &'p P<'a, true, false> = p;
+        let p: &'p P<'a, true, false, true> = p;
         let source_len = p.source.contents().len();
         syntax.b.classes_around = 0;
         let mut this = Lower {

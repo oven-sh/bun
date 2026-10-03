@@ -17,7 +17,9 @@ use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// This assumes the "function" token has already been parsed
     pub(crate) fn parse_fn_stmt(
         &mut self,
@@ -57,15 +59,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !opts.is_name_optional || p.lexer.token == T::TIdentifier {
             let mut name_loc = p.lexer.loc();
             name_text = p.lexer.identifier;
-            if p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant {
+            if p.lexer.token == T::TPrivateIdentifier && p.is_tolerant() {
                 // `createIdentifierWithDiagnostic`: a private name is reported as an error and
                 // still used as the name.
                 let range = p.lexer.range();
                 p.lexer.ts_error(range, 18016);
                 p.lexer.next()?;
-            } else if p.lexer.token != T::TIdentifier
-                && p.lexer.tolerant
-                && !p.lexer.is_log_disabled
+            } else if p.lexer.token != T::TIdentifier && p.is_tolerant() && !p.lexer.is_log_disabled
             {
                 name_loc = p.report_missing_fn_name()?;
                 name_text = b"";
@@ -240,7 +240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
         // `parseParameters`: without the "(" there are no parameters, and no ")" is expected.
-        let has_parens = p.lexer.token == T::TOpenParen || !p.lexer.tolerant;
+        let has_parens = p.lexer.token == T::TOpenParen || !p.is_tolerant();
         if !has_parens {
             p.note_token_full_start(&mut func.open_parens_loc, Mark::MissingParameters);
         }
@@ -279,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut arg_has_decorators: bool = false;
         // `parseParameterEx` accepts decorators and modifiers before any parameter of any function.
         // The checker reports them.
-        let takes_any_modifiers = Self::IS_TYPESCRIPT_ENABLED && p.lexer.tolerant;
+        let takes_any_modifiers = Self::IS_TYPESCRIPT_ENABLED && p.is_tolerant();
         let mut has_this_parameter = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         let saved_contexts = p.enter_list(ListKind::Parameters);
@@ -348,7 +348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `checkGrammarParameterList` reports them.
             let mut dots = bun_ast::Loc::EMPTY;
             if p.lexer.token == T::TDotDotDot
-                && (!func.flags.contains(Flags::Function::HasRestArg) || p.lexer.tolerant)
+                && (!func.flags.contains(Flags::Function::HasRestArg) || p.is_tolerant())
             {
                 // p.markSyntaxFeature
                 dots = p.lexer.loc();
@@ -377,7 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // `parseNameOfParameter`: a modifier keyword that is neither a modifier nor a name is skipped.
             if matches!(p.lexer.token, T::TConst | T::TDefault | T::TExport | T::TIn)
-                && p.lexer.tolerant
+                && p.is_tolerant()
                 && modifiers.is_none()
                 && p.lexer.loc() == name_start
             {
@@ -448,7 +448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut default_value: Option<Expr> = None;
             if p.lexer.token == T::TEquals
-                && (!func.flags.contains(Flags::Function::HasRestArg) || p.lexer.tolerant)
+                && (!func.flags.contains(Flags::Function::HasRestArg) || p.is_tolerant())
             {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
@@ -474,7 +474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
-            if func.flags.contains(Flags::Function::HasRestArg) && !p.lexer.tolerant {
+            if func.flags.contains(Flags::Function::HasRestArg) && !p.is_tolerant() {
                 // JavaScript does not allow a comma after a rest argument
                 if opts.is_typescript_declare {
                     // TypeScript does allow a comma after a rest argument in a "declare" context
@@ -542,7 +542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if p.lexer.token != T::TOpenBrace && p.lexer.tolerant && !p.lexer.is_log_disabled {
+        if p.lexer.token != T::TOpenBrace && p.is_tolerant() && !p.lexer.is_log_disabled {
             p.recover_missing_fn_body(&mut func, &opts)?;
             return Ok(func);
         }
@@ -883,7 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TOpenBrace)?;
         // `parseBlock`: without the "{" the block has no statements, and nothing more is consumed.
-        if !pushed_scope_for_function_body && p.lexer.tolerant {
+        if !pushed_scope_for_function_body && p.is_tolerant() {
             p.allow_in = old_allow_in;
             p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
             return Ok(G::FnBody {
@@ -930,7 +930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Newlines are not allowed before "=>". TypeScript's parser accepts the arrow anywhere:
         // `checkGrammarArrowFunction` reports the line break.
-        if p.lexer.has_newline_before && !p.lexer.tolerant {
+        if p.lexer.has_newline_before && !p.is_tolerant() {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
@@ -941,7 +941,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let has_arrow = p.lexer.token == T::TEqualsGreaterThan;
         // `parseExpectedToken`: a missing token is at the end of the previous token.
-        let arrow_token = if has_arrow || !p.lexer.tolerant {
+        let arrow_token = if has_arrow || !p.is_tolerant() {
             arrow_loc
         } else {
             p.lexer.full_start()
@@ -961,7 +961,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let args_slice = bun_ast::StoreSlice::<G::Arg>::new_mut(args);
 
         let is_missing_open_brace = p.lexer.token != T::TOpenBrace
-            && p.lexer.tolerant
+            && p.is_tolerant()
             && !p.lexer.is_log_disabled
             && has_arrow
             && p.is_arrow_body_missing_open_brace();
@@ -1001,14 +1001,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let parsed =
-            if flags == EFlags::AfterQuestionAndBeforeColon && has_arrow && p.lexer.tolerant {
-                p.parse_arrow_body_before_colon()
-            } else if has_arrow || !p.lexer.tolerant {
-                p.parse_expr(Level::Comma)
-            } else {
-                p.parse_arrow_body_without_arrow()
-            };
+        let parsed = if flags == EFlags::AfterQuestionAndBeforeColon && has_arrow && p.is_tolerant()
+        {
+            p.parse_arrow_body_before_colon()
+        } else if has_arrow || !p.is_tolerant() {
+            p.parse_expr(Level::Comma)
+        } else {
+            p.parse_arrow_body_without_arrow()
+        };
         let expr = match parsed {
             Ok(e) => e,
             Err(err) => {

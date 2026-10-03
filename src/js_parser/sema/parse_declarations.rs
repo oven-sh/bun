@@ -20,7 +20,9 @@ use crate::sema::ts_syntax as ts;
 use bun_ast::{E, G, Loc, LocRef, Ref, S, Stmt};
 use bun_sema::hir::TypeNodeKind;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// The name of a declaration that declares no symbol, because an ordinary build drops it.
     #[cold]
     #[inline(never)]
@@ -119,7 +121,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         implemented: ts::TypeId,
         start: Loc,
     ) {
-        if let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let implemented = if implemented.is_some() {
                 implemented
             } else {
@@ -142,7 +144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         has_type: bool,
     ) {
         parameter.end = self.lexer.full_start();
-        if let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let this = bun_sema::hir::PatKind::Ident(bun_sema::atom::known::this);
             let name_end = Loc {
                 start: name.start + b"this".len() as i32,
@@ -398,7 +400,9 @@ pub(crate) struct ModuleSyntax {
     module: Option<ts::ModuleSpecifier>,
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Called before a statement that starts with `import` or `export` is parsed.
     /// `end_module_syntax` follows, whatever the outcome.
     #[inline]
@@ -440,7 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseIdentifier`, before the token is consumed. A missing name is empty and is positioned
     /// at the end of the previous token.
     pub(crate) fn identifier_syntax(&self) -> ts::Name {
-        if self.lexer.token == T::TIdentifier || !self.lexer.tolerant {
+        if self.lexer.token == T::TIdentifier || !self.is_tolerant() {
             ts::Name {
                 text: bun_ast::StoreStr::new(self.lexer.identifier),
                 loc: self.lexer.loc(),
@@ -701,7 +705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn begin_entity_name(&self) -> usize {
         match &self.type_syntax {
-            Some(syntax) if TYPESCRIPT => syntax.name_stack.len(),
+            Some(syntax) if SEMA => syntax.name_stack.len(),
             _ => 0,
         }
     }

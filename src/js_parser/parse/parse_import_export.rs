@@ -9,7 +9,9 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef, Ref};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Note: The caller has already parsed the "import" keyword
     pub(crate) fn parse_import_expr(
         &mut self,
@@ -27,7 +29,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
-            } else if p.lexer.tolerant {
+            } else if p.is_tolerant() {
                 if let Some(expr) = p.parse_other_import_meta_property(loc)? {
                     return Ok(expr);
                 }
@@ -36,7 +38,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.lexer.expected_string(b"\"meta\"")?;
             }
-        } else if TYPESCRIPT && p.lexer.token == T::TLessThan && p.lexer.tolerant {
+        } else if TYPESCRIPT && p.lexer.token == T::TLessThan && p.is_tolerant() {
             // `parseLeftHandSideExpressionOrHigher`: `import` before `<` is the keyword by itself,
             // an expression of the error type. Type arguments are tried after it as after any
             // expression (`tryParseTypeArgumentsInExpression`). None of this is a syntax error, so
@@ -79,7 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        if p.lexer.tolerant {
+        if p.is_tolerant() {
             return p.parse_import_call_tolerant(loc, is_deferred, type_arguments);
         }
 
@@ -262,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
-        if p.lexer.tolerant {
+        if p.is_tolerant() {
             let (items, had_type_only_imports) = p.parse_specifiers_tolerant(true)?;
             return Ok(ImportClause {
                 items,
@@ -620,7 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
-        if p.lexer.tolerant {
+        if p.is_tolerant() {
             let (clauses, had_type_only_exports) = p.parse_specifiers_tolerant(false)?;
             return Ok(ExportClauseResult {
                 clauses,

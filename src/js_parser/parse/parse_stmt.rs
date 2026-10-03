@@ -25,7 +25,9 @@ type Result<T> = crate::CrateResult<T>;
 
 // The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
@@ -48,7 +50,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        if p.lexer.tolerant {
+        if p.is_tolerant() {
             // 1313 is reported at the `;`.
             return Ok(Stmt {
                 loc,
@@ -135,7 +137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
                 && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"declare"))
             {
-                if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                if p.is_tolerant() && !p.lexer.is_log_disabled {
                     return Self::declaration_after_decorators(p, opts);
                 }
                 p.lexer.expected(T::TClass)?;
@@ -229,7 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn decorators_without_class(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
-        if !p.lexer.tolerant || p.lexer.is_log_disabled {
+        if !p.is_tolerant() || p.lexer.is_log_disabled {
             p.lexer.expected(T::TClass)?;
             return Ok(());
         }
@@ -591,7 +593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.mark_comments_before(&mut clause_loc, clause_start, p.pos_for_jsdoc());
                 if p.lexer.token == T::TDefault {
                     if found_default {
-                        if !p.lexer.tolerant {
+                        if !p.is_tolerant() {
                             p.log().add_range_error(
                                 Some(p.source),
                                 p.lexer.range(),
@@ -612,7 +614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     found_default = true;
                 } else {
                     // `parseCaseBlock`
-                    if p.lexer.token != T::TCase && p.lexer.tolerant && !p.lexer.is_log_disabled {
+                    if p.lexer.token != T::TCase && p.is_tolerant() && !p.lexer.is_log_disabled {
                         if Self::stray_in_switch(p, 1130)? {
                             break;
                         }
@@ -630,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         // They terminate the statement list of a clause, escaped or not.
                         T::TEscapedKeyword
-                            if p.lexer.tolerant
+                            if p.is_tolerant()
                                 && !p.lexer.is_log_disabled
                                 && matches!(p.lexer.identifier, b"case" | b"default") =>
                         {
@@ -648,7 +650,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | T::TQuestion
                         | T::TQuestionDot
                         | T::TDotDotDot
-                            if p.lexer.tolerant && !p.lexer.is_log_disabled =>
+                            if p.is_tolerant() && !p.lexer.is_log_disabled =>
                         {
                             if Self::stray_in_switch(p, 1129)? {
                                 break 'case_body;
@@ -688,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// reported, the token is not consumed, the block is empty and no `}` is expected.
     #[inline]
     fn open_block(p: &mut Self) -> Result<bool> {
-        let exists = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
+        let exists = p.lexer.token == T::TOpenBrace || !p.is_tolerant();
         p.lexer.expect(T::TOpenBrace)?;
         Ok(exists)
     }
@@ -727,7 +729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // The catch binding is optional, and can be omitted. `parseCatchClause`: there is one only if there is a `(`.
             if p.lexer.token != T::TOpenBrace
-                && (p.lexer.token == T::TOpenParen || !p.lexer.tolerant)
+                && (p.lexer.token == T::TOpenParen || !p.is_tolerant())
             {
                 p.lexer.expect(T::TOpenParen)?;
                 // `parseVariableDeclaration`: the catch variable is parsed like any other variable.
@@ -747,7 +749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // So it may have an initializer. `checkCatchClause` reports it, unless there is a
                 // type annotation to check.
-                if p.lexer.token == T::TEquals && p.lexer.tolerant {
+                if p.lexer.token == T::TEquals && p.is_tolerant() {
                     p.lexer.next()?;
                     let at = p.lexer.range();
                     let initializer = p.parse_expr(Level::Comma)?;
@@ -798,7 +800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TFinally || catch.is_none() {
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
-            if p.lexer.token != T::TFinally && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            if p.lexer.token != T::TFinally && p.is_tolerant() && !p.lexer.is_log_disabled {
                 // `parseTryStatement`: 'catch' or 'finally' expected, and no token is consumed for
                 // it.
                 let (before, range) = (p.lexer.prev_error_loc, p.lexer.range());
@@ -957,7 +959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseForOrForInOrForOfStatement`: `let` here always starts a declaration list,
             // possibly an empty one.
             let is_empty_let_list = bad_let_range.is_some()
-                && p.lexer.tolerant
+                && p.is_tolerant()
                 && Self::no_declaration_follows_keyword(p);
             match p.lexer.token {
                 // for (var )
@@ -966,7 +968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let keyword = p.lexer.range();
                     p.lexer.next()?;
                     let mut stmt_opts = ParseStatementOptions::default();
-                    let decls = if p.lexer.tolerant && Self::no_declaration_follows(p) {
+                    let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
                         Self::no_declarations(p, keyword)
                     } else {
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?
@@ -986,7 +988,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let keyword = p.lexer.range();
                     p.lexer.next()?;
                     let mut stmt_opts = ParseStatementOptions::default();
-                    let decls = if p.lexer.tolerant && Self::no_declaration_follows(p) {
+                    let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
                         Self::no_declarations(p, keyword)
                     } else {
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?
@@ -1062,7 +1064,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // kind of the loop is determined as without `await`.
             if wrote_await
                 && !p.lexer.is_contextual_keyword(b"of")
-                && p.lexer.tolerant
+                && p.is_tolerant()
                 && !p.lexer.is_log_disabled
             {
                 p.lexer.expected_string(b"\"of\"")?;
@@ -1082,7 +1084,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // TypeScript's parser accepts it, and `checkGrammarForInOrForOfStatement` reports it (1106).
                 if let Some(r) = bad_async_range
-                    && !p.lexer.tolerant
+                    && !p.is_tolerant()
                 {
                     let full = bun_ast::Range {
                         loc: r.loc,
@@ -1115,7 +1117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     S::ForOf {
                         // `parseForOrForInOrForOfStatement`: `await` after `for` sets it regardless
                         // of the enclosing context.
-                        is_await: is_for_await || wrote_await && p.lexer.tolerant,
+                        is_await: is_for_await || wrote_await && p.is_tolerant(),
                         init: init_.unwrap(),
                         value,
                         body,
@@ -1157,7 +1159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TSemicolon)?;
             // `parseForOrForInOrForOfStatement`: no condition is parsed before a `)` either.
             if p.lexer.token != T::TSemicolon
-                && !(p.lexer.token == T::TCloseParen && p.lexer.tolerant)
+                && !(p.lexer.token == T::TCloseParen && p.is_tolerant())
             {
                 test = Some(p.parse_expr(Level::Lowest)?);
             }
@@ -1232,7 +1234,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Self::t_throw_before_newline(p, loc);
         }
         let expr = p.parse_expr(Level::Lowest)?;
-        if !p.can_parse_semicolon() && p.lexer.tolerant {
+        if !p.can_parse_semicolon() && p.is_tolerant() {
             Self::missing_semicolon_after_expr(p, &expr)?;
         } else {
             p.lexer.expect_or_insert_semicolon()?;
@@ -1246,7 +1248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let after = bun_ast::Loc {
             start: loc.start + 5,
         };
-        if p.lexer.tolerant {
+        if p.is_tolerant() {
             // `parseThrowStatement`: nothing on the next line is consumed, and the thrown
             // expression is missing. `checkThrowStatement` reports it right after the keyword.
             Self::grammar_error(p, bun_ast::Range { loc: after, len: 0 }, 1142);
@@ -1320,7 +1322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StatementScope::Nested => {
                 // `parseStatement` accepts `export` anywhere. The checker reports 1184, 1231, 1233
                 // or 1258.
-                if !p.lexer.tolerant {
+                if !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -1329,7 +1331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_statement_modifier(crate::sema::ts_syntax::Flags::EXPORT, loc);
         p.lexer.next()?;
 
-        if p.lexer.token == T::TAt && p.lexer.tolerant {
+        if p.lexer.token == T::TAt && p.is_tolerant() {
             Self::more_decorators(p, opts)?;
         }
 
@@ -1346,7 +1348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !p.lexer.is_contextual_keyword(b"abstract")
             && !p.lexer.is_contextual_keyword(b"declare")
             // Another modifier, which is reported as such.
-            && !(p.lexer.token == T::TExport && p.lexer.tolerant)
+            && !(p.lexer.token == T::TExport && p.is_tolerant())
         {
             Self::decorators_without_class(p, opts)?;
         }
@@ -1360,7 +1362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TImport => {
                 // "export import foo = bar"
                 if Self::IS_TYPESCRIPT_ENABLED
-                    && (opts.scope != StatementScope::Nested || p.lexer.tolerant)
+                    && (opts.scope != StatementScope::Nested || p.is_tolerant())
                 {
                     // `parseDeclarationWorker`: any import may follow `export`, which `checkImportDeclaration` reports (1191).
                     opts.is_export = true;
@@ -1388,7 +1390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "export using x", "export await using x": `checkGrammarModifiers` reports the modifier (1491, 1495).
-                if p.lexer.tolerant
+                if p.is_tolerant()
                     && (p.lexer.is_contextual_keyword(b"using")
                         || p.lexer.is_contextual_keyword(b"await"))
                     && p.is_start_of_declaration()
@@ -1481,7 +1483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export public class Foo {}", "export global {}": `parseModifiersEx` accepts
                     // any modifiers.
                     // `parse_declaration_after_modifiers` reports the misplaced ones.
-                    if p.lexer.tolerant
+                    if p.is_tolerant()
                         && !p.lexer.is_contextual_keyword(b"defer")
                         && p.is_start_of_declaration()
                     {
@@ -1494,7 +1496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             T::TDefault => {
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -1503,7 +1505,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.push_statement_modifier(crate::sema::ts_syntax::Flags::DEFAULT, default_loc);
                 p.lexer.next()?;
 
-                if p.lexer.token == T::TAt && p.lexer.tolerant {
+                if p.lexer.token == T::TAt && p.is_tolerant() {
                     Self::more_decorators(p, opts)?;
                 }
 
@@ -1675,7 +1677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     // Scopes are pushed in order of their positions, and decorators after `default`
                     // may have pushed some.
-                    let class_loc = if p.lexer.tolerant { abstract_loc } else { loc };
+                    let class_loc = if p.is_tolerant() { abstract_loc } else { loc };
                     let stmt: Stmt = p.parse_class_stmt(class_loc, &mut stmt_opts)?;
 
                     // Use the statement name if present, since it's a better name
@@ -1723,7 +1725,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && name == b"abstract"
                         && p.lexer.has_newline_before
                         && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
-                        && !p.lexer.tolerant
+                        && !p.is_tolerant()
                     {
                         let r = js_lexer::range_of_identifier(p.source, p.real_loc(expr.loc));
                         p.log()
@@ -1746,7 +1748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ))
             }
             T::TAsterisk => {
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -1829,7 +1831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ))
             }
             T::TOpenBrace => {
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -1839,7 +1841,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `parseExportDeclaration`: a string on the same line is the specifier after a
                     // missing "from" (1005).
                     || (p.lexer.token == T::TStringLiteral
-                        && p.lexer.tolerant
+                        && p.is_tolerant()
                         && !p.lexer.has_newline_before)
                 {
                     p.lexer.expect_contextual_keyword(b"from")?;
@@ -1935,7 +1937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.next()?;
                     // `parseExportAssignment`: an assignment expression, which ends at a comma.
-                    let value = p.parse_expr(if p.lexer.tolerant {
+                    let value = p.parse_expr(if p.is_tolerant() {
                         Level::Comma
                     } else {
                         Level::Lowest
@@ -1947,7 +1949,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Err(crate::Error::SyntaxError)
             }
             // `parseModifiersEx`: `export` is a modifier each time it occurs.
-            T::TExport if p.lexer.tolerant && !p.lexer.is_log_disabled => {
+            T::TExport if p.is_tolerant() && !p.lexer.is_log_disabled => {
                 if Self::export_is_modifier(p) {
                     opts.is_export = true;
                 }
@@ -1967,7 +1969,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         previous_export_keyword: bun_ast::Range,
     ) -> Result<Stmt> {
-        if !p.lexer.tolerant || p.lexer.is_log_disabled {
+        if !p.is_tolerant() || p.lexer.is_log_disabled {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -2069,7 +2071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.lexer.token != T::TIdentifier
             // `parseImportDeclarationOrImportEqualsDeclaration` accepts every form of import after
             // `export` and in a namespace.
-            && !p.lexer.tolerant
+            && !p.is_tolerant()
         {
             p.lexer.expected(T::TIdentifier)?;
         }
@@ -2095,7 +2097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
                 // "import 'path'"
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -2103,7 +2105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TAsterisk => {
                 // "import * as ns from 'path'"
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -2123,7 +2125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TOpenBrace => {
                 // "import {item1, item2} from 'path'"
-                if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                if !opts.allows_esm_import_export() && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -2131,7 +2133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
-                        if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+                        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
                             return Self::import_with_expression_specifier(p, loc);
                         }
                         let _ = p.parse_path()?;
@@ -2154,7 +2156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TIdentifier => {
                 // "import defaultItem from 'path'"
                 // "import foo = bar"
-                if opts.scope == StatementScope::Nested && !p.lexer.tolerant {
+                if opts.scope == StatementScope::Nested && !p.is_tolerant() {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -2189,13 +2191,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // and errors there.
                 if default_name_raw == b"defer"
                     && p.lexer.token == T::TAsterisk
-                    && (!opts.is_export || p.lexer.tolerant)
+                    && (!opts.is_export || p.is_tolerant())
                 {
                     p.note_deferred_import();
                     // Same scope restriction as `import * as ns from 'path'`:
                     // ESM import declarations are only valid at module scope
                     // (or inside a TypeScript `declare namespace`).
-                    if !opts.allows_esm_import_export() && !p.lexer.tolerant {
+                    if !opts.allows_esm_import_export() && !p.is_tolerant() {
                         p.lexer.unexpected()?;
                         return Err(crate::Error::SyntaxError);
                     }
@@ -2213,7 +2215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
-                    if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+                    if p.is_tolerant() && !Self::is_at_string_specifier(p) {
                         return Self::import_with_expression_specifier(p, loc);
                     }
                     let path = p.parse_path()?;
@@ -2221,7 +2223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return p.process_import_statement(stmt, path, loc, false);
                 }
 
-                if p.lexer.tolerant && default_name_raw == b"defer" && Self::defer_is_modifier(p) {
+                if p.is_tolerant() && default_name_raw == b"defer" && Self::defer_is_modifier(p) {
                     return Self::import_after_defer(p, loc);
                 }
 
@@ -2236,7 +2238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // below has to reject everything but "import type from = bar".
                                 let import_equals_only = (opts.is_export
                                     || (opts.scope.is_namespace() && !opts.is_typescript_declare))
-                                    && !p.lexer.tolerant;
+                                    && !p.is_tolerant();
                                 let leave_from = p.lexer.identifier == b"from"
                                     && p.next_token_matches(|p| {
                                         if import_equals_only {
@@ -2258,7 +2260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                                     if p.lexer.token == T::TEquals
                                         // `tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration`
-                                        || (p.lexer.tolerant
+                                        || (p.is_tolerant()
                                             && p.lexer.token != T::TComma
                                             && !p.lexer.is_contextual_keyword(b"from"))
                                     {
@@ -2270,13 +2272,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     } else {
                                         // "import type foo from 'bar';" (foo may be "from")
                                         let has_bindings =
-                                            p.lexer.token == T::TComma && p.lexer.tolerant;
+                                            p.lexer.token == T::TComma && p.is_tolerant();
                                         if has_bindings {
                                             Self::bindings_after_type_only_name(p)?;
                                         }
                                         let clause_end = p.lexer.full_start();
                                         p.lexer.expect_contextual_keyword(b"from")?;
-                                        if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+                                        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
                                             return Self::import_with_expression_specifier(p, loc);
                                         }
                                         if has_bindings && opts.scope.is_module() {
@@ -2308,7 +2310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.note_namespace_import_name();
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+                                if p.is_tolerant() && !Self::is_at_string_specifier(p) {
                                     return Self::import_with_expression_specifier(p, loc);
                                 }
                                 let _ = p.parse_path()?;
@@ -2321,7 +2323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.note_type_only_import();
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+                                if p.is_tolerant() && !Self::is_at_string_specifier(p) {
                                     return Self::import_with_expression_specifier(p, loc);
                                 }
                                 let _ = p.parse_path()?;
@@ -2333,7 +2335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // Parse TypeScript import assignment statements
-                    let is_import_equals = if p.lexer.tolerant {
+                    let is_import_equals = if p.is_tolerant() {
                         // `tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration`
                         p.lexer.token != T::TComma && !p.lexer.is_contextual_keyword(b"from")
                     } else {
@@ -2395,7 +2397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
+        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
             return Self::import_with_expression_specifier(p, loc);
         }
         let path = p.parse_path()?;
@@ -2576,7 +2578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
         let name = p.lexer.identifier;
-        if p.lexer.tolerant && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
+        if p.is_tolerant() && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
             if let Some(stmt) = Self::parse_declaration_after_modifiers(p, opts)? {
                 return Ok(stmt);
             }
@@ -2629,7 +2631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(stmt) =
                             Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
                         {
-                            if p.lexer.tolerant {
+                            if p.is_tolerant() {
                                 let end = p.noted_end(expr.loc);
                                 Self::ts_keyword_was_taken(p, loc, end, name, ts_stmt);
                             }
@@ -2640,7 +2642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
-        if !p.can_parse_semicolon() && p.lexer.tolerant {
+        if !p.can_parse_semicolon() && p.is_tolerant() {
             Self::missing_semicolon_after_expr(p, &expr)?;
         } else {
             p.lexer.expect_or_insert_semicolon()?;
@@ -2821,7 +2823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
-        if p.lexer.tolerant && !p.lexer.is_log_disabled {
+        if p.is_tolerant() && !p.lexer.is_log_disabled {
             match js_lexer::keyword(p.lexer.identifier) {
                 // Another error is reported at these before they are consumed: a missing `try` or a
                 // missing expression.
@@ -2867,11 +2869,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "declare module 'fs';"
                 // `parseDeclarationWorker` has no regard for where the statement stands: `checkModuleDeclaration` does.
                 if !p.lexer.has_newline_before
-                    && (opts.scope != StatementScope::Nested || p.lexer.tolerant)
+                    && (opts.scope != StatementScope::Nested || p.is_tolerant())
                     && (p.lexer.token == T::TIdentifier
                         // `nextTokenIsIdentifierOrStringLiteralOnSameLine`. `checkModuleDeclaration` reports the missing `declare` (1035).
                         || (p.lexer.token == T::TStringLiteral
-                            && (opts.is_typescript_declare || p.lexer.tolerant)))
+                            && (opts.is_typescript_declare || p.is_tolerant())))
                 {
                     let is_module = ts_stmt == js_lexer::TypescriptStmtKeyword::TsStmtModule;
                     return Ok(Some(
@@ -2886,7 +2888,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before || opts.is_name_optional {
                     // `scanStartOfDeclaration`: `interface` is a name unless a name follows it on the same line.
                     // After `export default` it is always the keyword (`nextTokenCanFollowDefaultKeyword`).
-                    if p.lexer.tolerant && !opts.is_name_optional && !p.is_identifier_in_context() {
+                    if p.is_tolerant() && !opts.is_name_optional && !p.is_identifier_in_context() {
                         return Ok(None);
                     }
                     let mut stmt_opts = ParseStatementOptions {
@@ -2923,19 +2925,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
                 // "declare module 'fs' { global { namespace NodeJS {} } }"
                 // `scanStartOfDeclaration`: for TypeScript's parser it is a declaration anywhere, with or without `declare`.
-                if (opts.scope.is_namespace() && opts.is_typescript_declare || p.lexer.tolerant)
+                if (opts.scope.is_namespace() && opts.is_typescript_declare || p.is_tolerant())
                     && p.lexer.token == T::TOpenBrace
                 {
                     p.lexer.next()?;
                     let scope_index = p.scopes_in_order.len();
                     let mut body_opts = *opts;
-                    if p.lexer.tolerant {
+                    if p.is_tolerant() {
                         body_opts.is_typescript_declare = true;
                         body_opts.scope = StatementScope::Namespace;
                     }
                     let body = p.parse_stmts_up_to(T::TCloseBrace, &mut body_opts)?;
                     p.lexer.expect(T::TCloseBrace)?;
-                    if p.lexer.tolerant {
+                    if p.is_tolerant() {
                         // The statements inside are dropped.
                         p.discard_scopes_up_to(scope_index);
                     }
@@ -2946,7 +2948,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
                 // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
-                if p.lexer.tolerant && matches!(p.lexer.token, T::TIdentifier | T::TExport) {
+                if p.is_tolerant() && matches!(p.lexer.token, T::TIdentifier | T::TExport) {
                     p.lexer.expect_or_insert_semicolon()?;
                     return Ok(Some(p.keep_global(loc, loc, None, opts.is_export)));
                 }
@@ -2962,7 +2964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(None);
                 }
                 // `scanStartOfDeclaration`: `declare` is a name unless a declaration follows it. `declare type` always is one.
-                if p.lexer.tolerant
+                if p.is_tolerant()
                     && opts.ts_decorators.is_none()
                     && !p.lexer.is_contextual_keyword(b"type")
                     && !p.is_start_of_declaration()
@@ -2987,7 +2989,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
                     // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
-                    if p.lexer.token != T::TOpenBrace && p.lexer.tolerant {
+                    if p.lexer.token != T::TOpenBrace && p.is_tolerant() {
                         p.lexer.expect_or_insert_semicolon()?;
                         return Ok(Some(p.keep_global(
                             name_loc,
@@ -3017,7 +3019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // `scanStartOfDeclaration`: `declare type` is always a type alias.
                 // `parseTypeAliasDeclaration` reports a line break before the name.
-                if p.lexer.tolerant
+                if p.is_tolerant()
                     && !p.lexer.is_log_disabled
                     && p.lexer.is_contextual_keyword(b"type")
                 {
@@ -3054,7 +3056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ) {
                     // `parseDeclarationWorker`: imports and exports accept modifiers like any
                     // declaration. The checker reports them (1120, 1193, 1079).
-                    if p.lexer.tolerant
+                    if p.is_tolerant()
                         && matches!(
                             &stmt.data,
                             js_ast::StmtData::SExportEquals(_)
@@ -3069,7 +3071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     // An ambient namespace that `parse_type_script_namespace_stmt` kept because it
                     // contains real statements. It starts at `declare`.
-                    if p.lexer.tolerant && matches!(&stmt.data, js_ast::StmtData::SNamespace(_)) {
+                    if p.is_tolerant() && matches!(&stmt.data, js_ast::StmtData::SNamespace(_)) {
                         return Ok(Some(Stmt {
                             loc,
                             data: stmt.data,

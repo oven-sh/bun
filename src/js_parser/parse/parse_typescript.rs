@@ -33,7 +33,9 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
@@ -45,7 +47,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let at_sign = p.lexer.loc();
             p.lexer.next()?;
 
-            if p.lexer.tolerant {
+            if p.is_tolerant() {
                 let mut decorator = p.parse_decorator_expression_tolerant()?;
                 p.note_loc(&mut decorator.loc, crate::sema::Mark::AtSign, at_sign);
                 p.note_token_full_start(&mut decorator.loc, crate::sema::Mark::DecoratorEnd);
@@ -128,7 +130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn note_stray_decorators(&mut self, decorators: &[Expr], end: bun_ast::Loc) {
-        if !self.lexer.tolerant || self.lexer.is_log_disabled || !self.preserves_type_syntax() {
+        if !self.is_tolerant() || self.lexer.is_log_disabled || !self.preserves_type_syntax() {
             return;
         }
         for decorator in decorators {
@@ -287,12 +289,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut name_text = p.lexer.identifier;
         // `parseModuleDeclaration`: `parseAmbientExternalModuleDeclaration` only right after `module`.
         let name_is_string = p.lexer.token == T::TStringLiteral
-            && (is_module_keyword && !is_nested || !p.lexer.tolerant);
+            && (is_module_keyword && !is_nested || !p.is_tolerant());
         let mut string_name: &'a [u8] = b"";
         let mut has_body = true;
-        if p.lexer.token == T::TIdentifier
-            || !p.lexer.tolerant
-            || p.lexer.is_identifier_or_keyword()
+        if p.lexer.token == T::TIdentifier || !p.is_tolerant() || p.lexer.is_identifier_or_keyword()
         {
             p.lexer.next()?;
         } else {
@@ -369,7 +369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if p.lexer.token != T::TOpenBrace
             // `parseAmbientExternalModuleDeclaration`: in TypeScript only a module named by a
             // string may omit its body.
-            && (if p.lexer.tolerant {
+            && (if p.is_tolerant() {
                 name_is_string
             } else {
                 opts.is_typescript_declare
@@ -379,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect_or_insert_semicolon()?;
         } else {
             // `parseModuleBlock`: without a "{" there are no statements and no "}" is expected.
-            let has_body = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
+            let has_body = p.lexer.token == T::TOpenBrace || !p.is_tolerant();
             p.lexer.expect(T::TOpenBrace)?;
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
@@ -631,7 +631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let kind = js_ast::LocalKind::KConst;
         // `parseEntityName`: any token but a name is not consumed, and the name is missing.
-        let name: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.lexer.tolerant {
+        let name: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.is_tolerant() {
             p.lexer.identifier
         } else {
             b""
@@ -652,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
             p.lexer.next()?;
-            let path = if p.lexer.token != T::TStringLiteral && p.lexer.tolerant {
+            let path = if p.lexer.token != T::TStringLiteral && p.is_tolerant() {
                 // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
                 // missing. `checkGrammarModuleElementContext` returns first in a block or a function.
                 let at = p.lexer.loc();
@@ -798,13 +798,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         p.lexer.expect(T::TEnum)?;
         // `createMissingIdentifier`: a missing name is at the end of the previous token.
-        let name_loc = if p.lexer.tolerant && p.lexer.token != T::TIdentifier {
+        let name_loc = if p.is_tolerant() && p.lexer.token != T::TIdentifier {
             p.lexer.full_start()
         } else {
             p.lexer.loc()
         };
         // `parseIdentifier`: any other token is not consumed, and the name is missing.
-        let name_text: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.lexer.tolerant {
+        let name_text: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.is_tolerant() {
             p.lexer.identifier
         } else {
             b""
@@ -840,7 +840,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // `parseEnumDeclaration`: without a "{" there are no members and no "}" is expected.
-        let has_body = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
+        let has_body = p.lexer.token == T::TOpenBrace || !p.is_tolerant();
         p.lexer.expect(T::TOpenBrace)?;
 
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
@@ -880,7 +880,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);
                 true
-            } else if p.lexer.tolerant && p.parse_other_enum_member_name(&mut value)? {
+            } else if p.is_tolerant() && p.parse_other_enum_member_name(&mut value)? {
                 false
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -915,7 +915,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
 
             // `parseDelimitedList`: only a comma separates members.
-            if p.lexer.token != T::TComma && (p.lexer.token != T::TSemicolon || p.lexer.tolerant) {
+            if p.lexer.token != T::TComma && (p.lexer.token != T::TSemicolon || p.is_tolerant()) {
                 if p.recover_missing_comma(ListKind::EnumMembers, value_loc)? {
                     continue;
                 }

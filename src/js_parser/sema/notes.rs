@@ -281,7 +281,9 @@ impl Iterator for NotesOf<'_> {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Position of the node whose `loc` is `loc`.
     #[inline]
     pub(crate) fn real_loc(&self, loc: Loc) -> Loc {
@@ -304,7 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Adds a note of kind `what` to the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note(&mut self, at: &mut Loc, what: Mark, payload: u32) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             syntax.notes.add(at, what, payload);
         }
     }
@@ -325,7 +327,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A note whose payload is the type that `parse_and_keep_type` parsed last.
     #[inline]
     pub(crate) fn note_type(&mut self, at: &mut Loc, what: Mark) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let ty = syntax.last_type_or_error();
             syntax.notes.add(at, what, ty.0);
         }
@@ -335,7 +337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn saved_type_or_error(&mut self) -> ts::TypeId {
         match &mut self.type_syntax {
-            Some(syntax) if TYPESCRIPT => syntax.last_type_or_error(),
+            Some(syntax) if SEMA => syntax.last_type_or_error(),
             _ => ts::TypeId::NONE,
         }
     }
@@ -344,7 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn saved_type(&self) -> ts::TypeId {
         match &self.type_syntax {
-            Some(syntax) if TYPESCRIPT => syntax.last_type,
+            Some(syntax) if SEMA => syntax.last_type,
             _ => ts::TypeId::NONE,
         }
     }
@@ -372,7 +374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn take_saved_type_argument_list(&mut self) -> ts::Types {
         match &mut self.type_syntax {
-            Some(syntax) if TYPESCRIPT => syntax.last_type_args.take().unwrap_or_default(),
+            Some(syntax) if SEMA => syntax.last_type_args.take().unwrap_or_default(),
             _ => ts::Types::EMPTY,
         }
     }
@@ -385,7 +387,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         close_paren: &mut Loc,
         parameters: Option<ts::TypeParams>,
     ) {
-        if let Some(syntax) = &mut self.type_syntax
+        if SEMA
+            && let Some(syntax) = &mut self.type_syntax
             && let Some(parameters) = parameters
         {
             syntax.notes.ranges.push([parameters.start, parameters.len]);
@@ -460,7 +463,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         self.note_token_full_start(&mut operand.loc, Mark::End);
         self.note_loc(&mut operand.loc, Mark::LessThan, less_than);
-        if let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let parameters = parameters.unwrap_or_default();
             syntax.notes.ranges.push([parameters.start, parameters.len]);
             let payload = syntax.notes.ranges.len() as u32 - 1;
@@ -486,7 +489,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A note whose payload is an expression that `bun_ast` has no field for.
     #[inline]
     pub(crate) fn note_expr(&mut self, at: &mut Loc, what: Mark, expression: Expr) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let kept = syntax.b.ts.add_expression(expression);
             syntax.notes.add(at, what, kept.index() as u32);
         }
@@ -507,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn note_type_arguments(&mut self, operand: &mut Expr, less_than: Loc) {
         let (next, end) = (self.lexer.loc(), self.lexer.full_start());
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             syntax.pending_type_arguments = None;
             if let Some(arguments) = syntax.last_type_args.take() {
                 syntax.notes.ranges.push([arguments.start, arguments.len]);
@@ -607,7 +610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     pub(crate) fn note_stray_decorator(&mut self, decorator: &Expr, end: Loc) {
         let at = self.real_loc(decorator.loc);
-        if let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             syntax.stray_decorators.push((at, end));
         }
     }
@@ -728,7 +731,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Records `node.Pos()` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_full_start(&mut self, at: &mut Loc, full_start: Loc) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let entry = syntax.notes.entry(at);
             syntax.notes.nodes[entry].full_start = full_start;
         }
@@ -737,7 +740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Records `node.Loc` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_range(&mut self, at: &mut Loc, full_start: Loc, end: Loc) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let entry = syntax.notes.entry(at);
             let node = &mut syntax.notes.nodes[entry];
             (node.full_start, node.end) = (full_start, end);
@@ -747,7 +750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Records `node.End()` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_end(&mut self, at: &mut Loc, end: Loc) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let entry = syntax.notes.entry(at);
             syntax.notes.nodes[entry].end = end;
         }
@@ -758,7 +761,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn finish_node(&mut self, at: &mut Loc, full_start: Loc) {
         let end = self.lexer.full_start();
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             let entry = syntax.notes.entry(at);
             let node = &mut syntax.notes.nodes[entry];
             (node.full_start, node.end) = (full_start, end);
@@ -778,7 +781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn type_syntax_checkpoint(&self) -> Checkpoint {
         match &self.type_syntax {
-            Some(syntax) if TYPESCRIPT => Checkpoint {
+            Some(syntax) if SEMA => Checkpoint {
                 nodes: syntax.notes.nodes.len() as u32,
                 notes: syntax.notes.notes.len() as u32,
                 ranges: syntax.notes.ranges.len() as u32,
@@ -797,7 +800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// existed before it.
     #[inline]
     pub(crate) fn rewind_type_syntax(&mut self, to: &Checkpoint) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             syntax.rewind(to);
         }
     }

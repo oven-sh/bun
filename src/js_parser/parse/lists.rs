@@ -79,12 +79,14 @@ const ALL_LISTS: [ListKind; 23] = [
     ListKind::JsxChildren,
 ];
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Marks a list of `kind` as open. Returns the previous `lexer.list_contexts`, which the caller restores after the list.
     #[inline]
     pub(crate) fn enter_list(&mut self, kind: ListKind) -> u32 {
         let saved = self.lexer.list_contexts;
-        if self.lexer.tolerant {
+        if self.is_tolerant() {
             self.lexer.list_contexts = saved | 1 << kind as u32;
         }
         saved
@@ -96,7 +98,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A speculative parse must still fail on errors. The type member parser accepts any run of
         // words as modifiers and a name, so for that list the check is done here: a token that
         // cannot start a member ends the list, and `expect("}")` fails the speculative parse.
-        if !self.lexer.tolerant || self.lexer.is_log_disabled && kind != ListKind::TypeMembers {
+        if !self.is_tolerant() || self.lexer.is_log_disabled && kind != ListKind::TypeMembers {
             return Ok(ListStep::Element);
         }
         self.classify_list_token_slow(kind)
@@ -136,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: ListKind,
         element_start: bun_ast::Loc,
     ) -> Result<bool, Error> {
-        if !self.lexer.tolerant || self.lexer.is_log_disabled || self.is_list_terminator(kind) {
+        if !self.is_tolerant() || self.lexer.is_log_disabled || self.is_list_terminator(kind) {
             return Ok(false);
         }
         self.report_missing_comma(kind, element_start)?;
@@ -819,7 +821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if !self.lexer.is_log_disabled {
             let next = self.lexer.loc();
-            if let Some(syntax) = &mut self.type_syntax {
+            if SEMA && let Some(syntax) = &mut self.type_syntax {
                 syntax.after_skipped.push(next);
             }
         }

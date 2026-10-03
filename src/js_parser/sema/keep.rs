@@ -28,15 +28,16 @@ fn loc(pos: u32) -> Loc {
     Loc { start: pos as i32 }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Whether to build type nodes. This is the only check ordinary builds pay for, once per top-level type.
     #[inline(always)]
     pub(crate) fn should_save_types(&self) -> bool {
-        TYPESCRIPT
-            && self
-                .type_syntax
-                .as_ref()
-                .is_some_and(|syntax| syntax.save_types)
+        SEMA && self
+            .type_syntax
+            .as_ref()
+            .is_some_and(|syntax| syntax.save_types)
     }
 
     #[inline]
@@ -1351,7 +1352,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Discards the modifiers pushed since the stack had `base` entries.
     pub(crate) fn drop_modifiers(&mut self, base: usize) {
-        if let Some(syntax) = &mut self.type_syntax {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
             syntax.statement_modifiers.truncate(base);
         }
     }

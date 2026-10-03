@@ -20,7 +20,9 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
@@ -62,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.forbid_suffix_after_as_loc = p.lexer.loc();
                 return Ok(Continuation::Done);
             }
-            if p.lexer.tolerant && Self::sfx_operator_cannot_follow_cast(p, level, left) {
+            if p.is_tolerant() && Self::sfx_operator_cannot_follow_cast(p, level, left) {
                 return Ok(Continuation::Done);
             }
             return Ok(Continuation::Next);
@@ -116,7 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = *left;
 
         if (p.lexer.has_newline_before || !p.lexer.is_identifier_or_keyword())
-            && p.lexer.tolerant
+            && p.is_tolerant()
             && Self::sfx_name_after_dot_is_missing(p, after_dot, false)?
         {
             let loc = left.loc;
@@ -133,11 +135,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if p.lexer.token == T::TPrivateIdentifier
             // `parseRightSideOfDot` accepts a private name anywhere. The checker reports 18013,
             // 18016 or 2339.
-            && (p.allow_private_identifiers || p.lexer.tolerant)
+            && (p.allow_private_identifiers || p.is_tolerant())
         {
             // "a.#b"
             // "a?.b.#c"
-            if matches!(left.data, ExprData::ESuper(_)) && !p.lexer.tolerant {
+            if matches!(left.data, ExprData::ESuper(_)) && !p.is_tolerant() {
                 p.lexer.expected(T::TIdentifier)?;
             }
 
@@ -147,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             // `parsePropertyAccessExpressionRest`: a private name is not allowed in an optional
             // chain.
-            if old_optional_chain.is_some() && p.lexer.tolerant {
+            if old_optional_chain.is_some() && p.is_tolerant() {
                 p.lexer.ts_error(name_range, 18030);
             }
             let ref_ = p.store_name_in_ref(name);
@@ -241,7 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parseNewExpressionOrNewDotTarget`: the callee of `new` cannot contain `?.`. The `new`
         // expression ends here, without arguments, and the chain continues from its result. Only
         // `new` parses at this level.
-        if level.eql(Level::Member) && p.lexer.tolerant {
+        if level.eql(Level::Member) && p.is_tolerant() {
             let range = p.lexer.range();
             let created = p.source.contents();
             let created = created
@@ -274,7 +276,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.allow_in = true;
 
                 let index = if p.lexer.token == T::TCloseBracket
-                    && p.lexer.tolerant
+                    && p.is_tolerant()
                     && !p.lexer.is_log_disabled
                 {
                     Self::sfx_missing_index(p, after_bracket)
@@ -357,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TNoSubstitutionTemplateLiteral | T::TTemplateHead if p.lexer.tolerant => {}
             _ => {
                 if (p.lexer.has_newline_before || !p.lexer.is_identifier_or_keyword())
-                    && p.lexer.tolerant
+                    && p.is_tolerant()
                     && Self::sfx_name_after_dot_is_missing(p, after_dot, true)?
                 {
                     let loc = left.loc;
@@ -373,7 +375,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                     );
                 } else if p.lexer.token == T::TPrivateIdentifier
-                    && (p.allow_private_identifiers || p.lexer.tolerant)
+                    && (p.allow_private_identifiers || p.is_tolerant())
                 {
                     // "a?.#b"
                     let name = p.lexer.identifier;
@@ -382,7 +384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     // `parsePropertyAccessExpressionRest`: a private name is not allowed in an
                     // optional chain.
-                    if p.lexer.tolerant {
+                    if p.is_tolerant() {
                         p.lexer.ts_error(name_range, 18030);
                     }
                     let ref_ = p.store_name_in_ref(name);
@@ -447,7 +449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let type_arguments = p.take_type_arguments();
         // `hasCorrectArity`: a call with an unterminated template is incomplete.
-        let is_incomplete = p.lexer.tolerant && p.lexer.unterminated_at == p.lexer.start;
+        let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == p.lexer.start;
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
@@ -474,7 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        if old_optional_chain.is_some() && !p.lexer.tolerant {
+        if old_optional_chain.is_some() && !p.is_tolerant() {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
@@ -486,12 +488,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
         let (parts, tail_loc) = p.parse_template_parts(true)?;
-        if old_optional_chain.is_some() && p.lexer.tolerant {
+        if old_optional_chain.is_some() && p.is_tolerant() {
             // `checkGrammarTaggedTemplateChain`: said of `node.Template`.
             p.lexer.ts_grammar_error(p.lexer.range_from(backtick), 1358);
         }
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
-        let is_incomplete = p.lexer.tolerant && p.lexer.unterminated_at == tail_loc.start as usize;
+        let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == tail_loc.start as usize;
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(
@@ -533,7 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
 
         let index =
-            if p.lexer.token == T::TCloseBracket && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            if p.lexer.token == T::TCloseBracket && p.is_tolerant() && !p.lexer.is_log_disabled {
                 Self::sfx_missing_index(p, after_bracket)
             } else {
                 p.parse_expr(Level::Lowest)?
@@ -628,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 || p.lexer.token == T::TCloseParen
                 || p.lexer.token == T::TComma
                 // "(a?=": `nextIsParenthesizedArrowFunctionExpression`. The checker reports 1015.
-                || (p.lexer.token == T::TEquals && p.lexer.tolerant))
+                || (p.lexer.token == T::TEquals && p.is_tolerant()))
         {
             if let Some(errors) = errors {
                 errors.invalid_expr_after_question = Some(p.lexer.range());
@@ -637,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // `parseConditionalExpressionRest`: an ordinary conditional expression, with nothing
             // after its `?`.
-            if !p.lexer.tolerant {
+            if !p.is_tolerant() {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -675,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                 ^
-        if p.lexer.token != T::TColon && p.lexer.tolerant {
+        if p.lexer.token != T::TColon && p.is_tolerant() {
             // `parseConditionalExpressionRest`: without the colon, the expression after it is
             // missing as well.
             p.lexer.expect(T::TColon)?;
@@ -744,7 +746,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        if p.lexer.tolerant && Self::cannot_follow_update(p) {
+        if p.is_tolerant() && Self::cannot_follow_update(p) {
             p.forbid_suffix_after_as_loc = p.lexer.loc();
             return Ok(Continuation::Done);
         }
@@ -767,7 +769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        if p.lexer.tolerant && Self::cannot_follow_update(p) {
+        if p.is_tolerant() && Self::cannot_follow_update(p) {
             p.forbid_suffix_after_as_loc = p.lexer.loc();
             return Ok(Continuation::Done);
         }
@@ -839,7 +841,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// e` is not an arrow function.
     #[inline]
     fn sfx_right_of_assignment(p: &mut Self, flags: EFlags) -> Result<Expr, Error> {
-        let flags = if flags == EFlags::AfterQuestionAndBeforeColon && p.lexer.tolerant {
+        let flags = if flags == EFlags::AfterQuestionAndBeforeColon && p.is_tolerant() {
             flags
         } else {
             EFlags::None
@@ -1163,7 +1165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &Self,
         chain: Option<OptionalChain>,
     ) -> Option<OptionalChain> {
-        if chain.is_some() && p.lexer.tolerant && !Self::sfx_takes_type_arguments(p.lexer.token) {
+        if chain.is_some() && p.is_tolerant() && !Self::sfx_takes_type_arguments(p.lexer.token) {
             return None;
         }
         chain
@@ -1178,7 +1180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> CResult {
         // `Scan`: in a file with JSX "</" is one token (LessThanSlashToken), which is not an
         // operator.
-        if p.lexer.tolerant && p.is_jsx_enabled() && p.lexer.is_less_than_slash() {
+        if p.is_tolerant() && p.is_jsx_enabled() && p.lexer.is_less_than_slash() {
             return Ok(Continuation::Done);
         }
         // TypeScript allows type arguments to be specified with angle brackets
@@ -1196,7 +1198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // template drops them.
             if matches!(left.data, ExprData::ESuper(_))
                 && level.lt(Level::Member)
-                && p.lexer.tolerant
+                && p.is_tolerant()
             {
                 let after_super = bun_ast::Loc {
                     start: p.real_loc(left.loc).start + 5,
@@ -1490,7 +1492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Prevent "||" inside "??" from the right
         if level.eql(Level::NullishCoalescing) {
-            if p.lexer.tolerant {
+            if p.is_tolerant() {
                 // `GetBinaryOperatorPrecedence`: "??" has the precedence of "||". The checker reports 5076.
                 return Ok(Continuation::Done);
             }
@@ -1514,7 +1516,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if level.lt(Level::NullishCoalescing) {
             p.parse_suffix(left, Level::NullishCoalescing.add_f(1), None, flags)?;
 
-            if p.lexer.token == T::TQuestionQuestion && !p.lexer.tolerant {
+            if p.lexer.token == T::TQuestionQuestion && !p.is_tolerant() {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -1553,7 +1555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Prevent "&&" inside "??" from the right
         // TypeScript's parser takes it, since "&&" binds tighter. The checker reports 5076.
-        if level.eql(Level::NullishCoalescing) && !p.lexer.tolerant {
+        if level.eql(Level::NullishCoalescing) && !p.is_tolerant() {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -1575,7 +1577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if level.lt(Level::NullishCoalescing) {
             p.parse_suffix(left, Level::NullishCoalescing.add_f(1), None, flags)?;
 
-            if p.lexer.token == T::TQuestionQuestion && !p.lexer.tolerant {
+            if p.lexer.token == T::TQuestionQuestion && !p.is_tolerant() {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -1750,7 +1752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// After anything else the expression ends.
     #[inline]
     fn sfx_takes_no_assignment(p: &Self, left: &Expr) -> bool {
-        p.lexer.tolerant && Self::sfx_is_not_left_hand_side(p, left)
+        p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left)
     }
 
     /// `isLeftHandSideExpressionKind`, negated. `left` was just parsed.
@@ -1848,7 +1850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Once an error has been reported at this token, the arrow function has already
                 // ended the expression. The next parser (`parseParenthesizedExpression`, the next
                 // statement) consumes the operator, as `parseBinaryExpressionRest` does.
-                && !(p.lexer.tolerant && p.lexer.prev_error_loc.eql(p.lexer.loc()))
+                && !(p.is_tolerant() && p.lexer.prev_error_loc.eql(p.lexer.loc()))
             {
                 // Plain loop re-reading `p.lexer.token` each iteration.
                 loop {

@@ -19,7 +19,9 @@ type PResult<T> = crate::CrateResult<T>;
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let super_range = p.lexer.range();
@@ -38,7 +40,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 // The operand of `new` is a primary expression, where `super` is only the keyword.
-                if p.lexer.tolerant && !p.lexer.is_log_disabled && level.lt(Level::Member) {
+                if p.is_tolerant() && !p.lexer.is_log_disabled && level.lt(Level::Member) {
                     return Self::pfx_super_without_access(p, super_range);
                 }
             }
@@ -209,7 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parsePrimaryExpression` accepts a private name anywhere. The checker reports 1451, 18016
         // or 2304.
         if (!p.allow_private_identifiers || !p.allow_in || level.gte(Level::Compare))
-            && !p.lexer.tolerant
+            && !p.is_tolerant()
         {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
@@ -219,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         // Check for "#foo in bar"
-        if p.lexer.token != T::TIn && !p.lexer.tolerant {
+        if p.lexer.token != T::TIn && !p.is_tolerant() {
             p.lexer.expected(T::TIn)?;
         }
 
@@ -246,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let (name_range, raw) = if async_kind == AsyncPrefixExpression::None {
             (bun_ast::Range::NONE, name)
         } else {
-            if p.lexer.tolerant && Self::pfx_word_is_no_name_here(p, async_kind, level, flags) {
+            if p.is_tolerant() && Self::pfx_word_is_no_name_here(p, async_kind, level, flags) {
                 return Self::pfx_missing(p);
             }
             (p.lexer.range(), p.lexer.raw())
@@ -262,14 +264,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     return p.parse_async_prefix_expr(name_range, full_start, level, flags);
                 }
-                if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                if p.is_tolerant() && !p.lexer.is_log_disabled {
                     return Self::pfx_escaped_async(p, name_range, full_start, level, flags);
                 }
             }
 
             AsyncPrefixExpression::IsAwait => match p.fn_or_arrow_data_parse.allow_await {
                 // `parseParametersWorker`, `parseClassStaticBlockBody`: an await context.
-                AwaitOrYield::ForbidAll if p.lexer.tolerant && level.lte(Level::Prefix) => {
+                AwaitOrYield::ForbidAll if p.is_tolerant() && level.lte(Level::Prefix) => {
                     return Self::pfx_misplaced_await(p, name_range, raw, level);
                 }
                 AwaitOrYield::ForbidAll => {
@@ -282,7 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 AwaitOrYield::AllowExpr => {
                     let is_escaped =
                         AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait;
-                    if is_escaped && !(p.lexer.tolerant && !p.lexer.is_log_disabled) {
+                    if is_escaped && !(p.is_tolerant() && !p.lexer.is_log_disabled) {
                         p.log().add_range_error(
                             Some(p.source),
                             name_range,
@@ -298,7 +300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.top_level_await_keyword = name_range;
                             // `isAwaitExpression`: the first parse treats this `await` as an
                             // identifier, so `reparseTopLevelAwait` reparses the statement.
-                            if p.lexer.tolerant && !Self::pfx_operand_follows_on_same_line(p) {
+                            if p.is_tolerant() && !Self::pfx_operand_follows_on_same_line(p) {
                                 p.lexer.await_name_seen = true;
                             }
                         }
@@ -318,7 +320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 AwaitOrYield::AllowIdent => {
                     // `isAwaitExpression`
-                    if p.lexer.tolerant
+                    if p.is_tolerant()
                         && level.lte(Level::Prefix)
                         && Self::pfx_operand_follows_on_same_line(p)
                     {
@@ -329,7 +331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `isUpdateExpression`: `await` does not start one even where it is an
                     // identifier, so `parseUnaryExpressionOrHigher` reports it on the left of `**`.
                     if p.lexer.token == T::TAsteriskAsterisk
-                        && p.lexer.tolerant
+                        && p.is_tolerant()
                         && level.lt(Level::Prefix)
                     {
                         p.lexer.ts_error_about(name_range, 17006, b"await");
@@ -340,7 +342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             AsyncPrefixExpression::IsYield => {
                 match p.fn_or_arrow_data_parse.allow_yield {
                     // `parseParametersWorker`: a yield context.
-                    AwaitOrYield::ForbidAll if p.lexer.tolerant && level.lte(Level::Assign) => {
+                    AwaitOrYield::ForbidAll if p.is_tolerant() && level.lte(Level::Assign) => {
                         return Self::pfx_misplaced_yield(p, name_range, raw, true);
                     }
                     AwaitOrYield::ForbidAll => {
@@ -353,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     AwaitOrYield::AllowExpr => {
                         let is_escaped =
                             AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield;
-                        if is_escaped && !(p.lexer.tolerant && !p.lexer.is_log_disabled) {
+                        if is_escaped && !(p.is_tolerant() && !p.lexer.is_log_disabled) {
                             p.log().add_range_error(
                                 Some(p.source),
                                 name_range,
@@ -387,7 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // },
                     _ => {
                         // `isYieldExpression`
-                        if p.lexer.tolerant
+                        if p.is_tolerant()
                             && level.lte(Level::Assign)
                             && Self::pfx_operand_follows_on_same_line(p)
                         {
@@ -732,7 +734,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_minus_minus(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = if p.lexer.tolerant {
+        let value = if p.is_tolerant() {
             Self::pfx_update_operand(p)?
         } else {
             p.parse_expr(Level::Prefix)?
@@ -750,7 +752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_plus_plus(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = if p.lexer.tolerant {
+        let value = if p.is_tolerant() {
             Self::pfx_update_operand(p)?
         } else {
             p.parse_expr(Level::Prefix)?
@@ -874,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Expect class keyword after decorators
         if p.lexer.token != T::TClass {
-            if p.lexer.tolerant && !p.lexer.is_log_disabled {
+            if p.is_tolerant() && !p.lexer.is_log_disabled {
                 // `parseDecoratedExpression`: 1109 at the end of the last decorator, and a missing
                 // declaration.
                 let node_pos = p.lexer.full_start();
@@ -968,7 +970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut other_name = None;
 
             if p.lexer.token != T::TIdentifier || p.lexer.raw() != b"target" {
-                if !p.lexer.tolerant || p.lexer.is_log_disabled {
+                if !p.is_tolerant() || p.lexer.is_log_disabled {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -1007,7 +1009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This will become the new expr
         // Parse target into a local, then construct E::New once.
         let mut target = Expr::EMPTY;
-        if p.lexer.tolerant
+        if p.is_tolerant()
             && !p.lexer.is_log_disabled
             && matches!(
                 p.lexer.token,
@@ -1392,7 +1394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.is_jsx_enabled() {
-            if p.lexer.tolerant {
+            if p.is_tolerant() {
                 return Self::pfx_jsx_or_missing(p, level);
             }
             // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
@@ -1414,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseSimpleUnaryExpression`: an arrow function starts an assignment expression. In an operand "<" can
             // only open a type assertion, which has one type between the brackets (`parseTypeAssertion`).
             let only_a_cast =
-                level.gt(Level::Assign) && p.lexer.tolerant && !p.lexer.is_log_disabled;
+                level.gt(Level::Assign) && p.is_tolerant() && !p.lexer.is_log_disabled;
 
             // "<T>(x)"
             // "<T>(x) => {}"
@@ -1450,7 +1452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.parse_suffix(&mut value, Level::Prefix, None, flags)?;
                         p.note_cast_to_type_parameter(&mut value, type_parameters, loc);
                         if p.lexer.token == T::TAsteriskAsterisk
-                            && p.lexer.tolerant
+                            && p.is_tolerant()
                             && !p.lexer.is_log_disabled
                         {
                             p.unary_before_exponentiation(level, loc, b"")?;
@@ -1474,7 +1476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.note_loc(&mut value.loc, crate::sema::Mark::LessThan, loc);
                 p.note_saved_type(&mut value.loc, crate::sema::Mark::As, ty);
                 if p.lexer.token == T::TAsteriskAsterisk
-                    && p.lexer.tolerant
+                    && p.is_tolerant()
                     && !p.lexer.is_log_disabled
                 {
                     p.unary_before_exponentiation(level, loc, b"")?;
@@ -1559,7 +1561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     fn pfx_t_import(p: &mut Self, level: Level) -> PResult<Expr> {
-        if p.lexer.tolerant && !p.lexer.is_log_disabled && !Self::pfx_import_starts_expression(p) {
+        if p.is_tolerant() && !p.lexer.is_log_disabled && !Self::pfx_import_starts_expression(p) {
             return Self::pfx_missing(p);
         }
         let loc = p.lexer.loc();
@@ -1647,7 +1649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn pfx_escaped_keyword_starts_expression(p: &mut Self, level: Level) -> bool {
-        if !p.lexer.tolerant || p.lexer.is_log_disabled {
+        if !p.is_tolerant() || p.lexer.is_log_disabled {
             return false;
         }
         match crate::lexer::keyword(p.lexer.identifier) {
@@ -1674,7 +1676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn pfx_implements_is_the_name(p: &mut Self) -> bool {
-        p.lexer.tolerant && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword())
+        p.is_tolerant() && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword())
     }
 
     /// `isParenthesizedArrowFunctionExpression`: a lone `=>` where an assignment expression starts
@@ -1706,7 +1708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         operator: &[u8],
     ) -> PResult<()> {
         let p = self;
-        if p.lexer.tolerant && !p.lexer.is_log_disabled {
+        if p.is_tolerant() && !p.lexer.is_log_disabled {
             // The operand of a unary operator, of `await` and of `<T>` is parsed at Level::Prefix
             // (`parseSimpleUnaryExpression`): only the outermost is reported.
             if level.lt(Level::Prefix) {
@@ -1770,17 +1772,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 if p.lexer.token == T::TEqualsGreaterThan
                     && level.lte(Level::Assign)
-                    && p.lexer.tolerant
+                    && p.is_tolerant()
                     && !p.lexer.is_log_disabled
                 {
                     return Self::pfx_arrow_without_parameters(p);
                 }
-                if p.lexer.token == T::TEndOfFile && p.lexer.tolerant && !p.lexer.is_log_disabled {
+                if p.lexer.token == T::TEndOfFile && p.is_tolerant() && !p.lexer.is_log_disabled {
                     return Self::pfx_missing_at_end_of_file(p);
                 }
                 let before = p.lexer.prev_error_loc;
                 p.lexer.unexpected()?;
-                if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                if p.is_tolerant() && !p.lexer.is_log_disabled {
                     // `createMissingNode`: nothing is consumed, and the expected node is missing.
                     p.lexer.put_up_with(before)?;
                     return Ok(p.new_expr(E::Missing {}, p.lexer.loc()));

@@ -42,7 +42,7 @@ type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 
-/// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
+/// Erases `P<'a, TS, SCAN, SEMA>`'s const-generics so helpers like `JSXTag::parse`
 /// can take any instantiation. Only the surface those helpers actually
 /// touch is exposed.
 pub(crate) trait ParserLike<'a> {
@@ -55,7 +55,9 @@ pub(crate) trait ParserLike<'a> {
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
-impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> ParserLike<'a>
+    for P<'a, TS, SCAN, SEMA>
+{
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
         &mut self.lexer
@@ -244,7 +246,7 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
+pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool = false> {
     /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
     /// parameter; demoted to a field because JSX only affects a handful of
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
@@ -757,7 +759,9 @@ pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool> Drop
+    for P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     fn drop(&mut self) {
         // Arena-allocated structs never run Drop; free their global-heap maps here.
         for mut scope in self.ts_namespace_scopes.drain(..) {
@@ -769,7 +773,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
 
@@ -937,7 +943,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
@@ -3371,13 +3379,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -4264,7 +4272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         // `parseObjectLiteralElement` accepts `{ a = 1 }`. The checker reports 1312.
         if let Some(r) = errors.invalid_expr_default_value
-            && !self.lexer.tolerant
+            && !self.is_tolerant()
         {
             self.log()
                 .add_range_error(Some(self.source), r, b"Unexpected \"=\"");
@@ -4944,7 +4952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     _ => {
                         // `checkGrammarVariableDeclaration`: a pattern after `using` gets 1492 and nothing else.
-                        if self.lexer.tolerant && !matches!(KIND, js_ast::s::Kind::KConst) {
+                        if self.is_tolerant() && !matches!(KIND, js_ast::s::Kind::KConst) {
                             continue;
                         }
                         self.log().add_error_fmt(
@@ -7440,7 +7448,9 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -9031,7 +9041,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -9086,7 +9098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, true>(
                     self,
                     part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -9096,7 +9108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Re-run for the last part.
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, true>(
                     self,
                     last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -9132,7 +9144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, SEMA, false>(
                         self,
                         part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
@@ -9772,7 +9784,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // The Binding2ExprWrapper self-referential helpers are
 // seeded with arena-unit placeholders inside the struct literal; the real `*P`
 // back-pointer is wired lazily by the call sites.
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// Construct a `P` in place at `out`.
     ///
     /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
@@ -10087,8 +10101,8 @@ pub(crate) struct LowerUsingDeclarationsContext {
 }
 
 impl LowerUsingDeclarationsContext {
-    pub(crate) fn init<'a, const T: bool, const S_: bool>(
-        p: &mut P<'a, T, S_>,
+    pub(crate) fn init<'a, const T: bool, const S_: bool, const SEMA: bool>(
+        p: &mut P<'a, T, S_, SEMA>,
     ) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
@@ -10097,9 +10111,9 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool>(
+    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, T, S_, SEMA>,
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
@@ -10162,9 +10176,9 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
+    pub(crate) fn finalize<'a, const T: bool, const S_: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, T, S_, SEMA>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

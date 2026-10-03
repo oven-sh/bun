@@ -9,7 +9,9 @@ use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     /// After the "<" at `loc`, whose `TokenFullStart` is `full_start`.
     pub(crate) fn parse_jsx_element(
         &mut self,
@@ -27,7 +29,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // The tag name of the parent element, empty for a fragment. Tolerant mode only.
-        let parent_tag = if p.lexer.tolerant {
+        let parent_tag = if p.is_tolerant() {
             p.jsx_parent_tag.take()
         } else {
             None
@@ -41,7 +43,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Pass a flag to the type argument skipper because we need to call
             // `</` is one token for TypeScript. It opens no type arguments. Nor are there any in a JavaScript file
             // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
-            if !(p.lexer.tolerant && p.lexer.is_less_than_slash())
+            if !(p.is_tolerant() && p.lexer.is_less_than_slash())
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
@@ -81,7 +83,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .unwrap_or(E::JSXSpecialProp::Any);
                         p.lexer.next_inside_jsx_element()?;
 
-                        if p.lexer.tolerant {
+                        if p.is_tolerant() {
                             // `parseJsxAttributeName`
                             let name = JSXTag::parse_namespaced_name(
                                 p,
@@ -97,7 +99,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if special_prop == E::JSXSpecialProp::Key {
                             // <ListItem key>
                             // `parseJsxAttribute`: to the type checker it is an attribute like any other, and `true`.
-                            if p.lexer.token != T::TEquals && !p.lexer.tolerant {
+                            if p.lexer.token != T::TEquals && !p.is_tolerant() {
                                 // Unlike Babel, we're going to just warn here and move on.
                                 p.log().add_warning(
                                     Some(p.source),
@@ -119,7 +121,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.parse_jsx_prop_value_identifier(
                                 &mut previous_string_with_backslash_loc,
                             )?
-                        } else if p.lexer.tolerant {
+                        } else if p.is_tolerant() {
                             // `parseJsxAttribute`: no `Initializer`.
                             None
                         } else {
@@ -149,7 +151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.next()?;
 
                         // `parseJsxSpreadAttribute`: TypeScript has no shorthand. It reports the missing `...` (1005).
-                        let is_missing_dots = p.lexer.tolerant && p.lexer.token != T::TDotDotDot;
+                        let is_missing_dots = p.is_tolerant() && p.lexer.token != T::TDotDotDot;
 
                         match if is_missing_dots {
                             T::TDotDotDot
@@ -164,7 +166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     first_spread_prop_i = i;
                                 }
                                 spread_loc = p.lexer.loc();
-                                let value = p.parse_expr(if p.lexer.tolerant {
+                                let value = p.parse_expr(if p.is_tolerant() {
                                     Level::Lowest
                                 } else {
                                     Level::Comma
@@ -258,7 +260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => p.lexer.unexpected()?,
                         }
 
-                        if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
+                        if p.lexer.token != T::TCloseBrace && p.is_tolerant() {
                             // `parseExpected`
                             p.lexer.expect(T::TCloseBrace)?;
                             Self::rescan_inside_jsx_element(p)?;
@@ -278,7 +280,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         i += 1;
                     }
                     _ => {
-                        if p.lexer.tolerant && Self::recover_jsx_attribute(p)? {
+                        if p.is_tolerant() && Self::recover_jsx_attribute(p)? {
                             continue 'parse_attributes;
                         }
                         break 'parse_attributes;
@@ -322,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TSyntaxError
             && p.lexer.raw() == b"\\"
             && previous_string_with_backslash_loc.start > 0
-            && !p.lexer.tolerant
+            && !p.is_tolerant()
         {
             let r = p.lexer.range();
             // Not dealing with this right now.
@@ -361,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
 
-        if p.lexer.token != T::TGreaterThan && p.lexer.tolerant {
+        if p.lexer.token != T::TGreaterThan && p.is_tolerant() {
             // `parseJsxOpeningOrSelfClosingElementOrOpeningFragment`: 1005 for the `/`, and the element is self-closing.
             p.lexer.expected(T::TSlash)?;
             let end = Self::end_of_jsx_tag(p);
@@ -393,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let e_string = p.lexer.to_e_string()?;
                     // `parseJsxText`
                     let range = p.lexer.range();
-                    let text_loc = if p.lexer.tolerant { range.loc } else { loc };
+                    let text_loc = if p.is_tolerant() { range.loc } else { loc };
                     let mut text = p.new_expr(e_string, text_loc);
                     p.note_end(&mut text.loc, range.end());
                     children.push(text);
@@ -412,7 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // The expression is optional, and may be absent
                     // `parseJsxExpression`: not after `...`, where it is missed.
-                    if p.lexer.token != T::TCloseBrace || (is_spread && p.lexer.tolerant) {
+                    if p.lexer.token != T::TCloseBrace || (is_spread && p.is_tolerant()) {
                         if can_be_inlined {
                             can_be_inlined = false;
                         }
@@ -448,14 +450,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token != T::TSlash {
                         // This is a child element
 
-                        if p.lexer.tolerant {
+                        if p.is_tolerant() {
                             p.jsx_parent_tag = Some(tag.name);
                         }
                         let child =
                             Self::parse_jsx_element(p, less_than_loc, less_than_full_start)?;
                         children.push(child);
 
-                        if p.lexer.tolerant {
+                        if p.is_tolerant() {
                             if let Some((end_tag, closing_start, end)) = p.jsx_adopted_close.take()
                             {
                                 // The child was not closed, and reached the closing tag of this
@@ -501,7 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let after_slash = p.lexer.range().end();
                     p.lexer.next_inside_jsx_element()?;
 
-                    if start_tag.is_none() && p.lexer.token != T::TGreaterThan && p.lexer.tolerant {
+                    if start_tag.is_none() && p.lexer.token != T::TGreaterThan && p.is_tolerant() {
                         // `parseJsxClosingFragment`: nothing is consumed.
                         if p.lexer.is_log_disabled {
                             return Err(crate::Error::Backtrack);
@@ -532,7 +534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let end_tag = JSXTag::parse(p)?;
 
-                    if end_tag.name != tag.name && p.lexer.tolerant && !p.lexer.is_log_disabled {
+                    if end_tag.name != tag.name && p.is_tolerant() && !p.lexer.is_log_disabled {
                         let belongs_to_parent = Self::report_jsx_tag_mismatch(
                             p,
                             loc,
@@ -621,9 +623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
                 _ => {
-                    if p.lexer.token == T::TEndOfFile
-                        && p.lexer.tolerant
-                        && !p.lexer.is_log_disabled
+                    if p.lexer.token == T::TEndOfFile && p.is_tolerant() && !p.lexer.is_log_disabled
                     {
                         Self::report_unclosed_jsx_element(p, full_start, &tag);
                         let at = p.lexer.loc();
@@ -649,7 +649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // tokens are reported at the same position. The marker is not consumed: a
                     // parent element rescans it, and a statement list skips it.
                     if p.lexer.token == T::TSyntaxError
-                        && p.lexer.tolerant
+                        && p.is_tolerant()
                         && !p.lexer.is_log_disabled
                     {
                         let at = p.lexer.loc();

@@ -23,7 +23,7 @@ use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 use bun_sema::hir::{Diagnostic, DiagnosticKind};
 
-// Named instantiations of `P<'_, TS, SCAN>`.
+// Named instantiations of `P<'_, TS, SCAN, SEMA>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
 pub type TSXParser<'a> = P<'a, true, false>;
 
@@ -489,7 +489,7 @@ impl<'a> Parser<'a> {
         await_is_a_name: bool,
         parsing: &core::cell::Cell<core::time::Duration>,
     ) -> (bun_sema::hir::File, bool) {
-        type Pi<'a> = P<'a, true, false>;
+        type Pi<'a> = P<'a, true, false, true>;
         let scratch_lexer = |this: &Self| {
             js_lexer::Lexer::init_without_reading(
                 this.bump.alloc(bun_ast::Log::default()),

@@ -35,7 +35,9 @@ fn is_at_start_of(
     opts.contains(option) && level == Level::Lowest && leading_operator.is_none()
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         if self.should_save_types() {
@@ -150,7 +152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 while self.lexer.token != T::TCloseBracket {
                     // "[a, , b]": `parseArrayBindingElement` produces an omitted element wherever a
                     // comma appears.
-                    if self.lexer.token == T::TComma && self.lexer.tolerant {
+                    if self.lexer.token == T::TComma && self.is_tolerant() {
                         if keeps {
                             elements.push(self.emit_array_hole());
                         }
@@ -173,7 +175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     // "[a = 1]"
                     let mut default = None;
-                    if self.lexer.token == T::TEquals && self.lexer.tolerant {
+                    if self.lexer.token == T::TEquals && self.is_tolerant() {
                         default = Some(self.skip_initializer_in_signature()?);
                     }
                     if keeps {
@@ -277,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         property.value = self.type_syntax_mut().last_binding;
                     }
                     // "{a = 1}", "{a: b = 1}"
-                    if self.lexer.token == T::TEquals && self.lexer.tolerant {
+                    if self.lexer.token == T::TEquals && self.is_tolerant() {
                         property.default = Some(self.skip_initializer_in_signature()?);
                     }
                     if keeps {
@@ -309,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Whether `skip_missing_binding_name` applies: no identifier or pattern starts here. A speculative parse must still fail.
     #[inline]
     fn starts_no_binding_name(&self) -> bool {
-        self.lexer.tolerant
+        self.is_tolerant()
             && !self.lexer.is_log_disabled
             && !matches!(
                 self.lexer.token,
@@ -361,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parameter.full_start = self.lexer.full_start();
             // "(public a)": `parseParameterEx` accepts modifiers on every parameter, and the
             // checker reports them (2369).
-            if self.lexer.tolerant && self.lexer.token == T::TIdentifier {
+            if self.is_tolerant() && self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
             }
             let has_modifiers = !parameter.flags.is_empty();
@@ -400,7 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // "(a = 1)": `parseParameterEx` accepts an initializer on every parameter, and the
             // checker reports it (2371).
-            if self.lexer.token == T::TEquals && self.lexer.tolerant {
+            if self.lexer.token == T::TEquals && self.is_tolerant() {
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
@@ -709,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if allow_fn_type
             && (self.try_skip_type_script_arrow_args_with_backtracking()?
-                || (self.lexer.tolerant
+                || (self.is_tolerant()
                     && !self.lexer.is_log_disabled
                     && self.skip_fn_type_args_without_arrow(head.is_some())?))
         {
@@ -877,7 +879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// right after "keyof" or "readonly" in an "extends" type keeps its constraint.
     #[inline]
     fn type_operand_opts(&self, opts: SkipTypeOptionsBitset) -> SkipTypeOptionsBitset {
-        if opts.contains(SkipTypeOptions::DisallowConditionalTypes) && self.lexer.tolerant {
+        if opts.contains(SkipTypeOptions::DisallowConditionalTypes) && self.is_tolerant() {
             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes)
         } else {
             SkipTypeOptionsBitset::empty()
@@ -1261,7 +1263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // `parseTypeOperatorOrHigher`: the operand of a type operator cannot be a function or constructor type.
-        let allow_fn_type = !self.lexer.tolerant || level != Level::Prefix;
+        let allow_fn_type = !self.is_tolerant() || level != Level::Prefix;
         // The leading "|" or "&" skipped before the type. For "| &", the "&".
         let mut leading_operator: Option<T> = None;
         // The error to report once the function type that starts right after a "|" or "&" has been
@@ -1363,7 +1365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         opts,
                         level,
                         leading_operator,
-                    ) && self.lexer.tolerant
+                    ) && self.is_tolerant()
                     {
                         return self.missing_type();
                     }
@@ -1407,7 +1409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TMinus => {
                     // `parseNonArrayType`: a type only if the next token is a number.
-                    if self.lexer.tolerant
+                    if self.is_tolerant()
                         && !opts.contains(SkipTypeOptions::IsIndexSignature)
                         && !self.next_token_matches(|p| {
                             matches!(p.lexer.token, T::TNumericLiteral | T::TBigIntegerLiteral)
@@ -1452,7 +1454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         leading_operator == Some(T::TAmpersand) || level.gte(Level::BitwiseAnd)
                     };
-                    if is_operator_after_nothing && self.lexer.tolerant {
+                    if is_operator_after_nothing && self.is_tolerant() {
                         self.missing_type()?;
                         break;
                     }
@@ -1460,7 +1462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Support things like "type Foo = | A | B" and "type Foo = & A & B"
                     leading_operator = Some(self.lexer.token);
                     self.lexer.next()?;
-                    if self.lexer.tolerant {
+                    if self.is_tolerant() {
                         fn_type_error =
                             self.fn_type_after_operator_error(leading_operator == Some(T::TBar));
                     }
@@ -1491,7 +1493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
                     let mut argument = TypeId::NONE;
-                    if self.lexer.token != T::TStringLiteral && self.lexer.tolerant {
+                    if self.lexer.token != T::TStringLiteral && self.is_tolerant() {
                         // `parseImportType`: any type is accepted. The checker reports it (1141).
                         self.skip_nested_type::<KEEP>(
                             Level::Lowest,
@@ -1507,7 +1509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import('./foo.json', { assert: { type: 'json' } })"
                     // "import('./foo.json', { with: { type: 'json' } })"
                     let mut attributes = Some((ResolutionMode::None, None, None));
-                    if self.lexer.token == T::TComma && self.lexer.tolerant {
+                    if self.lexer.token == T::TComma && self.is_tolerant() {
                         self.lexer.next()?;
                         attributes = Some(self.skip_import_type_attributes()?);
                     } else if self.lexer.token == T::TComma {
@@ -1533,7 +1535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.emit_import_type(specifier, argument, attributes, is_typeof, pos);
                     }
                     // "import('./foo')<T>" (`parseImportType`). Ordinary builds reject this.
-                    if self.lexer.tolerant && !self.lexer.has_newline_before {
+                    if self.is_tolerant() && !self.lexer.has_newline_before {
                         let reference = if KEEP { self.take_reference() } else { None };
                         let has_arguments =
                             self.skip_type_script_type_arguments::<false, false>()?;
@@ -1635,7 +1637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 opts,
                                 level,
                                 leading_operator,
-                            ) && self.lexer.tolerant
+                            ) && self.is_tolerant()
                                 && self.next_token_matches(|p| {
                                     p.lexer.is_contextual_keyword(b"is")
                                         && !p.lexer.has_newline_before
@@ -1760,7 +1762,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             // `parseTypeOperator`: "unique" is an operator regardless of the next
                             // token, like "keyof".
-                            if self.lexer.tolerant
+                            if self.is_tolerant()
                                 && ((self.lexer.token != T::TColon
                                     && self.lexer.token != T::TQuestion
                                     && self.lexer.token != T::TIn)
@@ -1805,7 +1807,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "function assert(x: boolean): asserts x is boolean"
                             // TypeScript's parser (`parseNonArrayType`) accepts this in any type position and leaves the error to the
                             // checker, so tolerant mode does the same.
-                            if (opts.contains(SkipTypeOptions::IsReturnType) || self.lexer.tolerant)
+                            if (opts.contains(SkipTypeOptions::IsReturnType) || self.is_tolerant())
                                 && !self.lexer.has_newline_before
                                 && (self.lexer.token == T::TIdentifier
                                     || self.lexer.token == T::TThis)
@@ -1945,7 +1947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "function assert(x: any): x is boolean"
                     if self.lexer.is_contextual_keyword(b"is")
-                        && (if self.lexer.tolerant {
+                        && (if self.is_tolerant() {
                             // `parseAssertsTypePredicate` accepts the "is" after "asserts x" on any
                             // line.
                             // `parseTypeOrTypePredicate`: any other "is" is only accepted directly
@@ -2013,7 +2015,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         // "typeof x"
                         if !self.lexer.is_identifier_or_keyword() {
-                            if self.lexer.tolerant {
+                            if self.is_tolerant() {
                                 // `parseEntityName`: the name is missing (1003), and the token is
                                 // not consumed.
                                 self.lexer.expect(T::TIdentifier)?;
@@ -2046,7 +2048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.lexer.next()?;
 
                             if self.lexer.has_newline_before
-                                && self.lexer.tolerant
+                                && self.is_tolerant()
                                 && self.is_name_after_dot_missing()
                             {
                                 if KEEP {
@@ -2061,7 +2063,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !self.lexer.is_identifier_or_keyword()
                                 && self.lexer.token != T::TPrivateIdentifier
                             {
-                                if self.lexer.tolerant {
+                                if self.is_tolerant() {
                                     // `parseRightSideOfDot`: the name is missing (1003), and the
                                     // token is not consumed.
                                     self.lexer.expect(T::TIdentifier)?;
@@ -2101,7 +2103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let mut elements: Vec<TupleElement> = Vec::new();
                     while self.lexer.token != T::TCloseBracket {
-                        if self.lexer.tolerant {
+                        if self.is_tolerant() {
                             self.skip_tuple_elements::<KEEP>(&mut elements)?;
                             break;
                         }
@@ -2113,7 +2115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.lexer.next()?;
                             // `scanStartOfNamedTupleElement`, `parseTupleElementType`: after "..." any word is a label or
                             // the name of a type.
-                            if self.is_reserved_word_that_starts_no_type() && self.lexer.tolerant {
+                            if self.is_reserved_word_that_starts_no_type() && self.is_tolerant() {
                                 element_opts = SkipTypeOptionsBitset::empty();
                             }
                         }
@@ -2182,7 +2184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         // `parseLiteralOfTemplateSpan`: without the "}" the template ends here, and
                         // the token is not consumed.
-                        if self.lexer.token != T::TCloseBrace && self.lexer.tolerant {
+                        if self.lexer.token != T::TCloseBrace && self.is_tolerant() {
                             self.lexer.expect(T::TCloseBrace)?;
                             if KEEP {
                                 types.push(TypeId::NONE);
@@ -2211,7 +2213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 _ => {
                     // TypeScript does not parse the contents of a type member's brackets as a type.
-                    if self.lexer.tolerant && !opts.contains(SkipTypeOptions::IsIndexSignature) {
+                    if self.is_tolerant() && !opts.contains(SkipTypeOptions::IsIndexSignature) {
                         // `isListElement(PCTupleElementTypes)`: no tuple element starts with such a
                         // word, whether or not it is a label.
                         if is_at_start_of(
@@ -2281,7 +2283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                     }
                     self.lexer.next()?;
-                    if self.lexer.tolerant {
+                    if self.is_tolerant() {
                         fn_type_error = self.fn_type_after_operator_error(true);
                     }
                     if KEEP {
@@ -2338,7 +2340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.next()?;
-                    if self.lexer.tolerant {
+                    if self.is_tolerant() {
                         fn_type_error = self.fn_type_after_operator_error(false);
                     }
                     if KEEP {
@@ -2407,7 +2409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TQuestion => {
                     // `parsePostfixTypeOrHigher`: JSDoc's "T?", unless a type follows, which makes
                     // it the "?" of a conditional type. The checker reports it (17019).
-                    if !self.lexer.tolerant
+                    if !self.is_tolerant()
                         || self.lexer.has_newline_before
                         || opts.contains(SkipTypeOptions::IsIndexSignature)
                         || self.next_token_starts_a_type()
@@ -2424,14 +2426,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `parseEntityName`: a dot only continues a name. After any other type it is
                     // not consumed.
                     if KEEP
-                        && self.lexer.tolerant
+                        && self.is_tolerant()
                         && (is_parenthesized || !self.last_type_takes_qualifier())
                     {
                         finish!();
                     }
                     self.lexer.next()?;
                     if self.lexer.has_newline_before
-                        && self.lexer.tolerant
+                        && self.is_tolerant()
                         && self.is_name_after_dot_missing()
                     {
                         if KEEP {
@@ -2440,7 +2442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     if !self.lexer.is_identifier_or_keyword() {
-                        if self.lexer.tolerant {
+                        if self.is_tolerant() {
                             self.skip_missing_name_after_dot::<KEEP>()?;
                             continue;
                         }
@@ -2502,7 +2504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `parsePostfixTypeOrHigher`: before a token that cannot start a type, it is an
                     // array type whose "]" is missing.
                     if self.lexer.token != T::TCloseBracket
-                        && !(self.lexer.tolerant && !self.is_start_of_type(false))
+                        && !(self.is_tolerant() && !self.is_start_of_type(false))
                     {
                         skipped = true;
                         if KEEP {
@@ -2649,7 +2651,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
-        if self.lexer.token != T::TOpenBrace && self.lexer.tolerant {
+        if self.lexer.token != T::TOpenBrace && self.is_tolerant() {
             return self.skip_missing_object_type();
         }
         self.lexer.expect(T::TOpenBrace)?;
@@ -2660,7 +2662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_interface_body =
             keeps && core::mem::take(&mut self.type_syntax_mut().next_braces_are_interface_body);
 
-        let tolerant = self.lexer.tolerant;
+        let tolerant = self.is_tolerant();
         let mut starts_mapped_type =
             tolerant && !is_interface_body && self.is_start_of_mapped_type();
         let saved_contexts = self.enter_list(ListKind::TypeMembers);
@@ -3184,7 +3186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
         let less_than = self.lexer.loc();
         self.lexer.next()?;
-        if self.lexer.tolerant {
+        if self.is_tolerant() {
             return self.skip_type_parameters_tolerant(flags, less_than);
         }
         // Keep mode stores the result in `TypeSyntax::last_type_params`.
@@ -3610,7 +3612,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.lexer.next()?;
                         let _ = self.parse_path()?;
                     } else if self.lexer.token == T::TStringLiteral
-                        && self.lexer.tolerant
+                        && self.is_tolerant()
                         && !self.lexer.has_newline_before
                     {
                         // `parseExportDeclaration`: a string on the same line is the specifier
@@ -3706,7 +3708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut other_heritage: Vec<TypeId> = Vec::new();
         let mut heritage_errors = [None; 2];
         // It consumes every clause, so the two blocks below find nothing.
-        let _ = self.lexer.tolerant
+        let _ = self.is_tolerant()
             && self.skip_interface_heritage_clauses(
                 &mut extends,
                 &mut other_heritage,
@@ -3972,7 +3974,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseDelimitedList(PCTypeArguments)`: the list ends before any token that is neither
             // a comma nor the start of a type, in TypeScript's own speculative parses too. So it
             // may be empty ("<>") and may end with a comma ("<T,>").
-            if self.lexer.tolerant && !self.is_list_element(ListKind::TypeArguments, false) {
+            if self.is_tolerant() && !self.is_list_element(ListKind::TypeArguments, false) {
                 self.check_end_of_type_arguments(is_first, less_than);
                 break;
             }
@@ -4177,7 +4179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.expect(T::TExtends)?;
         // `tryParseConstraintOfInferType`: the constraint is a whole type, and the lookahead for
         // the "?" comes after all of it.
-        let level = if self.lexer.tolerant {
+        let level = if self.is_tolerant() {
             Level::Lowest
         } else {
             Level::Prefix
@@ -4229,7 +4231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.skip_typescript_return_type()?;
         // Check the token after this and backtrack if it's the wrong one
-        if self.lexer.token != T::TEqualsGreaterThan || self.lexer.tolerant {
+        if self.lexer.token != T::TEqualsGreaterThan || self.is_tolerant() {
             return self.check_token_after_arrow_return_type(type_start);
         }
         Ok(())
@@ -4242,7 +4244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         type_start: bun_ast::Loc,
     ) -> Result<(), Error> {
-        if self.lexer.tolerant {
+        if self.is_tolerant() {
             if self.return_type_blocks_arrow_function(type_start) {
                 return Err(crate::Error::Backtrack);
             }

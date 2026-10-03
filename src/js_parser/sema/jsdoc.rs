@@ -249,11 +249,11 @@ fn is_object_or_object_array(file: &bun_sema::hir::File, ty: ts::TypeId) -> bool
 /// Parses every JSDoc comment recorded by the lexer of `p`. `syntax` is the type syntax the parser
 /// saved for the file. The types in the comments become nodes of a separate HIR.
 pub(crate) fn read_comments<'a>(
-    p: &mut P<'a, true, false>,
+    p: &mut P<'a, true, false, true>,
     mut syntax: TypeSyntax<'a>,
 ) -> (TypeSyntax<'a>, Comments) {
     let mut comments = Comments::default();
-    if !syntax.save_types || !p.lexer.tolerant {
+    if !syntax.save_types || !p.is_tolerant() {
         return (syntax, comments);
     }
     let source: &'a [u8] = p.lexer.contents;
@@ -347,7 +347,7 @@ fn token_of(token: T) -> Token {
 }
 
 /// The parser lexer's current token, as a `Name`.
-fn name_at_token(p: &P<'_, true, false>) -> Name {
+fn name_at_token(p: &P<'_, true, false, true>) -> Name {
     Name {
         start: p.lexer.start as u32,
         end: p.lexer.end as u32,
@@ -435,7 +435,7 @@ struct Mark<'a> {
 }
 
 struct Reader<'p, 'a> {
-    p: &'p mut P<'a, true, false>,
+    p: &'p mut P<'a, true, false, true>,
     /// The source, up to the `*/` of the comment.
     text: &'a [u8],
     token: Token,
@@ -456,7 +456,12 @@ struct Reader<'p, 'a> {
 
 impl<'p, 'a> Reader<'p, 'a> {
     /// `parseJSDocComment` for the comment from `start` to `end`.
-    fn read(p: &'p mut P<'a, true, false>, source: &'a [u8], start: usize, end: usize) -> JsDoc {
+    fn read(
+        p: &'p mut P<'a, true, false, true>,
+        source: &'a [u8],
+        start: usize,
+        end: usize,
+    ) -> JsDoc {
         let text = &source[..end - 2];
         p.lexer.contents = text;
         p.lexer.all_comments.clear();
@@ -901,7 +906,7 @@ impl<'p, 'a> Reader<'p, 'a> {
     }
 
     fn read_import_declaration(
-        p: &mut P<'a, true, false>,
+        p: &mut P<'a, true, false, true>,
         import: &mut Import,
     ) -> Result<(), Error> {
         import.clause_start = p.token_start();

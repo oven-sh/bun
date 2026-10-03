@@ -764,6 +764,51 @@ describe("reading an ASCII prefix slice does not mark the parent's store as ASCI
   });
 });
 
+// text() and json() strip a UTF-8 BOM before they scan for ASCII. The BOM's
+// bytes are not ASCII, so the scan must not mark the Blob or its store as ASCII.
+describe("reading a Blob that starts with a UTF-8 BOM does not mark it as ASCII", () => {
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+
+  test.each([
+    ["text()", "abc", (blob: Blob) => blob.text(), "abc"],
+    ["json()", '{"a":1}', (blob: Blob) => blob.json(), { a: 1 }],
+  ])("a slice into the BOM after the parent's %s", async (_, body, read, expected) => {
+    const blob = new Blob([bom, body]);
+    const sliceMadeBefore = blob.slice(1);
+    expect(await read(blob)).toEqual(expected);
+    expect(await read(blob)).toEqual(expected);
+    expect([await sliceMadeBefore.text(), await blob.slice(1).text()]).toEqual([
+      "\ufffd\ufffd" + body,
+      "\ufffd\ufffd" + body,
+    ]);
+  });
+
+  test("a Blob built from a BOM-prefixed part that was already read", async () => {
+    const part = new Blob([bom, "abc"]);
+    expect(await part.text()).toBe("abc");
+    // The BOM is no longer at the start, so it decodes as U+FEFF.
+    expect(await new Blob(["x", part]).text()).toBe("x\ufeffabc");
+    expect(await new Blob([part]).text()).toBe("abc");
+  });
+
+  test("Bun.serve gives a BOM-prefixed Blob the same Content-Type before and after text()", async () => {
+    const make = () => new Blob([new Uint8Array([...bom, 0x61, 0x62, 0x63])]);
+    const bodies: Record<string, Blob> = { read: make(), notRead: make() };
+    expect(await bodies.read.text()).toBe("abc");
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(bodies[new URL(req.url).pathname.slice(1)]),
+    });
+    const types: Record<string, string | null> = {};
+    for (const name of Object.keys(bodies)) {
+      const response = await fetch(new URL(name, server.url));
+      types[name] = response.headers.get("content-type");
+      await response.arrayBuffer();
+    }
+    expect(types).toEqual({ read: "application/octet-stream", notRead: "application/octet-stream" });
+  });
+});
+
 // Wrapping a Blob whose type is heap-owned (not in the mime table) with a
 // known mime type overwrote content_type with a static pointer without
 // clearing content_type_allocated, so GC sweep freed a static pointer.

@@ -2454,7 +2454,8 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
+                // `buf` excludes a stripped BOM, whose bytes are not ASCII.
+                self.set_is_ascii_flag(bom.is_none());
             }
         }
 
@@ -2671,7 +2672,8 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
+                // `buf` excludes a stripped BOM, whose bytes are not ASCII.
+                self.set_is_ascii_flag(bom.is_none());
             }
         }
 

@@ -450,6 +450,40 @@ impl ValueIdSet {
     fn iter(&self) -> std::slice::Iter<'_, ValueId> {
         self.as_slice().iter()
     }
+
+    /// Set-union in insertion order. `seen` is a scratch bitmap that is all zero on entry and on exit.
+    fn extend_from(&mut self, other: &ValueIdSet, seen: &mut Vec<u64>) -> bool {
+        if !other.is_heap() {
+            let mut changed = false;
+            for v in other {
+                changed |= self.insert(*v);
+            }
+            return changed;
+        }
+        if self.as_slice() == other.as_slice() {
+            return false;
+        }
+        let max = self.iter().chain(other).map(|v| v.0).max().unwrap_or(0) as usize;
+        if seen.len() <= max / 64 {
+            seen.resize(max / 64 + 1, 0);
+        }
+        for v in self.iter() {
+            seen[v.0 as usize / 64] |= 1 << (v.0 % 64);
+        }
+        let mut changed = false;
+        for v in other {
+            let (word, bit) = (v.0 as usize / 64, 1u64 << (v.0 % 64));
+            if seen[word] & bit == 0 {
+                seen[word] |= bit;
+                self.push(*v);
+                changed = true;
+            }
+        }
+        for v in self.iter() {
+            seen[v.0 as usize / 64] = 0;
+        }
+        changed
+    }
 }
 
 impl Clone for ValueIdSet {
@@ -847,6 +881,7 @@ impl InferenceState {
     /// Merge `other` into `self` in place. Returns `true` if `self` changed.
     fn merge_from(&mut self, other: &InferenceState) -> bool {
         let mut changed = false;
+        let mut seen: Vec<u64> = Vec::new();
 
         if other.values.len() > self.values.len() {
             self.values.resize(other.values.len(), None);
@@ -888,11 +923,7 @@ impl InferenceState {
                         *this_values = other_values.clone();
                         changed = true;
                     } else {
-                        for ov in other_values {
-                            if this_values.insert(*ov) {
-                                changed = true;
-                            }
-                        }
+                        changed |= this_values.extend_from(other_values, &mut seen);
                     }
                     *any_heap |= this_values.is_heap();
                 }
@@ -901,12 +932,7 @@ impl InferenceState {
                 for (id, other_values) in that {
                     match this.entry(*id) {
                         std::collections::hash_map::Entry::Occupied(mut e) => {
-                            let this_values = e.get_mut();
-                            for ov in other_values {
-                                if this_values.insert(*ov) {
-                                    changed = true;
-                                }
-                            }
+                            changed |= e.get_mut().extend_from(other_values, &mut seen);
                         }
                         std::collections::hash_map::Entry::Vacant(e) => {
                             e.insert(other_values.clone());
@@ -928,11 +954,10 @@ impl InferenceState {
         phi_operands: &crate::collections::IndexMap<BlockId, Place>,
     ) {
         let mut values = ValueIdSet::new();
+        let mut seen: Vec<u64> = Vec::new();
         for (_, operand) in phi_operands {
             if let Some(operand_values) = self.variables.get(operand.identifier) {
-                for v in operand_values {
-                    values.insert(*v);
-                }
+                values.extend_from(operand_values, &mut seen);
             }
             // If not found, it's a backedge that will be handled later by merge
         }

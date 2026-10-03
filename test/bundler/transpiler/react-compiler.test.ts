@@ -9,6 +9,87 @@ import { itBundled, type BundlerTestInput } from "../expectBundled";
 // See vendor/react-compiler/crates/react_compiler/src/entrypoint/imports.rs
 // (`add_memo_cache_import` / `get_react_compiler_runtime_module`).
 
+describe("react-compiler InferTypes", () => {
+  // `locals` variables rotated in a `while (true)` inside another loop: every
+  // phi of the inner loop reaches every other one through two back edges.
+  const rotation = (locals: number) => {
+    const names = Array.from({ length: locals }, (_, i) => `v${i}`);
+    return `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        ${names.map(name => `let ${name} = {};`).join(" ")}
+        for (let i = 0; i < props.n; i++) {
+          while (true) {
+            let z = v0;
+            ${names.map((name, i) => `${name} = ${names[i + 1] ?? "z"};`).join(" ")}
+            if (cond(v0)) break;
+          }
+        }
+        return v0;
+      }
+    `;
+  };
+
+  const build = async (cwd: string, entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+  };
+
+  // Every path to a phi used to copy its resolved type into the phi that reads it.
+  test("resolves a phi type once however many paths reach it", async () => {
+    const mutate = Array.from({ length: 3 }, () => "if (Array.isArray(v0)) v0.push(p.a);").join("\n");
+    using dir = tempDir("react-compiler-phi-types", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "try.jsx": `
+        export default function App(p) {
+          let v0 = [p.a];
+          let v3;
+          for (const x of p.items) {
+            try {
+              if (p.a > 1) { v0 = p.b; }
+              ${mutate}
+              JSON.parse(p.t);
+            } catch {
+              try {
+                ${mutate}
+                v0 = p.b;
+              } catch {}
+            }
+            for (const y of p.items) {
+              v3 = {};
+              if (y > 3) v0 = "k";
+            }
+          }
+          return <div data-v={v3} />;
+        }
+      `,
+      "rotation.jsx": rotation(20),
+    });
+
+    const [empty, tryCatch, rotated] = await Promise.all(
+      ["empty.jsx", "try.jsx", "rotation.jsx"].map(entry => build(String(dir), entry)),
+    );
+    const bound = isASAN || isDebug ? 300 : 100;
+    expect({
+      tryCatch: { memoized: tryCatch.memoized, bounded: tryCatch.peakMB - empty.peakMB < bound },
+      rotated: { memoized: rotated.memoized, bounded: rotated.peakMB - empty.peakMB < bound },
+    }).toEqual({
+      tryCatch: { memoized: true, bounded: true },
+      rotated: { memoized: true, bounded: true },
+    });
+  });
+});
+
 describe("bundler", () => {
   itBundled("react-compiler/SimpleComponent", {
     files: {

@@ -9,8 +9,10 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
+  spawnLookupLoop,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -3261,6 +3263,55 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   expect(readFileSync(resolved, "utf8")).toBe("x");
   // Idempotent: resolving the canonical path returns itself.
   expect(realpathSync(resolved)).toBe(resolved);
+});
+
+// fcntl(F_GETPATH) names a file that has several hard links by the link that any process looked up
+// last. Linux names the link that was opened.
+it.skipIf(!isMacOS)(
+  "realpath of a hard link names the link that was passed while another process looks up a different link",
+  async () => {
+    using dir = tempDir("fs-realpath-hardlink", { original: { "original.txt": "hard link" }, linked: {} });
+    const root = realpathSync(String(dir));
+    const original = join(root, "original", "original.txt");
+    const link = join(root, "linked", "link.txt");
+    const symlink = join(root, "linked", "symlink.txt");
+    const throughDirectorySymlink = join(root, "linked-symlink", "link.txt");
+    fs.linkSync(original, link);
+    symlinkSync(link, symlink);
+    symlinkSync("linked", join(root, "linked-symlink"));
+    expect(statSync(link).nlink).toBe(2);
+
+    await using lookups = await spawnLookupLoop(original);
+
+    const seen: Record<string, number> = {};
+    const count = (path: string) => void (seen[path] = (seen[path] ?? 0) + 1);
+    for (let i = 0; i < 2000; i++) {
+      count(realpathSync(link));
+      count(realpathSync.native(link));
+      count(realpathSync(symlink));
+      count(realpathSync(throughDirectorySymlink));
+    }
+    for (let i = 0; i < 100; i++) {
+      count(await promises.realpath(link));
+    }
+    expect(lookups.exitCode).toBeNull();
+    expect(seen).toEqual({ [link]: 8100 });
+  },
+);
+
+// /dev/fd/N is not a link of the file, so there is no path to walk and F_GETPATH names the file.
+it.skipIf(!isMacOS)("realpath of /dev/fd/N names the hard-linked file that the descriptor has open", () => {
+  using dir = tempDir("fs-realpath-hardlink-dev-fd", { "original.txt": "hard link" });
+  const root = realpathSync(String(dir));
+  const original = join(root, "original.txt");
+  const link = join(root, "link.txt");
+  fs.linkSync(original, link);
+  const fd = openSync(link, "r");
+  try {
+    expect([original, link]).toContain(realpathSync(`/dev/fd/${fd}`));
+  } finally {
+    closeSync(fd);
+  }
 });
 
 it("readlink", () => {

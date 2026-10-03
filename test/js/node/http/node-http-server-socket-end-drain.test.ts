@@ -502,22 +502,24 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       }
     });
 
-    // The FIN waits for response bytes that the client does not read. A request body that nothing reads pauses the
-    // reads then too, as in Node: a client cannot fill the memory of the server with it.
-    test.concurrent("a request body that nothing reads pauses the reads while the FIN waits", async () => {
+    // The FIN waits for response bytes that the client does not read. A request body that nothing reads is dropped
+    // then too: a client cannot fill the memory of the server with it. Node stops the reads there.
+    test.concurrent("a request body that nothing reads is not buffered while the FIN waits", async () => {
       const BODY = Buffer.alloc(4 * MB, "b");
-      const { promise: paused, resolve: onPause } = Promise.withResolvers<void>();
+      const { promise: dispatched, resolve: onDispatch } = Promise.withResolvers<void>();
       let upload: IncomingMessage | undefined;
       let heldAtEnd = -1;
       const onRequest: Handler = (req, res) => {
         if (req.url === "/ping") return void res.end("pong");
         upload = req;
         req.on("error", () => {});
-        req.socket.once("pause", onPause);
         writeChunks(res, MB);
         req.socket.end();
         // In the tick of a write, writableLength also counts the bytes that the transport took.
-        process.nextTick(() => (heldAtEnd = res.writableLength));
+        process.nextTick(() => {
+          heldAtEnd = res.writableLength;
+          onDispatch();
+        });
       };
       await using server = createServer({}, onRequest);
       await once(server.listen(0, "127.0.0.1"), "listening");
@@ -528,8 +530,9 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
         client.pause();
         client.write(post("/upload", BODY.length));
         client.write(BODY);
-        await paused;
-        // Two more requests reach the server behind the body. With the reads on, it has more of the body by now.
+        await dispatched;
+        while (upload!.readableLength < upload!.readableHighWaterMark) await new Promise(resolve => setImmediate(resolve));
+        // Two more requests reach the server behind the body. A server that keeps the body has more of it by now.
         await roundTrip(port);
         await roundTrip(port);
         expect({
@@ -992,32 +995,54 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
     },
   );
 
-  // The FIN waits for response bytes that the client does not read. Until it leaves, the body is buffered as before.
-  test.concurrent("a reader that comes late gets the whole body that arrived while the FIN waited", async () => {
-    const size = 300_000;
+  // The response is more than the kernel takes at once, so the FIN waits for it. Nothing reads the upload. It must
+  // not fill the memory of the server. The server must not close over it either: a close over bytes that nothing
+  // has read is a reset, and a reset discards the response bytes that the kernel has not sent yet.
+  test.concurrent.each([
+    ["in the tick of res.end()", (socket: net.Socket) => void socket.end()],
+    // The upload has filled the buffer of the request by then.
+    ["in a later tick", (socket: net.Socket) => void setImmediate(() => socket.end())],
+  ])("a client that still uploads gets the whole response, socket.end() %s", async (_when, end) => {
+    const size = 8 * 1024 * 1024;
+    const piece = Buffer.concat([Buffer.from("10000\r\n"), Buffer.alloc(65536, "u"), Buffer.from("\r\n")]);
     const { promise: dispatched, resolve: onRequest } = Promise.withResolvers<{ req: IncomingMessage; held: number }>();
     await using server = createServer((req, res) => {
       req.on("error", () => {});
       res.on("error", () => {});
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      const chunk = Buffer.alloc(1024 * 1024, "a");
-      for (let i = 0; i < 8; i++) res.write(chunk);
-      res.socket!.end();
+      req.socket.on("error", () => {});
+      res.end(Buffer.alloc(size, "r"));
+      end(req.socket);
       // In the tick of a write, writableLength also counts the bytes that the transport took.
-      process.nextTick(() => onRequest({ req, held: res.writableLength }));
+      setImmediate(() => onRequest({ req, held: res.writableLength }));
     });
 
     const client = await connectTo(server);
     try {
       client.pause();
-      client.write(requestHead(`Content-Length: ${size}`));
-      const { req, held } = await dispatched;
-      client.write(Buffer.alloc(size, "x"));
-      while (req.readableLength < req.readableHighWaterMark) await new Promise(resolve => setImmediate(resolve));
       let received = 0;
-      req.on("data", chunk => (received += chunk.length));
-      await once(req, "end");
-      expect({ received, fin: held > 0 ? "waits" : "left" }).toEqual({ received: size, fin: "waits" });
+      let head = Buffer.alloc(0);
+      client.on("data", chunk => {
+        received += chunk.length;
+        if (!head.includes("\r\n\r\n")) head = Buffer.concat([head, chunk]);
+      });
+      const outcome = new Promise<string>(resolve => {
+        client.on("end", () => resolve("end"));
+        client.on("error", (err: NodeJS.ErrnoException) => resolve(`error ${err.code}`));
+        client.on("close", () => resolve("close with no end"));
+      });
+      client.write(requestHead("Transfer-Encoding: chunked"));
+      for (let i = 0; i < 4; i++) client.write(piece);
+      const { req, held } = await dispatched;
+      // The client reads the response while it sends the rest of the upload.
+      client.resume();
+      for (let i = 0; i < 12; i++) client.write(piece);
+      expect({
+        outcome: await outcome,
+        body: received - (head.indexOf("\r\n\r\n") + 4),
+        fin: held > 0 ? "waits" : "left",
+        // One read is at most 512 KB: the read that filled the buffer, and one more when the reads start again.
+        bounded: req.readableLength <= req.readableHighWaterMark + 2 * 512 * 1024,
+      }).toEqual({ outcome: "end", body: size, fin: "waits", bounded: true });
     } finally {
       client.destroy();
       server.closeAllConnections();
@@ -1107,6 +1132,85 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
       client.destroy();
       server.closeAllConnections();
       server.close();
+    }
+  });
+
+  // Node.js reports one timeout for a message. The window behind the FIN must not report a second one.
+  test.concurrent("a 'clientError' listener that answers a request timeout with socket.end() hears it once", async () => {
+    const reports = new Map<Duplex, number>();
+    const { promise: firstReported, resolve: onFirstReport } = Promise.withResolvers<void>();
+    const { promise: secondClientReported, resolve: onSecondClient } = Promise.withResolvers<void>();
+    let first: Duplex | undefined;
+    const options = { connectionsCheckingInterval: 25 };
+    const server =
+      protocol === "https" ? https.createServer({ ...tlsCert, ...options }) : http.createServer(options);
+    server.requestTimeout = 100;
+    server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+      socket.on("error", () => {});
+      if (err.code !== "ERR_HTTP_REQUEST_TIMEOUT") return void socket.destroy();
+      reports.set(socket, (reports.get(socket) ?? 0) + 1);
+      first ??= socket;
+      if (socket !== first) {
+        socket.destroy();
+        return void onSecondClient();
+      }
+      socket.end(badRequest);
+      onFirstReport();
+    });
+
+    // Neither client sends a request: the window of a connection opens when the server accepts it.
+    const client = await connectTo(server);
+    let later: net.Socket | undefined;
+    try {
+      await firstReported;
+      // This connection is younger than the FIN of the first one. When it times out, a second window of the first
+      // one has ended too, and the server checks the first connection first.
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+      later = protocol === "https" ? tls.connect({ ...to, rejectUnauthorized: false }) : net.connect(to);
+      later.on("error", () => {});
+      await secondClientReported;
+      expect({ reports: reports.get(first!), clientEnded: client.writableEnded }).toEqual({
+        reports: 1,
+        clientEnded: false,
+      });
+    } finally {
+      client.destroy();
+      later?.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // The FIN has left, so the bytes of this response stay in the buffer. They must not hold the connection when the
+  // server closes: nothing can send them.
+  test.concurrent.each([
+    ["in the 'request' listener", false],
+    ["in a later tick", true],
+  ])("server.close() closes a connection that ended %s and then got its response", async (_when, later) => {
+    const { promise: responded, resolve: onResponse } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.socket.on("error", () => {});
+      res.on("error", () => {});
+      const endThenRespond = () => {
+        req.socket.end();
+        res.end("ok");
+        setImmediate(onResponse);
+      };
+      if (later) setImmediate(endThenRespond);
+      else endThenRespond();
+    });
+
+    const client = await connectTo(server);
+    try {
+      const serverEnded = once(client, "end");
+      client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await Promise.all([serverEnded, responded]);
+      // The client keeps its side open. Only the server can close this connection.
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      expect(client.writableEnded).toBe(false);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
     }
   });
 

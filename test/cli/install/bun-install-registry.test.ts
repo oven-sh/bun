@@ -23,11 +23,11 @@ import {
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
 import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
 import { join, resolve } from "path";
+import { TestRegistry } from "registry";
 import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
 
@@ -37,21 +37,17 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var registry: VerdaccioRegistry;
+var registry: TestRegistry;
 var port: number;
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
 var packageJson: string;
 
-let users: Record<string, string> = {};
-
 setDefaultTimeout(1000 * 60 * 5);
-registry = new VerdaccioRegistry();
+registry = new TestRegistry().start();
 port = registry.port;
-await registry.start();
 
-afterAll(async () => {
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+afterAll(() => {
   registry.stop();
 });
 
@@ -59,46 +55,12 @@ beforeEach(async () => {
   ({ packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
   }));
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
-  users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 });
 
 function registryUrl() {
   return registry.registryUrl();
-}
-
-/**
- * Returns auth token
- */
-async function generateRegistryUser(username: string, password: string): Promise<string> {
-  if (users[username]) {
-    throw new Error("that user already exists");
-  } else users[username] = password;
-
-  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
-  const user = {
-    name: username,
-    password: password,
-    email: `${username}@example.com`,
-  };
-
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(user),
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    return data.token;
-  } else {
-    throw new Error("Failed to create user:", response.statusText);
-  }
 }
 
 describe("auto-install", () => {
@@ -605,7 +567,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("only .npmrc", async () => {
-    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
+    const token = await registry.generateUser("whoami-npmrc", "whoami-npmrc");
     const npmrc = `
     //localhost:${port}/:_authToken=${token}
     registry=http://localhost:${port}`;
@@ -627,7 +589,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("two .npmrc", async () => {
-    const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
+    const token = await registry.generateUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
     const homeDir = `${packageDir}/home_dir`;
@@ -670,7 +632,7 @@ describe("whoami", async () => {
   });
   test("invalid token", async () => {
     // create the user and provide an invalid token
-    const token = await generateRegistryUser("invalid-token", "invalid-token");
+    await registry.generateUser("invalid-token", "invalid-token");
     const bunfig = Bun.TOML.stringify({
       install: {
         cache: false,
@@ -692,7 +654,33 @@ describe("whoami", async () => {
     const out = await stdout.text();
     expect(out).toBeEmpty();
     const err = await stderr.text();
-    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
+    expect(err).toBe(`\n401 Unauthorized: http://localhost:${port}/-/whoami\n`);
+    expect(await exited).toBe(1);
+  });
+  test("a registry that answers 200 without a username", async () => {
+    // Some registries do not reject a token they do not know. They answer with an empty object.
+    using anonymous = Bun.serve({ port: 0, fetch: () => Response.json({}) });
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${anonymous.port}/`, token: "1234567" },
+      },
+    });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await stdout.text();
+    expect(out).toBeEmpty();
+    const err = await stderr.text();
+    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${anonymous.port}/'\n`);
     expect(await exited).toBe(1);
   });
 });
@@ -10048,7 +10036,7 @@ test("rejects npm aliases whose manifest URL resolves to a different host than t
     },
   });
 
-  const token = await generateRegistryUser("manifest-host-pinning", "manifest-host-pinning");
+  const token = await registry.generateUser("manifest-host-pinning", "manifest-host-pinning");
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),

@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, tempDir } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
-const verdaccio = new VerdaccioRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   await verdaccio.start();

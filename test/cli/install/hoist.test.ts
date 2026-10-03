@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, test } from "bun:test";
-import { VerdaccioRegistry, bunEnv, runBunInstall } from "harness";
+import { bunEnv, runBunInstall } from "harness";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

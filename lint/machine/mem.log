@@ -1,13 +1,3 @@
-10-02_13:30:34 anon=23MB pids=27 load=1017.17 top=mariadbd:12MB
-10-02_13:31:07 anon=23MB pids=27 load=1021.94 top=mariadbd:12MB
-10-02_13:31:41 anon=25MB pids=29 load=1064.45 top=mariadbd:12MB
-10-02_13:32:17 anon=26MB pids=31 load=1086.55 top=mariadbd:12MB
-10-02_13:32:48 anon=49MB pids=34 load=1093.24 top=git:37MB
-10-02_13:33:20 anon=23MB pids=27 load=1118.48 top=mariadbd:12MB
-10-02_13:33:52 anon=23MB pids=27 load=1119.70 top=mariadbd:12MB
-10-02_13:34:24 anon=23MB pids=27 load=1073.15 top=mariadbd:12MB
-10-02_13:34:55 anon=23MB pids=27 load=1061.28 top=mariadbd:12MB
-10-02_13:35:28 anon=23MB pids=27 load=1046.91 top=mariadbd:12MB
 10-02_13:35:59 anon=23MB pids=27 load=1067.49 top=mariadbd:12MB
 10-02_13:36:33 anon=23MB pids=27 load=1076.10 top=mariadbd:12MB
 10-02_13:37:07 anon=23MB pids=27 load=1131.24 top=mariadbd:12MB
@@ -398,3 +388,13 @@
 10-03_00:21:56 anon=125MB pids=27 load=340.96 top=mariadbd:118MB
 10-03_00:22:30 anon=125MB pids=27 load=381.91 top=mariadbd:118MB
 10-03_00:23:01 anon=125MB pids=27 load=351.63 top=mariadbd:118MB
+10-03_00:23:32 anon=125MB pids=27 load=306.59 top=mariadbd:118MB
+10-03_00:24:04 anon=125MB pids=28 load=272.21 top=mariadbd:118MB
+10-03_00:24:35 anon=124MB pids=28 load=251.14 top=mariadbd:118MB
+10-03_00:25:07 anon=74MB pids=27 load=265.25 top=mariadbd:74MB
+10-03_00:25:42 anon=53MB pids=27 load=324.10 top=mariadbd:52MB
+10-03_00:26:13 anon=43MB pids=27 load=291.74 top=mariadbd:45MB
+10-03_00:26:45 anon=42MB pids=28 load=313.22 top=mariadbd:44MB
+10-03_00:27:21 anon=41MB pids=28 load=329.67 top=mariadbd:43MB
+10-03_00:27:56 anon=40MB pids=27 load=338.80 top=mariadbd:42MB
+10-03_00:28:31 anon=38MB pids=26 load=380.70 top=mariadbd:40MB

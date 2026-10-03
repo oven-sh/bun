@@ -15,7 +15,8 @@ export default [
     configurable: false,
     overridesToJS: true,
     memoryCost: true,
-    values: ["stream"],
+    // `bodyError`: the error of a failed body (`Body::Value::Error`), which the native side holds weakly.
+    values: ["stream", "bodyError"],
     proto: {
       text: { fn: "getText", async: true },
       textStream: { fn: "getTextStream" },
@@ -93,7 +94,8 @@ export default [
         fn: "constructError",
       },
     },
-    values: ["stream", "transform"],
+    // `bodyError`: the error of a failed body (`Body::Value::Error`), which the native side holds weakly.
+    values: ["stream", "transform", "bodyError"],
     proto: {
       url: {
         getter: "getURL",

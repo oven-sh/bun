@@ -154,7 +154,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
   function onProxyData(chunk: Buffer): boolean {
     $debug("onProxyData", chunk.length);
     const before = received;
-    buffer = appendHeadChunk(buffer, before, chunk);
+    buffer = appendHeadChunk(buffer, before, chunk, maxHeaderSize);
     received += chunk.length;
     const headerEndIndex = indexOfHeadEnd(buffer, before, received);
     const headerLength = headerEndIndex === -1 ? received : headerEndIndex + 4;

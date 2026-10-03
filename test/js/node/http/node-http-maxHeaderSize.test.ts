@@ -288,7 +288,7 @@ describe("the head of a proxy's CONNECT response", () => {
 
   const { appendHeadChunk, indexOfHeadEnd, firstLineOfHead } = proxyResponseHead;
 
-  test("its end is where Node's concat-and-search finds it, for random chunks", () => {
+  test("its end and its limit are where Node's concat-and-search puts them, for random chunks", () => {
     // xorshift32 with a fixed seed: the same chunks in every run.
     let state = 0x2545f491;
     function random(limit: number) {
@@ -298,32 +298,50 @@ describe("the head of a proxy's CONNECT response", () => {
       return (state >>> 0) % limit;
     }
     const alphabet = Buffer.from("\r\n\r\na ");
-    const seen = { mismatches: 0, ended: 0, notEnded: 0, chunksLargerThanAllBefore: 0 };
+    const seen = { mismatches: 0, ended: 0, exceeded: 0, pending: 0, chunksLargerThanAllBefore: 0, chunksPastLimit: 0 };
     for (let round = 0; round < 1000; round++) {
       const bytes = Buffer.from(Array.from({ length: 1 + random(300) }, () => alphabet[random(alphabet.length)]));
+      const limit = round % 3 === 0 ? Infinity : 1 + random(300);
       let head: Buffer | undefined;
       let node = Buffer.alloc(0);
       let received = 0;
-      let ended = false;
-      while (received < bytes.length && !ended) {
+      let result: "ended" | "exceeded" | "pending" = "pending";
+      // The tunnel reads until the head ends or passes the limit.
+      while (received < bytes.length && result === "pending") {
         const size = random(3) === 0 ? 1 + random(2 * received + 50) : 1 + random(4);
         // A chunk of its own, as a socket read makes one.
         const chunk = Buffer.from(bytes.subarray(received, received + size));
         if (received > 0 && chunk.length > received) seen.chunksLargerThanAllBefore++;
-        head = appendHeadChunk(head, received, chunk);
+        if (received > 0 && received + chunk.length > limit) seen.chunksPastLimit++;
+        head = appendHeadChunk(head, received, chunk, limit);
         const index = indexOfHeadEnd(head, received, received + chunk.length);
         received += chunk.length;
-        // Node: https://github.com/nodejs/node/blob/v26.10.0/lib/https.js#L251-L253
+        // Node: https://github.com/nodejs/node/blob/v26.10.0/lib/https.js#L251-L256
         node = Buffer.concat([node, chunk], node.length + chunk.length);
         const nodeIndex = node.indexOf("\r\n\r\n");
-        if (index !== nodeIndex || !head.subarray(0, received).equals(node)) seen.mismatches++;
-        ended = nodeIndex !== -1;
-        if (ended && firstLineOfHead(head) !== node.subarray(0, node.indexOf("\r\n")).toString()) seen.mismatches++;
+        if ((nodeIndex === -1 ? node.length : nodeIndex + 4) > limit) {
+          result = "exceeded";
+          if ((index === -1 ? received : index + 4) <= limit) seen.mismatches++;
+        } else if (nodeIndex !== -1) {
+          result = "ended";
+          if (index !== nodeIndex || !head.subarray(0, index + 4).equals(node.subarray(0, nodeIndex + 4))) {
+            seen.mismatches++;
+          }
+          if (firstLineOfHead(head) !== node.subarray(0, node.indexOf("\r\n")).toString()) seen.mismatches++;
+        } else if (index !== -1 || !head.subarray(0, received).equals(node)) {
+          seen.mismatches++;
+        }
       }
-      if (ended) seen.ended++;
-      else seen.notEnded++;
+      seen[result]++;
     }
-    expect(seen).toEqual({ mismatches: 0, ended: 724, notEnded: 276, chunksLargerThanAllBefore: 1253 });
+    expect(seen).toEqual({
+      mismatches: 0,
+      ended: 613,
+      exceeded: 139,
+      pending: 248,
+      chunksLargerThanAllBefore: 1248,
+      chunksPastLimit: 174,
+    });
   });
 
   test("only the received bytes are searched, from 3 bytes before the new ones", () => {
@@ -335,25 +353,40 @@ describe("the head of a proxy's CONNECT response", () => {
       indexOfHeadEnd(head, 5, 6),
       indexOfHeadEnd(head, 6, 12),
       indexOfHeadEnd(head, 9, 11),
-    ]).toEqual([-1, 2, 2, 8, -1]);
+      // More bytes were received than the buffer keeps.
+      indexOfHeadEnd(head, 6, 100),
+    ]).toEqual([-1, 2, 2, 8, -1, 8]);
   });
 
-  test("its buffer is the first chunk, then doubles", () => {
+  test("its buffer is the first chunk, then doubles, and is never larger than the limit", () => {
     const first = Buffer.from("a");
-    let head = appendHeadChunk(undefined, 0, first);
-    expect(head).toBe(first);
-    const capacities = new Set<number>();
-    for (let length = 1; length < 64; length++) {
-      head = appendHeadChunk(head, length, Buffer.from("b"));
-      capacities.add(head.length);
+    expect(appendHeadChunk(undefined, 0, first, Infinity)).toBe(first);
+    // A head of `bytes` bytes that arrives one byte at a time: the capacities of its buffer, and what the last one keeps.
+    function grow(limit: number, bytes: number) {
+      let head = first;
+      const capacities = new Set<number>();
+      for (let length = 1; length < bytes; length++) {
+        head = appendHeadChunk(head, length, Buffer.from("b"), limit);
+        capacities.add(head.length);
+      }
+      return { capacities: [...capacities], kept: head.toString("latin1") };
     }
-    expect({ capacities: [...capacities], first: first.toString(), head: head.toString() }).toEqual({
+    expect({ ...grow(Infinity, 64), first: first.toString() }).toEqual({
       capacities: [2, 4, 8, 16, 32, 64],
+      kept: "a" + Buffer.alloc(63, "b"),
       first: "a",
-      head: "a" + Buffer.alloc(63, "b"),
     });
-    // A chunk that does not fit in twice the capacity gets a buffer of the size of the head. Other growth leaves zeros.
-    expect(appendHeadChunk(head, 64, Buffer.alloc(1000, "c")).length).toBe(1064);
-    expect([...appendHeadChunk(Buffer.from("ab"), 2, Buffer.from("c"))]).toEqual([97, 98, 99, 0]);
+    // Byte 49 is past the limit: the buffer keeps 48.
+    expect(grow(48, 49)).toEqual({ capacities: [2, 4, 8, 16, 32, 48], kept: "a" + Buffer.alloc(47, "b") });
+    // A limit that is not a number does not bound the capacity.
+    expect(grow("48" as any, 49).capacities).toEqual([2, 4, 8, 16, 32, 64]);
+    // A buffer at the limit stays: the chunk that passes the limit costs no allocation.
+    const full = Buffer.alloc(48, "a");
+    expect(appendHeadChunk(full, 48, Buffer.from("b"), 48)).toBe(full);
+    // A chunk that does not fit in twice the capacity gets a buffer of the size of the head, or of the limit.
+    expect(appendHeadChunk(Buffer.from("ab"), 2, Buffer.alloc(1000, "c"), Infinity).length).toBe(1002);
+    expect(appendHeadChunk(Buffer.from("ab"), 2, Buffer.alloc(1000, "c"), 10).toString()).toBe("abcccccccc");
+    // Other growth leaves zeros.
+    expect([...appendHeadChunk(Buffer.from("ab"), 2, Buffer.from("c"), Infinity)]).toEqual([97, 98, 99, 0]);
   });
 });

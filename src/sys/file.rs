@@ -335,6 +335,26 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
+    /// Open `path` for reading; `EISDIR` for a directory, `ENODEV` for any other non-regular file.
+    pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<Self> {
+        let dir = dir.as_fd();
+        // On Windows `O_NONBLOCK` would make the handle overlapped; the fstat still rejects there.
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::CLOEXEC;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let mode = file.stat().map_err(|e| e.with_path(path))?.st_mode as Mode;
+        if !S::ISREG(mode) {
+            let errno = if S::ISDIR(mode) { E::EISDIR } else { E::ENODEV };
+            return Err(Error::new(errno, Tag::open).with_path(path));
+        }
+        Ok(file)
+    }
+    /// [`File::read_from`] of a regular file only ([`File::open_regular_at`]).
+    pub fn read_regular_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        Self::open_regular_at(dir, path)?.read_to_end()
+    }
     /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
     pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();

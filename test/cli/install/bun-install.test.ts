@@ -2999,6 +2999,60 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should skip bin entries whose value is not a string in a registry manifest", async () => {
+    // npm (normalize-package-bin) drops an entry whose value is not a string and keeps the rest.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            bin: {
+              "baz-run": "index.js",
+              "baz-bad": 5,
+              "baz-exec": "index.js",
+            },
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "0.0.3",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ baz@0.0.3",
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec", "baz-run"]);
+      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
   it("should install latest with prereleases", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

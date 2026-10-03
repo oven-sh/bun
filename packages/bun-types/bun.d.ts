@@ -3011,7 +3011,57 @@ declare module "bun" {
     allowBunRuntime?: boolean;
     exports?: {
       eliminate?: string[];
-      replace?: Record<string, string>;
+      /**
+       * Replace exported declarations of the file. Each key is the name of an
+       * exported declaration, and its value is the replacement.
+       *
+       * - A string, number, boolean, `null` or `undefined` becomes the value
+       *   of the declaration. The declaration keeps its name.
+       * - `[name, value]` replaces the declaration with an export called
+       *   `name`. The export has the value `value`, which is a string,
+       *   number, boolean, `null` or `undefined`.
+       *
+       * For a pair or a map that you keep in a variable, write `as const`:
+       * `const pair = ["__N_SSG", true] as const`. Without a type, TypeScript
+       * infers an array for the pair and reports an error.
+       *
+       * Write each key as an identifier or `default`, and each `name` as an
+       * identifier. The constructor throws a `TypeError` for a key or a
+       * `name` such as `a-b`.
+       *
+       * The `default` key takes a value, and not a pair.
+       *
+       * @example
+       * ```ts
+       * const transpiler = new Bun.Transpiler({
+       *   loader: "ts",
+       *   exports: {
+       *     replace: {
+       *       revalidate: 60,
+       *       getStaticProps: ["__N_SSG", true],
+       *     },
+       *   },
+       * });
+       *
+       * transpiler.transformSync(`
+       *   export const revalidate = readConfig().revalidate;
+       *   export const getStaticProps = async () => ({ props: await load() });
+       * `);
+       * // export const revalidate = 60;
+       * // export const __N_SSG = true;
+       * ```
+       */
+      replace?: Record<
+        string,
+        | string
+        | number
+        | boolean
+        | null
+        | undefined
+        | readonly [name: string, value: string | number | boolean | null | undefined]
+      > & {
+        default?: string | number | boolean | null | undefined;
+      };
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

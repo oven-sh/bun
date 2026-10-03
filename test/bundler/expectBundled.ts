@@ -271,6 +271,7 @@ export interface BundlerTestInput {
   reactCompiler?: boolean;
   reactFastRefresh?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
+  reactFastRefresh?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -541,6 +542,7 @@ function expectBundled(
     reactCompiler = false,
     reactFastRefresh = false,
     reactCompilerOutputMode,
+    reactFastRefresh = false,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,

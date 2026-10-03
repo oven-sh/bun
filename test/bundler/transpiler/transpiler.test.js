@@ -5437,6 +5437,7 @@ describe.concurrent("a stack overflow in the visit pass", () => {
       let below = 1;
       let first = 2;
       while ((await outcome(() => transpiler.transformSync(build(first)))) !== overflow) {
+        if (first >= 1 << 20) throw new Error("no overflow at " + first + " levels");
         below = first;
         first *= 2;
       }

@@ -83,6 +83,21 @@ function readsGivenLimits() { return givenLimits.low + givenLimits.high; }
 function widens(l: Limits) { l.high *= 2; return l.high; }
 out.push(readsConstantLimits(0), readsConstantLimits(5), readsConstantLimits(10), readsGivenLimits(), widens(givenLimits), readsGivenLimits());
 
+interface Route { endpoint: string; weight: number }
+const routes: Route[] = [{ endpoint: "/first", weight: 1 }, { endpoint: "/second", weight: 2 }];
+function isFirst(r: Route) { return r.endpoint === "/first"; }
+function weighsFirst(all: Route[]) { let w = 0; for (const r of all) if (isFirst(r)) w += r.weight; return w; }
+function namesRoute(r: Route) { switch (r.endpoint) { case "/first": return "first"; case "/second": return "second"; default: return "neither"; } }
+out.push(isFirst(routes[0]), isFirst(routes[1]), weighsFirst(routes), namesRoute(routes[0]), namesRoute(routes[1]), namesRoute({ endpoint: "/third", weight: 3 }));
+
+interface Part { name: string; size: number }
+interface Order { count: number; part: Part; rank: number }
+const keptCounts: (() => number)[] = [];
+function halves(n: number) { return n / 2; }
+function describesOrder(unused: unknown, { count, part: { name } }: Order) { keptCounts.push(() => count * 3); return halves(count) + ":" + (count + 0.5) + name; }
+function ordersOne(count: number, part: Part) { return describesOrder(null, { count, part, rank: 1 }); }
+out.push(ordersOne(JSON.parse("1"), { name: "bolt", size: 2 }), keptCounts.map(one => one()).join("|"));
+
 console.log(out.join());
 
 if (process.env.BREAK_TYPES) {

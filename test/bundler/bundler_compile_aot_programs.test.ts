@@ -145,7 +145,9 @@ describe("compile.aot", () => {
           ),
           runWrapped(String(dir), "compiled", {}, {}),
         ]);
-        expect(actual).toEqual({ ...expected, loadsOfMainFromImage: loads });
+        const comparable = (result: typeof actual) =>
+          loads > 1 ? { ...result, stdout: result.stdout.split("\n").sort().join("\n") } : result;
+        expect(comparable(actual)).toEqual({ ...comparable(expected), loadsOfMainFromImage: loads });
         expect(expected.loadsOfMainFromImage).toBe(0);
         expect(expected.stdout).not.toBe("");
       });

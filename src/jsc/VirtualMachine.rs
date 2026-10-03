@@ -5226,17 +5226,23 @@ impl VirtualMachine {
                     if let Some(name) = global.resolve_virtual_module(&answer, source) {
                         return Ok(Ok(name));
                     }
-                    // The name of what an `onLoad` serves may be a package's in the registry.
+                    let has_on_load = global.has_on_load(&answer.to_utf8())?;
+                    // The plugin's own name for a module may be a package's in the registry.
+                    let global_cache = if has_on_load || answer.eql(specifier) {
+                        bun_resolver::GlobalCache::disable
+                    } else {
+                        global.bun_vm().transpiler.resolver.opts.global_cache
+                    };
                     let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
                         global,
                         &answer,
                         source,
                         query_string,
                         mode,
-                        bun_resolver::GlobalCache::disable,
+                        global_cache,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
-                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
+                    if resolved.is_err() && has_on_load {
                         return Ok(Ok(answer));
                     }
                     return Ok(resolved);

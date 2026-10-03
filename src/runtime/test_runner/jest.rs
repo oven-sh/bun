@@ -148,8 +148,7 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
-    /// The `Error` of a `process.exit()` call that found the run failed and the exit code 0. Its stack is the call
-    /// site. `note_process_exit` stores it, `test_command::on_process_exit` prints it, `cancel_process_exit` drops it.
+    /// The `Error` of a `process.exit()` that `note_process_exit` overruled. Its stack is the call site.
     pub(crate) exit_request: Option<jsc::Strong>,
     /// The counts, the JUnit file and the timings file are written: at the end of the run, or before a `process.exit()`.
     pub(crate) report_written: bool,
@@ -181,9 +180,9 @@ impl core::fmt::Display for ExitCaller<'_> {
 }
 
 impl<'a> TestRunner<'a> {
-    /// Whether the run in this process has failed. A sequence that has failed and still runs its hooks counts, before
-    /// `handle_test_completed` adds it to `summary.fail`. False in a `--parallel` worker: its coordinator reports its exit.
+    /// Whether the run in this process has failed. Counts a failed sequence that still runs its hooks.
     pub(crate) fn has_observed_failure(&self) -> bool {
+        // The coordinator reports the exit of a `--parallel` worker.
         if self.test_options.test_worker {
             return false;
         }
@@ -202,8 +201,7 @@ impl<'a> TestRunner<'a> {
             })
     }
 
-    /// The test or hook whose callback is on the stack. A call in tail position (`() => process.exit(0)`) leaves no
-    /// stack frame of its caller, so the message about the call names the caller.
+    /// The test or hook on the stack, for a message about a call in tail position: it has no stack frame of its caller.
     pub(crate) fn exit_caller(&self) -> ExitCaller<'_> {
         let Some(file) = self.bun_test_root.active_file.as_deref() else {
             return ExitCaller::Unknown;
@@ -395,8 +393,7 @@ pub(crate) mod Jest {
         unsafe { RUNNER.read() }
     }
 
-    /// `process.exit()` is about to tell the 'exit' listeners exit code 0. When the run in this process has failed,
-    /// the exit code becomes 1 and the call site is kept for the report of `test_command::on_process_exit`.
+    /// Before `process.exit()` emits 'exit' with code 0: a failed run gets code 1, and the call site is kept.
     #[unsafe(export_name = "Bun__TestRunner__noteProcessExit")]
     extern "C" fn note_process_exit(global: &JSGlobalObject, argless: bool) -> bool {
         let vm = global.bun_vm().as_mut();
@@ -407,8 +404,7 @@ pub(crate) mod Jest {
         let Some(runner) = runner_ptr() else {
             return false;
         };
-        // SAFETY: `RUNNER` is only accessed on this thread. The caller can be a test callback, so no `&mut TestRunner`
-        // is formed over the borrows that `BunTest::run` holds.
+        // SAFETY: `RUNNER` is only accessed on this thread, and no `&mut TestRunner` is formed.
         unsafe {
             if !(*runner.as_ptr()).has_observed_failure() {
                 return false;
@@ -428,8 +424,7 @@ pub(crate) mod Jest {
         true
     }
 
-    /// `process.exit()` returns to JS after `note_process_exit`: a listener threw, or `process.reallyExit` is replaced.
-    /// The run continues, and a failed attempt can still pass on a retry, so the 0 comes back.
+    /// `process.exit()` returned to JS after `note_process_exit`, so the run continues with its 0.
     #[unsafe(export_name = "Bun__TestRunner__cancelProcessExit")]
     extern "C" fn cancel_process_exit(global: &JSGlobalObject) {
         if let Some(runner) = runner_ptr() {

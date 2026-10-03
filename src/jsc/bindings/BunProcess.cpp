@@ -904,8 +904,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // node exits 0 here. `bun test` owns the verdict of a run that has failed: the exit code is 1, and the 'exit'
-    // listeners and process.exitCode say so. A process.exit() that returns to JS leaves no trace of it.
+    // A `bun test` run that has failed exits 1 where node exits 0, and the 'exit' listeners are told so.
     bool wasExitCodeObservable = process->m_isExitCodeObservable;
     bool noted = isBunTest && !Bun__getExitCode(bunVM(zigGlobal)) && Bun__TestRunner__noteProcessExit(zigGlobal, code.isUndefinedOrNull());
     auto undoNote = WTF::makeScopeExit([&] {

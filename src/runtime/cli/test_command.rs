@@ -977,15 +977,12 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-/// The main thread ends the process: `process.exit()`, `process.reallyExit()` or a fatal exception. When the run in this
-/// process has failed and the exit code is 0, the exit code becomes 1 and the run reports what it recorded. Any other
-/// exit code stands.
+/// `Bun__Process__exit` on the main thread: a failed run with exit code 0 gets exit code 1 and its report.
 pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
     let Some(runner) = jest::Jest::runner_ptr() else {
         return;
     };
-    // SAFETY: `RUNNER` is only accessed on this thread. The caller can be a test callback that `BunTest::run` drives,
-    // so the runner is read through the raw pointer and no borrow of it is held across a call that can reach it.
+    // SAFETY: `RUNNER` is only accessed on this thread, and no borrow of the runner is held across a call.
     let request = unsafe { (*runner.as_ptr()).exit_request.take() };
     let overruled = match vm.exit_handler.exit_code {
         // SAFETY: see above.
@@ -1457,9 +1454,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// The count lines that precede `print_summary()`: pass, skip, todo, fail, errors, snapshots and `expect()` calls.
-    /// `snapshots_written` is false for a run that ends early. The end of a run writes the `.snap` files, so an early end
-    /// does not count the snapshots it added.
+    /// The count lines before `print_summary()`. A run that ends early writes no `.snap` file: `snapshots_written` is false.
     pub(crate) fn print_counts(&self, snapshots_written: bool) {
         let summary = self.jest.summary;
         struct DotIndenter {
@@ -1585,18 +1580,13 @@ impl CommandLineReporter {
         }
     }
 
-    /// What the end of a run writes, for a run that `on_process_exit` ends: `error` with its code frame, the failed tests
-    /// that still run their hooks, the counts, the JUnit file and the timings file. Once per process.
-    ///
-    /// # Safety
-    /// `this` is the live reporter. It is a raw pointer because `handle_test_completed` reaches the reporter through
-    /// `BunTest.reporter` while this runs.
+    /// Prints `error` and the early-end report, once per process. `this` is the live reporter.
     unsafe fn report_exit(
         this: *mut CommandLineReporter,
         vm: &mut VirtualMachine,
         error: jsc::JSValue,
     ) {
-        // SAFETY: per the contract, with no borrow of `*this` held across `end_failed_sequences_in_flight`.
+        // SAFETY: no borrow of `*this` is held across `end_failed_sequences_in_flight`, which reaches the reporter too.
         unsafe {
             if core::mem::replace(&mut (*this).jest.report_written, true) {
                 return;
@@ -1616,8 +1606,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// What a run writes when it ends before the tail of `exec`: the counts, the summary line, and the JUnit and
-    /// timings files. `bailed` adds the `--bail` line.
+    /// The counts, the summary line and the report files of a run that ends before the tail of `exec`.
     fn write_early_end_report(&mut self, bailed: bool) {
         pretty_error!("\n");
         self.print_counts(false);
@@ -3031,8 +3020,7 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Only count the file once, not once per repeat. Counted before the load, so a summary printed during the
-            // load has the file in it.
+            // Only count the file once, not once per repeat. Before the load, so a summary printed during it has the file.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }

@@ -628,9 +628,7 @@ impl Execution {
         }
     }
 
-    /// The process exits now. Ends each sequence of the active group that has failed and still runs its hooks, so that
-    /// `advance_sequence` reports it: the `(fail)` line, the counts and the JUnit test case. The hooks that remain do
-    /// not run, and a failed attempt is not retried.
+    /// Ends each failed sequence that still runs its hooks, so `advance_sequence` reports it before the process exits.
     #[cold]
     pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
         let (group, range) = {

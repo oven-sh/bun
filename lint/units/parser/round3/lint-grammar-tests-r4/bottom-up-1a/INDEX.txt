@@ -22,7 +22,9 @@ results/         cargo-test.head-b882bfc32f.txt: `cargo test -p bun_js_parser --
                  grammar_rows_tests.rs; the three findings are in files of the crate as they are at HEAD (p.rs:7996,
                  parse/erased_tests.rs:147, parse/generics.rs:719).
                  run.w.root3.75-passed.txt: the test binary of root3 with the file of state w, no cap on the lints: 75 passed, 0 failed.
-                 The runs of state head on root2 are here where they finished.
+                 clippy.head.root2.txt, run.head.root2.75-passed.txt: the same over root2 with the file of state head: no finding in
+                 the file, 75 passed, 0 failed. Each file that was built is its draft of generated/ byte for byte.
+                 The states z and all were generated and formatted, not built in this pass.
 
 States of the generated file (each is `bash run.sh <state>`):
   head   round 1 as it stands with ../top-down/data/import-type-rest.p1.diff: the three exports with `with` on the next line are taken

@@ -1,8 +1,3 @@
-10-02_15:39:10 anon=790MB pids=52 load=536.64 top=cachegrind-amd6:302MB
-10-02_15:39:45 anon=560MB pids=56 load=594.20 top=rustc:648MB
-10-02_15:40:16 anon=781MB pids=74 load=548.82 top=ld.lld:1401MB
-10-02_15:40:50 anon=2480MB pids=80 load=583.05 top=ld.lld:2830MB
-10-02_15:41:20 anon=2863MB pids=74 load=531.64 top=ld.lld:3087MB
 10-02_15:41:51 anon=2993MB pids=77 load=505.13 top=ld.lld:3214MB
 10-02_15:42:24 anon=3109MB pids=79 load=476.23 top=ld.lld:3298MB
 10-02_15:42:55 anon=3276MB pids=74 load=456.96 top=ld.lld:3506MB
@@ -398,3 +393,8 @@
 10-03_03:50:32 anon=8MB pids=33 load=1016.83 top=git:22MB
 10-03_03:51:18 anon=8MB pids=33 load=1026.08 top=git:22MB
 10-03_03:51:49 anon=11MB pids=31 load=904.27 top=rustfmt:38MB
+10-03_03:52:52 anon=6MB pids=29 load=1125.60 top=postgres:12MB
+10-03_03:54:19 anon=5MB pids=28 load=1287.17 top=postgres:12MB
+10-03_03:55:34 anon=3MB pids=27 load=1412.88 top=postgres:12MB
+10-03_03:56:27 anon=5MB pids=40 load=1539.25 top=postgres:12MB
+10-03_03:58:24 anon=3MB pids=29 load=1718.84 top=postgres:12MB

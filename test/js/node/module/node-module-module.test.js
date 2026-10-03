@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -526,7 +526,7 @@ console.log("survived", require("./late.js"));`,
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
@@ -747,6 +747,76 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("Overwriting _resolveFilename with a non-callable makes require() throw like Node", async () => {
+    // Node keeps _resolveFilename as a plain data property: any value can be
+    // assigned and reads back, and require() throws when it goes to call it.
+    using dir = tempDir("resolve-filename-non-callable", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const Module = require("module");
+        const original = Module._resolveFilename;
+        const attempt = fn => {
+          try {
+            return "returned " + String(fn());
+          } catch (e) {
+            return e.constructor.name + ": " + e.message;
+          }
+        };
+        const results = {};
+        for (const [label, value] of [
+          ["object", {}],
+          ["string", "not a function"],
+          ["undefined", undefined],
+          ["null", null],
+          ["number", 42],
+          ["symbol", Symbol("s")],
+        ]) {
+          Module._resolveFilename = value;
+          results[label] = {
+            readsBack: Object.is(Module._resolveFilename, value),
+            require: attempt(() => require("./dep.cjs")),
+            requireResolve: attempt(() => require.resolve("./dep.cjs")),
+            createRequire: attempt(() => Module.createRequire(__filename)("./dep.cjs")),
+          };
+        }
+        // Callable objects other than plain functions are still honored.
+        Module._resolveFilename = new Proxy(original, {});
+        results.callableProxy = attempt(() => require("./dep.cjs"));
+        Module._resolveFilename = original;
+        results.restored = {
+          readsBack: Module._resolveFilename === original,
+          require: attempt(() => require("./dep.cjs")),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notAFunction = {
+      readsBack: true,
+      require: "TypeError: Module._resolveFilename is not a function",
+      requireResolve: "TypeError: Module._resolveFilename is not a function",
+      createRequire: "TypeError: Module._resolveFilename is not a function",
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      object: notAFunction,
+      string: notAFunction,
+      undefined: notAFunction,
+      null: notAFunction,
+      number: notAFunction,
+      symbol: notAFunction,
+      callableProxy: "returned dep",
+      restored: { readsBack: true, require: "returned dep" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],
@@ -889,6 +959,90 @@ console.log("survived", require("./late.js"));`,
     const stdout = await proc.stdout.text();
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
+  });
+  describe.concurrent("Module.runMain set by a preload", () => {
+    const handlers = `
+      process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
+      process.on("unhandledRejection", error => console.log("unhandledRejection: " + error.message));
+    `;
+    async function run(preload, inWorker = false, main = `console.log("main ran");`) {
+      using dir = tempDir("module-run-main", {
+        "preload.cjs": preload,
+        "main.cjs": main,
+        "worker.mjs": `new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });`,
+      });
+      await using proc = Bun.spawn({
+        cmd: inWorker ? [bunExe(), "./worker.mjs"] : [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+
+    test.each([
+      ["{}", "Object"],
+      ["[]", "Array"],
+      [`"a string"`, `"a string"`],
+      [`Symbol("s")`, "Symbol(s)"],
+      ["10n", "10"],
+    ])("to %s, which is not a function", async (value, described) => {
+      expect(await run(`require("module").runMain = ${value};`)).toEqual({
+        stdout: "",
+        stderr: `TypeError: ${described} is not a function\n\nBun v<bun-version>`,
+        exitCode: 1,
+      });
+    });
+
+    test("to a function that throws", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `require("module").runMain = () => {\n  throw new RangeError("from the override");\n};`,
+      );
+      expect(stderr).toMatchInlineSnapshot(`
+        "1 | require("module").runMain = () => {
+        2 |   throw new RangeError("from the override");
+                        ^
+        RangeError: from the override
+            at <anonymous> (file:NN:NN)
+
+        Bun v<bun-version>"
+      `);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    test("to a function that calls the original and throws", async () => {
+      const preload = `
+        const Module = require("module");
+        const runMain = Module.runMain;
+        Module.runMain = (...args) => {
+          runMain(...args);
+          throw new Error("after the original");
+        };
+      `;
+      expect(await run(preload)).toMatchObject({ stdout: "main ran\n", exitCode: 1 });
+      expect(await run(handlers + preload)).toEqual({
+        stdout: "main ran\nunhandledRejection: after the original\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // What the main file throws is not lost for it.
+      expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
+        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["is not a function", "{}", "Object is not a function"],
+      ["throws", `() => { throw new Error("thrown"); }`, "thrown"],
+    ])("one that %s is reported once", async (_, value, message) => {
+      const expected = { stdout: `uncaughtException: ${message}\n`, stderr: "", exitCode: 0 };
+      expect(await run(`${handlers} require("module").runMain = ${value};`)).toEqual(expected);
+      expect(await run(`${handlers} require("module").runMain = ${value};`, true)).toEqual(expected);
+    });
   });
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({

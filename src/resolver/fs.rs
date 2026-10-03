@@ -10,7 +10,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
-use bun_threading::Mutex;
+use bun_threading::{Guarded, Mutex};
 
 // scope tag renamed `fs` → `Fs` so it doesn't collide with `fs:` fn
 // params (the `declare_scope!` macro emits a `static` with the tag name, and
@@ -116,17 +116,10 @@ pub struct EntryCache {
     pub(crate) kind: EntryKind,
 }
 
-// `cache` / `need_stat` are lazily populated by `Entry::kind` /
-// `Entry::symlink` while callers hold a shared
-// `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
-// `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
-// rewrite of these fields across threads (the `unsafe impl Sync for Entry`
-// below opts back in under that external-locking discipline). `need_stat`
-// is atomic because the `kind()`/`symlink()` fast path reads it without the
-// mutex: the Release store after the `cache` write paired with the Acquire
-// load is what publishes `cache` to those lock-free readers.
+// Lock order: entry mutex, then cache mutex. Cache snapshots also run without
+// the entry mutex, including after another thread has requested a re-stat.
 pub struct Entry {
-    pub(crate) cache: core::cell::Cell<EntryCache>,
+    cache: Guarded<EntryCache>,
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
@@ -141,28 +134,20 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Snapshot of the lazily-populated stat cache. `EntryCache` is `Copy`
-    /// (3 word-sized fields), so by-value return is free and avoids the
-    /// `&self → &interior` aliasing hazard the old `UnsafeCell` accessor had.
+    /// Snapshot the complete cache before a concurrent fill or re-stat can replace it.
     #[inline(always)]
     pub fn cache(&self) -> EntryCache {
-        self.cache.get()
+        *self.cache.lock()
     }
 
-    /// Update a single cache field. Read-modify-write is fine: callers hold
-    /// the per-entry `mutex` so no torn writes; `EntryCache` is `Copy`.
     #[inline(always)]
     pub fn set_cache_fd(&self, fd: Fd) {
-        let mut c = self.cache.get();
-        c.fd = fd;
-        self.cache.set(c);
+        self.cache.lock().fd = fd;
     }
 
     #[inline(always)]
     pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
-        let mut c = self.cache.get();
-        c.symlink = symlink;
-        self.cache.set(c);
+        self.cache.lock().symlink = symlink;
     }
 
     #[inline]
@@ -200,7 +185,7 @@ impl Entry {
     /// this entry's `mutex` (it only performs syscalls and string interning).
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
-    // (double-checked: the cached fast path stays lock-free). `fs` is `*mut`
+    // (the cached fast path takes only the cache mutex). `fs` is `*mut`
     // so the call site does not require a second exclusive `&mut RealFS`
     // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
     // Generic over `R: EntryKindResolver` so this block is independent of
@@ -219,15 +204,13 @@ impl Entry {
                     self.cache().fd,
                     store_fd,
                 ) {
-                    Ok(c) => self.cache.set(c),
+                    Ok(c) => *self.cache.lock() = c,
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
                         return self.cache().kind;
                     }
                 }
-                // Clear the flag only after the `cache` write: lock-free readers
-                // that observe `false` skip the mutex, so this Release store is
-                // what publishes `cache` to them.
+                // Publish completion only after replacing the cache.
                 self.need_stat.store(false, Ordering::Release);
             }
         }
@@ -256,7 +239,7 @@ impl Entry {
                     self.cache().fd,
                     store_fd,
                 ) {
-                    Ok(c) => self.cache.set(c),
+                    Ok(c) => *self.cache.lock() = c,
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
                         return b"";
@@ -286,8 +269,7 @@ impl<'a> EntryLookup<'a> {
     /// # Safety (encapsulated)
     /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
     /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
-    /// only mutable state (`cache`) is behind `Cell`, so interior
-    /// writes via `set_cache*()` do not alias this `&Entry`. The
+    /// cache snapshots and mutations are synchronized by `Guarded`. The
     /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
     /// looked up from.
     #[inline(always)]
@@ -295,13 +277,6 @@ impl<'a> EntryLookup<'a> {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
     }
-
-    // former `entry_mut() -> &'a mut Entry` accessor removed
-    // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
-    // so all mutation goes through `entry().set_cache*()` on a shared borrow;
-    // no `&mut Entry` escape hatch is needed. Write sites that bypass the
-    // accessor go through the raw `self.entry` field directly under the
-    // per-entry `Entry.mutex` (see struct doc above).
 }
 
 /// `DirEntry` companion items: the entry map, the global entry store, and the
@@ -468,15 +443,8 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    // No cache rewrite here, even when the kind changed: a
-                    // lock-free `kind()`/`symlink()` reader that already
-                    // observed `need_stat == false` reads `cache` without the
-                    // per-entry mutex, so overwriting it would race that read
-                    // (a torn 16-byte `Interned` faults in `as_bytes`).
-                    // Publishing `need_stat = true` instead routes every later
-                    // reader through the mutex, where the lazy stat writes the
-                    // fresh cache; a reader that raced the flag sees the old
-                    // cache, stale but untorn.
+                    // Defer the stat until the entry is used; readers racing
+                    // this flag can still take a consistent old cache snapshot.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
                     existing.need_stat.store(
@@ -531,7 +499,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
-                addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
+                addr_of_mut!((*p).cache).write(Guarded::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
@@ -677,13 +645,6 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 }
-
-// SAFETY: ARENA — `Entry` lives in the `BSSList` singleton; `*mut Entry` raw
-// pointers are the only !Send/!Sync field. All access is serialized through
-// `RealFS.entries_mutex`.
-unsafe impl Sync for Entry {}
-// SAFETY: same invariant as the `Sync` impl above.
-unsafe impl Send for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
@@ -1061,3 +1022,114 @@ pub struct PathContentsPair<'buf> {
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    fn entry() -> Entry {
+        Entry {
+            cache: Guarded::new(EntryCache {
+                symlink: Interned::EMPTY,
+                fd: Fd::INVALID,
+                kind: EntryKind::File,
+            }),
+            dir: b"/fixture/",
+            base_: strings::StringOrTinyString::init(b"entry.js"),
+            base_lowercase_: strings::StringOrTinyString::init(b"entry.js"),
+            mutex: Mutex::default(),
+            need_stat: AtomicBool::new(false),
+            abs_path: Interned::EMPTY,
+        }
+    }
+
+    #[test]
+    fn entry_cache_symlink_read_while_filling() {
+        struct NeverStat;
+        impl EntryKindResolver for NeverStat {
+            fn resolve_kind(
+                &mut self,
+                _: &[u8],
+                _: &[u8],
+                _: Fd,
+                _: bool,
+            ) -> crate::CrateResult<EntryCache> {
+                panic!("a populated cache must not stat");
+            }
+        }
+        let entry = entry();
+        let start = Barrier::new(3);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..if cfg!(miri) { 8 } else { 100_000 } {
+                    let _guard = entry.mutex.lock_guard();
+                    entry.set_cache_symlink(Interned::from_static(b"/fixture/real/entry.js"));
+                }
+            });
+            scope.spawn(|| {
+                let mut fs = NeverStat;
+                start.wait();
+                for _ in 0..if cfg!(miri) { 8 } else { 100_000 } {
+                    // SAFETY: the resolver is thread-local and remains live for the call.
+                    let path = unsafe { entry.symlink(&raw mut fs, false) };
+                    assert!(path.is_empty() || path == b"/fixture/real/entry.js");
+                    std::hint::black_box(path);
+                }
+            });
+            start.wait();
+        });
+    }
+
+    #[test]
+    fn entry_cache_snapshot_during_restat() {
+        struct Stat;
+        impl EntryKindResolver for Stat {
+            fn resolve_kind(
+                &mut self,
+                _: &[u8],
+                _: &[u8],
+                _: Fd,
+                _: bool,
+            ) -> crate::CrateResult<EntryCache> {
+                Ok(EntryCache {
+                    symlink: Interned::from_static(b"/fixture/restatted/entry.js"),
+                    fd: Fd::INVALID,
+                    kind: EntryKind::File,
+                })
+            }
+        }
+        let entry = entry();
+        let start = Barrier::new(3);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut fs = Stat;
+                start.wait();
+                for _ in 0..if cfg!(miri) { 8 } else { 10_000 } {
+                    {
+                        let _guard = entry.mutex.lock_guard();
+                        entry.set_cache_fd(Fd::INVALID);
+                        entry.need_stat.store(true, Ordering::Release);
+                    }
+                    // SAFETY: the resolver is thread-local and remains live for the call.
+                    assert_eq!(unsafe { entry.kind(&raw mut fs, false) }, EntryKind::File);
+                }
+            });
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..if cfg!(miri) { 8 } else { 10_000 } {
+                    let cache = entry.cache();
+                    assert_eq!(cache.kind, EntryKind::File);
+                    assert!(!cache.fd.is_valid());
+                    assert!(
+                        cache.symlink.is_empty()
+                            || cache.symlink.as_bytes() == b"/fixture/restatted/entry.js"
+                    );
+                    std::hint::black_box(cache);
+                }
+            });
+            start.wait();
+        });
+    }
+}

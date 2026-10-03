@@ -1231,6 +1231,335 @@ describe("sign/verify context option", () => {
   });
 });
 
+describe("crypto.diffieHellman key data", () => {
+  const b64url = hex => Buffer.from(hex, "hex").toString("base64url");
+  // Alice's private key, Bob's public key, and Bob's private key.
+  function importJwkPair(alice, { d, ...bobPublic }) {
+    return {
+      privateKey: crypto.createPrivateKey({ key: alice, format: "jwk" }),
+      publicKey: crypto.createPublicKey({ key: bobPublic, format: "jwk" }),
+      peerPrivateKey: crypto.createPrivateKey({ key: { ...bobPublic, d }, format: "jwk" }),
+    };
+  }
+
+  // RFC 7748 section 6.1.
+  const x25519 = {
+    ...importJwkPair(
+      {
+        kty: "OKP",
+        crv: "X25519",
+        x: b64url("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"),
+        d: b64url("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"),
+      },
+      {
+        kty: "OKP",
+        crv: "X25519",
+        x: b64url("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"),
+        d: b64url("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"),
+      },
+    ),
+    secret: "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+  };
+
+  // RFC 5903 section 8.1.
+  const ec = {
+    ...importJwkPair(
+      {
+        kty: "EC",
+        crv: "P-256",
+        x: b64url("dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c3772581180"),
+        y: b64url("5271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3"),
+        d: b64url("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"),
+      },
+      {
+        kty: "EC",
+        crv: "P-256",
+        x: b64url("d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63"),
+        y: b64url("56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab"),
+        d: b64url("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"),
+      },
+    ),
+    secret: "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de",
+  };
+
+  const toArrayBuffer = buf => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+
+  // One row per way to pass a key pair as key data: [name, private key data, public key data].
+  function keyDataForms(privateKey, publicKey) {
+    const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
+    const publicPem = publicKey.export({ type: "spki", format: "pem" });
+    const raw = { asymmetricKeyType: privateKey.asymmetricKeyType, ...privateKey.asymmetricKeyDetails };
+    return [
+      ["PEM string", privatePem, publicPem],
+      ["PEM Buffer", Buffer.from(privatePem), Buffer.from(publicPem)],
+      ["PEM ArrayBuffer", toArrayBuffer(Buffer.from(privatePem)), toArrayBuffer(Buffer.from(publicPem))],
+      [
+        "PEM DataView",
+        new DataView(toArrayBuffer(Buffer.from(privatePem))),
+        new DataView(toArrayBuffer(Buffer.from(publicPem))),
+      ],
+      ["{ key: PEM }", { key: privatePem }, { key: publicPem }],
+      [
+        "{ key: PEM, encoding }",
+        { key: Buffer.from(privatePem).toString("hex"), encoding: "hex" },
+        { key: Buffer.from(publicPem).toString("hex"), encoding: "hex" },
+      ],
+      [
+        "DER",
+        { key: privateKey.export({ type: "pkcs8", format: "der" }), format: "der", type: "pkcs8" },
+        { key: publicKey.export({ type: "spki", format: "der" }), format: "der", type: "spki" },
+      ],
+      [
+        "JWK",
+        { key: privateKey.export({ format: "jwk" }), format: "jwk" },
+        { key: publicKey.export({ format: "jwk" }), format: "jwk" },
+      ],
+      [
+        "raw",
+        { key: privateKey.export({ format: "raw-private" }), format: "raw-private", ...raw },
+        { key: publicKey.export({ format: "raw-public" }), format: "raw-public", ...raw },
+      ],
+      ["{ key: KeyObject }", { key: privateKey }, { key: publicKey }],
+    ];
+  }
+
+  function diffieHellmanAsync(options) {
+    const { promise, resolve } = Promise.withResolvers();
+    crypto.diffieHellman(options, (err, secret) => resolve({ err, secret }));
+    return promise;
+  }
+
+  function thrown(fn) {
+    try {
+      fn();
+    } catch (err) {
+      return { name: err.name, code: err.code, message: err.message };
+    }
+  }
+
+  const valid = { privateKey: x25519.privateKey, publicKey: x25519.publicKey };
+  const p384 = crypto.generateKeyPairSync("ec", { namedCurve: "P-384" });
+  const ed25519 = crypto.generateKeyPairSync("ed25519");
+
+  describe.each([
+    ["x25519", x25519],
+    ["ec", ec],
+  ])("%s", (_, { privateKey, publicKey, peerPrivateKey, secret }) => {
+    it.each(keyDataForms(privateKey, publicKey))("accepts %s", async (_, privateKeyData, publicKeyData) => {
+      for (const options of [
+        { privateKey: privateKeyData, publicKey },
+        { privateKey, publicKey: publicKeyData },
+        { privateKey: privateKeyData, publicKey: publicKeyData },
+      ]) {
+        expect(crypto.diffieHellman(options).toString("hex")).toBe(secret);
+        expect(await diffieHellmanAsync(options)).toEqual({ err: null, secret: Buffer.from(secret, "hex") });
+      }
+    });
+
+    it.each(keyDataForms(peerPrivateKey, publicKey))("accepts private key data as publicKey: %s", (_, peerData) => {
+      expect(crypto.diffieHellman({ privateKey, publicKey: peerData }).toString("hex")).toBe(secret);
+    });
+
+    it("decrypts an encrypted private key with the passphrase option", () => {
+      const encrypted = privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "secret" });
+      const options = { privateKey: { key: encrypted, passphrase: "secret" }, publicKey };
+      expect(crypto.diffieHellman(options).toString("hex")).toBe(secret);
+    });
+  });
+
+  it("accepts a SEC1 private key and a compressed raw public key", () => {
+    const options = {
+      privateKey: { key: ec.privateKey.export({ type: "sec1", format: "der" }), format: "der", type: "sec1" },
+      publicKey: {
+        key: ec.publicKey.export({ format: "raw-public", type: "compressed" }),
+        format: "raw-public",
+        asymmetricKeyType: "ec",
+        namedCurve: "prime256v1",
+      },
+    };
+    expect(crypto.diffieHellman(options).toString("hex")).toBe(ec.secret);
+  });
+
+  describe.each(["privateKey", "publicKey"])("invalid options.%s", name => {
+    const error = value => thrown(() => crypto.diffieHellman({ ...valid, [name]: value }));
+    const invalidArgType = (property, expected, received) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${property}" property must be ${expected}. Received ${received}`,
+    });
+    const invalidArgValue = (property, received) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property '${property}' is invalid. Received ${received}`,
+    });
+    const keyTypes =
+      "of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey";
+
+    it("rejects a value that is not key data", () => {
+      expect(error(undefined)).toEqual(invalidArgValue(`options.${name}`, "undefined"));
+      expect(error(null)).toEqual(invalidArgValue(`options.${name}`, "null"));
+      expect(error(1)).toEqual(invalidArgType(`options.${name}`, keyTypes, "type number (1)"));
+      expect(error({})).toEqual(invalidArgType(`options.${name}.key`, keyTypes, "undefined"));
+      expect(error({ key: 1 })).toEqual(invalidArgType(`options.${name}.key`, keyTypes, "type number (1)"));
+    });
+
+    it("names the encoding option that is invalid", () => {
+      const key = Buffer.alloc(0);
+      expect(error({ key, format: "banana" })).toEqual(invalidArgValue(`options.${name}.format`, "'banana'"));
+      expect(error({ key, format: "der" })).toEqual(invalidArgValue(`options.${name}.type`, "undefined"));
+      expect(error({ key, format: "der", type: "banana" })).toEqual(
+        invalidArgValue(`options.${name}.type`, "'banana'"),
+      );
+      expect(error({ key, passphrase: 1 })).toEqual(invalidArgValue(`options.${name}.passphrase`, "1"));
+    });
+
+    it("names the JWK and raw key property that is invalid", () => {
+      const format = name === "privateKey" ? "raw-private" : "raw-public";
+      const key = Buffer.alloc(32);
+      expect(error({ key: "str", format: "jwk" })).toEqual(
+        invalidArgType(`options.${name}.key`, "of type object", "type string ('str')"),
+      );
+      expect(error({ key, format })).toEqual(
+        invalidArgType(`options.${name}.asymmetricKeyType`, "of type string", "undefined"),
+      );
+      expect(error({ key, format, asymmetricKeyType: "ec" })).toEqual(
+        invalidArgType(`options.${name}.namedCurve`, "of type string", "undefined"),
+      );
+    });
+  });
+
+  it("rejects public key encodings and public KeyObjects for options.privateKey", () => {
+    const error = privateKey => thrown(() => crypto.diffieHellman({ privateKey, publicKey: x25519.publicKey }));
+    expect(error({ key: Buffer.alloc(0), format: "der", type: "spki" })).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The property 'options.privateKey.type' is invalid. Received 'spki'",
+    });
+    expect(error({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "x25519" })).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The property 'options.privateKey.format' is invalid. Received 'raw-public'",
+    });
+    for (const publicKeyObject of [x25519.publicKey, { key: x25519.publicKey }]) {
+      expect(error(publicKeyObject)).toEqual({
+        name: "TypeError",
+        code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+        message: "Invalid key object type public, expected private.",
+      });
+    }
+  });
+
+  it("rejects a secret KeyObject for options.publicKey", () => {
+    const secretKey = crypto.createSecretKey(Buffer.alloc(16));
+    for (const publicKey of [secretKey, { key: secretKey }]) {
+      expect(thrown(() => crypto.diffieHellman({ privateKey: x25519.privateKey, publicKey }))).toEqual({
+        name: "TypeError",
+        code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+        message: "Invalid key object type secret, expected private or public.",
+      });
+    }
+  });
+
+  it("checks KeyObject types first, then publicKey, then privateKey", () => {
+    const secretKey = crypto.createSecretKey(Buffer.alloc(16));
+    expect(thrown(() => crypto.diffieHellman({ privateKey: 1, publicKey: secretKey }))?.code).toBe(
+      "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+    );
+    expect(thrown(() => crypto.diffieHellman({ privateKey: x25519.publicKey, publicKey: 2 }))?.code).toBe(
+      "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+    );
+    expect(thrown(() => crypto.diffieHellman({ privateKey: 1, publicKey: 2 }))?.message).toStartWith(
+      'The "options.publicKey" property must be',
+    );
+  });
+
+  it("reports KeyObjects of different or unsupported key types as incompatible", () => {
+    expect(thrown(() => crypto.diffieHellman({ privateKey: ec.privateKey, publicKey: x25519.publicKey }))).toEqual({
+      name: "Error",
+      code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+      message: "Incompatible key types for Diffie-Hellman: ec and x25519",
+    });
+    expect(thrown(() => crypto.diffieHellman(ed25519))).toEqual({
+      name: "Error",
+      code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+      message: "Incompatible key types for Diffie-Hellman: ed25519 and ed25519",
+    });
+  });
+
+  it("reports unreadable key data like createPrivateKey and createPublicKey", () => {
+    const publicPem = x25519.publicKey.export({ type: "spki", format: "pem" });
+    const encrypted = x25519.privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "a" });
+    for (const privateKey of [
+      "not a key",
+      publicPem,
+      encrypted,
+      { key: encrypted, passphrase: "b" },
+      { key: Buffer.from("garbage"), format: "der", type: "pkcs8" },
+    ]) {
+      const expected = thrown(() => crypto.createPrivateKey(privateKey));
+      expect(expected).toBeDefined();
+      expect(thrown(() => crypto.diffieHellman({ privateKey, publicKey: x25519.publicKey }))).toEqual(expected);
+    }
+    for (const publicKey of ["not a key", encrypted, { key: Buffer.from("garbage"), format: "der", type: "spki" }]) {
+      const expected = thrown(() => crypto.createPublicKey(publicKey));
+      expect(expected).toBeDefined();
+      expect(thrown(() => crypto.diffieHellman({ privateKey: x25519.privateKey, publicKey }))).toEqual(expected);
+    }
+  });
+
+  it("throws key data errors synchronously when a callback is given", async () => {
+    let calls = 0;
+    const callback = () => calls++;
+    expect(thrown(() => crypto.diffieHellman({ ...valid, privateKey: 1 }, callback))?.code).toBe(
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(thrown(() => crypto.diffieHellman({ ...valid, publicKey: "not a key" }, callback))).toEqual(
+      thrown(() => crypto.createPublicKey("not a key")),
+    );
+    // This job starts after the two calls above, so a callback they queued would run before it completes.
+    await diffieHellmanAsync(valid);
+    expect(calls).toBe(0);
+  });
+
+  it.each([
+    ["ERR_OSSL_EVP_DIFFERENT_PARAMETERS", "curves that differ", ec.privateKey, p384.publicKey],
+    ["ERR_OSSL_EVP_DIFFERENT_KEY_TYPES", "key types that differ", ec.privateKey, x25519.publicKey],
+    [
+      "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE",
+      "a key type that cannot derive",
+      ed25519.privateKey,
+      ed25519.publicKey,
+    ],
+  ])("reports %s for key data with %s", async (code, _, privateKey, publicKey) => {
+    const options = {
+      privateKey: privateKey.export({ type: "pkcs8", format: "pem" }),
+      publicKey: publicKey.export({ type: "spki", format: "pem" }),
+    };
+    const syncError = thrown(() => crypto.diffieHellman(options));
+    expect(syncError).toMatchObject({ name: "Error", code });
+    // The derive runs on a worker when a callback is given: the error goes to the callback.
+    const { err } = await diffieHellmanAsync(options);
+    expect({ name: err.name, code: err.code, message: err.message }).toEqual(syncError);
+  });
+
+  it("parses publicKey before the option getters of privateKey run", () => {
+    // The PEM bytes of publicKey are borrowed from this ArrayBuffer. A getter on privateKey detaches it.
+    const publicPem = toArrayBuffer(Buffer.from(x25519.publicKey.export({ type: "spki", format: "pem" })));
+    const privatePem = x25519.privateKey.export({ type: "pkcs8", format: "pem" });
+    const options = {
+      publicKey: publicPem,
+      privateKey: {
+        get key() {
+          publicPem.transfer();
+          return privatePem;
+        },
+      },
+    };
+    expect(crypto.diffieHellman(options).toString("hex")).toBe(x25519.secret);
+    expect(publicPem.detached).toBe(true);
+  });
+});
+
 describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
   describe.each([
     ["ed25519", undefined, 32, 32],

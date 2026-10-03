@@ -71,6 +71,14 @@ pub fn install_with_manager(
         }
     }
 
+    // An error from the options or the environment is printed at every log level and fails the install first.
+    if manager.log_mut().has_errors() {
+        manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()))?;
+        Global::crash();
+    }
+
     // reshaped for borrowck — `loadFromCwd` needs `manager`, `manager.lockfile`,
     // and `manager.log` simultaneously. Route through a single
     // raw provenance root so the three reborrows share a tag.
@@ -839,6 +847,15 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        // The same errors fail a full install below, after the packages are linked.
+        if log_level != Options::LogLevel::Silent {
+            manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()))?;
+        }
+        if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
+            Global::crash();
+        }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,
@@ -1531,10 +1548,11 @@ fn report_lockfile_load_error(
             manager
                 .log_mut()
                 .print(std::ptr::from_mut(Output::error_writer()))?;
-            manager.log_mut().reset();
         }
         Output::flush();
     }
+    // The lockfile is ignored from here on. Its parse errors must not fail the install.
+    manager.log_mut().reset();
 
     if manager.options.enable.fail_early() {
         Global::crash();

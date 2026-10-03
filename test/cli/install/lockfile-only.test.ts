@@ -337,3 +337,57 @@ describe("--lockfile-only with remove and update", () => {
     }
   });
 });
+
+// A peer edge and a cleaning error are not caught by verify_resolutions.
+describe.concurrent("--lockfile-only fails on a logged error", () => {
+  async function packManifest(tarball: string, manifest: object) {
+    const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+    await writeFile(tarball, await archive.bytes());
+  }
+
+  async function lockfileOnly(dir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: dir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("does not save bun.lock when a peer dependency is a link: that is not linked", async () => {
+    using dir = tempDir("lockfile-only-peer-link", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { bar: "file:./bar.tgz" } }),
+    });
+    await packManifest(join(String(dir), "bar.tgz"), {
+      name: "bar",
+      version: "1.0.0",
+      peerDependencies: { inside: "link:not-linked-anywhere" },
+    });
+
+    const { stdout, stderr, exitCode } = await lockfileOnly(String(dir));
+    expect(stderr).toContain('error: Package "inside" is not linked');
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(stdout).not.toContain("Saved bun.lock");
+    expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // The tree builder logs this error while the lockfile is cleaned, after the
+  // dependencies are resolved.
+  it("does not save bun.lock when a dependency name is not a safe folder name", async () => {
+    using dir = tempDir("lockfile-only-unsafe-name", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "..": "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+
+    const { stdout, stderr, exitCode } = await lockfileOnly(String(dir));
+    expect(stderr).toContain('error: Invalid dependency name ".."');
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(stdout).not.toContain("Saved bun.lock");
+    expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+});

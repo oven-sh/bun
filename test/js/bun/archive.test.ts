@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
@@ -1886,7 +1887,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-lying-header", {});
       await expect(async () => {
         await new Bun.Archive(lying).extract(String(dir));
-      }).toThrow();
+      }).toThrow("ReadError");
 
       // What stays is the part of the body that was there.
       const left = join(String(dir), "big.bin");
@@ -1931,6 +1932,41 @@ describe("Bun.Archive", () => {
       expect(JSON.parse(stdout)).toEqual({ settled: "rejected", allocated: 0 });
       expect(exitCode).toBe(0);
     });
+  });
+
+  // A full disk, a quota or a file size limit refuses a write in the middle of
+  // a file. The write loop then went on with `write()` at the start of the
+  // file: the file was cut, its first bytes were those of the refused block,
+  // and extract() resolved.
+  test.skipIf(isWindows)("extract() rejects when the file system refuses a write in the middle of a file", async () => {
+    // 6,000,000 bytes where no file can grow past 4 MiB. Gzip, so that the
+    // member arrives in many blocks: the first ones fit.
+    const data = randomBytes(6_000_000);
+    using dir = tempDir("archive-refused-write", {
+      "big.tar.gz": Buffer.from(Bun.gzipSync(Buffer.concat([ustarEntry("big.bin", data), Buffer.alloc(1024)]))),
+      "extract.mjs": `
+        const archive = new Bun.Archive(await Bun.file("big.tar.gz").bytes());
+        console.log(await archive.extract("out").then(() => "resolved", e => "rejected " + e.message));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      // 8192 blocks of 512 bytes. A write past the limit raises SIGXFSZ, which
+      // must not end the child. Without the limit the child must not run.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8192 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected ReadError");
+
+    // What stays of the file is its start, byte for byte.
+    const left = join(String(dir), "out", "big.bin");
+    const written = existsSync(left) ? readFileSync(left) : Buffer.alloc(0);
+    expect(written.equals(data.subarray(0, written.length))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   describe("extract with glob patterns", () => {

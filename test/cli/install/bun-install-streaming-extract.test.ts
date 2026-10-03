@@ -7,8 +7,17 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { createGzip, deflateRawSync, gzipSync } from "node:zlib";
@@ -1065,7 +1074,7 @@ describe.concurrent("buffered extract: failed extraction", () => {
         TMP: tmp,
         BUN_INSTALL_CACHE_DIR: cache,
       },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -1379,7 +1388,7 @@ describe.concurrent("sparse tar members", () => {
         // Drain on the first piece, so that the extraction directory appears.
         BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
       },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     void proc.exited.then(() => (exited = true));
@@ -1395,4 +1404,90 @@ describe.concurrent("sparse tar members", () => {
     expect(allocated).toBeLessThan(allocatedLimit);
     expect(exitCode).toBe(0);
   });
+});
+
+// -------------------------------------------------------------------
+// A full disk, a quota or a file size limit refuses a write in the
+// middle of a file. The write loop then went on with `write()` at the
+// start of the file: the install exited 0 with a file that was cut and
+// whose first bytes were those of the refused block, and that package
+// stayed in the cache for every later install.
+// -------------------------------------------------------------------
+test.skipIf(isWindows)("streaming extract fails the install when the file system refuses a write", async () => {
+  // 6,000,000 bytes where no file can grow past 4 MiB. Random bytes keep the
+  // tarball above the size from which a registry tarball is streamed.
+  const big = randomBytes(6_000_000);
+  const pkgJson = Buffer.from(JSON.stringify({ name: "pk", version: "1.0.0" }));
+  const tgz = gzipSync(
+    Buffer.concat([
+      tarHeader("package/package.json", pkgJson.length, "0"),
+      pkgJson,
+      pad512(pkgJson.length),
+      tarHeader("package/big.bin", big.length, "0"),
+      big,
+      pad512(big.length),
+      Buffer.alloc(1024, 0),
+    ]),
+  );
+  const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
+
+  using dir = tempDir("refused-write-streamed", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pk: "1.0.0" } }),
+  });
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/pk") {
+        return Response.json({
+          name: "pk",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name: "pk", version: "1.0.0", dist: { integrity, tarball: `${server.url}pk/-/pk-1.0.0.tgz` } },
+          },
+        });
+      }
+      if (url.pathname.endsWith("/pk-1.0.0.tgz")) return new Response(tgz);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  writeFileSync(join(String(dir), "bunfig.toml"), Bun.TOML.stringify({ install: { registry: String(server.url) } }));
+  const tmp = join(String(dir), "bun-tmp");
+  mkdirSync(tmp);
+  const env = { ...bunEnv, BUN_TMPDIR: tmp, TMPDIR: tmp, BUN_INSTALL_CACHE_DIR: join(String(dir), "bun-cache") };
+  const installed = join(String(dir), "node_modules", "pk", "big.bin");
+
+  {
+    await using proc = Bun.spawn({
+      // 8192 blocks of 512 bytes. A write past the limit raises SIGXFSZ, which
+      // must not end the child. Without the limit the child must not run.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8192 && exec "$@"`, "sh", bunExe(), "install", "--linker=hoisted"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('EFBIG extracting tarball for "pk"');
+    expect(existsSync(installed)).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+
+  // Without the limit, the same cache gives the whole file: the failed install
+  // left no package there.
+  rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+  rmSync(join(String(dir), "bun.lock"), { force: true });
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Streamed ");
+    expect(readFileSync(installed).equals(big)).toBe(true);
+    expect(exitCode).toBe(0);
+  }
 });

@@ -79,6 +79,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
     let cwd = edited.iter().position(|e| e.received_requests);
+    let catalogs_steered = PackageJSONEditor::steers_catalogs_to_latest(manager);
 
     let result = if let Some(mut pending) = manager.pending_filtered_write.take() {
         let result = pending.edit_entries(manager, &mut updates);
@@ -93,7 +94,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
     } else {
         Ok(())
     }
-    .and_then(|()| sync_lockfile(manager, &edited));
+    .and_then(|()| sync_lockfile(manager, &edited, catalogs_steered));
 
     if result.is_ok() && !updates.is_empty() {
         manager.lockfile.bind_update_requests(
@@ -264,8 +265,12 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     ids
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
-fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. `catalogs_steered`: the resolve ran with `latest` in the catalogs (`steer_used_catalogs_to_latest`), so the root's catalogs are copied even when the root was not edited.
+fn sync_lockfile(
+    manager: &mut PackageManager,
+    edited: &[EditedPackageJson],
+    catalogs_steered: bool,
+) -> crate::Result<()> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     scratch.parse_root(manager)?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
@@ -277,6 +282,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
         parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
+    let root_edited = root_pkg.is_none();
     let super::workspace_manifests::ScratchManifests {
         lockfile: scratch, ..
     } = scratch;
@@ -362,6 +368,14 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
             *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
             *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         }
+        builder.clamp();
+    }
+    if catalogs_steered && !root_edited {
+        let known = &mut manager.known_npm_aliases;
+        let (mut builder, lf) = manager.lockfile.string_builder_split();
+        scratch.catalogs.count(sbuf, &mut builder);
+        builder.allocate()?;
+        *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
     Ok(())

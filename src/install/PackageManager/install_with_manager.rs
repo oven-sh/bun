@@ -189,6 +189,14 @@ pub fn install_with_manager(
                         Features::main(),
                     )?;
                 }
+                if super::package_json_editor::steers_catalogs_to_latest(manager) {
+                    let log = manager.log_mut();
+                    super::package_json_editor::steer_used_catalogs_to_latest(
+                        &mut manager.workspace_package_json_cache,
+                        log,
+                        &mut lockfile,
+                    )?;
+                }
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize]
                     .into_boxed_slice();
                 // @memset already done via vec! init
@@ -1949,6 +1957,14 @@ fn create_new_lockfile_and_enqueue(
             &source_copy,
             &mut resolver,
             Features::main(),
+        )?;
+    }
+    if super::package_json_editor::steers_catalogs_to_latest(manager) {
+        let log = manager.log_mut();
+        super::package_json_editor::steer_used_catalogs_to_latest(
+            &mut manager.workspace_package_json_cache,
+            log,
+            &mut manager.lockfile,
         )?;
     }
 

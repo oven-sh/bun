@@ -276,8 +276,8 @@ pub mod ssl_wrapper {
         /// A callback of the running pass called `handle_traffic` again.
         RerunRequested,
         /// A callback of the running pass called `deinit`. `SSL_do_handshake`
-        /// can be below that callback on the stack, so the `SSL` is freed
-        /// when the pass has unwound.
+        /// can be below that callback on the stack, so the pass frees the
+        /// `SSL` when it has unwound.
         FreeRequested,
     }
 
@@ -927,15 +927,17 @@ pub mod ssl_wrapper {
 
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
+            let ssl = self.ssl.take();
             if self.traffic.get() != Traffic::Idle {
+                // The running pass holds this `SSL` and frees it.
                 self.traffic.set(Traffic::FreeRequested);
                 return;
             }
-            self.free();
+            self.free(ssl);
         }
 
-        fn free(&self) {
-            if let Some(ssl) = self.ssl.take() {
+        fn free(&self, ssl: Option<NonNull<boring_sys::SSL>>) {
+            if let Some(ssl) = ssl {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
@@ -1328,6 +1330,8 @@ pub mod ssl_wrapper {
                     return;
                 }
             }
+            // A `deinit` from inside the pass takes the `SSL` out of `self.ssl`.
+            let ssl = self.ssl.get();
             loop {
                 self.traffic.set(Traffic::Running);
                 self.traffic_pass();
@@ -1335,7 +1339,7 @@ pub mod ssl_wrapper {
                     Traffic::RerunRequested => {}
                     Traffic::FreeRequested => {
                         self.traffic.set(Traffic::Idle);
-                        self.free();
+                        self.free(ssl);
                         return;
                     }
                     Traffic::Idle | Traffic::Running => break,
@@ -1380,7 +1384,7 @@ pub mod ssl_wrapper {
 
         /// Hand the parked sessions and keylog lines to the owner. The callbacks run JS, which may close the wrapper.
         fn flush_pending_events(&self) {
-            while self.ssl.get().is_some() && !self.flags.closed_notified() {
+            while self.ssl.get().is_some() {
                 let Some(entry) = self.callbacks.sessions.borrow_mut().pop_front() else {
                     break;
                 };
@@ -1389,7 +1393,7 @@ pub mod ssl_wrapper {
                     on_session(handlers.ctx, &entry);
                 }
             }
-            while self.ssl.get().is_some() && !self.flags.closed_notified() {
+            while self.ssl.get().is_some() {
                 let Some(entry) = self.callbacks.keylog.borrow_mut().pop_front() else {
                     break;
                 };
@@ -1404,7 +1408,7 @@ pub mod ssl_wrapper {
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
             self.flags.set_closed_notified(true);
-            self.free();
+            self.free(self.ssl.take());
         }
     }
 

@@ -791,20 +791,22 @@ it.each(["TLSv1.3", "TLSv1.2"] as const)(
       raw.on("end", () => duplex.push(null));
       server.emit("connection", duplex);
     });
-    let client: TLSSocket | undefined;
+    const clients: TLSSocket[] = [];
     try {
       front.listen(0, "127.0.0.1");
       await once(front, "listening");
       const port = (front.address() as AddressInfo).port;
-      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
-      const [err] = await once(client, "error");
+      const refused = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
+      clients.push(refused);
+      const [err] = await once(refused, "error");
       expect(err.code).toBe("ECONNRESET");
       // A client that offers no ALPN does not reach the callback: the server still serves it.
-      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-      await once(client, "secureConnect");
-      expect(client.alpnProtocol).toBe(false);
+      const served = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      clients.push(served);
+      await once(served, "secureConnect");
+      expect(served.alpnProtocol).toBe(false);
     } finally {
-      client?.destroy();
+      for (const client of clients) client.destroy();
       front.close();
     }
   },

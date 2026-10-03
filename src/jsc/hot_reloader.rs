@@ -860,8 +860,7 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    // Windows watches a file by its path, which still names it once it is back.
-                    if !cfg!(windows)
+                    if !bun_watcher::WATCHES_BY_PATH
                         && (event.op.contains(WatchOp::DELETE)
                             || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {

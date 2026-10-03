@@ -930,67 +930,107 @@ it.each([
   });
 });
 
-it.if(isWindows)("a burst of file events with a deleted import in it does not end the process", async () => {
-  using dir = tempDir("hot-burst", {
-    "main.js": `import "./mods/a.js";\nimport "./mods/b.js";\nconsole.log("loaded");\n`,
-    "mods/a.js": "export {};",
-    "mods/b.js": "export {};",
-    "other/keep": "",
-  });
-  const root = String(dir);
-  const { OpenProcess, CloseHandle } = dlopen("kernel32.dll", {
+/** Resolves to `true` once the stream has had `wanted` in it, or to all of its text if it ends first. */
+function follow(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  let text = "";
+  return async (wanted: string) => {
+    while (!text.includes(wanted)) {
+      const { value, done } = await reader.read();
+      if (done) return text;
+      text += Buffer.from(value).toString();
+    }
+    return true;
+  };
+}
+
+/** Windows only. The process finds every change that `change` makes already queued when it goes on. */
+function whileSuspended(pid: number, change: () => void) {
+  const kernel32 = dlopen("kernel32.dll", {
     OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
     CloseHandle: { args: ["ptr"], returns: "i32" },
-  }).symbols;
-  const { NtSuspendProcess, NtResumeProcess } = dlopen("ntdll.dll", {
+  });
+  const ntdll = dlopen("ntdll.dll", {
     NtSuspendProcess: { args: ["ptr"], returns: "i32" },
     NtResumeProcess: { args: ["ptr"], returns: "i32" },
-  }).symbols;
-
-  await using runner = spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-    env: bunEnv,
-    cwd: root,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
   });
-  const follow = (stream: ReadableStream<Uint8Array>) => {
-    const reader = stream.getReader();
-    let text = "";
-    return async (wanted: string) => {
-      while (!text.includes(wanted)) {
-        const { value, done } = await reader.read();
-        if (done) return text;
-        text += Buffer.from(value).toString();
-      }
-      return true;
-    };
-  };
-  const stdout = follow(runner.stdout);
-  const stderr = follow(runner.stderr);
-  expect(await stdout("loaded")).toBe(true);
-
-  // Stopped, the process finds the whole burst waiting for it, as it does on a busy machine.
   const PROCESS_SUSPEND_RESUME = 0x0800;
-  const handle = OpenProcess(PROCESS_SUSPEND_RESUME, 0, runner.pid);
+  const handle = kernel32.symbols.OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
   expect(handle).not.toBeNull();
+  let resumed: number;
   try {
-    expect(NtSuspendProcess(handle)).toBe(0);
-    try {
+    expect(ntdll.symbols.NtSuspendProcess(handle)).toBe(0);
+    change();
+  } finally {
+    resumed = ntdll.symbols.NtResumeProcess(handle);
+    kernel32.symbols.CloseHandle(handle);
+    kernel32.close();
+    ntdll.close();
+  }
+  expect(resumed).toBe(0);
+}
+
+it.if(isWindows)(
+  "a deleted import is not lost in a burst of file events",
+  async () => {
+    using dir = tempDir("hot-burst", {
+      "main.js": `import "./mods/a.js";\nimport "./mods/b.js";\nconsole.log("loaded");\n`,
+      "mods/a.js": "export {};",
+      "mods/b.js": "export {};",
+      "other/keep": "",
+    });
+    const root = String(dir);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    const stderr = follow(runner.stderr);
+    expect(await stdout("loaded")).toBe(true);
+
+    whileSuspended(runner.pid, () => {
       // The read that is already waiting completes with the first change alone.
       writeFileSync(join(root, "other", "first"), "");
       unlinkSync(join(root, "mods", "b.js"));
       for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
-    } finally {
-      expect(NtResumeProcess(handle)).toBe(0);
-    }
-  } finally {
-    CloseHandle(handle);
-  }
-  // The delete was not lost in the burst: its reload fails on the import.
-  expect(await stderr("b.js")).toBe(true);
+    });
+    expect(await stderr("Cannot find module './mods/b.js'")).toBe(true);
 
-  writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
-  expect(await stdout("reloaded")).toBe(true);
-});
+    writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
+    expect(await stdout("reloaded")).toBe(true);
+  },
+  timeout,
+);
+
+it.todoIf(!isWindows)(
+  "reloads when a deleted import is written again",
+  async () => {
+    using dir = tempDir("hot-import-back", {
+      "main.js": `import "./imported.js";\n`,
+      "imported.js": `console.log("first");`,
+    });
+    const root = String(dir);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    const stderr = follow(runner.stderr);
+    expect(await stdout("first")).toBe(true);
+
+    unlinkSync(join(root, "imported.js"));
+    expect(await stderr("Cannot find module './imported.js'")).toBe(true);
+
+    writeFileSync(join(root, "imported.js"), `console.log("second");`);
+    expect(await stdout("second")).toBe(true);
+  },
+  timeout,
+);

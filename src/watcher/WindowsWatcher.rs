@@ -22,8 +22,6 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// The kernel owns `watcher.buf` and `watcher.overlapped` while this is set.
-    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -34,10 +32,10 @@ impl Default for WindowsWatcher {
                 overlapped: bun_core::ffi::zeroed(),
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
+                read_pending: false,
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
-            read_pending: false,
         }
     }
 }
@@ -80,6 +78,9 @@ pub struct DirWatcher {
     /// `EventIterator::next`).
     pub(crate) buf: [u8; 64 * 1024],
     pub(crate) dir_handle: HANDLE,
+    /// A read was started and its completion is not out of the queue yet: `buf` and
+    /// `overlapped` are not ours to reuse.
+    read_pending: bool,
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
@@ -87,7 +88,7 @@ pub struct DirWatcher {
 // total size) is what proves that alignment requirement.
 bun_core::assert_ffi_layout!(
     DirWatcher,
-    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>(),
+    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>() + ::core::mem::align_of::<w::OVERLAPPED>(),
     ::core::mem::align_of::<w::OVERLAPPED>();
     overlapped @ 0, buf @ 32, dir_handle @ 32 + 64 * 1024,
 );
@@ -99,8 +100,12 @@ const _: () = assert!(
 );
 
 impl DirWatcher {
-    /// invalidates any EventIterators
+    /// Starts a read, which invalidates any EventIterators, unless one is pending: a poll
+    /// that times out leaves its read with the kernel.
     fn prepare(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
         let filter = w::FileNotifyChangeFilter::FILE_NAME
             | w::FileNotifyChangeFilter::DIR_NAME
             | w::FileNotifyChangeFilter::LAST_WRITE
@@ -125,6 +130,7 @@ impl DirWatcher {
             return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
         }
         bun_core::scoped_log!(watcher, "read directory changes!");
+        self.read_pending = true;
         Ok(())
     }
 }
@@ -297,13 +303,9 @@ impl WindowsWatcher {
 
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        // A poll that timed out left its read with the kernel.
-        if !self.read_pending {
-            if let Err(err) = self.watcher.prepare() {
-                bun_core::scoped_log!(watcher, "prepare() returned error");
-                return Err(err);
-            }
-            self.read_pending = true;
+        if let Err(err) = self.watcher.prepare() {
+            bun_core::scoped_log!(watcher, "prepare() returned error");
+            return Err(err);
         }
 
         let mut nbytes: w::DWORD = 0;
@@ -320,6 +322,10 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            // Its completion is out of the queue, whether the read succeeded or not.
+            if overlapped == &raw mut self.watcher.overlapped {
+                self.watcher.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
@@ -336,7 +342,6 @@ impl WindowsWatcher {
                 if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
                     continue;
                 }
-                self.read_pending = false;
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
@@ -354,7 +359,6 @@ impl WindowsWatcher {
                     if let Err(err) = self.watcher.prepare() {
                         return Err(err);
                     }
-                    self.read_pending = true;
                     continue;
                 }
                 return Ok(Some(EventIterator {
@@ -434,56 +438,51 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            // The JS thread appends to the watchlist under this mutex.
-            let mut guard = Some(this.mutex.lock_guard());
-            // Backwards, because a batch evicts items: an eviction moves the last item into
-            // the hole, so an item this scan has not reached never moves out of its way.
-            let mut item_idx = this.watchlist.len();
-            bun_core::scoped_log!(watcher, "number of watched items: {}", item_idx);
-            while item_idx > 0 {
-                if event_id >= this.watch_events.len() {
-                    // It takes the mutex itself.
-                    drop(guard.take());
-                    process_watch_event_batch(this, event_id)?;
-                    // passing `this: &mut Watcher` above materialises a fresh Unique
-                    // borrow over the whole `Watcher`, which under Stacked Borrows pops the
-                    // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
-                    // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
-                    // then dereference a pointer with invalidated provenance — UB that MIRI flags.
-                    // The callee never touches `platform.watcher`, so re-deriving the pointer
-                    // here from the now-current `&mut Watcher` restores valid provenance.
-                    iter.watcher = BackRef::new(&this.platform.watcher);
-                    event_id = 0;
-                    guard = Some(this.mutex.lock_guard());
+            let mut item_idx = usize::MAX;
+            loop {
+                {
+                    // Other threads append to the watchlist under this mutex, which can move it.
+                    let _guard = this.mutex.lock_guard();
+                    // A batch evicts items. `flush_evictions` fills each hole with the last item,
+                    // so a walk from the end does not miss an item it has not reached.
                     item_idx = item_idx.min(this.watchlist.len());
-                    continue;
-                }
-                item_idx -= 1;
-
-                let eventpath = &this.platform.buf[..eventpath_len];
-                let path = &this.watchlist.items_file_path()[item_idx];
-                let rel = is_parent_or_equal(path.as_ref(), eventpath);
-                bun_core::scoped_log!(
-                    watcher,
-                    "checking path: {} = .{}",
-                    bstr::BStr::new(path.as_ref()),
-                    match rel {
-                        ParentEqual::Parent => "parent",
-                        ParentEqual::Equal => "equal",
-                        ParentEqual::Unrelated => "unrelated",
+                    let eventpath = &this.platform.buf[..eventpath_len];
+                    while item_idx > 0 && event_id < this.watch_events.len() {
+                        item_idx -= 1;
+                        let path = &this.watchlist.items_file_path()[item_idx];
+                        let rel = is_parent_or_equal(path.as_ref(), eventpath);
+                        bun_core::scoped_log!(
+                            watcher,
+                            "checking path: {} = .{}",
+                            bstr::BStr::new(path.as_ref()),
+                            match rel {
+                                ParentEqual::Parent => "parent",
+                                ParentEqual::Equal => "equal",
+                                ParentEqual::Unrelated => "unrelated",
+                            }
+                        );
+                        if rel == ParentEqual::Unrelated {
+                            continue;
+                        }
+                        this.watch_events[event_id] =
+                            create_watch_event(&event, item_idx as WatchItemIndex);
+                        event_id += 1;
                     }
-                );
-                // skip unrelated items
-                if rel == ParentEqual::Unrelated {
-                    continue;
                 }
-                // if the event is for a parent dir of the item, only emit it if it's a delete or rename
-
-                this.watch_events[event_id] =
-                    create_watch_event(&event, item_idx as WatchItemIndex);
-                event_id += 1;
+                if item_idx == 0 {
+                    break;
+                }
+                process_watch_event_batch(this, event_id)?;
+                // passing `this: &mut Watcher` above materialises a fresh Unique
+                // borrow over the whole `Watcher`, which under Stacked Borrows pops the
+                // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
+                // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
+                // then dereference a pointer with invalidated provenance — UB that MIRI flags.
+                // The callee never touches `platform.watcher`, so re-deriving the pointer
+                // here from the now-current `&mut Watcher` restores valid provenance.
+                iter.watcher = BackRef::new(&this.platform.watcher);
+                event_id = 0;
             }
-            drop(guard);
         }
     }
 

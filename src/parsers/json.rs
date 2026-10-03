@@ -151,7 +151,7 @@ fn parse_impl_in(
                 .iter()
                 .filter(|m| m.kind == bun_ast::Kind::Err)
                 .filter_map(|m| m.data.location.as_ref())
-                .any(|l| l.offset + l.length.max(1) <= pos);
+                .any(|l| l.offset + l.length.max(1) as usize <= pos);
             if !earlier_stage2_err {
                 drop_stage2_errors(log);
                 return Err(report_index_error(e, source, log));

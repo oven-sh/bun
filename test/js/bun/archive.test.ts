@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { constants } from "node:os";
+import { getSystemErrorName } from "node:util";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -848,6 +850,200 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("extract() errors", () => {
+    // extract() has two implementations: the default one, and the one that `glob` selects.
+    const modes = [
+      ["default", undefined],
+      ["glob", { glob: "**" }],
+    ] as const;
+
+    async function rejection(promise: Promise<unknown>): Promise<any> {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the promise to reject");
+    }
+
+    test.each(modes)("a destination that is a file rejects with the failed open (%s)", async (_mode, options) => {
+      using dir = tempDir("archive-error-destination", { "not-a-dir": "file" });
+      const dest = join(String(dir), "not-a-dir");
+
+      const error = await rejection(new Bun.Archive({ "a.txt": "a" }).extract(dest, options));
+
+      expect(error).toBeInstanceOf(Error);
+      expect({
+        message: error.message,
+        code: error.code,
+        errno: getSystemErrorName(error.errno),
+        syscall: error.syscall,
+        path: error.path,
+      }).toEqual({
+        message: `ENOTDIR: not a directory, open '${dest}'`,
+        code: "ENOTDIR",
+        errno: "ENOTDIR",
+        syscall: "open",
+        path: dest,
+      });
+    });
+
+    // NAME_MAX and PATH_MAX are the limits of a POSIX file system.
+    describe.skipIf(isWindows)("an entry that cannot be created", () => {
+      const longName = Buffer.alloc(300, "x").toString();
+
+      test("rejects with the failed open and the path of the entry", async () => {
+        using dir = tempDir("archive-error-entry", {});
+        const dest = String(dir);
+
+        const error = await rejection(new Bun.Archive({ [longName]: "x", "after.txt": "after" }).extract(dest));
+
+        expect(error).toBeInstanceOf(Error);
+        expect({
+          message: error.message,
+          code: error.code,
+          errno: error.errno,
+          syscall: error.syscall,
+          path: error.path,
+        }).toEqual({
+          message: `ENAMETOOLONG: name too long, open '${join(dest, longName)}'`,
+          code: "ENAMETOOLONG",
+          errno: -constants.errno.ENAMETOOLONG,
+          syscall: "open",
+          path: join(dest, longName),
+        });
+      });
+
+      test("the path is where the entry lands, not its name in the archive", async () => {
+        using dir = tempDir("archive-error-entry-dotdot", {});
+        const dest = join(String(dir), "out");
+
+        // extract() writes `../name` to `out/name`.
+        expect(await new Bun.Archive({ "../up.txt": "up" }).extract(dest)).toBe(1);
+        expect(readdirSync(String(dir))).toEqual(["out"]);
+        expect(readdirSync(dest)).toEqual(["up.txt"]);
+
+        const error = await rejection(new Bun.Archive({ ["../" + longName]: "x" }).extract(dest));
+
+        expect({ code: error.code, syscall: error.syscall, path: error.path }).toEqual({
+          code: "ENAMETOOLONG",
+          syscall: "open",
+          path: join(dest, longName),
+        });
+      });
+
+      test("reports a path that is longer than PATH_MAX", async () => {
+        const PATH_MAX = isLinux ? 4096 : 1024;
+        using dir = tempDir("archive-error-entry-deep", {});
+        let dest = String(dir);
+        while (dest.length + 201 < PATH_MAX - 50) dest = join(dest, Buffer.alloc(200, "d").toString());
+        mkdirSync(dest, { recursive: true });
+
+        const error = await rejection(new Bun.Archive({ [longName]: "x" }).extract(dest));
+
+        expect(error.path.length).toBeGreaterThan(PATH_MAX);
+        expect({ code: error.code, syscall: error.syscall, path: error.path }).toEqual({
+          code: "ENAMETOOLONG",
+          syscall: "open",
+          path: join(dest, longName),
+        });
+      });
+
+      // Root can write to a directory whatever its mode is.
+      test.skipIf(process.getuid?.() === 0)("in a destination that is not writable", async () => {
+        using dir = tempDir("archive-error-readonly", { "out/keep.txt": "keep" });
+        const dest = join(String(dir), "out");
+        chmodSync(dest, 0o555);
+        try {
+          const error = await rejection(new Bun.Archive({ "a.txt": "a" }).extract(dest));
+
+          expect({ code: error.code, syscall: error.syscall, path: error.path }).toEqual({
+            code: "EACCES",
+            syscall: "open",
+            path: join(dest, "a.txt"),
+          });
+        } finally {
+          chmodSync(dest, 0o755);
+        }
+      });
+    });
+
+    // `ulimit -f` makes a write fail without a full disk. Its unit is 512 or
+    // 1024 bytes, depending on the shell. The entry is larger than both limits.
+    test.skipIf(isWindows).each([
+      ["tar", undefined],
+      ["tar.gz", { compress: "gzip" }],
+    ] as const)("a write that fails rejects with the failed write (%s)", async (_format, options) => {
+      using dir = tempDir("archive-error-write", {});
+      const dest = String(dir);
+      const fixture = /* ts */ `
+        const bytes = await new Bun.Archive(
+          { "big.bin": Buffer.alloc(256 * 1024, "x") },
+          ${JSON.stringify(options)},
+        ).bytes();
+        try {
+          console.log(JSON.stringify({ count: await new Bun.Archive(bytes).extract(process.env.DEST) }));
+        } catch (error) {
+          console.log(JSON.stringify({ code: error.code, syscall: error.syscall, path: error.path }));
+        }
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", 'ulimit -f 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+        env: { ...bunEnv, DEST: dest },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ code: "EFBIG", syscall: "write", path: join(dest, "big.bin") }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each(modes)("bytes that are not an archive reject with libarchive's message (%s)", async (_mode, options) => {
+      using dir = tempDir("archive-error-garbage", {});
+      const garbage = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+      const error = await rejection(new Bun.Archive(garbage).extract(join(String(dir), "out"), options));
+      const filesError = await rejection(new Bun.Archive(garbage).files());
+
+      expect(error).toBeInstanceOf(Error);
+      expect({ message: error.message, code: error.code, files: filesError.message }).toEqual({
+        message: "Unrecognized archive format",
+        code: undefined,
+        files: "Unrecognized archive format",
+      });
+    });
+
+    test("with a glob, bytes that are not an archive create no destination", async () => {
+      using dir = tempDir("archive-error-garbage-glob", {});
+      const dest = join(String(dir), "out");
+
+      await rejection(new Bun.Archive(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])).extract(dest, { glob: "**" }));
+
+      expect(existsSync(dest)).toBe(false);
+    });
+
+    test("an archive that ends inside an entry rejects with libarchive's message", async () => {
+      using dir = tempDir("archive-error-truncated", {});
+      const tarball = buildTarball([{ name: "a.txt", data: Buffer.alloc(5000, "a") }]);
+      const truncated = tarball.slice(0, 512 + 1024);
+
+      const error = await rejection(new Bun.Archive(truncated).extract(String(dir)));
+      const filesError = await rejection(new Bun.Archive(truncated).files());
+
+      expect(error).toBeInstanceOf(Error);
+      expect({ message: error.message, code: error.code, files: filesError.message }).toEqual({
+        message: "Truncated tar archive detected while reading data",
+        code: undefined,
+        files: "Truncated tar archive detected while reading data",
+      });
     });
   });
 

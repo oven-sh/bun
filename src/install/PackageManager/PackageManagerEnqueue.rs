@@ -2573,10 +2573,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::redacted(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, existing_id);
@@ -2624,10 +2624,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::redacted(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, list[0]);

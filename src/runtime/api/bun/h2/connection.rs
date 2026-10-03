@@ -214,6 +214,10 @@ pub(crate) trait Sink {
     fn credit_send_window(&self, _stream_id: u32, _increment: u32) -> SendCredit {
         SendCredit::NotOwned
     }
+    /// Whether a SETTINGS_INITIAL_WINDOW_SIZE raise of `delta` takes a send window past 2^31-1.
+    fn initial_window_overflows(&self, _delta: i64) -> bool {
+        false
+    }
 
     /// The embedder cannot take further callbacks in this batch (its VM has an exception pending
     /// from an earlier one): stop before the next frame; the unconsumed bytes stay queued.
@@ -843,6 +847,14 @@ impl Connection {
         // window by the delta (the connection window is not affected).
         if self.remote_settings.initial_window_size != old_initial_window {
             let delta = self.remote_settings.initial_window_size as i64 - old_initial_window as i64;
+            if delta > 0 && sink.initial_window_overflows(delta) {
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FlowControlError,
+                    b"SETTINGS_INITIAL_WINDOW_SIZE takes a stream window past 2^31-1",
+                );
+                return true;
+            }
             for (_, s) in self.streams.iter_mut() {
                 if s.state != State::Closed {
                     s.send_window.apply_initial_delta(delta);

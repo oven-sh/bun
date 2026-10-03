@@ -1208,6 +1208,15 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
         raisedTo120000: 150_000,
       });
     });
+
+    test("ends the session when a raise of INITIAL_WINDOW_SIZE takes its window past 2^31-1", async () => {
+      using sender = await senders[role]({ credit: MAX_WINDOW - DEFAULT_WINDOW - 1000 });
+      const { raw } = sender;
+      expect({
+        toTheCap: await errorsAfter(raw, initialWindowSize(DEFAULT_WINDOW + 1000)),
+        oneMore: await errorsAfter(raw, initialWindowSize(DEFAULT_WINDOW + 1001)),
+      }).toEqual({ toTheCap: [], oneMore: [[0, ErrorCode.FLOW_CONTROL_ERROR]] });
+    });
   });
 
   /**
@@ -1405,6 +1414,8 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     expect({ counted, errors }).toEqual({ counted: 1000, errors: [] });
     let bytes = 0;
     const ended = Promise.withResolvers<number>();
+    stream.on("error", ended.reject);
+    stream.on("close", () => ended.reject(new Error("the stream closed before its end")));
     stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
     stream.on("end", () => ended.resolve(bytes));
     expect(await ended.promise).toBe(sent);

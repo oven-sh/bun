@@ -3895,6 +3895,20 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         SendCredit::Applied
     }
 
+    fn initial_window_overflows(&self, delta: i64) -> bool {
+        for (_, item) in self.streams.get().iter() {
+            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+            let stream = unsafe { &**item };
+            if stream.state != StreamState::CLOSED
+                && stream.remote_window_size.saturating_add_signed(delta)
+                    > stream.remote_used_window_size + MAX_WINDOW_SIZE as u64
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
         if !self.can_dispatch(JSH2FrameParser::Gc::onAltSvc) {
             return;

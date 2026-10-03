@@ -3335,16 +3335,6 @@ void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
       struct us_ssl_rare_t *rare = s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
       if (rare && rare->listener == ls) rare->listener = NULL;
     }
-    /* Mid-handshake sockets (SSL_in_init → low_prio) are *unlinked* from
-     * head_sockets while parked in loop->data.low_prio_head, and they're
-     * exactly the population that will run sni_cb on the next tick. Miss them
-     * here and sni_cb dereferences `ls` after it's freed. Same group-filter as
-     * close_all's drain. */
-    for (struct us_socket_t *s = ls->accept_group->loop->data.low_prio_head; s; s = s->next) {
-      struct us_ssl_rare_t *rare =
-          s->group == ls->accept_group && s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
-      if (rare && rare->listener == ls) rare->listener = NULL;
-    }
   }
   if (ls->ssl_ctx) {
     us_internal_ssl_ctx_unref(ls->ssl_ctx);

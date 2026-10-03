@@ -46,8 +46,8 @@ void us_socket_group_init(struct us_socket_group_t *group, struct us_loop_t *loo
 }
 
 void us_socket_group_deinit(struct us_socket_group_t *group) {
-    /* The owner is about to free the embedding storage. Every list head and the
-     * low-prio count must be zero or some socket/listener/DNS request still
+    /* The owner is about to free the embedding storage. Every list head must be
+     * NULL or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
      * caller must close_all() away first. iterator != NULL means we're inside
      * a dispatch on this very group. Never deinit from inside a dispatch of one
@@ -60,7 +60,6 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);
-    US_ASSERT(group->low_prio_count == 0);
     US_ASSERT(group->iterator == NULL);
     if (group->linked) {
         us_internal_loop_unlink_group(group->loop, group);
@@ -112,35 +111,6 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         }
     }
     group->iterator = 0;
-
-    /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets
-     * (the queue reuses prev/next), so they'd survive the walk above and later
-     * dereference s->group into freed owner storage. Drain ours out now. */
-    if (group->low_prio_count) {
-        /* Don't pre-unlink — leave low_prio_state==1 so us_socket_close takes
-         * its low-prio branch (which knows the socket is NOT in head_sockets
-         * and decrements low_prio_count itself). That branch unlinks q before
-         * dispatching the JS close/handshake handler, but the handler may
-         * close any OTHER parked socket (whose close_raw then repoints its
-         * `next` at the closed-socket list), so no pointer into the queue
-         * survives a dispatch: re-scan from the head after every close. The
-         * group->iterator trick from the walk above doesn't apply here — the
-         * low-prio close branch never touches it. `budget` keeps a deferred
-         * TLS close (never observed for parked mid-handshake sockets; the
-         * assert below encodes that) from turning the re-scan into a spin. */
-        struct us_internal_loop_data_t *ld = &group->loop->data;
-        for (uint16_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
-            struct us_socket_t *q = ld->low_prio_head;
-            while (q && q->group != group) {
-                q = q->next;
-            }
-            if (!q) {
-                break;
-            }
-            us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
-        }
-        US_ASSERT(group->low_prio_count == 0);
-    }
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {
@@ -168,8 +138,7 @@ struct us_socket_group_t *us_socket_group_next(struct us_socket_group_t *group) 
 static inline int us_internal_group_is_empty(struct us_socket_group_t *group) {
     return group->head_sockets == NULL
         && group->head_connecting_sockets == NULL
-        && group->head_listen_sockets == NULL
-        && group->low_prio_count == 0;
+        && group->head_listen_sockets == NULL;
 }
 
 static inline void us_internal_group_touched(struct us_socket_group_t *group) {
@@ -267,19 +236,11 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
     struct us_socket_group_t *old_group = s->group;
     struct us_loop_t *loop = old_group->loop;
 
-    if (s->flags.low_prio_state != 1) {
-        /* This properly updates the iterator if in on_timeout */
-        us_internal_socket_group_unlink_socket(old_group, s);
-    } else if (old_group != group) {
-        /* Stays on the loop-wide low-prio queue, but s->group changes owner —
-         * keep both groups' invariants consistent so old_group can deinit. */
-        old_group->low_prio_count--;
-        group->low_prio_count++;
-        us_internal_group_touched(group);
-        us_internal_group_maybe_unlink(old_group);
-    }
+    /* This properly updates the iterator if in on_timeout */
+    us_internal_socket_group_unlink_socket(old_group, s);
 
-    struct us_connecting_socket_t *c = s->connect_state;
+    /* A socket in the low-priority queue has its queue links where connect_state is. */
+    struct us_connecting_socket_t *c = s->flags.low_prio_state == 1 ? NULL : s->connect_state;
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *poll_ref = &s->p;
@@ -316,16 +277,13 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 
-    if (new_s->flags.low_prio_state == 1) {
-        /* update pointers in low-priority queue */
-        if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = new_s;
-        if (!new_s->prev) loop->data.low_prio_head = new_s;
-        else new_s->prev->next = new_s;
-
-        if (new_s->next) new_s->next->prev = new_s;
-    } else {
-        us_internal_socket_group_link_socket(group, new_s);
+    if (new_s != s && new_s->flags.low_prio_state == 1) {
+        /* The block moved: its neighbours in the low-priority queue still point at the old one. */
+        if (new_s->low_prio_prev) new_s->low_prio_prev->low_prio_next = new_s;
+        else loop->data.low_prio_head = new_s;
+        if (new_s->low_prio_next) new_s->low_prio_next->low_prio_prev = new_s;
     }
+    us_internal_socket_group_link_socket(group, new_s);
     return new_s;
 }
 

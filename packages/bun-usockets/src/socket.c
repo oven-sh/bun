@@ -281,24 +281,9 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         struct us_loop_t *loop = s->group->loop;
 
         if (s->flags.low_prio_state == 1) {
-            /* Unlink this socket from the low-priority queue */
-            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
-            if (!s->prev) loop->data.low_prio_head = s->next;
-            else s->prev->next = s->next;
-
-            if (s->next) s->next->prev = s->prev;
-
-            s->prev = 0;
-            s->next = 0;
-            s->flags.low_prio_state = 0;
-            s->group->low_prio_count--;
-            /* Mirror the else branch: if this was the last thing keeping the
-             * group linked, drop it from the loop now rather than waiting for
-             * the next link/unlink to notice. */
-            us_internal_group_maybe_unlink(s->group);
-        } else {
-            us_internal_socket_group_unlink_socket(s->group, s);
+            us_internal_low_prio_unlink(loop, s);
         }
+        us_internal_socket_group_unlink_socket(s->group, s);
         #ifdef LIBUS_USE_KQUEUE
             // kqueue automatically removes the fd from the set on close
             // we can skip the system call for that case

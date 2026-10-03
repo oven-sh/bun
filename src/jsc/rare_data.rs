@@ -655,7 +655,6 @@ impl SocketGroups {
         g.head_sockets.is_null()
             && g.head_connecting_sockets.is_null()
             && g.head_listen_sockets.is_null()
-            && g.low_prio_count == 0
     }
 
     /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.

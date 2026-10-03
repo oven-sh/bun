@@ -324,10 +324,6 @@ struct us_socket_group_t {
     struct us_socket_t *iterator;
     struct us_socket_group_t *prev, *next;
     uint32_t global_tick;
-    /* Sockets currently parked in loop->data.low_prio_head with s->group == this.
-     * They are NOT in head_sockets while queued, so close_all/deinit must
-     * account for them separately. */
-    uint16_t low_prio_count;
     unsigned char timestamp;
     unsigned char long_timestamp;
     unsigned char linked;

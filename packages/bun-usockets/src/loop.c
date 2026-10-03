@@ -224,7 +224,7 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
          * 1:1 owned by a Listener / uWS App that holds a raw pointer to them; the
          * runtime's stop phase has already stopped those owners before this sweep,
          * and closing a listen socket from under one that was not would be a UAF. */
-        if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
+        if (g->head_sockets || g->head_connecting_sockets) {
             us_socket_group_close_all_ex(g, /* also_listeners */ 0);
             any = 1;
         }
@@ -301,38 +301,24 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
-
-    /* Sockets parked in the low-priority queue are unlinked from head_sockets
-     * (the queue reuses prev/next), so the walk above never visits them. On an
-     * idle loop the queue drains only as fast as loop iterations occur, so a
-     * burst of pre-handshake TLS accepts can still be parked when the single
-     * tick their s->timeout stamp matches passes, after which the exact-match
-     * test above can never fire again. Sweep the parked set here against each
-     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
-     * close_raw/detach advance iteration past a socket they unlink, same as
-     * group->iterator does for head_sockets. */
-    for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
-        struct us_socket_t *s = loop_data->low_prio_iterator;
-        unsigned char stamp = s->group->timestamp;
-        unsigned char long_stamp = s->group->long_timestamp;
-        if (stamp == s->timeout) {
-            s->timeout = 255;
-            us_dispatch_timeout(s);
-            if (loop_data->low_prio_iterator != s) continue;
-        }
-        if (long_stamp == s->long_timeout) {
-            s->long_timeout = 255;
-            us_dispatch_long_timeout(s);
-            if (loop_data->low_prio_iterator != s) continue;
-        }
-        loop_data->low_prio_iterator = s->next;
-    }
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
  * Spread it out during many loop iterations, prioritizing already open connections, they are far
  * easier on CPU */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
+
+/* A socket over the budget waits in loop->data.low_prio_head with its reads off. It stays in its
+ * group's head_sockets the whole time, so everything that walks a group reaches it. */
+void us_internal_low_prio_unlink(struct us_loop_t *loop, struct us_socket_t *s) {
+    if (s->low_prio_prev) s->low_prio_prev->low_prio_next = s->low_prio_next;
+    else loop->data.low_prio_head = s->low_prio_next;
+    if (s->low_prio_next) s->low_prio_next->low_prio_prev = s->low_prio_prev;
+    /* The two words are connect_next/connect_state again. */
+    s->connect_next = 0;
+    s->connect_state = 0;
+    s->flags.low_prio_state = 0;
+}
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -341,24 +327,16 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     loop_data->low_prio_budget = MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION;
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
-        /* Unlink this socket from the low-priority queue */
-        if (s == loop_data->low_prio_iterator) loop_data->low_prio_iterator = s->next;
-        loop_data->low_prio_head = s->next;
-        if (s->next) s->next->prev = 0;
-        s->next = 0;
-        s->group->low_prio_count--;
+        us_internal_low_prio_unlink(loop, s);
 
-        if(us_socket_is_closed(s)) {
-            s->flags.low_prio_state = 2;
+        if (us_socket_is_closed(s)) {
             continue;
         }
 
-        us_internal_socket_group_link_socket(s->group, s);
         if (s->flags.is_paused) {
             /* us_socket_pause found the reads already off and only set the flag. Hand back an
              * ordinary paused socket: us_socket_resume arms the reads, and the readable dispatch
              * gates it again. */
-            s->flags.low_prio_state = 0;
             continue;
         }
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
@@ -642,8 +620,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * event carried no READABLE bit or the socket is paused: a pause is flow
              * control, and there is no later for a dead connection to flow into. recv()
              * then returns the data and after it the error, which is what libuv reports
-             * to node as well. A socket parked in the low-priority queue is not linked
-             * where on_data expects it and takes the plain error close. */
+             * to node as well. A socket parked in the low-priority queue has its reads
+             * deferred and takes the plain error close. */
             const int drain_for_error = error && !s->read_eof && s->flags.low_prio_state != 1;
             if ((events & LIBUS_SOCKET_READABLE) || drain_for_error) {
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
@@ -664,29 +642,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         us_poll_change(poll, loop, us_poll_events(poll) & LIBUS_SOCKET_WRITABLE);
                         /* Already parked: a writable dispatch re-enabled READABLE on
                          * this socket (us_socket_raw_write / us_socket_resume issue
-                         * us_poll_change(R|W) without knowing about the queue). It
-                         * sits in loop->data.low_prio_head, NOT in g->head_sockets,
-                         * so the group unlink below would cross-wire the two lists
-                         * (they share prev/next) and the counter bump would leak.
-                         * Readable is disabled again above; leave it where it is. */
+                         * us_poll_change(R|W) without knowing about the queue).
+                         * Pushing it again would corrupt the queue. Readable is
+                         * disabled again above; leave it where it is. */
                         if (flags->low_prio_state == 1) {
                             break;
                         }
-                        struct us_socket_group_t *g = s->group;
-                        /* Queued sockets aren't in head_sockets while parked, so
-                         * the group's emptiness check needs this counter to know
-                         * the owner can't deinit yet. Bump BEFORE unlinking so
-                         * maybe_unlink() inside it still sees the group as
-                         * non-empty. */
-                        g->low_prio_count++;
-                        us_internal_socket_group_unlink_socket(g, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts
-                         * under high load */
-                        s->prev = 0;
-                        s->next = loop->data.low_prio_head;
-                        if (s->next) s->next->prev = s;
+                         * under high load. It stays in its group's head_sockets. */
+                        s->low_prio_prev = 0;
+                        s->low_prio_next = loop->data.low_prio_head;
+                        if (s->low_prio_next) s->low_prio_next->low_prio_prev = s;
                         loop->data.low_prio_head = s;
 
                         flags->low_prio_state = 1;

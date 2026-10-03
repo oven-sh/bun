@@ -372,9 +372,16 @@ struct us_socket_t {
    * in adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
   struct ssl_st *ssl;
   struct us_socket_t *prev, *next;
-  struct us_socket_t *connect_next;
-  struct us_connecting_socket_t *connect_state;
+  /* connect_next/connect_state belong to a candidate of a us_connecting_socket_t. A socket in
+   * the loop's low-priority queue (flags.low_prio_state == 1) is past connecting, has no
+   * connect_state, and keeps its queue links in the same two words. Read the low_prio_ names
+   * only in that state, and connect_state of a socket in that state as NULL. */
+  union { struct us_socket_t *connect_next; struct us_socket_t *low_prio_next; };
+  union { struct us_connecting_socket_t *connect_state; struct us_socket_t *low_prio_prev; };
 };
+
+/* Takes a socket in the low-priority queue (flags.low_prio_state == 1) out of it. */
+void us_internal_low_prio_unlink(struct us_loop_t *loop, struct us_socket_t *s);
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");

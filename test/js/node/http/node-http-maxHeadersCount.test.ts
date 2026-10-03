@@ -7,6 +7,14 @@
  * body with them: a hidden Content-Length still delimited a body. Node rejects
  * such a request since nodejs/node 821688aaa0 (CVE-2026-58044). The expected
  * values below were recorded from Node v26.5.1.
+ *
+ * The native server also held 198 fields at most, whatever the option was: it
+ * answered the 199th with 431 when maxHeadersCount was 400 or 0, and it
+ * delivered the first 199 trailer fields of any number. The expected values
+ * for those cases were recorded from Node v26.10.0.
+ *
+ * A server that does not set the option has a limit of 1000 fields in Node.
+ * The native server of Bun keeps its limit of 198 fields for it.
  */
 import assert from "node:assert";
 import { once } from "node:events";
@@ -17,7 +25,7 @@ import https from "node:https";
 import { createRequire } from "node:module";
 import net, { type AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
-import { duplexPair } from "node:stream";
+import { duplexPair, type Duplex } from "node:stream";
 import { describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
@@ -76,21 +84,38 @@ async function listen(server: net.Server) {
 
 type Transport = {
   name: string;
+  // The limit of a server that does not set maxHeadersCount.
+  unsetLimit: number;
   // Sends `payload` on a new connection and resolves with every byte the server answered.
   roundtrip: (server: http.Server, payload: string) => Promise<string>;
+  // Opens a connection that stays open, for respondsTo().
+  connect: (server: http.Server) => Promise<Duplex>;
   close: (server: http.Server) => void;
 };
 const transports: Transport[] = [
   {
-    // Bun parses these connections in the native server.
+    // Bun parses these connections in the native server, which keeps a limit of 198 fields
+    // for a server that does not set the option.
     name: "listen()",
+    unsetLimit: process.versions.bun ? 198 : 1000,
     roundtrip: async (server, payload) => exchange(await listen(server), payload),
+    connect: async server => {
+      const socket = net.connect(await listen(server), "127.0.0.1");
+      await once(socket, "connect");
+      return socket;
+    },
     close: server => void server.close(),
   },
   {
     // Bun parses these with the llhttp binding, like the HTTP/1.1 connections of an
     // allowHTTP1 HTTP/2 server.
     name: 'emit("connection")',
+    unsetLimit: 1000,
+    connect: async server => {
+      const [client, serverSide] = duplexPair();
+      server.emit("connection", serverSide);
+      return client;
+    },
     roundtrip: (server, payload) =>
       new Promise<string>((resolve, reject) => {
         const [client, serverSide] = duplexPair();
@@ -108,6 +133,37 @@ const transports: Transport[] = [
   },
 ];
 
+// Writes `payload` on an open connection and resolves with the next response: its head and the
+// body that its Content-Length gives, or all that the server sent when it closes the connection.
+function respondsTo(connection: Duplex, payload: string) {
+  return new Promise<string>((resolve, reject) => {
+    let received = "";
+    const finish = () => {
+      connection.off("data", onData).off("end", finish).off("close", finish).off("error", reject);
+      resolve(received);
+    };
+    const onData = (chunk: Buffer | string) => {
+      received += chunk.toString("latin1");
+      const headEnd = received.indexOf("\r\n\r\n");
+      const contentLength = /\r\ncontent-length: (\d+)\r\n/i.exec(received.slice(0, headEnd + 2));
+      if (headEnd !== -1 && contentLength && received.length === headEnd + 4 + Number(contentLength[1])) finish();
+    };
+    connection.on("data", onData).on("end", finish).on("close", finish).on("error", reject);
+    connection.write(payload);
+  });
+}
+
+// req.rawHeaders of a request head: the name and the value of every field line.
+function rawHeadersOf(head: string) {
+  return head
+    .split("\r\n")
+    .slice(1, -2)
+    .flatMap(line => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]);
+}
+
+// Enough for the 2000 and 3000 fields that some cases send. The default is 16 KiB.
+const roomy = { maxHeaderSize: 1024 * 1024 };
+
 const statusLine = (response: string) => response.slice(0, response.indexOf("\r\n"));
 // For test titles: JSON.stringify prints NaN and Infinity as null.
 const show = (value: unknown) => (typeof value === "string" ? JSON.stringify(value) : String(value));
@@ -121,7 +177,7 @@ function record(seen: Seen[]) {
   };
 }
 
-for (const { name, roundtrip, close } of transports) {
+for (const { name, unsetLimit, roundtrip, connect, close } of transports) {
   describe(`server.maxHeadersCount, ${name}`, () => {
     rejectTest("a request over the limit gets 431 and never reaches the handler", async () => {
       const seen: Seen[] = [];
@@ -166,10 +222,11 @@ for (const { name, roundtrip, close } of transports) {
     });
 
     // The llhttp binding hands fields over in blocks of 31, so 31 to 33 cross its first flush.
-    for (const limit of [2, 31, 32, 33, 100]) {
+    // The native server keeps 198 fields in the request itself, so 199 is the first head it moves.
+    for (const limit of [2, 31, 32, 33, 100, 198, 199, 2000]) {
       test(`limit ${limit}: a request at the limit passes with every field`, async () => {
         const seen: Seen[] = [];
-        const server = http.createServer(record(seen));
+        const server = http.createServer(roomy, record(seen));
         server.maxHeadersCount = limit;
         try {
           assert.strictEqual(statusLine(await roundtrip(server, requestHead(limit))), ok);
@@ -181,7 +238,7 @@ for (const { name, roundtrip, close } of transports) {
 
       rejectTest(`limit ${limit}: one more field fails`, async () => {
         const seen: Seen[] = [];
-        const server = http.createServer(record(seen));
+        const server = http.createServer(roomy, record(seen));
         server.maxHeadersCount = limit;
         try {
           assert.strictEqual(await roundtrip(server, requestHead(limit + 1)), tooLarge);
@@ -206,19 +263,154 @@ for (const { name, roundtrip, close } of transports) {
       }
     });
 
-    for (const value of [0, 0.5, -1, NaN, Infinity, null, "2"]) {
+    // A number whose int32 `<< 1` is not positive. 1001 fields are more than a server with no option passes.
+    for (const value of [0, 0.5, -1, NaN, Infinity, 2 ** 30, 2 ** 31]) {
       test(`maxHeadersCount = ${show(value)} sets no limit`, async () => {
         const seen: Seen[] = [];
         const server = http.createServer(record(seen));
-        server.maxHeadersCount = value as number;
+        server.maxHeadersCount = value;
         try {
-          assert.strictEqual(statusLine(await roundtrip(server, requestHead(40))), ok);
-          assert.deepStrictEqual(seen, [{ url: "/", fields: 40, host: "localhost" }]);
+          assert.strictEqual(statusLine(await roundtrip(server, requestHead(1001))), ok);
+          assert.deepStrictEqual(seen, [{ url: "/", fields: 1001, host: "localhost" }]);
         } finally {
           close(server);
         }
       });
     }
+
+    test("maxHeadersCount = 0 passes 3000 fields", async () => {
+      const seen: Seen[] = [];
+      const server = http.createServer(roomy, record(seen));
+      server.maxHeadersCount = 0;
+      try {
+        assert.strictEqual(statusLine(await roundtrip(server, requestHead(3000))), ok);
+        assert.deepStrictEqual(seen, [{ url: "/", fields: 3000, host: "localhost" }]);
+      } finally {
+        close(server);
+      }
+    });
+
+    // 199 fields are the first that the native server parses into a larger request.
+    for (const fields of [199, 1000]) {
+      test(`limit 1000: a head of ${fields} fields arrives with every name and value`, async () => {
+        let rawHeaders: string[] | undefined;
+        const server = http.createServer((req, res) => {
+          rawHeaders = req.rawHeaders;
+          res.end("ok");
+        });
+        server.maxHeadersCount = 1000;
+        try {
+          const head = requestHead(fields);
+          assert.strictEqual(statusLine(await roundtrip(server, head)), ok);
+          assert.deepStrictEqual(rawHeaders, rawHeadersOf(head));
+        } finally {
+          close(server);
+        }
+      });
+    }
+
+    // A value that is not a number is like no option.
+    for (const value of [undefined, null, "2"]) {
+      const unset = value === undefined ? "not set" : `= ${show(value)}`;
+      rejectTest(`maxHeadersCount ${unset}: ${unsetLimit} fields pass and ${unsetLimit + 1} fields fail`, async () => {
+        const seen: Seen[] = [];
+        const server = http.createServer(record(seen));
+        if (value !== undefined) server.maxHeadersCount = value as number;
+        try {
+          assert.strictEqual(statusLine(await roundtrip(server, requestHead(unsetLimit))), ok);
+          assert.strictEqual(await roundtrip(server, requestHead(unsetLimit + 1)), tooLarge);
+          assert.deepStrictEqual(seen, [{ url: "/", fields: unsetLimit, host: "localhost" }]);
+        } finally {
+          close(server);
+        }
+      });
+    }
+
+    // maxHeaderSize counts the url, the names and the values: 14 001 bytes here. It does not count
+    // the 4 bytes around each field, and with those this head is 18 018 bytes.
+    test("1000 fields of 14 bytes fit the default maxHeaderSize", async () => {
+      const seen: Seen[] = [];
+      const server = http.createServer(record(seen));
+      server.maxHeadersCount = 1000;
+      try {
+        const lines = ["GET / HTTP/1.1", "Host: localhost"];
+        for (let i = 0; i < 998; i++) lines.push(`X-${String(i).padStart(4, "0")}: 12345678`);
+        lines.push("Connection: close");
+        const head = lines.join("\r\n") + "\r\n\r\n";
+        assert.strictEqual(head.length, 18018);
+        assert.strictEqual(statusLine(await roundtrip(server, head)), ok);
+        assert.deepStrictEqual(seen, [{ url: "/", fields: 1000, host: "localhost" }]);
+      } finally {
+        close(server);
+      }
+    });
+
+    // The rest of the second head goes out when the first response is back. The server read the
+    // start of that head with the first request, so the head takes two reads.
+    for (const fieldsInFirstRead of [150, 250]) {
+      test(`a head of 300 fields arrives whole when a read ends after ${fieldsInFirstRead} of them`, async () => {
+        const requests: string[][] = [];
+        const server = http.createServer((req, res) => {
+          requests.push(req.rawHeaders);
+          res.end("ok");
+        });
+        server.maxHeadersCount = 1000;
+        const connection = await connect(server);
+        try {
+          const head = requestHead(300);
+          const cut = head.split("\r\n", fieldsInFirstRead + 1).join("\r\n").length + 2;
+          const first = requestHead(3, { close: false });
+          assert.strictEqual(statusLine(await respondsTo(connection, first + head.slice(0, cut))), ok);
+          assert.strictEqual(statusLine(await respondsTo(connection, head.slice(cut))), ok);
+          assert.deepStrictEqual(requests, [rawHeadersOf(first), rawHeadersOf(head)]);
+        } finally {
+          connection.destroy();
+          close(server);
+        }
+      });
+    }
+
+    // Node copies server.maxHeadersCount to the parser of a connection when the connection opens.
+    rejectTest("a connection keeps the limit that its server had when it opened", async () => {
+      const server = http.createServer(record([]));
+      const connections: Duplex[] = [];
+      const open = async () => connections[connections.push(await connect(server)) - 1];
+      try {
+        // Each connection answers a request before the assignment, so it is open by then.
+        const lowered = await open();
+        assert.strictEqual(statusLine(await respondsTo(lowered, requestHead(6, { close: false }))), ok);
+        server.maxHeadersCount = 3;
+        assert.strictEqual(statusLine(await respondsTo(lowered, requestHead(6, { close: false }))), ok);
+
+        const raised = await open();
+        assert.strictEqual(statusLine(await respondsTo(raised, requestHead(3, { close: false }))), ok);
+        server.maxHeadersCount = 10;
+        assert.strictEqual(await respondsTo(raised, requestHead(6)), tooLarge);
+
+        assert.strictEqual(statusLine(await respondsTo(await open(), requestHead(6))), ok);
+      } finally {
+        for (const connection of connections) connection.destroy();
+        close(server);
+      }
+    });
+
+    // The listener ends the connection, and with it the parser, while it holds the request.
+    test("a head of 300 fields is whole after its 'upgrade' listener destroys the socket", async () => {
+      let rawHeaders: string[] | undefined;
+      const server = http.createServer(record([]));
+      server.on("upgrade", (req, socket) => {
+        socket.destroy();
+        rawHeaders = req.rawHeaders;
+      });
+      server.maxHeadersCount = 1000;
+      try {
+        const head = requestHead(300, { extra: ["Connection: Upgrade", "Upgrade: raw"], close: false });
+        assert.strictEqual(await roundtrip(server, head), "");
+        assert.deepStrictEqual(rawHeaders, rawHeadersOf(head));
+      } finally {
+        close(server);
+      }
+    });
 
     test("a request with 40 fields keeps its Content-Length and its body", async () => {
       const bodies: unknown[] = [];
@@ -282,58 +474,94 @@ for (const { name, roundtrip, close } of transports) {
       }
     });
 
+    rejectTest("a pipelined request of 1001 fields fails after one of 300 fields is dispatched", async () => {
+      const urls: string[] = [];
+      // No response: the 431 is then all that the server sends.
+      const server = http.createServer(req => void urls.push(req.url!));
+      server.maxHeadersCount = 1000;
+      try {
+        const response = await roundtrip(
+          server,
+          requestHead(300, { requestLine: "GET /one HTTP/1.1", close: false }) +
+            requestHead(1001, { requestLine: "GET /two HTTP/1.1" }),
+        );
+        assert.strictEqual(response, tooLarge);
+        assert.deepStrictEqual(urls, ["/one"]);
+      } finally {
+        close(server);
+      }
+    });
+
     describe("trailers count from zero against the same limit", () => {
       const chunked =
         "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n";
+      const trailerSection = (fields: number) => {
+        let section = "";
+        for (let i = 0; i < fields; i++) section += `T${i}: ${i}\r\n`;
+        return section + "\r\n";
+      };
+      const rawTrailersOf = (fields: number) => Array.from({ length: fields }, (_, i) => [`T${i}`, `${i}`]).flat();
 
-      test("at the limit they are delivered", async () => {
-        let rawTrailers: string[] | undefined;
-        const server = http.createServer((req, res) => {
-          req.resume().on("end", () => {
-            rawTrailers = req.rawTrailers;
-            res.end("ok");
-          });
-        });
-        server.maxHeadersCount = 3;
-        try {
-          const response = await roundtrip(server, chunked + "A: 1\r\nB: 2\r\nC: 3\r\n\r\n");
-          assert.strictEqual(statusLine(response), ok);
-          assert.deepStrictEqual(rawTrailers, ["A", "1", "B", "2", "C", "3"]);
-        } finally {
-          close(server);
-        }
-      });
+      // The native server held 199 trailer fields, and dropped the rest of a section without an error.
+      for (const { limit, fields } of [
+        { limit: 3, fields: 3 },
+        { limit: undefined, fields: unsetLimit },
+        { limit: 1000, fields: 1000 },
+        { limit: 0, fields: 1500 },
+      ]) {
+        const title = limit === undefined ? "limit not set" : limit === 0 ? "no limit" : `limit ${limit}`;
 
-      rejectTest("over the limit the request fails with HPE_HEADER_OVERFLOW", async () => {
-        let ended = false;
-        const server = http.createServer();
-        server.maxHeadersCount = 3;
-        const requestError = new Promise<any>(resolve => {
-          server.on("request", (req, res) => {
-            req.resume().on("error", resolve);
-            // Not reached: the message never completes.
-            req.on("end", () => {
-              ended = true;
+        test(`${title}: ${fields} fields are delivered`, async () => {
+          let rawTrailers: string[] | undefined;
+          const server = http.createServer((req, res) => {
+            req.resume().on("end", () => {
+              rawTrailers = req.rawTrailers;
               res.end("ok");
             });
           });
+          if (limit !== undefined) server.maxHeadersCount = limit;
+          try {
+            const response = await roundtrip(server, chunked + trailerSection(fields));
+            assert.strictEqual(statusLine(response), ok);
+            assert.deepStrictEqual(rawTrailers, rawTrailersOf(fields));
+          } finally {
+            close(server);
+          }
         });
-        const clientError = new Promise<any>(resolve => {
-          server.on("clientError", (err, socket) => {
-            resolve(err);
-            socket.destroy();
+
+        if (limit === 0) continue;
+
+        rejectTest(`${title}: one more field fails the request with HPE_HEADER_OVERFLOW`, async () => {
+          let ended = false;
+          const server = http.createServer();
+          if (limit !== undefined) server.maxHeadersCount = limit;
+          const requestError = new Promise<any>(resolve => {
+            server.on("request", (req, res) => {
+              req.resume().on("error", resolve);
+              // Not reached: the message never completes.
+              req.on("end", () => {
+                ended = true;
+                res.end("ok");
+              });
+            });
           });
+          const clientError = new Promise<any>(resolve => {
+            server.on("clientError", (err, socket) => {
+              resolve(err);
+              socket.destroy();
+            });
+          });
+          try {
+            const response = await roundtrip(server, chunked + trailerSection(fields + 1));
+            assert.strictEqual(response, "");
+            assert.strictEqual((await clientError).code, "HPE_HEADER_OVERFLOW");
+            assert.strictEqual((await requestError).code, "ECONNRESET");
+            assert.strictEqual(ended, false);
+          } finally {
+            close(server);
+          }
         });
-        try {
-          const response = await roundtrip(server, chunked + "A: 1\r\nB: 2\r\nC: 3\r\nD: 4\r\n\r\n");
-          assert.strictEqual(response, "");
-          assert.strictEqual((await clientError).code, "HPE_HEADER_OVERFLOW");
-          assert.strictEqual((await requestError).code, "ECONNRESET");
-          assert.strictEqual(ended, false);
-        } finally {
-          close(server);
-        }
-      });
+      }
     });
   });
 }
@@ -351,6 +579,8 @@ describe("server.maxHeadersCount, listen() only", () => {
       server.maxHeadersCount = null;
       assert.strictEqual(server.maxHeadersCount, null);
       assert.strictEqual(statusLine(await exchange(port, requestHead(6))), ok);
+      // The default again, and not no limit.
+      assert.strictEqual(await exchange(port, requestHead(1001)), tooLarge);
       assert.deepStrictEqual(
         seen.map(request => request.fields),
         [6, 6],
@@ -360,49 +590,34 @@ describe("server.maxHeadersCount, listen() only", () => {
     }
   });
 
-  test("https.Server accepts a request at the limit", async () => {
-    const seen: Seen[] = [];
-    const server = https.createServer({ cert, key }, record(seen));
-    server.maxHeadersCount = 3;
-    try {
-      assert.strictEqual(statusLine(await exchange(await listen(server), requestHead(3), true)), ok);
-      assert.deepStrictEqual(seen, [{ url: "/", fields: 3, host: "localhost" }]);
-    } finally {
-      server.close();
-    }
-  });
+  for (const limit of [3, 1000]) {
+    test(`https.Server accepts a request at the limit of ${limit}`, async () => {
+      const seen: Seen[] = [];
+      const server = https.createServer({ cert, key }, record(seen));
+      server.maxHeadersCount = limit;
+      try {
+        assert.strictEqual(statusLine(await exchange(await listen(server), requestHead(limit), true)), ok);
+        assert.deepStrictEqual(seen, [{ url: "/", fields: limit, host: "localhost" }]);
+      } finally {
+        server.close();
+      }
+    });
 
-  rejectTest("https.Server rejects a request over the limit", async () => {
-    const seen: Seen[] = [];
-    const server = https.createServer({ cert, key }, record(seen));
-    server.maxHeadersCount = 3;
-    try {
-      assert.strictEqual(await exchange(await listen(server), requestHead(4), true), tooLarge);
-      assert.deepStrictEqual(seen, []);
-    } finally {
-      server.close();
-    }
-  });
+    rejectTest(`https.Server rejects a request over the limit of ${limit}`, async () => {
+      const seen: Seen[] = [];
+      const server = https.createServer({ cert, key }, record(seen));
+      server.maxHeadersCount = limit;
+      try {
+        assert.strictEqual(await exchange(await listen(server), requestHead(limit + 1), true), tooLarge);
+        assert.deepStrictEqual(seen, []);
+      } finally {
+        server.close();
+      }
+    });
+  }
 });
 
 describe('server.maxHeadersCount, emit("connection") only', () => {
-  const { roundtrip } = transports[1];
-
-  // Node's parsers start with maxHeaderPairs = 2000. The native server holds fewer fields.
-  test("1000 fields pass when the option is not set", async () => {
-    const seen: Seen[] = [];
-    const server = http.createServer(record(seen));
-    assert.strictEqual(statusLine(await roundtrip(server, requestHead(1000))), ok);
-    assert.deepStrictEqual(seen, [{ url: "/", fields: 1000, host: "localhost" }]);
-  });
-
-  rejectTest("1001 fields fail when the option is not set", async () => {
-    const seen: Seen[] = [];
-    const server = http.createServer(record(seen));
-    assert.strictEqual(await roundtrip(server, requestHead(1001)), tooLarge);
-    assert.deepStrictEqual(seen, []);
-  });
-
   rejectTest("an allowHTTP1 HTTP/2 server enforces the limit on HTTP/1.1 connections", async () => {
     let requests = 0;
     const server = http2.createSecureServer({ cert, key, allowHTTP1: true }, (req, res) => {

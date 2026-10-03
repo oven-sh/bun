@@ -38,6 +38,7 @@ enum class WebSocketErrorCode : int32_t {
     proxy_authentication_required = 34,
     proxy_tunnel_failed = 36,
     unexpected_rsv1 = 37,
+    response_headers_too_large = 38,
 };
 
 }

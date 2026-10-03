@@ -642,3 +642,36 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+// The stale bitset of the incremental graph grows in steps of 512 files. The
+// first bundle of this page takes the client graph past one step.
+const modulesPastOneBitsetStep = Array.from({ length: 600 }, (_, i) => `m${i}`);
+const importModulesPastOneBitsetStep = modulesPastOneBitsetStep.map(name => `import "./modules/${name}";`).join("\n");
+devTest("hot update sends only the changed module in a page with a stylesheet and over 512 modules", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["style.css"],
+      scripts: ["root.ts"],
+    }),
+    "style.css": `
+      body { color: red; }
+    `,
+    // "root.ts" does not accept updates, so a hot update that carries one of the modules it imports reloads the page.
+    "root.ts": [importModulesPastOneBitsetStep, `import "./a";`, `console.log("root");`].join("\n"),
+    "a.ts": [importModulesPastOneBitsetStep, `console.log("a1");`, `import.meta.hot.accept();`].join("\n"),
+    ...Object.fromEntries(
+      modulesPastOneBitsetStep.map(name => [`modules/${name}.ts`, `export const ${name} = "${name}";`]),
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a1", "root");
+
+    // Only "a.ts" changed and it accepts itself. The client exits if the page reloads.
+    await dev.write(
+      "a.ts",
+      [importModulesPastOneBitsetStep, `console.log("a2");`, `import.meta.hot.accept();`].join("\n"),
+    );
+    await c.expectMessage("a2");
+  },
+});

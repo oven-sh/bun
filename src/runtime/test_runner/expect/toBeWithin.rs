@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::{throw, Expect};
+use super::{throw, Expect, OrderingRelation};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -27,26 +27,24 @@ impl Expect {
         let start_value = arguments[0];
         start_value.ensure_still_alive();
 
-        if !start_value.is_number() {
+        if !start_value.is_number() && !start_value.is_big_int() {
             return Err(global.throw(format_args!(
-                "toBeWithin() requires the first argument to be a number"
+                "toBeWithin() requires the first argument to be a number or a bigint"
             )));
         }
 
         let end_value = arguments[1];
         end_value.ensure_still_alive();
 
-        if !end_value.is_number() {
+        if !end_value.is_number() && !end_value.is_big_int() {
             return Err(global.throw(format_args!(
-                "toBeWithin() requires the second argument to be a number"
+                "toBeWithin() requires the second argument to be a number or a bigint"
             )));
         }
 
-        let mut pass = value.is_number();
-        if pass {
-            let num = value.as_number();
-            pass = num >= start_value.as_number() && num < end_value.as_number();
-        }
+        let mut pass = (value.is_number() || value.is_big_int())
+            && OrderingRelation::Ge.holds(global, value, start_value)
+            && OrderingRelation::Lt.holds(global, value, end_value);
 
         if not {
             pass = !pass;

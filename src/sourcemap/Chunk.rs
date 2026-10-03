@@ -1,4 +1,5 @@
 use bun_ast::{Loc, Source};
+use bun_core::strings::EncodingNonAscii;
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
@@ -384,6 +385,11 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
+
+    /// How the printer's output buffer (the `output` passed to every method
+    /// here) is encoded while it prints: `Utf8`, or `Latin1` for one byte per
+    /// UTF-16 code unit.
+    pub output_encoding: EncodingNonAscii,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -404,6 +410,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
             prepend_count: false,
+            output_encoding: EncodingNonAscii::Utf8,
         }
     }
 }
@@ -525,20 +532,26 @@ impl NewBuilder<'_, VLQSourceMap> {
             && !self.line_starts_with_mapping
             && self.has_prev_state;
 
+        let latin1 = self.output_encoding == EncodingNonAscii::Latin1;
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
         while i < n {
-            let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            let mut cp_bytes = [0u8; 4];
-            let take = (len as usize).min(n - i);
-            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
-            c = strings::decode_wtf8_rune_t::<i32>(
-                cp_bytes,
-                len,
-                strings::UNICODE_REPLACEMENT as i32,
-            );
-            i += len as usize;
+            if latin1 {
+                c = slice[i] as i32;
+                i += 1;
+            } else {
+                let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
+                let mut cp_bytes = [0u8; 4];
+                let take = (len as usize).min(n - i);
+                cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
+                c = strings::decode_wtf8_rune_t::<i32>(
+                    cp_bytes,
+                    len,
+                    strings::UNICODE_REPLACEMENT as i32,
+                );
+                i += len as usize;
+            }
 
             match c {
                 14..=127 => {
@@ -604,6 +617,20 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
+        self.last_generated_update = output.len() as u32;
+    }
+
+    /// `output[start..]` is `text` as a `Latin1` writer stored it: a character
+    /// above U+00FF is one placeholder byte per code unit there, so U+2028 and
+    /// U+2029 do not show. Count that part from `text` (WTF-8) instead.
+    #[cold]
+    pub fn update_generated_verbatim(&mut self, output: &[u8], start: usize, text: &[u8]) {
+        debug_assert!(self.output_encoding == EncodingNonAscii::Latin1);
+        self.update_generated_line_and_column(&output[..start]);
+        self.output_encoding = EncodingNonAscii::Utf8;
+        self.last_generated_update = 0;
+        self.update_generated_line_and_column(text);
+        self.output_encoding = EncodingNonAscii::Latin1;
         self.last_generated_update = output.len() as u32;
     }
 

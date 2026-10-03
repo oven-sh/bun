@@ -104,6 +104,7 @@ test("(multi-file test) my feature", async () => {
 - Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `VerdaccioRegistry` from `"harness"` for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
 - `setDefaultTimeout` is a ceiling, not a target. Leave the default and pass a per-test timeout only for the rare outlier; a 5-minute file default multiplies across retries when one test hangs.
 - Leak tests branch their RSS threshold on `isASAN`/`isDebug` and keep the bound well below what the unfixed leak produces. An un-branched absolute delta flakes under ASAN quarantine and GC jitter.
+- To bound a subprocess's peak RSS, use `runCommandMaxRSS` from `"harness"`. Do not read `proc.resourceUsage().maxRSS` from a process the test spawned: on Linux that value is max(test runner peak, child peak).
 - **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` or `await sleep(N)` to wait for a condition; poll with a deadline or `await` the event itself. You are not testing the TIME PASSING, you are testing the CONDITION.
 - **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 

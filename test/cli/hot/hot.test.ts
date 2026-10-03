@@ -1006,6 +1006,56 @@ it.if(isWindows)(
   timeout,
 );
 
+it.if(isWindows)(
+  "the dev server outlives a burst of file events with a deleted import in it",
+  async () => {
+    // More files than the watcher dispatches events at once, which is 128.
+    const count = 150;
+    const main = (from: number, log: string) =>
+      Array.from({ length: count - from }, (_, i) => `import "./mods/${from + i}.ts";\n`).join("") +
+      `console.log(${JSON.stringify(log)});\n`;
+    using dir = tempDir("dev-server-burst", {
+      "index.html": `<script type="module" src="./main.ts"></script>`,
+      "main.ts": main(0, "first bundle"),
+      ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`mods/${i}.ts`, `console.log(${i});`])),
+      "other/keep": "",
+      "server.ts": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await Bun.write("url", server.url.href);
+        console.log("listening");
+      `,
+    });
+    const root = String(dir);
+    await using runner = spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    expect(await follow(runner.stdout)("listening")).toBe(true);
+    const url = readFileSync(join(root, "url"), "utf8");
+    const bundle = async () => {
+      const [, src] = /src="([^"]+)"/.exec(await (await fetch(url)).text())!;
+      return await (await fetch(new URL(src, url))).text();
+    };
+    expect(await bundle()).toContain("first bundle");
+
+    whileSuspended(runner.pid, () => {
+      // The read that is already waiting completes with the first change alone.
+      writeFileSync(join(root, "other", "first"), "");
+      unlinkSync(join(root, "mods", "0.ts"));
+      for (let i = 1; i < count; i++) writeFileSync(join(root, "mods", `${i}.ts`), `console.log(${i}, "again");`);
+    });
+
+    writeFileSync(join(root, "main.ts"), main(1, "second bundle"));
+    while (!(await bundle()).includes("second bundle"));
+  },
+  timeout,
+);
+
 it.todoIf(!isWindows)(
   "reloads when a deleted import is written again",
   async () => {

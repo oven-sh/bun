@@ -78,8 +78,7 @@ pub struct DirWatcher {
     /// `EventIterator::next`).
     pub(crate) buf: [u8; 64 * 1024],
     pub(crate) dir_handle: HANDLE,
-    /// A read was started and its completion is not out of the queue yet: `buf` and
-    /// `overlapped` are not ours to reuse.
+    /// A read's completion is still to come, so `buf` and `overlapped` are not ours to reuse.
     read_pending: bool,
 }
 
@@ -100,8 +99,7 @@ const _: () = assert!(
 );
 
 impl DirWatcher {
-    /// Starts a read, which invalidates any EventIterators, unless one is pending: a poll
-    /// that times out leaves its read with the kernel.
+    /// invalidates any EventIterators, unless a read is pending: a poll that times out leaves one
     fn prepare(&mut self) -> bun_sys::Result<()> {
         if self.read_pending {
             return Ok(());
@@ -443,8 +441,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 {
                     // Other threads append to the watchlist under this mutex, which can move it.
                     let _guard = this.mutex.lock_guard();
-                    // A batch evicts items. `flush_evictions` fills each hole with the last item,
-                    // so a walk from the end does not miss an item it has not reached.
+                    // An eviction moves the last item into the hole: from the end, none is missed.
                     item_idx = item_idx.min(this.watchlist.len());
                     let eventpath = &this.platform.buf[..eventpath_len];
                     while item_idx > 0 && event_id < this.watch_events.len() {
@@ -473,13 +470,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     break;
                 }
                 process_watch_event_batch(this, event_id)?;
-                // passing `this: &mut Watcher` above materialises a fresh Unique
-                // borrow over the whole `Watcher`, which under Stacked Borrows pops the
-                // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
-                // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
-                // then dereference a pointer with invalidated provenance — UB that MIRI flags.
-                // The callee never touches `platform.watcher`, so re-deriving the pointer
-                // here from the now-current `&mut Watcher` restores valid provenance.
+                // Passing the whole `&mut Watcher` invalidated the pointer derived from it.
                 iter.watcher = BackRef::new(&this.platform.watcher);
                 event_id = 0;
             }

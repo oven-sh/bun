@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-const supported = isArm64 && !isWindows;
+const supported = !isWindows;
 
 function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] program data: ");

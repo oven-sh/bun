@@ -8,8 +8,8 @@ pub(crate) fn why_unsupported(target: &CompileTarget) -> Option<&'static str> {
     unsafe extern "C" {
         safe fn Bun__AOT__hasCompiler() -> bool;
     }
-    if !cfg!(all(target_arch = "aarch64", unix)) {
-        return Some("ahead-of-time compilation only supports arm64 macOS and Linux so far");
+    if !cfg!(any(target_arch = "aarch64", target_arch = "x86_64")) {
+        return Some("ahead-of-time compilation only supports arm64 and x64");
     }
     if !Bun__AOT__hasCompiler() {
         return Some("this build of Bun does not include the ahead-of-time compiler");

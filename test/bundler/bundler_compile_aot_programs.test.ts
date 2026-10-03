@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { cpSync, existsSync, readdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-const supported = isArm64 && !isWindows;
 const programs = join(import.meta.dir, "compile-aot");
 
 const mainOf = (dir: string) => (existsSync(join(dir, "main.ts")) ? "main.ts" : "main.js");
@@ -93,7 +92,7 @@ async function runWrapped(dir: string, outfile: string, build: Record<string, st
   };
 }
 
-describe.skipIf(!supported)("compile.aot", () => {
+describe("compile.aot", () => {
   for (const name of readdirSync(programs)
     .filter(name => !name.startsWith("."))
     .sort((a, b) => Number(heavy.has(a)) - Number(heavy.has(b)))) {

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-const supported = isArm64 && !isWindows;
+const supported = !isWindows;
 
 type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean };
 

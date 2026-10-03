@@ -27,14 +27,18 @@
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #endif
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
 #include <link.h>
+#endif
+#if OS(FREEBSD)
+#include <sys/types.h>
+#include <sys/sysctl.h>
 #endif
 #if OS(DARWIN)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #endif
-#if OS(DARWIN) || OS(LINUX)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -420,6 +424,7 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
     return true;
 }
 
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 static std::optional<off_t> offsetInExecutableFile(const void* address)
 {
     uintptr_t target = reinterpret_cast<uintptr_t>(address);
@@ -446,7 +451,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
         }
         command = reinterpret_cast<const load_command*>(reinterpret_cast<const char*>(command) + command->cmdsize);
     }
-#elif OS(LINUX)
+#else
     std::optional<off_t> result;
     struct Context {
         uintptr_t target;
@@ -463,11 +468,10 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
         return 1;
     }, &context);
     return result;
-#else
-    UNUSED_PARAM(target);
 #endif
     return std::nullopt;
 }
+#endif
 
 extern "C" void Bun__AOT__setImageCodec()
 {
@@ -508,6 +512,7 @@ extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t string
     append(ctx, image.span().data(), image.size());
 }
 
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 static int openExecutable()
 {
 #if OS(DARWIN)
@@ -515,11 +520,18 @@ static int openExecutable()
     uint32_t pathSize = sizeof(path);
     if (_NSGetExecutablePath(path, &pathSize))
         return -1;
+#elif OS(FREEBSD)
+    char path[PATH_MAX];
+    size_t pathSize = sizeof(path);
+    int name[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+    if (sysctl(name, std::size(name), path, &pathSize, nullptr, 0))
+        return -1;
 #else
     const char* path = "/proc/self/exe";
 #endif
     return open(path, O_RDONLY | O_CLOEXEC);
 }
+#endif
 
 extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, size_t* result)
 {
@@ -536,8 +548,13 @@ extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, 
 
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
 {
-#if OS(DARWIN) || OS(LINUX)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
     const char* verbose = getenv("BUN_AOT_VERBOSE");
+#if OS(WINDOWS)
+    UNUSED_PARAM(offsetInFile);
+    const char* isNotInExecutable = "it is not in the executable";
+    JSC::AOTFileUse use = fileDescriptor < 0 ? JSC::useAOTFileInLoadedSection({ bytes, length }) : JSC::AOTFileUse { isNotInExecutable, isNotInExecutable };
+#else
     bool isInExecutable = fileDescriptor < 0;
     if (isInExecutable) {
         auto offset = offsetInExecutableFile(bytes);
@@ -548,6 +565,7 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
     JSC::AOTFileUse use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
+#endif
     if (!verbose)
         return;
     if (use.programDataRejectionReason)
@@ -559,11 +577,13 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
         return;
     }
     fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.codeSizeInBytes, use.code, JSC::aotImageRegExpCount({ bytes, length }).value_or(0));
+#if !OS(WINDOWS)
     if (!strcmp(verbose, "2") && use.codeSizeInBytes > 4096) {
         auto* start = static_cast<const uint8_t*>(use.code);
         for (auto* at = start; (at = static_cast<const uint8_t*>(memmem(at, start + use.codeSizeInBytes - at, start, 512))); at += 512)
             fprintf(stderr, "[aot] stubs at image+0x%zx\n", static_cast<size_t>(at - start));
     }
+#endif
 #else
     UNUSED_PARAM(bytes);
     UNUSED_PARAM(length);

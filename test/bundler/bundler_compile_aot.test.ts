@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-const supported = isArm64 && !isWindows;
 
 const usesImage = (stdout: string): BundlerTestInput["run"] => ({
   env: { BUN_AOT_VERBOSE: "1" },
@@ -15,7 +14,7 @@ const usesImage = (stdout: string): BundlerTestInput["run"] => ({
   },
 });
 
-describe.skipIf(!supported)("bundler", () => {
+describe("bundler", () => {
   for (const backend of ["cli", "api"] as const) {
     const itBundled = (id: string, opts: BundlerTestInput) =>
       itBundledBase(`compile/aot/${backend}/${id}`, { backend, target: "bun", compile: { aot: true }, ...opts });
@@ -284,7 +283,7 @@ describe.skipIf(!supported)("bundler", () => {
   });
 });
 
-test.skipIf(!supported)("compile.aot: concurrent builds from several threads", async () => {
+test("compile.aot: concurrent builds from several threads", async () => {
   const apps = [1, 2, 3, 4];
   using dir = tempDir("compile-aot-at-once", {
     ...Object.fromEntries(
@@ -343,9 +342,7 @@ test.skipIf(!supported)("compile.aot: concurrent builds from several threads", a
 });
 
 const otherTarget = process.platform === "linux" ? "bun-darwin-x64" : "bun-linux-x64";
-const whyNot = supported
-  ? "ahead-of-time compilation cannot target another platform or version of Bun"
-  : "ahead-of-time compilation only supports arm64 macOS and Linux so far";
+const whyNot = "ahead-of-time compilation cannot target another platform or version of Bun";
 
 test("--compile-aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross", { "entry.ts": `console.log(1);` });
@@ -371,7 +368,7 @@ test("compile.aot rejects cross-compilation and unsupported targets", async () =
   ).toThrow(`compile.aot: ${whyNot}`);
 });
 
-test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
+test("--compile-aot requires --format=esm", async () => {
   using dir = tempDir("compile-aot-format", { "entry.cjs": `console.log(1);` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--compile-aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
@@ -392,7 +389,7 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-describe.skipIf(!supported)("Bun.ModuleGraph with --compile-aot", () => {
+describe("Bun.ModuleGraph with --compile-aot", () => {
   async function run(entry: string) {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
@@ -600,7 +597,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph with --compile-aot", () => {
   });
 });
 
-test.skipIf(!supported).each(["forEach", "map"])(
+test.each(["forEach", "map"])(
   "an uncaught error from the callback of %s is reported",
   async method => {
     using dir = tempDir("compile-aot-uncaught", {
@@ -628,7 +625,7 @@ test.skipIf(!supported).each(["forEach", "map"])(
   },
 );
 
-test.skipIf(!supported)("image and program data are used", async () => {
+test("image and program data are used", async () => {
   using dir = tempDir("compile-aot-address", {
     "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
   });
@@ -660,7 +657,7 @@ test.skipIf(!supported)("image and program data are used", async () => {
   });
 });
 
-test.skipIf(!supported).each([
+test.each([
   ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--compile-aot"]],
   ["with BUN_AOT=1", { BUN_AOT: "1" }, ["--bytecode", "--format=esm"]],
 ])("a build %s produces the same code", async (_, env, flags) => {
@@ -691,7 +688,7 @@ test.skipIf(!supported).each([
   expect(actual).toBe(expected);
 });
 
-test.skipIf(!supported)("compiles RegExps with the u and v flags", async () => {
+test("compiles RegExps with the u and v flags", async () => {
   using dir = tempDir("compile-aot-regexps", {
     "none.ts": `console.log("none");`,
     "some.ts": `console.log([/a+b/.test("aab"), /\\p{L}+x/u.test("\\xe9x"), /^.$/u.test("\\u{1f600}"), /[\\p{L}--[a-c]]y/v.test("dy")].join());`,
@@ -728,7 +725,7 @@ test.skipIf(!supported)("compiles RegExps with the u and v flags", async () => {
   expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(none + 4);
 });
 
-test.skipIf(!supported)("hot run-time RegExps are compiled", async () => {
+test("hot run-time RegExps are compiled", async () => {
   using dir = tempDir("compile-aot-regexp-at-run-time", {
     "entry.ts": `
       const build = (word: string) => new RegExp(["(\\\\w+)@", "(\\\\w+)\\\\.", word].join(""));
@@ -773,7 +770,7 @@ test.skipIf(!supported)("hot run-time RegExps are compiled", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!supported)("crash reports symbolicate compiled frames", async () => {
+test("crash reports symbolicate compiled frames", async () => {
   using dir = tempDir("compile-aot-crash", {
     "entry.ts": `
       import { crash_handler } from "bun:internal-for-testing";
@@ -821,7 +818,7 @@ test.skipIf(!supported)("crash reports symbolicate compiled frames", async () =>
   expect(exitCode).not.toBe(0);
 });
 
-test.skipIf(!supported)("--cpu-prof attributes native time to the calling function", async () => {
+test("--cpu-prof attributes native time to the calling function", async () => {
   using dir = tempDir("compile-aot-cpu-prof", {
     "entry.ts": `
       function busy(rounds: number, seed: number) {
@@ -861,7 +858,7 @@ test.skipIf(!supported)("--cpu-prof attributes native time to the calling functi
   expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
 });
 
-test.skipIf(!supported)("image size limit is a build error", async () => {
+test("image size limit is a build error", async () => {
   using dir = tempDir("compile-aot-too-large", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
@@ -877,7 +874,7 @@ test.skipIf(!supported)("image size limit is a build error", async () => {
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test.skipIf(!supported)("--compile-aot with --bytecode-depth is an error", async () => {
+test("--compile-aot with --bytecode-depth is an error", async () => {
   using dir = tempDir("compile-aot-depth", {
     "entry.ts": `function a() { return function b() { return function c() { return 1; }; }; } console.log(a()()());`,
   });
@@ -894,7 +891,7 @@ test.skipIf(!supported)("--compile-aot with --bytecode-depth is an error", async
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test.skipIf(!supported).each([
+test.each([
   ["that is not an executable", ["--target=bun", "--outfile", "out.js"]],
   ["without bytecode", ["--compile", "--outfile", "out"]],
 ])("BUN_AOT=1 does not affect a build %s", async (_, flags) => {
@@ -934,7 +931,7 @@ test.skipIf(!supported).each([
   expect(exitCodeOfRun).toBe(0);
 });
 
-test.skipIf(!supported)("BUN_AOT=0 disables AoT at build time", async () => {
+test("BUN_AOT=0 disables AoT at build time", async () => {
   using dir = tempDir("compile-aot-env-off", { "entry.ts": `console.log(function named() {}.toString());` });
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "entry.ts", "--compile", "--compile-aot", "--outfile", "out"],
@@ -972,7 +969,7 @@ test("--compile-aot requires --compile", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-describe.skipIf(!supported)("--compile-aot across threads", () => {
+describe("--compile-aot across threads", () => {
   async function run(files: Record<string, string>, entryPoints: string[], env: Record<string, string> = {}) {
     using dir = tempDir("compile-aot-threads", files);
     await using build = Bun.spawn({
@@ -1155,7 +1152,7 @@ describe.skipIf(!supported)("--compile-aot across threads", () => {
   });
 });
 
-describe.skipIf(!supported)("--compile-aot optimizations", () => {
+describe("--compile-aot optimizations", () => {
   const program = /* ts */ `
     const out: unknown[] = [];
     const kept: unknown[] = [];
@@ -1269,9 +1266,31 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     kept.push(testsUnknown);
     out.push(narrowsOptional(2), narrowsOptional(2, 3), testsUnknown(2), testsUnknown(2, 3), comparesWithUndefined(kept[0]), comparesWithUndefined(kept[1000]));
 
+    function callsManyArguments(f: (...all: number[]) => number) { return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); }
+    function constructsGiven(C: new (v: number) => { v: number }) { return new C(3).v; }
+    class Tested { v: number; constructor(v: number) { this.v = v; } }
+    function testsInstance(x: unknown) { return x instanceof Tested; }
+    function testsType(x: unknown) { return typeof x === "object"; }
+    function spreadsAfterProperty(o: { a: number }) { return { z: 1, ...o }; }
+    function takesTheRest(o: { a: number; b: number; c: number }) { const { a, ...others } = o; return others; }
+    function takesTheRestByName(o: Record<string, number>, name: string) { const { [name]: taken, ...others } = o; return others; }
+    function spreadsFirst(o: { a: number }) { return { ...o }; }
+    function readsNamed(this: Record<string, unknown>, name: string) { return this[name]; }
+    function readsNamedAndAdds(this: Record<string, number>, name: string) { return this[name] + 1; }
+    let moduleVariable = 5;
+    const returnsModuleVariable = () => moduleVariable;
+    const returnsModuleVariablePlusOne = () => moduleVariable + 1;
+    const forwarding = Object.defineProperty({}, "a", { get: readsNamed.bind({ a: 7 }, "a") }) as { a: number };
+    const exporting = Object.defineProperty({}, "a", { get: returnsModuleVariable }) as { a: number };
+    function readsA(o: { a: number }) { let s = 0; for (let i = 0; i < 100; i++) s += o.a; return s; }
+    out.push(callsManyArguments((...all) => all.length), constructsGiven(Tested), testsInstance(new Tested(1)), testsInstance({}), testsType(null));
+    out.push(JSON.stringify([spreadsAfterProperty({ a: 2 }), takesTheRest({ a: 1, b: 2, c: 3 }), takesTheRestByName({ a: 1, b: 2 }, "a"), spreadsFirst({ a: 4 })]));
+    out.push(readsNamedAndAdds.call({ a: 1 }, "a"), returnsModuleVariablePlusOne(), readsA(forwarding), readsA(exporting), (moduleVariable = 6, readsA(exporting)));
+
     console.log(out.join());
   `;
-  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true\n";
+  const expectedOutput =
+    '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600\n';
   const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1334,6 +1353,11 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     ["calls:Mul", ["testsUnknown"], ["narrowsOptional"]],
     ["calls:GetGlobal", [], ["comparesWithUndefined", "narrowsOptional", "testsUnknown"]],
     ["calls:StrictEqual", [], ["comparesWithUndefined", "narrowsOptional"]],
+    ["cached-call", ["callsEither", "callsReassigned"], ["inlinesSmall", "callsRecursive", "callsManyArguments", "constructsGiven"]],
+    ["cached-instanceof", ["testsInstance"], ["testsType"]],
+    ["copies-data-properties", ["spreadsAfterProperty", "takesTheRest"], ["takesTheRestByName", "spreadsFirst"]],
+    ["get-by-val-on-this", ["readsNamed"], ["readsNamedAndAdds"]],
+    ["returns-scope-variable", ["returnsModuleVariable"], ["returnsModuleVariablePlusOne"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
     ["lowered-builtin:Array.isArray", ["isArray"], []],
     ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
@@ -1358,7 +1382,7 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
   });
 });
 
-describe.skipIf(!supported)("--compile-aot with a type table", () => {
+describe("--compile-aot with a type table", () => {
   const root = join(import.meta.dir, "compile-aot-typed");
   const typed = [
     "useTypeTags=1",

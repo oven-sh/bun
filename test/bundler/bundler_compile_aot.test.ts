@@ -1702,6 +1702,9 @@ describe("--compile-aot with a type table", () => {
     ["folds-property-of-constant-object:name", ["readsConstantLimits"], []],
     ["typed-field-read", ["readsGivenLimits"], ["readsConstantLimits"]],
     ["scalar-replaced-object", ["ordersOne", "ordersLoosely", "ordersAsserted", "ordersGeneric", "ordersThrough"], ["keepsOrder"]],
+    ["reads-returned-object-from-registers:talliesLoosely", ["readsTally", "destructuresTally"], []],
+    ["reads-returned-object-from-registers:talliesInTry", ["readsTallyFromTry", "destructuresTallyFromTry"], []],
+    ["reads-returned-object-from-registers", [], ["keepsTally", "readsKeptTally", "readsTallyMadeInTry", "destructuresTallyMadeInTry"]],
   ];
 
   test("a value of another type is refused with the property, what is expected and what it got", async () => {
@@ -1719,6 +1722,12 @@ describe("--compile-aot with a type table", () => {
       'a string in an object that is never made: TypeError: Type check failed: property "count": expected number, got string',
       'null in an object that is never made: TypeError: Type check failed: property "count": expected number, got null',
       'a number for the object in an object that is never made: TypeError: Type check failed: property "part": expected object, got number',
+      'a string in an object that is returned in registers: TypeError: Type check failed: property "count": expected number, got string',
+      'null in an object that is returned in registers: TypeError: Type check failed: property "count": expected number, got null',
+      'a number for the string in an object that is returned in registers: TypeError: Type check failed: property "label": expected string, got number',
+      'a string in an object that is returned: TypeError: Type check failed: property "count": expected number, got string',
+      "a string in an object that is returned in registers from a try block: -0.5:caught",
+      'a string in an object that is made in a try block and returned after it: true, TypeError: Type check failed: property "count": expected number, got string',
       "",
     ]);
     expect(exitCode).toBe(0);

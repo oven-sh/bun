@@ -111,6 +111,23 @@ function ordersThrough(count: number, part: Part) { return passesOrder({ count, 
 for (const orders of [ordersAsserted, ordersGeneric, ordersThrough]) out.push(orders(JSON.parse("1"), { name: "bolt", size: 2 }));
 out.push(keptCounts.map(one => one()).join("|"));
 
+interface Tally { count: number; label: string }
+const tallied: unknown[] = [];
+function talliesLoosely(count: any, label: any): Tally { tallied.push(label); if (tallied.length > 100) tallied.length = 0; if (tallied.length > 50) tallied.shift(); return { count, label }; }
+function readsTally(count: any, label: any) { const tally = talliesLoosely(count, label); return halves(tally.count) + ":" + tally.label; }
+function destructuresTally(count: any, label: any) { const { count: n, label: text } = talliesLoosely(count, label); return text + "/" + (n + 0.5); }
+function talliesToKeep(count: any, label: any): Tally { tallied.push(label); if (tallied.length > 100) tallied.length = 0; if (tallied.length > 50) tallied.shift(); return { count, label }; }
+function keepsTally(count: any, label: any) { const tally = talliesToKeep(count, label); tallied.push(tally); return halves(tally.count) + ":" + tally.label; }
+function readsKeptTally(count: any, label: any) { const tally = talliesToKeep(count, label); return halves(tally.count) + ":" + tally.label; }
+out.push(readsTally(JSON.parse("1"), "a"), destructuresTally(JSON.parse("2"), "b"), keepsTally(JSON.parse("3"), "c"), readsKeptTally(JSON.parse("5"), "d"));
+function talliesInTry(count: any, label: any): Tally { try { tallied.push(label); if (tallied.length > 100) tallied.length = 0; return { count, label }; } catch { return { count: -1, label: "caught" }; } }
+function readsTallyFromTry(count: any, label: any) { const tally = talliesInTry(count, label); return halves(tally.count) + ":" + tally.label; }
+function destructuresTallyFromTry(count: any, label: any) { const { count: n, label: text } = talliesInTry(count, label); return text + "/" + (n + 0.5); }
+function talliesBeforeReturning(count: any, label: any): Tally { let tally: Tally; try { tallied.push(label); tally = { count, label }; } catch (e) { tallied.push("noticed"); throw e; } if (tallied.length > 100) tallied.length = 0; return tally; }
+function readsTallyMadeInTry(count: any, label: any) { const tally = talliesBeforeReturning(count, label); return halves(tally.count) + ":" + tally.label; }
+function destructuresTallyMadeInTry(count: any, label: any) { const { count: n, label: text } = talliesBeforeReturning(count, label); return text + "/" + (n + 0.5); }
+out.push(readsTallyFromTry(JSON.parse("7"), "e"), destructuresTallyFromTry(JSON.parse("8"), "f"), readsTallyMadeInTry(JSON.parse("9"), "g"), destructuresTallyMadeInTry(JSON.parse("10"), "h"));
+
 console.log(out.join());
 
 if (process.env.BREAK_TYPES) {
@@ -127,6 +144,12 @@ if (process.env.BREAK_TYPES) {
     ["a string in an object that is never made", () => ordersLoosely(JSON.parse('"text"'), { name: "a", size: 1 })],
     ["null in an object that is never made", () => ordersLoosely(JSON.parse("null"), { name: "a", size: 1 })],
     ["a number for the object in an object that is never made", () => ordersLoosely(3, JSON.parse("7"))],
+    ["a string in an object that is returned in registers", () => readsTally(JSON.parse('"text"'), "a")],
+    ["null in an object that is returned in registers", () => destructuresTally(JSON.parse("null"), "a")],
+    ["a number for the string in an object that is returned in registers", () => readsTally(1, JSON.parse("7"))],
+    ["a string in an object that is returned", () => readsKeptTally(JSON.parse('"text"'), "a")],
+    ["a string in an object that is returned in registers from a try block", () => readsTallyFromTry(JSON.parse('"text"'), "a")],
+    ["a string in an object that is made in a try block and returned after it", () => { try { readsTallyMadeInTry(JSON.parse('"text"'), "a"); } catch (e) { return tallied.includes("noticed") + ", " + e; } }],
   ];
   for (const [what, attempt] of attempts) {
     try { console.log(what + ": " + attempt()); } catch (e) { console.log(what + ": " + e); }

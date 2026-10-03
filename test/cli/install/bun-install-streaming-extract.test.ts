@@ -1180,21 +1180,22 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
   const oneExtension = oldGnuSparseMember(1);
   const twoExtensions = oldGnuSparseMember(2);
 
+  // Each cut is `part+offset`: the piece ends before that byte of the part.
   test.each([
-    ["at the first byte of a PAX 1.0 map", pax, [["map", 0]]],
-    ["inside a PAX 1.0 map", pax, [["map", 3]]],
-    ["twice inside a PAX 1.0 map", pax, [["map", 3], ["map", 9]]],
-    ["inside the padding of a PAX 1.0 map", pax, [["mapPadding", 100]]],
-    ["at the first byte of an old GNU extension block", oneExtension, [["extension0", 0]]],
-    ["inside an old GNU extension block", oneExtension, [["extension0", 3]]],
-    ["inside the second of two old GNU extension blocks", twoExtensions, [["extension1", 100]]],
-    ["inside each of two old GNU extension blocks", twoExtensions, [["extension0", 200], ["extension1", 300]]],
-  ] as [string, Member, [string, number][]][])("%s", async (_, member, cuts) => {
+    ["at the first byte of a PAX 1.0 map", pax, "map+0"],
+    ["inside a PAX 1.0 map", pax, "map+3"],
+    ["twice inside a PAX 1.0 map", pax, "map+3 map+9"],
+    ["inside the padding of a PAX 1.0 map", pax, "mapPadding+100"],
+    ["at the first byte of an old GNU extension block", oneExtension, "extension0+0"],
+    ["inside an old GNU extension block", oneExtension, "extension0+3"],
+    ["inside the second of two old GNU extension blocks", twoExtensions, "extension1+100"],
+    ["inside each of two old GNU extension blocks", twoExtensions, "extension0+200 extension1+300"],
+  ] as const)("%s", async (_, member, cuts) => {
     const { tgz, integrity, offsetOf } = buildPackage(member);
     const { stderr, exitCode, file } = await installInPieces(
       tgz,
       integrity,
-      cuts.map(([label, delta]) => offsetOf(label, delta)),
+      cuts.split(" ").map(cut => offsetOf(cut.split("+")[0], Number(cut.split("+")[1]))),
     );
     expect(stderr.match(/^error:.*$/m)?.[0] ?? null).toBeNull();
     expect(stderr).toContain("Streamed ");

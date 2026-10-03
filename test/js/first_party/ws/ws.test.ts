@@ -748,6 +748,78 @@ it("WebSocketServer should handle backpressure", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/21376
+// Bun.serve drops a message once 16 MiB is buffered for the socket. The server
+// socket queues a dropped message and sends it from the drain callback.
+it("WebSocketServer sends a message that waited at the backpressure limit once", async () => {
+  // A client that does not read lets the kernel take only a few MiB, so the
+  // end of this burst is dropped and queued.
+  const messages = 32;
+  const payloadLength = 1024 * 1024;
+  const frameLength = 10 + payloadLength; // a header with a 64-bit length, then the payload
+  const wss = new WebSocketServer({ port: 0 });
+  const socket = connect({ port: (wss.address() as AddressInfo).port, host: "127.0.0.1" });
+  try {
+    const connection = once(wss, "connection");
+    let step = Promise.withResolvers<void>();
+    socket.on("error", err => step.reject(err));
+
+    let head = "";
+    let upgraded = false;
+    let received = 0;
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => {
+      if (!upgraded) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        upgraded = true;
+        // Read nothing more until the whole burst is sent.
+        socket.pause();
+        step.resolve();
+        return;
+      }
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received >= messages * frameLength) step.resolve();
+    });
+    socket.write(
+      "GET / HTTP/1.1\r\n" +
+        "Host: 127.0.0.1\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+    );
+    await step.promise;
+    expect(head).toStartWith("HTTP/1.1 101 ");
+    const [ws] = await connection;
+
+    let callbacks = 0;
+    for (let i = 0; i < messages; i++) {
+      const message = Buffer.alloc(payloadLength);
+      message.writeUInt32BE(i, 0);
+      ws.send(message, (err?: Error) => {
+        if (!err) callbacks++;
+      });
+    }
+
+    step = Promise.withResolvers<void>();
+    socket.resume();
+    await step.promise;
+
+    // The number at the start of each of the first `messages` frames the client got.
+    const bytes = Buffer.concat(chunks);
+    const order = Array.from({ length: messages }, (_, i) => bytes.readUInt32BE(i * frameLength + 10));
+    expect({ order, callbacks }).toEqual({
+      order: Array.from({ length: messages }, (_, i) => i),
+      callbacks: messages,
+    });
+  } finally {
+    socket.destroy();
+    wss.close();
+  }
+});
+
 it("should abort incorrect WebSocket handshake", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   const wss = new WebSocketServer({ port: 0 });

@@ -149,6 +149,54 @@ async function withRawH2Server(
   }
 }
 
+// SETTINGS payload that sets SETTINGS_INITIAL_WINDOW_SIZE (0x4).
+const initialWindow = (size: number) => Buffer.concat([Buffer.from([0, 4]), u32be(size)]);
+
+/** Raw server for the upload tests. `onFrame` sees every frame the client
+ *  sends and returns the frames to answer with. They go out in one write. */
+async function withRawUploadServer(
+  settings: Buffer,
+  onFrame: (frame: { type: number; flags: number; id: number; len: number }) => Buffer[],
+  fn: (url: string, connections: () => number) => Promise<void>,
+) {
+  let connections = 0;
+  const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+    connections++;
+    let buf = Buffer.alloc(0);
+    let prefaceSeen = false;
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!prefaceSeen) {
+        if (buf.length < 24) return;
+        buf = buf.subarray(24);
+        prefaceSeen = true;
+        socket.write(frame(4, 0, 0, settings));
+      }
+      const out: Buffer[] = [];
+      while (buf.length >= 9) {
+        const len = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + len) break;
+        const type = buf[3],
+          flags = buf[4],
+          id = buf.readUInt32BE(5) & 0x7fffffff;
+        buf = buf.subarray(9 + len);
+        if (type === 4 && !(flags & 1)) out.push(frame(4, 1, 0)); // ack their SETTINGS
+        out.push(...onFrame({ type, flags, id, len }));
+      }
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+  try {
+    await fn(`https://localhost:${port}/`, () => connections);
+  } finally {
+    server.close();
+  }
+}
+
 // Each test spawns a fresh subprocess so the BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
 // env var is read at startup. With describe.concurrent + max_concurrency=20 that
 // peaks at ~8GB of debug subprocesses, which under ASAN (~2-3x) OOM-kills the
@@ -625,6 +673,262 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     } finally {
       server.close();
     }
+  });
+
+  test("uploads that wait for the connection window take turns of one frame each", async () => {
+    // A warm-up upload uses up the connection window, and the stream windows
+    // are 1 MiB. The server grants connection window only when the client has
+    // none left and the upload that replaces each finished one has opened. So
+    // the order of the DATA frames does not depend on timing.
+    const FRAME = 16384;
+    const OPEN = 4;
+    const TOTAL = 8;
+    // A frame plus one byte, then the rest of the second frame, then one frame each.
+    const grants = [FRAME + 1, FRAME - 1];
+    let credit = 65535;
+    const opened: number[] = [];
+    const finished: number[] = [];
+    const data: string[] = [];
+    await withRawUploadServer(
+      initialWindow(1 << 20),
+      ({ type, flags, id, len }) => {
+        const out: Buffer[] = [];
+        // Stream 1 is the warm-up.
+        if (type === 1 && id !== 1) opened.push(id);
+        if (type === 0) {
+          credit -= len;
+          if (id !== 1) data.push(len === FRAME ? `${id}` : `${id}:${len}`);
+          if (flags & 1) {
+            if (id !== 1) finished.push(id);
+            out.push(frame(1, 5, id, hpackStatus(200)));
+          }
+        }
+        if (credit === 0 && finished.length < TOTAL && opened.length === Math.min(TOTAL, OPEN + finished.length)) {
+          credit = grants.shift() ?? FRAME;
+          out.push(frame(8, 0, 0, u32be(credit)));
+        }
+        return out;
+      },
+      async (url, connections) => {
+        await using proc = await spawnFetch(`
+          const opts = { method: "POST", tls: { rejectUnauthorized: false } };
+          await fetch("${url}", { ...opts, body: Buffer.alloc(65535, "a") }).then(r => r.arrayBuffer());
+          const body = Buffer.alloc(${3 * FRAME}, "a");
+          const { promise, resolve, reject } = Promise.withResolvers();
+          let started = 0, finished = 0;
+          const upload = () => {
+            started++;
+            fetch("${url}", { ...opts, body })
+              .then(r => r.arrayBuffer())
+              .then(() => {
+                if (++finished === ${TOTAL}) resolve();
+                else if (started < ${TOTAL}) upload();
+              }, reject);
+          };
+          for (let i = 0; i < ${OPEN}; i++) upload();
+          await promise;
+          console.log("finished", finished);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe(`finished ${TOTAL}`);
+        // Stream 5 gets the last byte of the first grant. It keeps its turn
+        // and sends the rest of its frame from the next grant.
+        // prettier-ignore
+        expect(data).toEqual([
+          "3", "5:1", "5:16383", "7", "9",
+          "3", "5", "7", "9",
+          "3", "5", "7", "9",
+          "11", "13", "15", "17",
+          "11", "13", "15", "17",
+          "11", "13", "15", "17",
+        ]);
+        expect(connections()).toBe(1);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("uploads that wait for the connection window all get a turn while new uploads keep arriving", async () => {
+    // The stream windows are 1 MiB, so only the connection window limits the
+    // client. The server grants one frame of it each time the client has used
+    // up its credit. The client keeps OPEN uploads in flight: a new one starts
+    // for each one that finishes. Every second body is a ReadableStream.
+    const OPEN = 16;
+    const BODY = 32 * 1024;
+    const FINISH = 4 * OPEN;
+    let credit = 65535;
+    const opened: number[] = [];
+    const finished: number[] = [];
+    const received = new Map<number, number>();
+    await withRawUploadServer(
+      initialWindow(1 << 20),
+      ({ type, flags, id, len }) => {
+        const out: Buffer[] = [];
+        if (type === 1) {
+          // HEADERS with END_STREAM is the warm-up GET, without it an upload.
+          if (flags & 1) out.push(frame(1, 5, id, hpackStatus(200)));
+          else opened.push(id);
+        }
+        if (type === 0) {
+          credit -= len;
+          received.set(id, (received.get(id) ?? 0) + len);
+          if (flags & 1) {
+            finished.push(id);
+            out.push(frame(1, 5, id, hpackStatus(200)));
+          }
+          if (credit === 0) {
+            credit = 16384;
+            out.push(frame(8, 0, 0, u32be(credit)));
+          }
+        }
+        return out;
+      },
+      async (url, connections) => {
+        await using proc = await spawnFetch(`
+          const opts = { method: "POST", duplex: "half", tls: { rejectUnauthorized: false } };
+          // Warmup so every upload goes to the session that is already open.
+          await fetch("${url}", { tls: opts.tls }).then(r => r.arrayBuffer());
+          const bytes = Buffer.alloc(${BODY}, "a");
+          const stream = () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array(bytes));
+                controller.close();
+              },
+            });
+          const { promise, resolve, reject } = Promise.withResolvers();
+          let started = 0, finished = 0;
+          const upload = () =>
+            fetch("${url}", { ...opts, body: started++ % 2 ? stream() : bytes })
+              .then(r => r.arrayBuffer())
+              .then(() => {
+                if (++finished === ${FINISH}) resolve();
+                else if (finished < ${FINISH}) upload();
+              }, reject);
+          for (let i = 0; i < ${OPEN}; i++) upload();
+          await promise;
+          console.log("finished", finished);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe(`finished ${FINISH}`);
+        // Every upload that was open at the start is among the first FINISH to finish.
+        const inTime = new Set(finished.slice(0, FINISH));
+        expect(opened.slice(0, OPEN).filter(id => !inTime.has(id))).toEqual([]);
+        expect(finished.filter(id => received.get(id) !== BODY)).toEqual([]);
+        expect(connections()).toBe(1);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("uploads held by a stream window of 0 and by Expect: 100-continue go out when the server lets them", async () => {
+    // After the warm-up GET the server sets SETTINGS_INITIAL_WINDOW_SIZE to 0,
+    // so a new upload cannot send a byte. The second upload also waits for a
+    // 100. A second GET tells the server that both wait. The server then sends
+    // the 100 and raises the window.
+    const uploads: number[] = [];
+    const received = new Map<number, number>();
+    let gets = 0;
+    let dataBeforeRelease = 0;
+    await withRawUploadServer(
+      Buffer.alloc(0),
+      ({ type, flags, id, len }) => {
+        const out: Buffer[] = [];
+        if (type === 1 && !(flags & 1)) uploads.push(id);
+        if (type === 1 && flags & 1) {
+          out.push(frame(1, 5, id, hpackStatus(200)));
+          if (++gets === 1) out.push(frame(4, 0, 0, initialWindow(0)));
+          else out.push(frame(1, 4, uploads[1], hpackStatus(100)), frame(4, 0, 0, initialWindow(65535)));
+        }
+        if (type === 0) {
+          if (gets < 2) dataBeforeRelease += len;
+          received.set(id, (received.get(id) ?? 0) + len);
+          if (flags & 1) {
+            out.push(frame(1, 4, id, hpackStatus(200)), frame(0, 1, id, Buffer.from(String(received.get(id)))));
+          }
+        }
+        return out;
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const tls = { rejectUnauthorized: false };
+          await fetch("${url}", { tls }).then(r => r.arrayBuffer());
+          const first = fetch("${url}", { method: "POST", tls, body: Buffer.alloc(20000, "a") }).then(r => r.text());
+          const fed = Promise.withResolvers();
+          let pulls = 0;
+          const second = fetch("${url}", {
+            method: "POST",
+            tls,
+            headers: { Expect: "100-continue" },
+            duplex: "half",
+            body: new ReadableStream({
+              pull(controller) {
+                if (++pulls === 1) return controller.enqueue(new Uint8Array(10000));
+                // The sink took the chunk.
+                fed.resolve();
+                controller.close();
+              },
+            }),
+          }).then(r => r.text());
+          await fed.promise;
+          await fetch("${url}", { tls }).then(r => r.arrayBuffer());
+          console.log(await first, await second);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("20000 10000");
+        expect(dataBeforeRelease).toBe(0);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("the END_STREAM of a streamed body with no bytes left does not wait behind an upload that waits for the connection window", async () => {
+    // The warm-up upload uses up the connection window. The server grants more
+    // only after the END_STREAM of the empty streamed body has arrived.
+    const uploads: number[] = [];
+    const events: string[] = [];
+    await withRawUploadServer(
+      initialWindow(1 << 20),
+      ({ type, flags, id, len }) => {
+        const out: Buffer[] = [];
+        // Stream 1 is the warm-up.
+        if (type === 1 && id !== 1) uploads.push(id);
+        if (type === 0) {
+          if (id !== 1) events.push(`upload ${uploads.indexOf(id)}: ${len} bytes${flags & 1 ? ", END_STREAM" : ""}`);
+          if (flags & 1) out.push(frame(1, 5, id, hpackStatus(200)));
+          if (flags & 1 && id === uploads[1]) {
+            events.push("grant");
+            out.push(frame(8, 0, 0, u32be(65535)));
+          }
+        }
+        return out;
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const opts = { method: "POST", tls: { rejectUnauthorized: false } };
+          await fetch("${url}", { ...opts, body: Buffer.alloc(65535, "a") }).then(r => r.arrayBuffer());
+          const waiting = fetch("${url}", { ...opts, body: Buffer.alloc(1000, "a") });
+          const empty = fetch("${url}", {
+            ...opts,
+            duplex: "half",
+            body: new ReadableStream({
+              pull(controller) {
+                controller.close();
+              },
+            }),
+          });
+          console.log((await empty).status, (await waiting).status);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 200");
+        expect(events).toEqual(["upload 1: 0 bytes, END_STREAM", "grant", "upload 0: 1000 bytes, END_STREAM"]);
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   test("cold-start: parallel requests coalesce onto one TLS connect", async () => {

@@ -1,5 +1,6 @@
 use core::mem::size_of;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -1248,6 +1249,45 @@ pub struct S3CredentialsWithOptions {
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
+}
+
+/// What a client or a file keeps for its uploads. Owned bytes: any thread can release a blob store.
+pub struct S3ContentHeaders {
+    pub content_disposition: Option<Box<[u8]>>,
+    pub content_encoding: Option<Box<[u8]>>,
+}
+
+impl S3ContentHeaders {
+    /// `options` over `defaults`, value by value. An empty value of `options` means "no header".
+    pub fn from_options(
+        options: &S3CredentialsWithOptions,
+        defaults: Option<&Arc<S3ContentHeaders>>,
+    ) -> Option<Arc<S3ContentHeaders>> {
+        let content_disposition = options.content_disposition.as_deref();
+        let content_encoding = options.content_encoding.as_deref();
+        if content_disposition.is_none() && content_encoding.is_none() {
+            return defaults.cloned();
+        }
+        let content_disposition = content_disposition
+            .or_else(|| defaults.and_then(|d| d.content_disposition.as_deref()))
+            .filter(|value| !value.is_empty());
+        let content_encoding = content_encoding
+            .or_else(|| defaults.and_then(|d| d.content_encoding.as_deref()))
+            .filter(|value| !value.is_empty());
+        if content_disposition.is_none() && content_encoding.is_none() {
+            return None;
+        }
+        Some(Arc::new(S3ContentHeaders {
+            content_disposition: content_disposition.map(Box::from),
+            content_encoding: content_encoding.map(Box::from),
+        }))
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        size_of::<S3ContentHeaders>()
+            + self.content_disposition.as_deref().map_or(0, <[u8]>::len)
+            + self.content_encoding.as_deref().map_or(0, <[u8]>::len)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

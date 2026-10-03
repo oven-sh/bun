@@ -5,7 +5,9 @@ use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
-use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
+use crate::webcore::s3::client::{
+    ACL, S3ContentHeaders, S3Credentials, S3CredentialsWithOptions, StorageClass,
+};
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -252,9 +254,22 @@ pub(crate) struct S3Client {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    pub(crate) content: Option<std::sync::Arc<S3ContentHeaders>>,
 }
 
 impl S3Client {
+    /// The client of the options that the parser read.
+    pub(crate) fn from_options(options: &S3CredentialsWithOptions) -> Self {
+        S3Client {
+            credentials: options.credentials.dupe(),
+            content: S3ContentHeaders::from_options(options, None),
+            options: options.options,
+            acl: options.acl,
+            storage_class: options.storage_class,
+            request_payer: options.request_payer,
+        }
+    }
+
     // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
     // derive on the struct emits `S3ClientClass__construct` which calls
     // `<S3Client>::constructor` directly.
@@ -285,13 +300,7 @@ impl S3Client {
             false,
             global,
         )?;
-        Ok(Box::new(S3Client {
-            credentials: aws_options.credentials.dupe(),
-            options: aws_options.options,
-            acl: aws_options.acl,
-            storage_class: aws_options.storage_class,
-            request_payer: aws_options.request_payer,
-        }))
+        Ok(Box::new(S3Client::from_options(&aws_options)))
     }
 
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -355,6 +364,7 @@ impl S3Client {
             self.acl,
             self.storage_class,
             self.request_payer,
+            self.content.as_ref(),
         )
     }
 
@@ -511,8 +521,7 @@ impl S3Client {
                 .throw());
         };
 
-        let options = args.next_eat();
-        let blob = ptr.construct_blob(global, path, options)?;
+        let blob = ptr.construct_blob(global, path, args.next_eat())?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
@@ -522,7 +531,8 @@ impl S3Client {
             data,
             crate::webcore::blob::WriteFileOptions {
                 mkdirp_if_not_exists: Some(false),
-                extra_options: options,
+                // The file was made with the options of this call.
+                extra_options: None,
                 mode: None,
             },
         )
@@ -548,6 +558,7 @@ impl S3Client {
             None,
             None,
             ptr.request_payer,
+            None,
         )?;
 
         let store = blob.store.get().as_ref().unwrap();

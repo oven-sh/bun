@@ -3235,6 +3235,15 @@ pub mod bv2_impl {
                 this.framework = Some(bo.framework);
                 this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
                 this.plugins = bo.plugins;
+                // A macro VM tells builds apart by this `Arc`: graphs that differ make it reload on each switch.
+                debug_assert!(std::sync::Arc::ptr_eq(
+                    &this.transpiler.options.transform_options,
+                    &this
+                        .client_transpiler_ref()
+                        .unwrap()
+                        .options
+                        .transform_options,
+                ));
                 if this.transpiler.options.server_components {
                     debug_assert!(
                         this.client_transpiler_ref()

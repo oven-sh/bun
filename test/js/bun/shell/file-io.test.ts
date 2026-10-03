@@ -116,7 +116,7 @@ describe("IOWriter file output redirection", () => {
     test("a second redirection throws before anything runs", async () => {
       using dir = tempDir("shell-second-redirect", {});
       const run = async () => await Bun.$`echo a > f1 b > f2`.cwd(String(dir)).quiet();
-      await expect(run()).rejects.toThrow("Multiple redirects are not supported yet. Please open a GitHub issue.");
+      await expect(run()).rejects.toThrow("Multiple redirects are not supported yet.");
       expect(fs.existsSync(join(String(dir), "f1"))).toBe(false);
     });
   });

@@ -52,7 +52,9 @@ describe.concurrent("run-shell", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(await Bun.file(join(String(dir), "INJECTED")).exists()).toBe(false);
     expect(stdout).toBe("");
-    expect(stderr).toContain('Expected ";", "&&", "||", "|" or a newline but got: touch');
+    expect(stderr).toBe(
+      '$ (echo a) touch INJECTED\nerror: Failed to run script sub due to error Expected ";", "&&", "||", "|" or a newline but got: touch\n',
+    );
     expect(exitCode).toBe(1);
   });
 });

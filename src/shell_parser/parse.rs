@@ -1364,13 +1364,23 @@ impl<'bump> Parser<'bump> {
                 name_and_args.push(arg);
                 continue;
             }
+            // `[[` and `]]` are reserved words only where a command starts.
+            let bracket: Option<&'static [u8]> = match self.peek() {
+                Token::DoubleBracketOpen => Some(b"[["),
+                Token::DoubleBracketClose => Some(b"]]"),
+                _ => None,
+            };
+            if let Some(text) = bracket {
+                let _ = self.advance();
+                let _ = self.r#match(TokenTag::Delimit);
+                name_and_args.push(ast::Atom::new_simple(ast::SimpleAtom::Text(text)));
+                continue;
+            }
             if !self.check(TokenTag::Redirect) {
                 break;
             }
             if parsed_redirect.is_some() {
-                self.add_error(format_args!(
-                    "Multiple redirects are not supported yet. Please open a GitHub issue."
-                ))?;
+                self.add_error(format_args!("Multiple redirects are not supported yet."))?;
                 return Err(ParseError::Unsupported.into());
             }
             parsed_redirect = Some(self.parse_redirect()?);
@@ -2369,6 +2379,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Some(self.tokens[self.tokens.len() - 1].tag())
     }
 
+    /// A command substitution can sit inside a word, so its last word gets a delimiter unless a statement already ended there.
+    fn delimit_before_cmd_subst_end(&mut self) {
+        let Some(last) = self.last_tok_tag() else {
+            return;
+        };
+        if !matches!(
+            last,
+            TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline
+        ) {
+            self.tokens.push(Token::Delimit);
+        }
+    }
+
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
@@ -2661,11 +2684,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word(AddDelimiter::AfterWord)?;
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    if toktag != TokenTag::Delimit {
-                                        self.tokens.push(Token::Delimit);
-                                    }
-                                }
+                                self.delimit_before_cmd_subst_end();
                                 self.tokens.push(Token::CmdSubstEnd);
                                 return Ok(());
                             } else {
@@ -2742,22 +2761,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
 
                             self.break_word(AddDelimiter::AfterText)?;
-                            // Command substitution can be put in a word so need to add delimiter
                             if self.in_subshell == Some(SubShellKind::Dollar) {
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    match toktag {
-                                        TokenTag::Delimit
-                                        | TokenTag::Semicolon
-                                        | TokenTag::Eof
-                                        | TokenTag::Newline => {}
-                                        _ => {
-                                            self.tokens.push(Token::Delimit);
-                                        }
-                                    }
-                                }
-                            }
-
-                            if self.in_subshell == Some(SubShellKind::Dollar) {
+                                self.delimit_before_cmd_subst_end();
                                 self.tokens.push(Token::CmdSubstEnd);
                             } else if self.in_subshell == Some(SubShellKind::Normal) {
                                 self.tokens.push(Token::CloseParen);

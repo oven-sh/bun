@@ -139,6 +139,26 @@ describe("parse shell", () => {
     expect(JSON.parse(parse({ raw: ["echo a |\ncat |\n\ncat"] }))).toEqual(JSON.parse(parse`echo a | cat | cat`));
   });
 
+  test("[[ and ]] after the command name are words", () => {
+    const words = ["echo", "a", "[[", "-n", "b", "]]", "c"].map(Text => ({ simple: { Text } }));
+    expect(JSON.parse(parse({ raw: ["echo a > f [[ -n b ]] c"] }))).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: words,
+                redirect: redirect({ stdout: true }),
+                redirect_file: { atom: { simple: { Text: "f" } } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   test("single atom", () => {
     expect(JSON.parse(parse`ls`)).toEqual({
       stmts: [
@@ -1149,22 +1169,19 @@ describe("parse shell invalid input", () => {
   });
 
   test("second redirection in one command", () => {
-    const message = "Multiple redirects are not supported yet. Please open a GitHub issue.";
+    const message = "Multiple redirects are not supported yet.";
     expect(() => parse`echo a > f1 > f2`).toThrow(message);
     expect(() => parse`echo a > f1 b > f2`).toThrow(message);
     expect(() => parse`echo a 2>&1 b > f`).toThrow(message);
   });
 
-  // Each of these ran two commands. bash reports a syntax error, except for
-  // `echo a [[ -n b ]]`, where `[[` is an argument.
+  // Each of these ran two commands.
   test.each([
     ["(echo a) echo b", "echo"],
     ["(echo a) (echo b)", "`(`"],
     ["[[ -n a ]] echo b", "echo"],
     ["if true; then echo a; fi echo b", "echo"],
-    ["echo a [[ -n b ]]", "[["],
     ["A=1 [[ -n b ]]", "[["],
-    ["echo a > f [[ -n b ]] touch g", "[["],
     ["echo $( (echo a) echo b )", "echo"],
     ["echo `(echo a) echo b`", "echo"],
     ["( [[ -n a ]] echo b )", "echo"],

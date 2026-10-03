@@ -947,6 +947,8 @@ const macroClientComponents = [0, 1];
 // while it serves one build and drops them when a file of another build reaches it. The graphs of
 // one app are one build: a thread that parses server files and client files evaluates the macro
 // module once. The module counts its evaluations in its VM and appends each count to a file.
+// A bun whose VMs never drop their modules passes this too. The test guards the other direction:
+// with one build per graph, a VM evaluated the module at every switch (14 times in 28 calls).
 devTest("a macro used in the server graph and the client graph is evaluated once per worker thread", {
   framework: {
     ...minimalFramework,

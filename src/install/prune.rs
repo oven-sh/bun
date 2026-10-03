@@ -258,6 +258,8 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
 
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
     manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;
+    // The scan below deletes inside `<workspace>/node_modules`.
+    manager.verify_workspaces_inside_root(manager.options.log_level);
 
     let node_modules = match Dir::open(ROOT_DIR) {
         Ok(node_modules) => node_modules,

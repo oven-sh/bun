@@ -60,11 +60,7 @@ impl Default for ByteStream {
     }
 }
 
-/// The bytes a producer delivered that no consumer has taken: `bytes[consumed..]`.
-///
-/// `consumed` is an index into `bytes`, so the two are one value: every method
-/// that empties `bytes` resets it. An index left behind an emptied buffer would
-/// make [`Self::take`] cut a prefix off bytes that are not there.
+/// Bytes a producer delivered. A consumer already took `bytes[..consumed]`.
 #[derive(Default)]
 pub(crate) struct Buffered {
     bytes: JsCell<Vec<u8>>,
@@ -83,9 +79,7 @@ impl Buffered {
         self.len() == 0
     }
 
-    /// Bytes the buffer holds, the already-taken prefix included. The HTMLRewriter paces its
-    /// input by this, not by [`Self::len`] (#38656): it holds its input until a consumer takes
-    /// the buffer, and a pull that leaves a remainder behind takes nothing.
+    /// Bytes the buffer holds, the taken prefix included. The HTMLRewriter paces its input by this.
     #[inline]
     pub(crate) fn held_len(&self) -> usize {
         self.bytes.get().len()
@@ -129,11 +123,8 @@ impl Buffered {
         }
     }
 
-    /// Copy up to `dest.len()` untaken bytes into `dest` and count them as
-    /// taken. Returns how many it copied.
+    /// Copy up to `dest.len()` untaken bytes into `dest`. Returns how many it copied.
     fn copy_out(&self, dest: &mut [u8]) -> usize {
-        // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
-        // borrow escapes the copy.
         self.bytes.with_mut(|b| {
             let consumed = self.consumed.get();
             let to_write = (b.len() - consumed).min(dest.len());
@@ -498,9 +489,7 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the bytes no consumer has taken yet without signalling the
-    /// producer; the caller writes them to the sink before
-    /// [`Self::signal_drained`].
+    /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
         Vec::<u8>::move_from_list(self.buffered.take())
     }
@@ -746,8 +735,7 @@ impl ByteStream {
         if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
-                    // `move_to_list_managed` moves the buffer, no copy; the taken
-                    // prefix stays in it and counts as consumed.
+                    // `move_to_list_managed` moves the buffer, no copy.
                     self.buffered.adopt(owned.move_to_list_managed(), offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
@@ -965,8 +953,7 @@ impl ByteStream {
         })
     }
 
-    /// Ends the sink just installed with a stored error, as [`Self::on_data`] does for one that
-    /// arrives after the attach; false if none is stored.
+    /// End the attached sink with the stored producer error. Returns false if none is stored.
     pub(crate) fn end_sink_with_pending_error(&self) -> bool {
         let sink = *self.sink.get();
         debug_assert!(sink.is_some());

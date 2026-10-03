@@ -2306,8 +2306,14 @@ fn get_or_put_resolved_package_with_find_result(
             (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
                 || (name_hash != dependency.name_hash
                     && this.is_update_request(name_hash, name.slice(string_buf))))
-                && crate::update_scope::UpdateScope::of(&*this)
-                    .contains_dependency(&this.lockfile, dependency_id)
+                && {
+                    let scope = crate::update_scope::UpdateScope::of(&*this);
+                    if this.options.do_.update_direct_only() {
+                        scope.contains_direct_dependency(&this.lockfile, dependency_id)
+                    } else {
+                        scope.contains_dependency(&this.lockfile, dependency_id)
+                    }
+                }
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog

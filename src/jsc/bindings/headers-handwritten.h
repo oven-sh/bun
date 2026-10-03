@@ -347,6 +347,8 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+// Property key from a BunString. Empty (any tag, zero length) is the empty identifier, never a null WTF::String.
+JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);

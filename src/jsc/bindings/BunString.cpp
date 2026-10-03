@@ -232,6 +232,7 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
 JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
 {
+    ASSERT(!bunString.isDead());
     if (bunString.isEmpty()) {
         return vm.propertyNames->emptyIdentifier;
     }

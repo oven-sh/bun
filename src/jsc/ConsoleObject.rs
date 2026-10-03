@@ -10,7 +10,7 @@ use core::ffi::c_void;
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_collections::HashMap;
+use bun_collections::{HashContext, HashMap};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
@@ -587,6 +587,86 @@ struct Column {
     width: u32,
 }
 
+/// Property names are atoms: equal text is one `StringImpl`, so one run of bytes.
+struct ColumnNameContext;
+
+impl HashContext<BunString> for ColumnNameContext {
+    fn ctx_hash(name: &BunString) -> u64 {
+        bun_wyhash::hash(name.byte_slice())
+    }
+
+    fn ctx_eql(a: &BunString, b: &BunString) -> bool {
+        a.eql(b)
+    }
+}
+
+type ColumnIndex = HashMap<BunString, usize, ColumnNameContext>;
+
+/// Scanning this many names costs about as much as one hash lookup.
+const MAX_SCANNED_COLUMNS: usize = 8;
+
+/// The columns in print order, plus an index by name for wide tables.
+struct Columns {
+    list: Vec<Column>,
+    /// Built by the first lookup among more than [`MAX_SCANNED_COLUMNS`] columns.
+    by_name: Option<ColumnIndex>,
+}
+
+impl Columns {
+    /// Tables that look names up have only the index column before these.
+    const FIRST_PROPERTY_COLUMN: usize = 1;
+
+    /// A row's own names are distinct, so only columns below `row_start` can match.
+    #[inline(always)]
+    fn find_or_create(&mut self, name: &BunString, row_start: usize) -> usize {
+        if row_start > Self::FIRST_PROPERTY_COLUMN + MAX_SCANNED_COLUMNS {
+            return self.find_or_create_indexed(name);
+        }
+        let earlier = &self.list[Self::FIRST_PROPERTY_COLUMN..row_start];
+        match earlier.iter().position(|col| col.name.eql(name)) {
+            Some(i) => Self::FIRST_PROPERTY_COLUMN + i,
+            None => self.create(name),
+        }
+    }
+
+    /// Out of line: with this arm inside it, the scan above was not inlined.
+    #[inline(never)]
+    fn find_or_create_indexed(&mut self, name: &BunString) -> usize {
+        let Self { list, by_name } = self;
+        let found = by_name
+            .get_or_insert_with(|| Self::index(list))
+            .get(name)
+            .copied();
+        found.unwrap_or_else(|| self.create(name))
+    }
+
+    #[cold]
+    fn index(list: &[Column]) -> ColumnIndex {
+        let mut by_name = ColumnIndex::with_capacity(list.len());
+        for (i, col) in list.iter().enumerate().skip(Self::FIRST_PROPERTY_COLUMN) {
+            by_name
+                .put_no_clobber(col.name.clone(), i)
+                .expect("unreachable");
+        }
+        by_name
+    }
+
+    #[inline(never)]
+    fn create(&mut self, name: &BunString) -> usize {
+        let index = self.list.len();
+        self.list.push(Column {
+            name: name.clone(),
+            width: 1,
+        });
+        if let Some(by_name) = &mut self.by_name {
+            by_name
+                .put_no_clobber(name.clone(), index)
+                .expect("unreachable");
+        }
+        index
+    }
+}
+
 enum RowKey {
     /// Property-name UTF-8 bytes + visible width (plain-object tabular data).
     Str {
@@ -711,11 +791,11 @@ impl<'a> TablePrinter<'a> {
     fn collect_row<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         cell_text: &mut Vec<u8>,
-        columns: &mut Vec<Column>,
+        columns: &mut Columns,
         row_key: RowKey,
         row_value: JSValue,
     ) -> JsResult<CollectedRow> {
-        columns[0].width = columns[0].width.max(row_key.width());
+        columns.list[0].width = columns.list[0].width.max(row_key.width());
 
         let mut row = CollectedRow {
             key: row_key,
@@ -733,7 +813,7 @@ impl<'a> TablePrinter<'a> {
                 cell_text,
                 row_value.get_index(self.global_object, 1)?,
             )?;
-            columns[1].width = columns[1].width.max(key_cell.width);
+            columns.list[1].width = columns.list[1].width.max(key_cell.width);
             self.values_col_width = Some(self.values_col_width.unwrap_or(0).max(value_cell.width));
             row.cells.push(Some(key_cell));
             row.values_cell = Some(value_cell);
@@ -747,7 +827,7 @@ impl<'a> TablePrinter<'a> {
             //  - otherwise: iterate the object properties, and create the
             //    columns on-demand
             if !self.properties.is_undefined() {
-                for column in columns[1..].iter_mut() {
+                for column in columns.list[1..].iter_mut() {
                     if let Some(value) = row_value.get_own(self.global_object, &column.name)? {
                         let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
                         column.width = column.width.max(cell.width);
@@ -766,25 +846,13 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
+                let row_start = columns.list.len();
                 while let Some((col_key, value)) = cols_iter.next()? {
-                    // find or create the column for the property
-                    let col_idx: usize = 'brk: {
-                        // reshaped for borrowck — split find/append.
-                        if let Some(idx) =
-                            columns[1..].iter().position(|col| col.name.eql(&col_key))
-                        {
-                            break 'brk 1 + idx;
-                        }
-
-                        columns.push(Column {
-                            name: (*col_key).clone(),
-                            width: 1,
-                        });
-                        break 'brk columns.len() - 1;
-                    };
+                    let col_idx = columns.find_or_create(&col_key, row_start);
 
                     let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
-                    columns[col_idx].width = columns[col_idx].width.max(cell.width);
+                    let column = &mut columns.list[col_idx];
+                    column.width = column.width.max(cell.width);
                     let slot = col_idx - 1;
                     if row.cells.len() <= slot {
                         row.cells.resize(slot + 1, None);
@@ -865,23 +933,19 @@ impl<'a> TablePrinter<'a> {
         let _ = writer.write_all("│\n".as_bytes());
     }
 
-    pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut dyn bun_io::Write,
-    ) -> JsResult<()> {
-        let global_object = self.global_object;
-
-        let mut columns: Vec<Column> = Vec::with_capacity(16);
+    /// The columns that exist before any row is read.
+    fn initial_columns(&self) -> JsResult<Columns> {
+        let mut list = Vec::with_capacity(16);
 
         // create the first column " " which is always present
-        columns.push(Column {
+        list.push(Column {
             name: BunString::static_("\u{0020}"),
             width: 1,
         });
 
         // special case for Map: create the special "Key" column at index 1
         if self.jstype.is_map() {
-            columns.push(Column {
+            list.push(Column {
                 name: BunString::static_("Key"),
                 width: 1,
             });
@@ -889,14 +953,28 @@ impl<'a> TablePrinter<'a> {
 
         // if the "properties" arg was provided, pre-populate the columns
         if !self.properties.is_undefined() {
-            let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
+            let mut properties_iter =
+                jsc::JSArrayIterator::init(self.properties, self.global_object)?;
             while let Some(value) = properties_iter.next()? {
-                columns.push(Column {
-                    name: value.to_bun_string(global_object)?,
+                list.push(Column {
+                    name: value.to_bun_string(self.global_object)?,
                     width: 1,
                 });
             }
         }
+
+        Ok(Columns {
+            list,
+            by_name: None,
+        })
+    }
+
+    pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut dyn bun_io::Write,
+    ) -> JsResult<()> {
+        let global_object = self.global_object;
+        let mut columns = self.initial_columns()?;
 
         // Width pass: format each cell exactly once, appending its bytes to
         // `cell_text` and sizing columns. The render pass replays those byte
@@ -908,7 +986,7 @@ impl<'a> TablePrinter<'a> {
                 struct Ctx<'c, 'a> {
                     this: &'c mut TablePrinter<'a>,
                     cell_text: &'c mut Vec<u8>,
-                    columns: &'c mut Vec<Column>,
+                    columns: &'c mut Columns,
                     rows: &'c mut Vec<CollectedRow>,
                     idx: u32,
                     err: Option<jsc::JsError>,
@@ -980,6 +1058,9 @@ impl<'a> TablePrinter<'a> {
             }
         }
 
+        // No more lookups by name; the remaining passes only need the print order.
+        let columns = &mut columns.list;
+
         // append the special "Values" column as the last one, if it is present
         if let Some(width) = self.values_col_width {
             self.values_col_idx = columns.len();
@@ -1046,7 +1127,7 @@ impl<'a> TablePrinter<'a> {
 
         // render pass: replay each row's pre-formatted cell bytes
         for row in rows.iter() {
-            self.print_row(writer, &columns, row, &cell_text);
+            self.print_row(writer, columns, row, &cell_text);
         }
 
         // print the table bottom border

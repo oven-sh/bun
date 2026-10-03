@@ -143,6 +143,16 @@ impl LinkerContext<'_> {
     }
 }
 
+/// Which folds a group stays out of. Only an entry point's own chunk is pinned.
+#[derive(Clone, Copy, PartialEq)]
+enum Pin {
+    None,
+    /// No chunk may import it, so it is never merged into. Rule 1 merges it into the parent of its class.
+    Name,
+    /// Neither merged nor merged into.
+    Files,
+}
+
 /// The files sharing one chunk key (`File.entry_bits`).
 struct Group {
     /// Summed source bytes (plus those folded in).
@@ -165,8 +175,7 @@ struct Group {
     checked_at: u32,
     recheck: bool,
     wants_inits: bool,
-    /// Neither merged nor merged into.
-    pinned: bool,
+    pin: Pin,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -201,7 +210,7 @@ impl Group {
     fn new(
         target: Target,
         bits: &AutoBitSet,
-        pinned: bool,
+        pin: Pin,
         first_source: u32,
     ) -> Result<Group, bun_alloc::AllocError> {
         Ok(Group {
@@ -214,7 +223,7 @@ impl Group {
             checked_at: 0,
             recheck: false,
             wants_inits: false,
-            pinned,
+            pin,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -743,12 +752,13 @@ fn entries_loaded_mid_evaluation(
 ///
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
-/// cross-chunk imports) sees the merged layout.
+/// cross-chunk imports) sees the merged layout. Returns the entry points
+/// (by id) whose own chunk it merged into the parent of their class (`Pin::Name`).
 pub(crate) fn merge_small_chunks(
     this: &mut LinkerContext,
     temp: &Arena,
     min_chunk_size: u64,
-) -> crate::Result<()> {
+) -> crate::Result<AutoBitSet> {
     let _trace = bun_core::perf::trace("Bundler.mergeSmallChunks");
     debug_assert!(this.graph.code_splitting);
 
@@ -757,18 +767,20 @@ pub(crate) fn merge_small_chunks(
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let kinds = this.graph.files.items_entry_point_kind();
     let fold_pure = min_chunk_size > 0;
+    let mut files_in_parent = AutoBitSet::init_empty(entry_points_len)?;
     if !fold_pure
         && !entry_source_indices
             .iter()
             .any(|&source_index| kinds[source_index as usize] == EntryPoint::Kind::DynamicImport)
     {
-        return Ok(());
+        return Ok(files_in_parent);
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
     let parts = this.graph.ast.items_parts();
     let flags = this.graph.meta.items_flags();
+    let ast_flags = this.graph.ast.items_flags();
     let file_entry_bits = this.graph.files.items_entry_bits();
     let files_len = this.graph.files.len();
 
@@ -998,13 +1010,23 @@ pub(crate) fn merge_small_chunks(
     let host_names_url = |source_index: usize| {
         !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
     };
-    let pin_entry_chunk = |entry_id: usize| {
+    let export_stars = this.graph.ast.items_export_star_import_records();
+    let entry_chunk_pin = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
-        (!is_dynamic_entry(entry_id)
-            && (this.options.compile_mode.is_executable() || host_names_url(source_index)))
+        if (!is_dynamic_entry(entry_id) && this.options.compile_mode.is_executable())
             || flags[source_index].wrap == WrapKind::Cjs
             || flags[source_index].needs_synthetic_default_export
             || !export_aliases[source_index].is_empty()
+        {
+            Pin::Files
+        } else if is_dynamic_entry(entry_id) || !host_names_url(source_index) {
+            Pin::None
+        } else if export_stars[source_index].is_empty() {
+            Pin::Name
+        } else {
+            // `export * from "external"` adds no alias. It is printed with the file.
+            Pin::Files
+        }
     };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
     let mut inits: Vec<u32> = Vec::new();
@@ -1061,13 +1083,24 @@ pub(crate) fn merge_small_chunks(
                         e.insert((class, vec![group_index]));
                     }
                 }
-                let pinned = bits.count() == 1
-                    && pin_entry_chunk(bits.find_first_set().expect("one bit set"));
-                entry.insert(Group::new(target, bits, pinned, source_index)?)
+                let pin = if bits.count() == 1 {
+                    entry_chunk_pin(bits.find_first_set().expect("one bit set"))
+                } else {
+                    Pin::None
+                };
+                entry.insert(Group::new(target, bits, pin, source_index)?)
             }
         };
         group.size += size;
         group.pure &= pure;
+        // `import.meta` names the chunk that holds it, and `import.meta.main` is only true in the entry point's own.
+        // The runtime makes `require` from it, which depends on the directory alone. The parent chunk is in the same one.
+        if group.pin == Pin::Name
+            && source_index != Index::RUNTIME.value()
+            && ast_flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+        {
+            group.pin = Pin::Files;
+        }
         if group.target != Some(target) {
             group.target = None;
         }
@@ -1082,7 +1115,8 @@ pub(crate) fn merge_small_chunks(
 
     // An entry point's JS chunk exists even when no file is keyed by exactly
     // its bit (its own file is also reached from an `import()` target that
-    // imports back from it); give its class that chunk to fold into.
+    // imports back from it); give its class that chunk to fold into, or
+    // (`Pin::Name`) to leave without a file.
     for class_index in 0..classes.count() {
         let key = classes.keys()[class_index];
         let class = &classes.values()[class_index].0;
@@ -1097,7 +1131,7 @@ pub(crate) fn merge_small_chunks(
         let mut group = Group::new(
             ast_targets[source_index as usize],
             class,
-            pin_entry_chunk(entry_id),
+            entry_chunk_pin(entry_id),
             source_index,
         )?;
         group.pure = false;
@@ -1174,7 +1208,7 @@ pub(crate) fn merge_small_chunks(
         let unpinned = || {
             members.iter().copied().filter(|&i| {
                 let group = &groups.values()[i];
-                !group.pinned && !group.loads_entry_of(class)
+                group.pin == Pin::None && !group.loads_entry_of(class)
             })
         };
         let Some(target_index) = unpinned().max_by(|&a, &b| {
@@ -1190,7 +1224,10 @@ pub(crate) fn merge_small_chunks(
         };
         for &member in members {
             let group = &groups.values()[member];
-            if member == target_index || group.pinned || group.target != Some(target_platform) {
+            if member == target_index
+                || group.pin == Pin::Files
+                || group.target != Some(target_platform)
+            {
                 continue;
             }
             if group.loads_entry_of(class) {
@@ -1199,6 +1236,9 @@ pub(crate) fn merge_small_chunks(
                     bstr::BStr::new(sources[group.first_source as usize].path.pretty)
                 );
                 continue;
+            }
+            if group.pin == Pin::Name {
+                files_in_parent.set(group.bits.find_first_set().expect("one bit set"));
             }
             fold(groups.values_mut(), member, target_index);
             folded_same += 1;
@@ -1210,7 +1250,7 @@ pub(crate) fn merge_small_chunks(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
         );
-        return Ok(());
+        return Ok(files_in_parent);
     }
 
     // An `import()` entry every load path of which passes through entry `e`
@@ -1365,7 +1405,7 @@ pub(crate) fn merge_small_chunks(
         for candidate in 0..group_count {
             let c = &groups[candidate];
             if c.merged_into.is_some()
-                || c.pinned
+                || c.pin != Pin::None
                 || !c.pure
                 || c.size >= min_chunk_size
                 || c.size > max_headroom
@@ -1422,7 +1462,7 @@ pub(crate) fn merge_small_chunks(
                 let (c, t) = (&groups[candidate], &groups[target]);
                 if target == candidate
                     || t.merged_into.is_some()
-                    || t.pinned
+                    || t.pin != Pin::None
                     || t.target != c.target
                     || !c.loaded.subset_of(&t.loaded)
                     || t.loads_entry_of(&c.loaded)
@@ -1605,7 +1645,7 @@ pub(crate) fn merge_small_chunks(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
     );
-    Ok(())
+    Ok(files_in_parent)
 }
 
 fn rekey_files(

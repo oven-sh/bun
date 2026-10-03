@@ -279,7 +279,12 @@ pub(crate) fn compute_chunks(
     }
     if code_splitting && this.options.fold_chunks {
         let min_chunk_size = this.options.min_chunk_size;
-        merge_small_chunks(this, temp, min_chunk_size)?;
+        let files_in_parent = merge_small_chunks(this, temp, min_chunk_size)?;
+        for chunk in js_chunks.values_mut() {
+            if files_in_parent.is_set(chunk.entry_point.entry_point_id() as usize) {
+                chunk.flags |= chunk::Flags::FILES_IN_PARENT_CHUNK;
+            }
+        }
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
@@ -728,6 +733,35 @@ pub(crate) fn compute_chunks(
             let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
+    }
+
+    // The parent chunk stands in for the entry point's own, so it has that name with a hash. A relative path in its code counts from that directory.
+    for entry_chunk_index in 0..chunks.len() {
+        let entry_chunk = &chunks[entry_chunk_index];
+        if !entry_chunk
+            .flags
+            .contains(chunk::Flags::FILES_IN_PARENT_CHUNK)
+        {
+            continue;
+        }
+        let bits =
+            &this.graph.files.items_entry_bits()[entry_chunk.entry_point.source_index() as usize];
+        // No file of the parent may print code. Then it has no chunk.
+        let Some(parent) = chunks.iter().position(|chunk| {
+            !chunk.entry_point.is_entry_point()
+                && matches!(chunk.content, chunk::Content::Javascript(_))
+                && chunk.entry_bits().eql(bits)
+        }) else {
+            continue;
+        };
+        let PathTemplate { data, placeholder } = entry_chunk.template.clone();
+        let name = bun_fs::PathName::init(&data);
+        chunks[parent].template = PathTemplate {
+            data: [&data[..data.len() - name.ext.len()], b"-[hash]", name.ext]
+                .concat()
+                .into_boxed_slice(),
+            placeholder,
+        };
     }
 
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`

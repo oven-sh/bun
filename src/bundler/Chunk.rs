@@ -105,7 +105,9 @@ bitflags::bitflags! {
         const IS_EXECUTABLE = 1 << 0;
         const HAS_HTML_CHUNK = 1 << 1;
         const IS_BROWSER_CHUNK_FROM_SERVER_BUILD = 1 << 2;
-        // _padding: u5 = 0
+        /// An entry point's chunk that holds no file: the parent chunk of its class runs them (`merge_small_chunks`).
+        const FILES_IN_PARENT_CHUNK = 1 << 3;
+        // _padding: u4 = 0
     }
 }
 

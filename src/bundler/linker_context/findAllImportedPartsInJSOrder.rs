@@ -834,6 +834,14 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
+    // The parent chunk runs the entry point's file, after what that file imports.
+    let mut parent_bits = None;
+    let mut parent = None;
+    if chunk.flags.contains(chunk::Flags::FILES_IN_PARENT_CHUNK) {
+        let entry_file = chunk.entry_point.source_index();
+        roots.push(entry_file);
+        parent_bits = Some(&file_entry_bits[entry_file as usize]);
+    }
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
@@ -848,6 +856,11 @@ fn reached_chunks_in_order(
                     // Post-order: when the unbundled program would have run this file.
                     let other = chunk_of_file[source_index as usize];
                     if other != u32::MAX
+                        && parent_bits
+                            .is_some_and(|bits| bits.eql(&file_entry_bits[source_index as usize]))
+                    {
+                        parent = Some(other);
+                    } else if other != u32::MAX
                         && other != chunk_index
                         && !reached_set.is_set(other as usize)
                     {
@@ -894,5 +907,6 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
+    reached.extend(parent);
     Ok(reached)
 }

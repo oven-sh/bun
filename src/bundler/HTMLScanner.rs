@@ -6,6 +6,7 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
+use bun_core::strings;
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
@@ -67,11 +68,79 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
+/// The URLs the resolver marks external from their text alone.
+pub(crate) fn is_external_url(url: &[u8]) -> bool {
+    ["//", "http://", "https://", "data:"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix.as_bytes()))
+}
+
+/// The `?query#fragment` of a local URL: `?v=2#icon` for `./sprite.svg?v=2#icon`, nothing for `https://x/y?z` or `#icon`.
+pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
+    match strings::index_of_any(url, b"?#") {
+        Some(i) if i > 0 && !is_external_url(url) => &url[i..],
+        _ => b"",
+    }
+}
+
+const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
+
+/// Length of a `srcset` descriptor: up to the next comma outside `( )`.
+fn descriptor_len(s: &[u8]) -> usize {
+    let mut i = 0;
+    while let Some(j) = strings::index_of_any(&s[i..], b",(") {
+        if s[i + j] == b',' {
+            return i + j;
+        }
+        match strings::index_of_char_usize(&s[i + j..], b')') {
+            Some(k) => i += j + k + 1,
+            None => break,
+        }
+    }
+    s.len()
+}
+
+/// Byte ranges of the URLs in a `srcset`, per <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>.
+struct SrcsetUrls<'a> {
+    value: &'a [u8],
+    pos: usize,
+}
+
+impl Iterator for SrcsetUrls<'_> {
+    type Item = core::ops::Range<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let rest = strings::trim_left(&self.value[self.pos..], b" \t\n\r\x0c,");
+        if rest.is_empty() {
+            return None;
+        }
+        let start = self.value.len() - rest.len();
+        let url_end = strings::index_of_any(rest, HTML_WHITESPACE).unwrap_or(rest.len());
+        let url_len = strings::trim_right(&rest[..url_end], b",").len();
+        // A URL that ends in a comma has no descriptor.
+        let end = if url_len < url_end {
+            url_end
+        } else {
+            url_end + descriptor_len(&rest[url_end..])
+        };
+        self.pos = start + end;
+        Some(start..start + url_len)
+    }
+}
+
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
+        // The resolver retries without `?query#fragment` for assets and stylesheets only; a bundled script has no use for its `?v=3`.
+        let input_path = match strings::index_of_char_usize(url, b'?') {
+            Some(query) if kind == ImportKind::Stmt && !is_external_url(url) => &url[..query],
+            _ => url,
+        };
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
+        let path_to_use: &[u8] = if is_external_url(url) {
+            // `//cdn.example.com/x.png` is a host, not a project-root path.
+            url
+        } else if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
                 fs::FileSystem::instance().top_level_dir,
                 &[&input_path[1..]],
@@ -80,8 +149,7 @@ impl<'a> HTMLScanner<'a> {
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
             'blk: {
-                let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
-                else {
+                let Some(index_of_dot) = strings::last_index_of_char(input_path, b'.') else {
                     break 'blk input_path;
                 };
                 let ext = &input_path[index_of_dot..];
@@ -134,17 +202,6 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    fn on_tag(
-        &mut self,
-        _element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    ) {
-        let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
-    }
-
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
         Processor::run(self, input)
     }
@@ -156,15 +213,17 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 // HTMLProcessor — generic over visitor `T` and `VISIT_DOCUMENT_TAGS`
 // ───────────────────────────────────────────────────────────────────────────
 
+/// What `HTMLProcessor` does with a URL after `on_url` returns.
+pub(crate) enum UrlAction<'a> {
+    Keep,
+    Replace(Cow<'a, [u8]>),
+    RemoveElement,
+}
+
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    );
+    /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
+    fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_>;
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
@@ -183,14 +242,9 @@ pub(crate) trait HTMLProcessorHandler {
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    ) {
-        HTMLScanner::on_tag(self, element, path, url_attribute, kind)
+    fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_> {
+        let _ = self.create_import_record(url, kind);
+        UrlAction::Keep
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
         HTMLScanner::on_write_html(self, bytes)
@@ -301,6 +355,48 @@ fn element_entry<'h>(
     ))
 }
 
+/// lol-html escapes only `"` on output, so entities in `value` pass through as written.
+fn set_attribute(element: &mut Element<'_, '_>, name: &str, value: &[u8]) {
+    let ok = match core::str::from_utf8(value) {
+        Ok(value) => element.set_attribute(name, value).is_ok(),
+        Err(_) => false,
+    };
+    if !ok {
+        panic!("unexpected error from Element.setAttribute");
+    }
+}
+
+/// Runs `on_url` for every URL in a `srcset` and splices the replacements into the value as written.
+fn rewrite_srcset<T: HTMLProcessorHandler>(
+    this: &mut T,
+    value: &[u8],
+    kind: ImportKind,
+) -> UrlAction<'static> {
+    let mut out = Vec::new();
+    let mut copied = 0;
+    let mut remove = false;
+    // No early exit: every candidate reaches `on_url` so both passes stay in step.
+    for url in (SrcsetUrls { value, pos: 0 }) {
+        match this.on_url(&value[url.clone()], kind) {
+            UrlAction::Keep => {}
+            UrlAction::Replace(new_url) => {
+                out.extend_from_slice(&value[copied..url.start]);
+                out.extend_from_slice(&new_url);
+                copied = url.end;
+            }
+            UrlAction::RemoveElement => remove = true,
+        }
+    }
+    if remove {
+        UrlAction::RemoveElement
+    } else if copied == 0 {
+        UrlAction::Keep
+    } else {
+        out.extend_from_slice(&value[copied..]);
+        UrlAction::Replace(Cow::Owned(out))
+    }
+}
+
 impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     HTMLProcessor<T, VISIT_DOCUMENT_TAGS>
 {
@@ -315,26 +411,28 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         for tag_info in TAG_HANDLERS {
             let on_element: lol_html::ElementHandler<'_> = Box::new(
                 move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
-                    if !tag_info.url_attribute.is_empty()
-                        && element.has_attribute(tag_info.url_attribute)
-                    {
-                        let value = element
-                            .get_attribute(tag_info.url_attribute)
-                            .unwrap_or_default();
-                        if !value.is_empty() {
-                            bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
-                            // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
-                            // which is not reborrowed while the rewriter — the only
-                            // holder of these closures — is alive.
-                            unsafe {
-                                (*this_ptr).on_tag(
-                                    element,
-                                    value.as_bytes(),
-                                    tag_info.url_attribute.as_bytes(),
-                                    tag_info.kind,
-                                );
-                            }
+                    let value = element
+                        .get_attribute(tag_info.url_attribute)
+                        .unwrap_or_default();
+                    bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
+                    let action = if tag_info.url_attribute == "srcset" {
+                        // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
+                        // which is not reborrowed while the rewriter — the only
+                        // holder of these closures — is alive.
+                        rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), tag_info.kind)
+                    } else {
+                        match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
+                            b"" => UrlAction::Keep,
+                            // SAFETY: as for `rewrite_srcset` above.
+                            url => unsafe { (*this_ptr).on_url(url, tag_info.kind) },
                         }
+                    };
+                    match action {
+                        UrlAction::Keep => {}
+                        UrlAction::Replace(new_value) => {
+                            set_attribute(element, tag_info.url_attribute, &new_value)
+                        }
+                        UrlAction::RemoveElement => element.remove(),
                     }
                     Ok(())
                 },
@@ -346,7 +444,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             for (which, tag) in ["body", "head", "html"].into_iter().enumerate() {
                 let on_element: lol_html::ElementHandler<'_> = Box::new(
                     move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
-                        // SAFETY: see `on_tag` above.
+                        // SAFETY: see the URL element handler above.
                         let stop = unsafe {
                             match which {
                                 0 => (*this_ptr).on_body_tag(element),
@@ -382,7 +480,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
         let output_sink = OutputSink::Callback(Box::new(move |chunk: &[u8]| {
             if !chunk.is_empty() {
-                // SAFETY: see `on_tag` above.
+                // SAFETY: see the URL element handler above.
                 unsafe { (*this_ptr).on_write_html(chunk) }
             }
         }));

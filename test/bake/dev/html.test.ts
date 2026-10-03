@@ -96,6 +96,36 @@ devTest("image tag", {
     await dev.fetch(url).expect404(); // TODO
   },
 });
+devTest("srcset candidates and #fragments on asset URLs", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img srcset="./a.png 1x, ./b.png 2x">
+      <img src="./sprite.svg?v=2#icon">
+      <img src="https://cdn.example.com/y.png?v=1#f">
+      <img src="#local">
+      <img id="c-sharp" src="./C#/logo.png">
+      </body></html>
+    `,
+    "a.png": "A",
+    "b.png": "B",
+    "C#/logo.png": "C SHARP",
+    "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const [, a, b] = html.match(/srcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x"/)!;
+    await dev.fetch(a).expect.toBe("A");
+    await dev.fetch(b).expect.toBe("B");
+    const [, sprite] = html.match(/<img src="(\/_bun\/asset\/[0-9a-f]+\.svg)\?v=2#icon">/)!;
+    await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
+    expect(html).toInclude(`<img src="https://cdn.example.com/y.png?v=1#f">`);
+    expect(html).toInclude(`<img src="#local">`);
+    // The `#` is part of a directory name, not a fragment.
+    const [, logo] = html.match(/<img id="c-sharp" src="(\/_bun\/asset\/[0-9a-f]+\.png)">/)!;
+    await dev.fetch(logo).expect.toBe("C SHARP");
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

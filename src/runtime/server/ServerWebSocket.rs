@@ -394,8 +394,8 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        // Every caller refuses first when `handler.server.is_none()` (`on_upgrade`,
-        // `NodeHTTPResponse::can_upgrade`), so this is normally `Some`; keep the `and_then` as
+        // Every caller (`on_upgrade`, `NodeHTTPResponse::can_upgrade`) makes the `handler.server.is_none()`
+        // refusal, so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
         // re-enter JS and `stop(true)`, and `js_value_for_dispatch` returns
         // `None` once the wrapper is `Finalized` or the VM's script gate has

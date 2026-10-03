@@ -21,12 +21,8 @@ function lazyHttp() {
   return (http ??= require("node:http"));
 }
 
-// The server upgrades through the native response of the request. node:http keeps it on the
-// request: null for a request that it parsed in JS (http2 allowHTTP1, a socket given to
-// server.emit("connection")), and such a request cannot upgrade. A request that the program
-// built holds none, so the response that the socket holds is taken.
-// Loaded on the first handshake.
 let kHeaderSource;
+// The native response to upgrade through: the request's own (null when node:http parsed it in JS), else the socket's.
 function nativeRequest(request, socket) {
   kHeaderSource ??= require("internal/http").kHeaderSource;
   const own = request?.[kHeaderSource];

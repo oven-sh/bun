@@ -75,9 +75,7 @@ pub(crate) fn get_bun_server_open_count(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
-/// The built-in `ws`: `upgradeNodeHTTPResponse(handle, data, protocol)`. The native response of a
-/// request upgrades through the server that dispatched it. False for a value that is not one,
-/// and for one that cannot upgrade.
+/// The built-in `ws`: upgrades the native response of a request. False when `handle` is not one or cannot upgrade.
 pub(crate) fn upgrade_node_http_response(
     global: &JSGlobalObject,
     frame: &CallFrame,

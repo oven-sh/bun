@@ -1,13 +1,3 @@
-10-03_03:29:52 anon=56MB pids=40 load=1714.71 top=rustc:103MB
-10-03_03:31:22 anon=166MB pids=37 load=1778.20 top=rustc:261MB
-10-03_03:32:28 anon=198MB pids=35 load=1624.98 top=rustc:347MB
-10-03_03:33:07 anon=227MB pids=35 load=1453.49 top=rustc:380MB
-10-03_03:34:12 anon=279MB pids=40 load=1533.15 top=rustc:429MB
-10-03_03:34:53 anon=279MB pids=35 load=1376.97 top=rustc:437MB
-10-03_03:35:53 anon=358MB pids=35 load=1386.29 top=rustc:521MB
-10-03_03:36:23 anon=378MB pids=35 load=1197.39 top=rustc:546MB
-10-03_03:36:53 anon=388MB pids=35 load=1072.11 top=rustc:566MB
-10-03_03:37:23 anon=395MB pids=35 load=1005.09 top=rustc:573MB
 10-03_03:37:53 anon=404MB pids=37 load=928.47 top=rustc:584MB
 10-03_03:38:24 anon=551MB pids=44 load=884.24 top=rustc:754MB
 10-03_03:39:11 anon=503MB pids=38 load=943.76 top=rustc:687MB
@@ -398,3 +388,13 @@
 10-03_08:43:35 anon=3MB pids=27 load=684.60 top=postgres:12MB
 10-03_08:44:06 anon=3MB pids=27 load=593.65 top=postgres:12MB
 10-03_08:44:38 anon=3MB pids=27 load=550.63 top=postgres:12MB
+10-03_08:45:14 anon=3MB pids=27 load=559.64 top=postgres:12MB
+10-03_08:45:46 anon=3MB pids=27 load=592.74 top=postgres:12MB
+10-03_08:46:19 anon=3MB pids=27 load=650.56 top=postgres:12MB
+10-03_08:46:52 anon=3MB pids=27 load=665.13 top=postgres:12MB
+10-03_08:47:24 anon=3MB pids=27 load=617.18 top=postgres:12MB
+10-03_08:47:56 anon=3MB pids=27 load=584.40 top=postgres:12MB
+10-03_08:48:30 anon=3MB pids=27 load=557.53 top=postgres:12MB
+10-03_08:49:03 anon=3MB pids=27 load=583.98 top=postgres:12MB
+10-03_08:49:36 anon=3MB pids=27 load=536.70 top=postgres:12MB
+10-03_08:50:07 anon=8MB pids=27 load=517.77 top=postgres:12MB

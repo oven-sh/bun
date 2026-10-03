@@ -399,3 +399,97 @@ describe("fs.promises.mkdir", () => {
     expect(result).toBeUndefined();
   });
 });
+
+// When mkdir reports the path as existing, the recursive form stats it to find out
+// whether it is a directory. Like node, a failed stat is the error that gets reported:
+// ENOENT for a symlink whose target is missing, ELOOP for a symlink loop. Bun used to
+// report the mkdir's EEXIST for both. On Windows the existence probe describes the link
+// itself instead of following it, so the symlink cases there are a separate fix.
+describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink", () => {
+  let tmpdir: string;
+  let missing: string;
+  let dangling: string;
+  let loop: string;
+  let file: string;
+  let fileLink: string;
+  let dir: string;
+  let dirLink: string;
+
+  const mkdirForms = {
+    mkdirSync: (pathname: string) => Promise.resolve().then(() => fs.mkdirSync(pathname, { recursive: true })),
+    mkdir: (pathname: string) =>
+      new Promise<string | undefined>((resolve, reject) =>
+        fs.mkdir(pathname, { recursive: true }, (err, result) => (err ? reject(err) : resolve(result))),
+      ),
+    "promises.mkdir": (pathname: string) => fs.promises.mkdir(pathname, { recursive: true }),
+  };
+  const forms = Object.keys(mkdirForms) as (keyof typeof mkdirForms)[];
+
+  beforeEach(() => {
+    tmpdir = getTmpDir();
+    missing = path.join(tmpdir, "missing");
+    dangling = path.join(tmpdir, "dangling");
+    fs.symlinkSync("missing", dangling);
+    loop = path.join(tmpdir, "loop");
+    fs.symlinkSync("loop", loop);
+    file = path.join(tmpdir, "file");
+    fs.writeFileSync(file, "");
+    fileLink = path.join(tmpdir, "file-link");
+    fs.symlinkSync("file", fileLink);
+    dir = path.join(tmpdir, "dir");
+    fs.mkdirSync(dir);
+    dirLink = path.join(tmpdir, "dir-link");
+    fs.symlinkSync("dir", dirLink);
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpdir, { recursive: true, force: true });
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+  });
+
+  describe.each(forms)("%s", form => {
+    it("reports ENOENT for a symlink to a missing target and creates nothing", async () => {
+      await expect(mkdirForms[form](dangling)).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "mkdir",
+        path: dangling,
+      });
+      expect(fs.existsSync(missing)).toBe(false);
+      expect(fs.lstatSync(dangling).isSymbolicLink()).toBe(true);
+    });
+
+    it("reports ELOOP for a symlink loop", async () => {
+      await expect(mkdirForms[form](loop)).rejects.toMatchObject({
+        code: "ELOOP",
+        syscall: "mkdir",
+        path: loop,
+      });
+      expect(fs.lstatSync(loop).isSymbolicLink()).toBe(true);
+    });
+
+    it("still reports EEXIST for a file and for a symlink to a file", async () => {
+      await expect(mkdirForms[form](file)).rejects.toMatchObject({ code: "EEXIST", syscall: "mkdir", path: file });
+      await expect(mkdirForms[form](fileLink)).rejects.toMatchObject({
+        code: "EEXIST",
+        syscall: "mkdir",
+        path: fileLink,
+      });
+    });
+
+    it("still accepts a symlink to a directory", async () => {
+      expect(await mkdirForms[form](dirLink)).toBeUndefined();
+      expect(await mkdirForms[form](path.join(dirLink, "sub"))).toBe(path.join(dirLink, "sub"));
+      expect(fs.statSync(path.join(dir, "sub")).isDirectory()).toBe(true);
+    });
+
+    it("reports the error of the component below the symlink unchanged", async () => {
+      await expect(mkdirForms[form](path.join(dangling, "sub"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(mkdirForms[form](path.join(loop, "sub"))).rejects.toMatchObject({ code: "ELOOP" });
+      await expect(mkdirForms[form](path.join(fileLink, "sub"))).rejects.toMatchObject({ code: "ENOTDIR" });
+      expect(fs.existsSync(missing)).toBe(false);
+    });
+  });
+});

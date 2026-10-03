@@ -1984,10 +1984,11 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
   ];
 
   test.each(cases)("%s", async (_, script, expected) => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "inherit" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: expected,
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });

@@ -752,10 +752,11 @@ impl TransformTask {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
-            name,
-            self.input_code.slice(),
-        ));
+        // SAFETY: as for `arena_ref`: `self.input_code` outlives every use through
+        // `self.transpiler` in this fn body.
+        let source: &bun_ast::Source = arena_ref.alloc(unsafe {
+            bun_ast::Source::init_path_string(name, self.input_code.slice()).into_static()
+        });
         self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
@@ -1212,8 +1213,11 @@ impl JSTranspiler {
             code
         };
 
-        let source: &bun_ast::Source =
-            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
+        // SAFETY: as for `arena`: both callers hold `code` in the frame that
+        // holds the arena and the returned `ParseResult`.
+        let source: &bun_ast::Source = arena.alloc(unsafe {
+            bun_ast::Source::init_path_string(name, processed_code).into_static()
+        });
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),

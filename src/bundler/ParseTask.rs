@@ -190,7 +190,7 @@ impl WatcherData {
 
 pub(crate) struct Success {
     pub(crate) ast: JSAst<'static>,
-    pub(crate) source: Source,
+    pub(crate) source: Source<'static>,
     pub(crate) log: Log,
     pub(crate) use_directive: UseDirective,
     pub(crate) side_effects: bun_ast::SideEffects,
@@ -396,7 +396,7 @@ unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 
 pub(crate) struct RuntimeSource {
     pub(crate) parse_task: ParseTask,
-    pub(crate) source: Source,
+    pub(crate) source: Source<'static>,
 }
 
 // When the `require` identifier is visited, it is replaced with e_require_call_target
@@ -628,9 +628,6 @@ pub mod parse_worker {
             is_entry_point: false,
         };
         let source = Source {
-            // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
-            // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // directly rather than `clone()` across the type boundary.
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
@@ -665,7 +662,7 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &'static Source,
+        source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
@@ -686,7 +683,7 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &'static Source,
+        source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
@@ -816,7 +813,7 @@ pub mod parse_worker {
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
-        source: &'static Source,
+        source: &'static Source<'static>,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
@@ -2427,11 +2424,8 @@ pub mod parse_worker {
         let topts = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
-        // `&'bump Source` parameter is satisfied (`bump` is the same arena).
-        let source: &'static Source = bump.alloc(Source {
-            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
-            // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // field-by-field across the type boundary.
+        // `&'bump Source<'bump>` parameter is satisfied (`bump` is the same arena).
+        let source: &'static Source<'static> = bump.alloc(Source {
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,

@@ -185,9 +185,9 @@ pub struct Lexer<'a> {
     /// caller must keep the pointee alive for the lexer's lifetime — see
     /// `init_without_reading`.
     pub(crate) log: core::ptr::NonNull<Log>,
-    pub(crate) source: &'a Source,
-    /// Cached `source.contents()` slice. With `source: &'a Source` plus
-    /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
+    pub(crate) source: &'a Source<'a>,
+    /// Cached `source.contents()` slice. With `source: &'a Source<'a>` plus
+    /// `Source.contents: Cow<'a,[u8]>`, every inlined `step()` was a
     /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
     /// LLVM could not hoist (perf-annotate showed `mov 0x70(%rbx),%rax` at
     /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` here collapses
@@ -257,7 +257,7 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
         unsafe { self.log.as_mut() }
     }
     #[inline]
-    fn source(&self) -> &'a Source {
+    fn source(&self) -> &'a Source<'a> {
         self.source
     }
     #[inline]
@@ -2240,7 +2240,7 @@ impl<'a> Lexer<'a> {
     /// the `log` field doc) and the caller must keep the pointee alive for the
     /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
     /// through `arena`) outlive a stack-local scratch log.
-    pub fn init_without_reading(log: &mut Log, source: &'a Source, arena: &'a Arena) -> Self {
+    pub fn init_without_reading(log: &mut Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
         // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
         // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
         // cache for the lexer's lifetime.
@@ -2980,7 +2980,7 @@ impl<'a> Lexer<'a> {
         }
 
         if strings::index_of_char(text, b'\r').is_none() {
-            // `text` already borrows `self.source: &'a Source` → `&'a [u8]`.
+            // `text` already borrows `self.source: &'a Source<'a>` → `&'a [u8]`.
             return text;
         }
 

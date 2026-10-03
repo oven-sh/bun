@@ -4017,7 +4017,7 @@ pub mod bv2_impl {
         pub(crate) fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
-            source: &mut bun_ast::Source,
+            source: &mut bun_ast::Source<'static>,
             loader: Loader,
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
@@ -4069,7 +4069,7 @@ pub mod bv2_impl {
 
         pub(crate) fn enqueue_parse_task2(
             &mut self,
-            source: &mut bun_ast::Source,
+            source: &mut bun_ast::Source<'static>,
             loader: Loader,
             known_target: options::Target,
             module_type: options::ModuleType,
@@ -4169,7 +4169,7 @@ pub mod bv2_impl {
         pub(crate) fn enqueue_server_component_generated_file(
             &mut self,
             data: crate::ServerComponentParseTask::Data,
-            source_without_index: bun_ast::Source,
+            source_without_index: bun_ast::Source<'static>,
         ) -> Result<IndexInt, AllocError> {
             let mut new_source = source_without_index;
             let source_index = self.graph.input_files.len();
@@ -6440,7 +6440,7 @@ pub mod bv2_impl {
 
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
-        pub(crate) source: &'a bun_ast::Source,
+        pub(crate) source: &'a bun_ast::Source<'a>,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         /// See `only_selected_record`.

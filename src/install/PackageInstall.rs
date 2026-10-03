@@ -848,12 +848,12 @@ impl<'a> PackageInstall<'a> {
             .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
     }
 
-    fn get_installed_package_json_source(
+    fn get_installed_package_json_source<'m>(
         &mut self,
         root_node_modules_dir: &Dir,
-        mutable: &mut MutableString,
+        mutable: &'m mut MutableString,
         resolution_tag: resolution::Tag,
-    ) -> Option<bun_ast::Source> {
+    ) -> Option<bun_ast::Source<'m>> {
         let mut total: usize = 0;
         let mut read: usize;
         mutable.reset();
@@ -925,7 +925,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         Some(bun_ast::Source::init_path_string(
-            package_json_path.as_bytes(),
+            b"package.json",
             &mutable.list[0..total],
         ))
     }

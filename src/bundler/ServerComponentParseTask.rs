@@ -31,7 +31,7 @@ pub(crate) struct ServerComponentParseTask {
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
-    pub source: Source,
+    pub source: Source<'static>,
 }
 
 // `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
@@ -46,7 +46,7 @@ pub enum Data {
 }
 
 pub struct ReferenceProxy {
-    pub(crate) other_source: Source,
+    pub(crate) other_source: Source<'static>,
     pub(crate) named_exports: NamedExports,
 }
 

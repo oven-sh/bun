@@ -49,7 +49,7 @@ pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
-    fn source(&self) -> &'a bun_ast::Source;
+    fn source(&self) -> &'a bun_ast::Source<'a>;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref;
 }
@@ -69,7 +69,7 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         self.arena
     }
     #[inline]
-    fn source(&self) -> &'a bun_ast::Source {
+    fn source(&self) -> &'a bun_ast::Source<'a> {
         self.source
     }
     #[inline]
@@ -254,7 +254,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
     pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
     pub(crate) define: &'a Define,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub lexer: js_lexer::Lexer<'a>,
     pub(crate) allow_in: bool,
     pub(crate) allow_private_identifiers: bool,
@@ -9691,7 +9691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,

@@ -102,7 +102,7 @@ pub struct HtmlImports {
 }
 
 pub struct InputFile {
-    pub(crate) source: bun_ast::Source,
+    pub(crate) source: bun_ast::Source<'static>,
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
@@ -134,7 +134,7 @@ impl Default for InputFile {
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
-        source: bun_ast::Source,
+        source: bun_ast::Source<'static>,
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,

@@ -463,7 +463,7 @@ pub enum GetLoaderAndVirtualSourceErr {
 
 pub struct LoaderResult<'a> {
     pub loader: Option<Loader>,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
@@ -485,11 +485,11 @@ pub fn get_loader_and_virtual_source<'a>(
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
-    let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
-        let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
+        let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
         // The eval/stdin entry path uses the platform path separator
         // (`/` becomes `\` on Windows), so the suffix is per-platform.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {

@@ -2444,17 +2444,8 @@ fn transpile_source_code_inner(
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     {
-                        // `bun_ast::Source::path` is the logger-local
-                        // `fs::Path` (NOT `bun_resolver::fs::Path`). `specifier`
-                        // here is a `node_fallbacks` key — a `&'static [u8]`
-                        // literal — so no lifetime erasure needed.
-                        // SAFETY: `node_fallbacks::contents_from_path` only
-                        // matches `'static` literal keys.
-                        let spec_static: &'static [u8] = unsafe {
-                            core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
-                        };
                         let fallback_path =
-                            bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
+                            bun_paths::fs::Path::init_with_namespace(specifier, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
                             contents: std::borrow::Cow::Borrowed(code),
@@ -2572,7 +2563,11 @@ fn transpile_source_code_inner(
                     use_define_for_class_fields: unsafe {
                         (*jsc_vm).transpiler.options.use_define_for_class_fields
                     },
-                    virtual_source,
+                    // SAFETY: the VM's `Transpiler<'static>` pins this lifetime to
+                    // `'static`. The caller holds the source's bytes for this call,
+                    // which prints `parse_result` before it returns, unless it is
+                    // queued as an `AsyncModule` below.
+                    virtual_source: virtual_source.map(|source| unsafe { source.as_static() }),
                     dont_bundle_twice: true,
                     allow_commonjs: true,
                     module_type: module_type_only_for_wrappables,
@@ -3856,7 +3851,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
-    virtual_source: Option<&'a bun_ast::Source>,
+    virtual_source: Option<&'a bun_ast::Source<'a>>,
     path: Fs::Path<'a>,
     is_main: bool,
     specifier: &'a [u8],
@@ -3884,7 +3879,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
     let mut loader: Option<Loader> =
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
-    let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
 
     // Synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
@@ -3943,9 +3938,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // SAFETY: same lifetime erasure as above — `shared_view()`
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
-                    // `bun_ast::Source` stores `&'static [u8]` (see
-                    // logger/lib.rs §`type Str`), so erase to
-                    // `'static`; sound because the blob outlives the
+                    // Sound because the blob outlives the
                     // synchronous `transpile_source_code_inner` call.
                     let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
                         let v = blob.shared_view();
@@ -3955,9 +3948,6 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         )
                     };
                     *virtual_source_to_use = Some(bun_ast::Source {
-                        // Note: `bun_ast::Source::path` is the
-                        // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
-                        // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
                         contents: std::borrow::Cow::Borrowed(contents),
                         ..Default::default()

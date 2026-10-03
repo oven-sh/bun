@@ -102,7 +102,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
-                all_sources: &'a [Source],
+                all_sources: &'a [Source<'a>],
                 all_symbols: &'a [SymbolList<'a>],
                 source_index: IndexInt,
                 log: &'a mut Log,

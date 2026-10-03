@@ -40,10 +40,9 @@ impl SubCommand {
     }
 }
 
-struct PackageJson {
+struct PackageJson<'p> {
     root: Expr,
-    contents: Box<[u8]>,
-    source: Source,
+    source: Source<'p>,
     indentation: bun_ast::Indentation,
 }
 
@@ -141,9 +140,9 @@ impl PmPkgCommand {
         Global::exit(1);
     }
 
-    fn load_package_json(ctx: &Context, path: &[u8]) -> Result<PackageJson, Error> {
-        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-            Ok(b) => b.into(),
+    fn load_package_json<'p>(ctx: &Context, path: &'p [u8]) -> Result<PackageJson<'p>, Error> {
+        let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(b) => b,
             Err(e) => {
                 Output::err_generic(
                     "Failed to read package.json: {s}",
@@ -153,7 +152,7 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(path, &contents[..]);
+        let source = Source::init_path_string_owned(path, contents);
         // Use the process-lifetime CLI arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
@@ -180,7 +179,6 @@ impl PmPkgCommand {
 
         Ok(PackageJson {
             root: result.root,
-            contents,
             source,
             indentation: result.indentation,
         })
@@ -825,14 +823,14 @@ impl PmPkgCommand {
     }
 
     fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
-        let preserve_newline =
-            !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
+        let contents = &pkg.source.contents;
+        let preserve_newline = contents.last() == Some(&b'\n');
 
         let mut buffer_writer = js_printer::BufferWriter::init();
         buffer_writer
             .buffer
             .list
-            .reserve((pkg.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+            .reserve((contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
         buffer_writer.append_newline = preserve_newline;
 
         let mut writer = js_printer::BufferPrinter::init(buffer_writer);

@@ -207,7 +207,7 @@ impl bun_js_printer::OnSourceMapChunk for ChunkCollector {
 
 fn parse_js<'a>(
     arena: &'a Arena,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     loader: bun_ast::Loader,
     options: Options,
 ) -> Option<Box<bun_ast::Ast<'a>>> {
@@ -231,7 +231,7 @@ fn parse_js<'a>(
 fn print_js<'a>(
     arena: &'a Arena,
     mut ast: Box<bun_ast::Ast<'a>>,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     options: Options,
 ) -> Option<Normalized> {
     super::pm_diff_relayout::relayout(arena, &mut ast, options.relayout);

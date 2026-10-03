@@ -134,7 +134,7 @@ struct ParseContext<'a, 'b> {
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
     log: &'a mut bun_ast::Log,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
     builder: &'a mut StringBuilder<'b>,
 }

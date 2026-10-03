@@ -20,7 +20,7 @@ use crate::initialize_store;
 
 pub struct MapEntry {
     pub root: Expr,
-    pub source: Source,
+    pub source: Source<'static>,
     pub indentation: Indentation,
     indentation_guessed: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
@@ -193,13 +193,14 @@ impl WorkspacePackageJSONCache {
             }
         };
 
+        // SAFETY: `source.path` borrows `key`, which moves into the same entry as
+        // `_path_storage`; its heap address is stable across that move.
+        let source = unsafe { source.into_static() };
         let value = MapEntry {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
-            // `source.path` borrows this allocation; the `Box<[u8]>` heap
-            // address is stable across the move into the map.
             _path_storage: key,
             json_arena: json_bump,
             stale_contents: Vec::new(),

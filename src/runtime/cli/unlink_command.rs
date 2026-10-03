@@ -55,22 +55,21 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
 
         // Step 1. parse the nearest package.json file
         {
-            let package_json_source = match bun_ast::to_source(
-                manager.original_package_json_path.as_zstr(),
-                Default::default(),
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    Output::err_generic(
-                        "failed to read \"{}\" for unlinking: {}",
-                        (
-                            BStr::new(manager.original_package_json_path.as_bytes()),
-                            BStr::new(e.name()),
-                        ),
-                    );
-                    Global::crash();
-                }
-            };
+            let package_json_path = manager.original_package_json_path.clone();
+            let package_json_source =
+                match bun_ast::to_source(package_json_path.as_zstr(), Default::default()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        Output::err_generic(
+                            "failed to read \"{}\" for unlinking: {}",
+                            (
+                                BStr::new(manager.original_package_json_path.as_bytes()),
+                                BStr::new(e.name()),
+                            ),
+                        );
+                        Global::crash();
+                    }
+                };
             lockfile.init_empty();
 
             let mut resolver: () = ();

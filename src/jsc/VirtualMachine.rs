@@ -2019,16 +2019,10 @@ impl VirtualMachine {
             Entry::Occupied(e) => (*e.get()).cast(),
             Entry::Vacant(v) => {
                 let mut ep = Box::new(MacroEntryPoint::default());
-                // SAFETY: PathName stores slices with an artificial 'static
-                // bound; the generated entry point is
-                // boxed into `macro_entry_points` and lives for the VM
-                // lifetime, and `entry_path` is only borrowed for the
-                // duration of `generate` (it copies into `code_buffer`).
-                let entry_path_static: &'static [u8] = bun_ast::IntoStr::into_str(entry_path);
                 MacroEntryPoint::generate(
                     &mut *ep,
                     &mut self.transpiler,
-                    &Fs::PathName::init(entry_path_static),
+                    &Fs::PathName::init(entry_path),
                     function_name,
                     hash,
                     specifier,

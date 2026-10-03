@@ -21,7 +21,7 @@ pub mod Fs {
 
 #[derive(Default)]
 pub struct ClientEntryPoint {
-    pub(crate) source: bun_ast::Source,
+    pub(crate) source: bun_ast::Source<'static>,
 }
 
 #[derive(Default)]
@@ -129,7 +129,7 @@ impl ServerEntryPoint {
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
     pub(crate) code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
 }
 
 impl Default for MacroEntryPoint {
@@ -278,12 +278,15 @@ impl MacroEntryPoint {
             cursor.position() as usize
         };
 
-        // INVARIANT: self-referential — `macro_label`/`code` borrow
-        // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
-        // via `IntoStr`), so `entry` must not move or drop while `entry.source`
-        // is in use.
-        let macro_label: &[u8] = &entry.code_buffer[..label_len];
-        let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
+        // SAFETY: self-referential — both slices point into `entry.code_buffer`
+        // and are stored in `entry.source`, so `entry` must not move while
+        // `entry.source` is in use. The one caller boxes it before this call.
+        let (macro_label, code): (&'static [u8], &'static [u8]) = unsafe {
+            (
+                bun_ptr::detach_lifetime(&entry.code_buffer[..label_len]),
+                bun_ptr::detach_lifetime(&entry.code_buffer[label_len..label_len + code_len]),
+            )
+        };
         entry.source = bun_ast::Source::init_path_string(macro_label, code);
         // `Path::init` already set `text = macro_label`; only override namespace.
         entry.source.path.namespace = js_ast::Macro::NAMESPACE;

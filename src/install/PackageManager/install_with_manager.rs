@@ -1867,7 +1867,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
-) -> crate::Result<Source> {
+) -> crate::Result<Source<'static>> {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),

@@ -198,13 +198,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 ));
                 source_storage = bun_ast::Source {
                     path: new_path,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                    // SAFETY: `source_ref` is `&'static Source<'static>`, so re-borrowing its
                     // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
                     contents: std::borrow::Cow::Borrowed(unsafe {
                         &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                     }),
                     contents_is_recycled: source_ref.contents_is_recycled,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                    // SAFETY: `source_ref` is `&'static Source<'static>`, so re-borrowing its
                     // `Cow` payload as `&'static [u8]` is sound regardless of arm.
                     identifier_name: std::borrow::Cow::Borrowed(unsafe {
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
@@ -973,7 +973,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
+    // `get_source` returns `&'static Source<'static>` (parse_graph SoA is append-only and
     // outlives the link step), so it does not borrow `c` — no split-borrow needed
     // across the `&mut self` call below.
     let source: &bun_ast::Source = c.get_source(source_index as u32);

@@ -1696,7 +1696,7 @@ pub fn new_lazy_export_ast<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     new_lazy_export_ast_impl(
@@ -1717,7 +1717,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {

@@ -21,14 +21,14 @@ const {
   validateBoolean,
 } = require("internal/validators");
 
-// node's name handling (lib/internal/worker.js): truthy → validateString + trim,
-// falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
+// node: truthy → validateString + trim, falsy → "WorkerThread" ("" before v23.8.0 and in v22.x).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L280-L284
 function normalizeWorkerName(rawName) {
   if (rawName) {
     validateString(rawName, "options.name");
     return rawName.trim();
   }
-  return "";
+  return "WorkerThread";
 }
 
 const { isAbsolute: pathIsAbsolute } = require("node:path");
@@ -594,7 +594,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
 
 let workerData: any = unpackJSTransferables(_workerData);
 let threadId = _threadId;
-// node: main-thread and unspecified-worker name are both "" (trimmed).
+// node: "" on the main thread. A worker reads the name its native Worker was created with.
 const threadName = isMainThread ? "" : (_threadName ?? "");
 // Set below from the transferred port for node workers; a raw `new Worker()`
 // (web) that loads this module has no parent port pair, so it keeps the
@@ -918,7 +918,7 @@ class Worker extends EventEmitter {
       options = {
         ...options,
         // Pass the parent's already-normalized/validated name so the worker can
-        // use it verbatim (native cannot distinguish omitted from explicit "").
+        // use it verbatim (native applies no default and does not trim).
         name: this.#name,
         workerData: workerDataWrapper,
         transferList: options.transferList
@@ -964,7 +964,7 @@ class Worker extends EventEmitter {
     // Tracing active (CLI flag or dynamic enable): record the Node-style
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
-    require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
+    require("internal/trace_events").emitWorkerThreadName(this.#name, this.#worker.threadId);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this), {

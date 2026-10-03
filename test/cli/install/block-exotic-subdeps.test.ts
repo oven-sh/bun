@@ -538,6 +538,37 @@ blockExoticSubdeps = true
     });
   });
 
+  // The loaded lockfile keeps plugin's peer bound to the tarball row after the
+  // root moves `lib` elsewhere. The peer installs as the root's `lib`.
+  test.each([
+    ["a registry version outside the peer range", "^2.0.0"],
+    ["a folder", "file:./lib"],
+  ])("allows a peer range after the root moves its dependency from a tarball to %s", async (_, next) => {
+    const lib = { name: "lib", version: "1.0.0" };
+    await using registry = await serveRegistry([
+      { name: "lib", version: "2.0.0" },
+      { name: "plugin", version: "1.0.0", peerDependencies: { lib: "^1.0.0" } },
+    ]);
+    const root = (lib: string) =>
+      JSON.stringify({ name: "root", version: "1.0.0", dependencies: { lib, plugin: "1.0.0" } });
+    using dir = tempDir("block-exotic-peer-moved", {
+      "package.json": root("file:./lib.tgz"),
+      "bunfig.toml": bunfigWithRegistry(registry.origin),
+      "lib.tgz": Buffer.from(await tarball(lib)),
+      "lib/package.json": JSON.stringify({ ...lib, version: "1.5.0" }),
+    });
+    expect(await install(String(dir))).toEqual({
+      stderr: expect.not.stringContaining("blockExoticSubdeps"),
+      exitCode: 0,
+    });
+
+    await Bun.write(join(String(dir), "package.json"), root(next));
+    expect(await install(String(dir))).toEqual({
+      stderr: expect.not.stringContaining("blockExoticSubdeps"),
+      exitCode: 0,
+    });
+  });
+
   test("still blocks a peer dependency that names the root's tarball itself", async () => {
     const lib = { name: "lib", version: "1.0.0" };
     await using registry = await serveRegistry([

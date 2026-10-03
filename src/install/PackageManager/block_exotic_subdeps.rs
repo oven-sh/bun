@@ -7,8 +7,9 @@
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{Output, fmt as bun_fmt, strings};
+use bun_install::Lockfile;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
-use bun_install::{DependencyID, PackageID, PackageManager, invalid_package_id};
+use bun_install::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
 use bun_semver::semver_string::Builder as StringBuilder;
 
 use crate::lockfile::package::PackageColumns as _;
@@ -104,8 +105,11 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
 
             // A range names no source. It is allowed to bind to a package whose
             // source the root or a workspace declares (a peer range on a tarball).
+            // A peer installs as the root's own dependency of that name whatever
+            // the lockfile bound it to (`Tree::hoist_dependency`).
             if matches!(version.tag, dependency::Tag::Npm | dependency::Tag::DistTag)
-                && project_names_source_of(manager, dep_pkg_id)
+                && (project_names_source_of(manager, dep_pkg_id)
+                    || (dep.behavior.is_peer() && root_declares(&manager.lockfile, dep.name_hash)))
             {
                 continue;
             }
@@ -199,6 +203,15 @@ fn project_names_source_of(manager: &PackageManager, id: PackageID) -> bool {
         }
     }
     false
+}
+
+/// Does the root package declare a dependency with this name?
+fn root_declares(lockfile: &Lockfile, name_hash: PackageNameHash) -> bool {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    lockfile.packages.items_dependencies()[0]
+        .get(deps)
+        .iter()
+        .any(|dep| dep.name_hash == name_hash)
 }
 
 /// The exotic-source label for this edge, or `None` when it is allowed.

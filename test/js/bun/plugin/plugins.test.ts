@@ -1216,10 +1216,8 @@ describe("namespace characters", () => {
     });
   });
 
-  // The message quotes the namespace, so no message fits for a namespace near the string length limit
-  // (2**31 - 1 characters). The child needs a string of about 2 GiB, so the test skips on small machines.
-  // `repeat` of one character allocates that string once. The child takes 2 to 3 seconds in a debug ASAN
-  // build, which is too close to the default 5 second limit, so this one test carries its own ceiling.
+  // The message quotes the namespace, so no message fits near the string length limit (2**31 - 1 characters).
+  // `repeat` allocates the 2 GiB string once. `Buffer.alloc(n, "!").toString()` holds it twice.
   const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
   it.skipIf(memory < 10 * 1024 ** 3)(
     "Bun.plugin throws a RangeError for a refused namespace that is too long to quote",
@@ -1252,6 +1250,5 @@ describe("namespace characters", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 });

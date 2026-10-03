@@ -643,6 +643,77 @@ describe("bundler", () => {
       },
     };
   });
+  // With target "node", the runtime module that Bun injects imports "node:module"
+  // for `__require`. The project does not contain that import, so a plugin that
+  // answers every bare specifier does not see it.
+  itBundled("plugin/ResolveNotCalledForRuntimeImports", ({ root }) => {
+    const calls: { path: string; importer: string }[] = [];
+    return {
+      files: {
+        "index.mjs": /* js */ `
+          import dep from "./dep.cjs";
+          import lib from "lib";
+          console.log(dep.sep, lib);
+        `,
+        "dep.cjs": /* js */ `
+          // Not a string literal, so this call goes through the runtime's \`__require\`.
+          module.exports = { sep: require(["node", "path"].join(":")).posix.sep };
+        `,
+        "vendor/lib.js": /* js */ `
+          export default "vendored";
+        `,
+      },
+      target: "node",
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          if (args.kind === "entry-point-build") return;
+          calls.push({ path: args.path, importer: args.importer });
+          if (!args.path.startsWith(".")) {
+            return { path: join(root, "vendor", args.path.replace(":", "_") + ".js") };
+          }
+        });
+      },
+      run: {
+        stdout: "/ vendored",
+      },
+      onAfterBundle(api) {
+        expect(calls).toEqual([
+          { path: "./dep.cjs", importer: join(root, "index.mjs") },
+          { path: "lib", importer: join(root, "index.mjs") },
+        ]);
+        api.expectFile("/out.js").toContain(`from "node:module"`);
+      },
+    };
+  });
+  // A plugin that marks every bare specifier as external used to claim the runtime's
+  // "node:module" import too. That kept the import in the output when nothing used it.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`plugin/ResolveExternalDoesNotKeepUnusedRuntimeImport_${format}`, {
+      files: {
+        "index.mjs": /* js */ `
+          import dep from "./dep.cjs";
+          console.log(dep.v);
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = { v: 1 };
+        `,
+      },
+      target: "node",
+      format,
+      plugins(builder) {
+        builder.onResolve({ filter: /^[^./]/ }, args => {
+          if (args.kind === "entry-point-build") return;
+          return { path: args.path, external: true };
+        });
+      },
+      run: {
+        stdout: "1",
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("node:module");
+      },
+    });
+  }
   itBundled("plugin/ManyFiles", ({ root }) => {
     const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));

@@ -2364,6 +2364,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED, "The inspector session is already connected"_s));
     case ErrorCode::ERR_INSPECTOR_NOT_CONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_CONNECTED, "Session is not connected"_s));
+    case ErrorCode::ERR_INSPECTOR_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_CLOSED, "Session was closed"_s));
     case ErrorCode::ERR_INSPECTOR_NOT_WORKER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_WORKER, "Current thread is not a worker"_s));
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:

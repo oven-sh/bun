@@ -65,6 +65,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
@@ -3219,9 +3220,7 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
-// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
-// a /dev/fd fallback for environments where /proc is broken (FreeBSD
-// Linuxulator) or absent (minimal containers).
+// Regression guard for realpathSync on POSIX hosts.
 it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
   expect(realpathSync("/")).toBe("/");
 
@@ -3235,13 +3234,231 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
-// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
-// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
-// non-Windows target Bun ships, fd→path resolution is implemented — there is
-// no platform that falls through to ENOSYS. realpathSync on POSIX is
-// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
-it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+it.if(isPosix)("realpath resolves a symlink before a following parent traversal", async () => {
+  using dir = tempDir("fs-realpath-symlink-parent", {});
+  const root = String(dir);
+  const actualDir = join(root, "actual");
+  const nestedDir = join(actualDir, "nested");
+  const expected = join(actualDir, "target.txt");
+  const collision = join(root, "target.txt");
+  const linkPath = join(root, "link");
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(expected, "expected");
+  writeFileSync(collision, "collision");
+  symlinkSync(nestedDir, linkPath);
+  const input = `${linkPath}${path.sep}..${path.sep}target.txt`;
+
+  expect(realpathSync(input)).toBe(collision);
+  expect(realpathSync.native(input)).toBe(expected);
+  expect(await promises.realpath(input)).toBe(expected);
+  expect(await promisify(fs.realpath)(input)).toBe(collision);
+  expect(await promisify(fs.realpath.native)(input)).toBe(expected);
+});
+
+const posixCc = isPosix ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+const realpathImplementations = [
+  ["sync", realpathSync],
+  ["sync native", realpathSync.native],
+  ["promises", promises.realpath],
+  ["callback", promisify(fs.realpath)],
+  ["callback native", promisify(fs.realpath.native)],
+] as const;
+
+describe.each(realpathImplementations)("realpath %s POSIX paths", (_name, realpath) => {
+  // POSIX permits backslashes in filenames; Windows treats them as separators.
+  it.skipIf(!isPosix)("preserves literal backslashes instead of resolving a collision", async () => {
+    using dir = tempDir("fs-realpath-backslash", {});
+    const root = String(dir);
+    const literal = join(root, "directory\\name");
+    const collision = join(root, "directory", "name");
+    mkdirSync(literal);
+    mkdirSync(collision, { recursive: true });
+    const target = join(literal, "file\\name.txt");
+    writeFileSync(target, "literal");
+    mkdirSync(join(collision, "file"));
+    writeFileSync(join(collision, "file", "name.txt"), "collision");
+    const link = join(root, "link\\name");
+    symlinkSync(target, link);
+
+    for (const input of [target, link, relative(process.cwd(), target)]) {
+      expect(await realpath(input)).toBe(target);
+      expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(target));
+    }
+  });
+
+  it.skipIf(!isPosix)("counts literal backslashes as one containment-check component", async () => {
+    using dir = tempDir("fs-realpath-backslash-parent", {});
+    const root = String(dir);
+    const jail = join(root, "jail");
+    mkdirSync(join(jail, "up\\x"), { recursive: true });
+    writeFileSync(join(root, "data.txt"), "outside");
+    writeFileSync(join(jail, "data.txt"), "inside");
+    const escapes = `${jail}/up\\x/../../data.txt`;
+
+    expect(readFileSync(escapes, "utf8")).toBe("outside");
+    for (const input of [escapes, `${relative(process.cwd(), jail)}/up\\x/../../data.txt`]) {
+      const resolved = await realpath(input);
+      expect(resolved).toBe(join(root, "data.txt"));
+      expect(resolved.startsWith((await realpath(jail)) + path.sep)).toBe(false);
+      expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(resolved));
+    }
+
+    const literal = join(jail, "..\\secret.txt");
+    await expect((async () => realpath(literal))()).rejects.toMatchObject({ code: "ENOENT" });
+    writeFileSync(literal, "literal");
+    expect(await realpath(literal)).toBe(literal);
+  });
+
+  // Windows modes cannot remove POSIX read/search permissions; root bypasses them.
+  it.skipIf(!isPosix || process.getuid?.() === 0)("does not require read permission on the target", async () => {
+    using dir = tempDir("fs-realpath-permissions", { "file.txt": "private" });
+    const root = String(dir);
+    const file = join(root, "file.txt");
+    const directory = join(root, "search-only");
+    mkdirSync(directory);
+    const child = join(directory, "child.txt");
+    writeFileSync(child, "child");
+    try {
+      fs.chmodSync(file, 0o200);
+      fs.chmodSync(directory, 0o100);
+      expect(() => readFileSync(file)).toThrow(expect.objectContaining({ code: "EACCES" }));
+      expect(() => readdirSync(directory)).toThrow(expect.objectContaining({ code: "EACCES" }));
+      for (const target of [file, directory, child]) {
+        expect(await realpath(target)).toBe(target);
+        expect(await realpath(Buffer.from(target), { encoding: "buffer" })).toEqual(Buffer.from(target));
+      }
+      fs.chmodSync(file, 0);
+      expect(await realpath(file)).toBe(file);
+    } finally {
+      fs.chmodSync(file, 0o600);
+      fs.chmodSync(directory, 0o700);
+    }
+  });
+
+  it.skipIf(process.platform !== "darwin" || !posixCc)("matches F_GETPATH through symlinks and firmlinks", async () => {
+    using dir = tempDir("fs-realpath-fullpath", {
+      "path.c": `
+        #include <fcntl.h>
+        int fd_path(int fd, char *buf) { return fcntl(fd, F_GETPATH, buf); }
+      `,
+      "file.txt": "target",
+    });
+    const root = String(dir);
+    const libraryPath = join(root, "path.dylib");
+    const compile = spawnSync({ cmd: [posixCc!, "-dynamiclib", "-o", libraryPath, join(root, "path.c")], env: bunEnv });
+    expect(compile.stderr.toString()).toBe("");
+    expect(compile.exitCode).toBe(0);
+    const library = dlopen(libraryPath, { fd_path: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 } });
+    try {
+      const file = join(root, "file.txt");
+      const first = join(root, "first");
+      const second = join(root, "second");
+      symlinkSync(file, first);
+      symlinkSync(first, second);
+      const inputs = [file, root, second, "/Users", "/System/Volumes/Data/Users"];
+      for (const input of inputs) {
+        const fd = openSync(input, "r");
+        try {
+          const output = Buffer.alloc(1024);
+          expect(library.symbols.fd_path(fd, ptr(output))).toBe(0);
+          const expected = output.subarray(0, output.indexOf(0)).toString();
+          expect(await realpath(input)).toBe(expected);
+          expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(expected));
+        } finally {
+          closeSync(fd);
+        }
+      }
+    } finally {
+      library.close();
+    }
+  });
+});
+
+describe.each(realpathImplementations)("realpath %s POSIX locks", (_name, realpath) => {
+  it.skipIf(!posixCc)("preserves process-owned POSIX locks", async () => {
+    using dir = tempDir("fs-realpath-posix-lock", {
+      "lock.c": `
+      #include <fcntl.h>
+      #include <errno.h>
+      int lock_file(int fd) {
+        struct flock lock = { .l_start = 0, .l_len = 0, .l_pid = 0, .l_type = F_WRLCK, .l_whence = SEEK_SET };
+        return fcntl(fd, F_SETLK, &lock) == 0 ? 0 : errno;
+      }
+    `,
+    });
+    const dylibPath = join(String(dir), process.platform === "darwin" ? "lock.dylib" : "lock.so");
+    const compile = spawnSync({
+      cmd: [
+        posixCc!,
+        ...(process.platform === "darwin" ? ["-dynamiclib"] : ["-shared", "-fPIC"]),
+        "-o",
+        dylibPath,
+        join(String(dir), "lock.c"),
+      ],
+      env: bunEnv,
+    });
+    expect(compile.stderr.toString()).toBe("");
+    expect(compile.exitCode).toBe(0);
+    const library = dlopen(dylibPath, {
+      lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
+    });
+
+    const probeWriter = (filePath: string) => {
+      const result = spawnSync({
+        cmd: [
+          bunExe(),
+          "--eval",
+          `
+          const { closeSync, openSync } = require("node:fs");
+          const { dlopen, FFIType } = require("bun:ffi");
+          const library = dlopen(process.argv[1], {
+            lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
+          });
+          const fd = openSync(process.argv[2], "r+");
+          const result = library.symbols.lock_file(fd);
+          const { EAGAIN, EACCES } = require("node:os").constants.errno;
+          console.log(result === 0 ? "acquired" : result === EAGAIN || result === EACCES ? "busy" : "error:" + result);
+          closeSync(fd);
+          library.close();
+        `,
+          dylibPath,
+          filePath,
+        ],
+        env: bunEnv,
+      });
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
+      return result.stdout.toString().trim();
+    };
+
+    try {
+      const filePath = join(String(dir), "file.lock");
+      writeFileSync(filePath, "lock target");
+      const linkPath = join(String(dir), "link.lock");
+      symlinkSync(filePath, linkPath);
+      const fd = openSync(filePath, "r+");
+      try {
+        expect(library.symbols.lock_file(fd)).toBe(0);
+        expect(probeWriter(filePath)).toBe("busy");
+        for (const input of [filePath, linkPath]) {
+          expect(await realpath(input)).toBe(filePath);
+          expect(probeWriter(filePath)).toBe("busy");
+        }
+        // Closing any ordinary descriptor for this inode must make the probe succeed.
+        closeSync(openSync(filePath, "r"));
+        expect(probeWriter(filePath)).toBe("acquired");
+      } finally {
+        closeSync(fd);
+      }
+    } finally {
+      library.close();
+    }
+  });
+});
+
+// The POSIX syscall layer supports every non-Windows target Bun ships, so an
+// ENOSYS result means a platform implementation was dropped.
+it.skipIf(isWindows)("realpathSync is implemented on every POSIX target — never ENOSYS", () => {
   using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
   const probe = join(String(dir), "probe.txt");
 
@@ -3249,9 +3466,6 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   try {
     resolved = realpathSync(probe);
   } catch (e: any) {
-    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
-    // value has a real implementation. If this fires, a target (FreeBSD's
-    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
     expect(e?.code).not.toBe("ENOSYS");
     expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
     throw e;
@@ -6894,8 +7108,8 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
-  // The relative path argument is within the per-argument limit, but joining
-  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // The relative path argument is within the per-argument limit, but resolving
+  // it against the (non-root) cwd exceeds the system path limit.
   // Both realpath variants must surface this as a clean ENAMETOOLONG error
   // instead of aborting the process.
   const script = `

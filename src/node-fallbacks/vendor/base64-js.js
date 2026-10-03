@@ -33,14 +33,6 @@ function getLens(b64) {
   return [validLen, placeHoldersLen];
 }
 
-// base64 is 4/3 + up to two characters of the original data
-function byteLength(b64) {
-  var lens = getLens(b64);
-  var validLen = lens[0];
-  var placeHoldersLen = lens[1];
-  return ((validLen + placeHoldersLen) * 3) / 4 - placeHoldersLen;
-}
-
 function _byteLength(validLen, placeHoldersLen) {
   return ((validLen + placeHoldersLen) * 3) / 4 - placeHoldersLen;
 }

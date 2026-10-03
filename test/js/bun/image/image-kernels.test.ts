@@ -230,6 +230,126 @@ describe("resize filter properties", () => {
   });
 });
 
+// ─── linear-light resize (colorspace: "linear") ─────────────────────────────
+//
+// sRGB encodes perceived brightness, not light. Averaging the encoded codes
+// (the default, Sharp-parity path) darkens downscaled detail; the opt-in
+// `colorspace: "linear"` decodes to linear light, resizes in 16-bit, and
+// re-encodes. The instrument is a 1px black/white checkerboard: half the
+// pixels are 0 and half 255, so averaging light gives sRGB ~188 while
+// averaging codes gives ~128. See issue #40510.
+
+describe("linear-light resize", () => {
+  async function resizeWith(
+    src: Uint8Array,
+    w: number,
+    h: number,
+    options: Bun.Image.ResizeOptions,
+  ): Promise<Uint8Array> {
+    return decodePng(await new Bun.Image(src).resize(w, h, options).png().bytes()).data;
+  }
+
+  test("checkerboard downscale averages light, not codes", async () => {
+    const checker = makePng(64, 64, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    // box 64→8: every output pixel covers an 8×8 block that is exactly half
+    // black, half white. Linear mean 0.5 encodes to sRGB ~188.
+    const linear = await resizeWith(checker, 8, 8, { filter: "box", colorspace: "linear" });
+    for (let i = 0; i < linear.length; i += 4) {
+      expect(linear[i]).toBeGreaterThanOrEqual(186);
+      expect(linear[i]).toBeLessThanOrEqual(189);
+      expect(linear[i + 3]).toBe(255);
+    }
+    // The default path is unchanged: it averages the encoded codes to ~128.
+    const srgb = await resizeWith(checker, 8, 8, { filter: "box" });
+    for (let i = 0; i < srgb.length; i += 4) {
+      expect(srgb[i]).toBeGreaterThanOrEqual(126);
+      expect(srgb[i]).toBeLessThanOrEqual(129);
+    }
+  });
+
+  test("lanczos3 interior mean on the checkerboard lands near 188", async () => {
+    const checker = makePng(64, 64, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    const out = await resizeWith(checker, 8, 8, { colorspace: "linear" });
+    let sum = 0;
+    let n = 0;
+    for (let y = 1; y < 7; y++) {
+      for (let x = 1; x < 7; x++) {
+        sum += out[(y * 8 + x) * 4];
+        n++;
+      }
+    }
+    const mean = sum / n;
+    expect(mean).toBeGreaterThan(180);
+    expect(mean).toBeLessThan(195);
+  });
+
+  // DC gain through the LUT round-trip: every sRGB code must survive
+  // srgb→linear16→srgb unchanged when the resample is a pure average.
+  test("flat fields stay flat exactly (LUT round-trip + DC gain)", async () => {
+    for (const v of [0, 1, 13, 128, 173, 254, 255]) {
+      const flat = makePng(9, 7, () => [v, v, v, 200]);
+      const out = await resizeWith(flat, 3, 3, { colorspace: "linear" });
+      for (let i = 0; i < out.length; i += 4) {
+        expect([out[i], out[i + 1], out[i + 2], out[i + 3]]).toEqual([v, v, v, 200]);
+      }
+    }
+  });
+
+  test("explicit colorspace 'srgb' matches the default byte-for-byte", async () => {
+    const src = makePng(16, 16, (x, y) => [(x * 37) & 255, (y * 53) & 255, ((x ^ y) * 11) & 255, 255]);
+    const a = await new Bun.Image(src).resize(7, 5, { colorspace: "srgb" }).png().bytes();
+    const b = await new Bun.Image(src).resize(7, 5).png().bytes();
+    expect(Buffer.compare(Buffer.from(a), Buffer.from(b))).toBe(0);
+  });
+
+  test("linear output is identical across backends", async () => {
+    const checker = makePng(32, 32, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    const prev = Bun.Image.backend;
+    try {
+      Bun.Image.backend = "system";
+      const sys = await new Bun.Image(checker).resize(4, 4, { colorspace: "linear" }).png().bytes();
+      Bun.Image.backend = "bun";
+      const bun = await new Bun.Image(checker).resize(4, 4, { colorspace: "linear" }).png().bytes();
+      expect(Buffer.compare(Buffer.from(sys), Buffer.from(bun))).toBe(0);
+    } finally {
+      Bun.Image.backend = prev;
+    }
+  });
+
+  // A JPEG source at 2x+ shrink normally decodes through the M/8 IDCT scale,
+  // which averages encoded DC coefficients per 8×8 block — the exact
+  // code-averaging `colorspace: "linear"` opts out of. The linear path must
+  // decode at full resolution, so the checkerboard still lands near 188.
+  test("linear resize of a JPEG source skips the IDCT downscale hint", async () => {
+    const checker = makePng(128, 128, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    const jpeg = await new Bun.Image(checker).jpeg({ quality: 100 }).bytes();
+    const out = decodePng(
+      await new Bun.Image(jpeg).resize(16, 16, { filter: "box", colorspace: "linear" }).png().bytes(),
+    ).data;
+    let sum = 0;
+    let n = 0;
+    for (let y = 2; y < 14; y++) {
+      for (let x = 2; x < 14; x++) {
+        sum += out[(y * 16 + x) * 4];
+        n++;
+      }
+    }
+    // A hinted decode collapses every 8×8 block to its ~128 DC before the
+    // linear resize runs, so the mean reads ~128. Full decode + linear
+    // resize reads ~188 (JPEG quantization noise gives a wide margin).
+    const mean = sum / n;
+    expect(mean).toBeGreaterThan(165);
+    expect(mean).toBeLessThan(210);
+  });
+
+  test("invalid colorspace value throws", () => {
+    const src = makePng(4, 4, () => [0, 0, 0, 255]);
+    expect(() => new Bun.Image(src).resize(2, 2, { colorspace: "rec2020" as any })).toThrow(
+      TypeError("colorspace must be one of 'srgb' or 'linear'"),
+    );
+  });
+});
+
 // ─── Floyd–Steinberg dither ─────────────────────────────────────────────────
 
 describe("Floyd–Steinberg dither", () => {

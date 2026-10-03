@@ -2,6 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
 
+async function runNodeAlias(args: string[], stdin = "", files: Record<string, string> = {}) {
+  using temp = tempDir("fake-node-stdio", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    argv0: "node",
+    cwd: String(temp),
+    env: bunEnv,
+    stdin: Buffer.from(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
     using temp = tempDir("fake-node", {
@@ -95,6 +110,59 @@ describe("fake node cli", () => {
       // note: no extension here is INTENTIONAL
       JSON.stringify([join(temp, "index"), "a", "b", "c"]),
     );
+  });
+
+  test.each([
+    { args: ["-v"] },
+    { args: ["--version"] },
+    { args: ["--no-warnings", "-v"] },
+    { args: ["--no-warnings", "--version"] },
+    { args: ["--require", "./preload.cjs", "--version"] },
+    { args: ["--import", "./preload.mjs", "-v"] },
+  ])("reports the Node compatibility version for $args", async ({ args }) => {
+    expect(
+      await runNodeAlias(args, "", {
+        "preload.cjs": 'throw new Error("preload must not run")',
+        "preload.mjs": 'throw new Error("preload must not run")',
+      }),
+    ).toEqual({
+      stdout: `v${process.versions.node}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    { args: ["--revision"] },
+    { args: ["--revision", "entry.cjs"] },
+    { args: ["--revision", "-e", 'console.log("eval ran")'] },
+  ])("rejects Bun-only revision before executing $args", async ({ args }) => {
+    expect(
+      await runNodeAlias(args, 'console.log("stdin ran")', {
+        "entry.cjs": 'console.log("script ran")',
+      }),
+    ).toEqual({ stdout: "", stderr: "error: Invalid Argument '--revision'\n", exitCode: 1 });
+  });
+
+  test.each(
+    ["--revision", "-v", "--version"].flatMap(flag => [
+      { args: ["entry.cjs", flag], flag },
+      { args: ["--", "entry.cjs", flag], flag },
+    ]),
+  )("passes $args through to the script", async ({ args, flag }) => {
+    expect(
+      await runNodeAlias(args, "", {
+        "entry.cjs": "console.log(JSON.stringify(process.argv.slice(2)))",
+      }),
+    ).toEqual({ stdout: JSON.stringify([flag]) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  test("Node help advertises version without the rejected revision flag", async () => {
+    const { stdout, stderr, exitCode } = await runNodeAlias(["--help"]);
+    expect(stdout).toContain("--version");
+    expect(stdout).not.toContain("--revision");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a

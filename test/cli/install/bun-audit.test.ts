@@ -7,10 +7,12 @@ import {
   bunEnv,
   bunExe,
   gunzipJsonRequest,
+  isWindows,
   normalizeBunSnapshot,
   runBunInstall,
   tempDir,
 } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
@@ -1830,6 +1832,61 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  // The advisory's `url` and `id` are the registry's text, and the `--ignore` line is printed to be pasted.
+  test.concurrent("the --ignore line takes each advisory as one shell word", async () => {
+    const ghsa = "GHSA-xxxx-xxxx-xxxx";
+    const id = "2 --latest; touch pwned";
+    await using server = startRegistry({
+      "a-dep": [
+        { ...adv("<=1.0.10"), url: "https://example.invalid/" + ghsa + ";touch${IFS}pwned" },
+        { ...adv("<=1.0.10"), id: id as unknown as number },
+      ],
+    });
+    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "^1.0.0" } });
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      no published version fixes:
+        a-dep@1.0.10  2 --latest; touch pwned, GHSA-xxxx-xxxx-xxxx
+          bun audit fix --ignore '2 --latest; touch pwned' --ignore GHSA-xxxx-xxxx-xxxx
+
+      Fixed 0 of 2 vulnerabilities (checked 1)
+      2 vulnerabilities remaining"
+    `);
+    expect(exitCode).toBe(1);
+
+    if (!isWindows) {
+      // Paste the line: `bun` is a function that prints its arguments.
+      const line = stdout.split("\n").find(line => line.includes("--ignore"))!;
+      using cwd = tempDir("audit-ignore-paste", {});
+      await using sh = Bun.spawn({
+        cmd: ["sh", "-c", `bun() { printf '[%s]\\n' "$@"; }\n${line}`],
+        env: bunEnv,
+        cwd: String(cwd),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [pasted, stderr, shExitCode] = await Promise.all([sh.stdout.text(), sh.stderr.text(), sh.exited]);
+      expect({ pasted, stderr, shExitCode, created: readdirSync(String(cwd)) }).toEqual({
+        pasted: ["audit", "fix", "--ignore", id, "--ignore", ghsa].map(word => `[${word}]\n`).join(""),
+        stderr: "",
+        shExitCode: 0,
+        created: [],
+      });
+    }
+
+    // The printed tokens are what `--ignore` takes.
+    const ignored = await auditFix(dir, "--ignore", id, "--ignore", ghsa);
+    expect(normalizeBunSnapshot(ignored.stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      No vulnerabilities found (checked 1 package, 2 ignored)"
+    `);
+    expect(ignored.exitCode).toBe(0);
   });
 
   // pnpm#11101: a workspace package sharing a name with an advised npm package is not audited.

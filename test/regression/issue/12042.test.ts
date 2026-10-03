@@ -43,5 +43,5 @@ await server.stop();
   const output = stdout + stderr;
   const normalized = normalizeBunSnapshot(output, dirPath);
 
-  expect(normalized).toContain('--data-raw "grant_type=client_credentials&client_id=abc&client_secret=xyz');
+  expect(normalized).toContain("--data-raw 'grant_type=client_credentials&client_id=abc&client_secret=xyz'");
 });

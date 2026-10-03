@@ -326,6 +326,21 @@ fn destination_overlaps_template(
     }
 }
 
+/// The template argument is the path of a folder. Any other argument is a name to look up.
+fn is_folder_path(template_arg: &[u8]) -> bool {
+    bun_paths::is_absolute(template_arg)
+}
+
+/// `destination` does not exist or is a directory with no entries.
+fn destination_is_new_or_empty(destination: &[u8]) -> Result<bool, bun_sys::Error> {
+    let dir = match bun_sys::Dir::open(destination) {
+        Ok(dir) => dir,
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    Ok(bun_sys::dir_iterator::iterate(dir.fd()).next()?.is_none())
+}
+
 pub(crate) struct CreateCommand;
 
 impl CreateCommand {
@@ -679,7 +694,36 @@ impl CreateCommand {
                     Global::exit(1);
                 }
 
-                let _ = bun_sys::delete_tree_absolute(destination);
+                // A template found by name replaces the destination, as documented.
+                // A template given as a folder path never removes a file.
+                if is_folder_path(positionals[0]) {
+                    match destination_is_new_or_empty(destination) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            node.end();
+                            progress.refresh();
+
+                            pretty_errorln!(
+                                "<r><red>error<r>: the destination <b>{}<r> is not empty. A template folder is copied only into a new or empty destination.",
+                                bstr::BStr::new(destination),
+                            );
+                            Global::exit(1);
+                        }
+                        Err(err) => {
+                            node.end();
+                            progress.refresh();
+
+                            pretty_errorln!(
+                                "<r><red>{}<r>: opening dir {}",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(destination),
+                            );
+                            Global::exit(1);
+                        }
+                    }
+                } else {
+                    let _ = bun_sys::delete_tree_absolute(destination);
+                }
                 let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {
@@ -1422,7 +1466,7 @@ impl CreateCommand {
                 Global::exit(1);
             }
 
-            if bun_paths::is_absolute(positional) {
+            if is_folder_path(positional) {
                 example_tag = ExampleTag::LocalFolder;
                 break 'brk positional;
             }

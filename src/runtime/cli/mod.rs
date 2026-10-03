@@ -2070,7 +2070,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 <b>Templates<r><d>:<r>
   • NPM: Runs <b><magenta>bunx create-\\<template\\><r> with given arguments
   • GitHub: Downloads repository contents as template
-  • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>
+  • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>, or a folder at an absolute path
 
 Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
 "

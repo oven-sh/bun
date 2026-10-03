@@ -427,7 +427,12 @@ devTest("removing 'use client' from a component with a pending resolution failur
   for (const { name, serverComponents, failedImport, which } of [
     { name: "no server components", serverComponents: undefined, failedImport: `import "./missing";`, which: "ssr" },
     { name: "one server graph", serverComponents: oneServerGraph, failedImport: `import "./missing";`, which: "rsc" },
-    { name: "separate SSR graph", serverComponents: separateSSRGraph, failedImport: `import "./missing";`, which: "rsc" },
+    {
+      name: "separate SSR graph",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "./missing";`,
+      which: "rsc",
+    },
     {
       name: "bunBakeGraph attribute without an SSR graph",
       serverComponents: oneServerGraph,

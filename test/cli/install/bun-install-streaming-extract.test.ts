@@ -955,14 +955,16 @@ test("streaming extract skips a damaged header block and extracts the entries af
 
 // -------------------------------------------------------------------
 // A piece of the body can end at any byte of the tar stream. The
-// streaming extractor then waits for the next piece and resumes. These
-// tests end a piece inside the map of a GNU sparse member. The map
-// follows the member header: the PAX 1.0 form stores it as text at the
+// streaming extractor then waits for the next piece and continues.
+// These tests end a piece inside the header of a member, past its
+// 512-byte header block: inside the map of a GNU sparse member, inside
+// a large pax header, and inside an AppleDouble blob. A sparse map
+// follows the header block: the PAX 1.0 form stores it as text at the
 // start of the member data, the old GNU form in 512-byte extension
 // blocks. The members are built by hand because CI has no GNU tar on
 // every platform.
 // -------------------------------------------------------------------
-describe.concurrent("streaming extract: a body piece ends inside a sparse map", () => {
+describe.concurrent("streaming extract: a body piece ends inside the header of a member", () => {
   const realSize = 300_000;
   const pkgJson = Buffer.from(JSON.stringify({ name: "sparse-pkg", version: "1.0.0" }));
 
@@ -976,16 +978,18 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
     return file;
   };
 
+  // One record of a pax header: its own length, the key and the value.
+  const record = (key: string, value: string | number) => {
+    const body = ` ${key}=${value}\n`;
+    let len = body.length + 1;
+    while (String(len).length + body.length !== len) len++;
+    return `${len}${body}`;
+  };
+
   // What `tar --sparse --format=posix` writes: an 'x' header with the name
   // and the real size, then a member whose data starts with the map as
   // decimal lines, NUL-padded to a block.
   function paxSparseMember(): Member {
-    const record = (key: string, value: string | number) => {
-      const body = ` ${key}=${value}\n`;
-      let len = body.length + 1;
-      while (String(len).length + body.length !== len) len++;
-      return `${len}${body}`;
-    };
     const pax = Buffer.from(
       record("GNU.sparse.major", 1) +
         record("GNU.sparse.minor", 0) +
@@ -1055,8 +1059,40 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
     return { parts, expected: fileOf(chunks) };
   }
 
-  // package.json, then the sparse member. The gzip stream is one stored
-  // block, so byte `n` of the tar is byte `15 + n` of the .tgz.
+  // An 'x' header whose payload is over 1 MiB: one large extended attribute.
+  function largePaxMember(): Member {
+    const pax = Buffer.from(record("SCHILY.xattr.user.large", Buffer.alloc(1_200_000, "x").toString()));
+    const data = Buffer.alloc(1000, 0x43);
+    return {
+      parts: [
+        ["paxHeader", tarHeader("PaxHeaders.0/m.bin", pax.length, "x")],
+        ["paxBody", Buffer.concat([pax, pad512(pax.length)])],
+        ["header", tarHeader("package/m.bin", data.length, "0")],
+        ["data", Buffer.concat([data, pad512(data.length)])],
+      ],
+      expected: data,
+    };
+  }
+
+  // What macOS `tar` writes for a file with extended attributes: a `._name`
+  // member in front of the file. libarchive on macOS reads the data of that
+  // member as a part of the header of the file. Elsewhere it is one more file.
+  function appleDoubleMember(): Member {
+    const blob = Buffer.alloc(700, 0x05);
+    const data = Buffer.alloc(1000, 0x44);
+    return {
+      parts: [
+        ["blobHeader", tarHeader("package/._m.bin", blob.length, "0")],
+        ["blob", Buffer.concat([blob, pad512(blob.length)])],
+        ["header", tarHeader("package/m.bin", data.length, "0")],
+        ["data", Buffer.concat([data, pad512(data.length)])],
+      ],
+      expected: data,
+    };
+  }
+
+  // package.json, then the member. The gzip stream is stored deflate blocks,
+  // so `offsetOf` maps a byte of the tar to a byte of the .tgz.
   function buildPackage(member: Member) {
     const before = Buffer.concat([
       tarHeader("package/package.json", pkgJson.length, "0"),
@@ -1070,19 +1106,28 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
       at += bytes.length;
     }
     const tar = Buffer.concat([before, ...member.parts.map(([, bytes]) => bytes), Buffer.alloc(1024, 0)]);
-    expect(tar.length).toBeLessThanOrEqual(0xffff);
 
-    const head = Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0]);
-    head.writeUInt16LE(tar.length, 11);
-    head.writeUInt16LE(~tar.length & 0xffff, 13);
+    const blockSize = 0xffff;
+    const pieces: Buffer[] = [Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3])];
+    for (let start = 0; start < tar.length; start += blockSize) {
+      const block = tar.subarray(start, start + blockSize);
+      const head = Buffer.alloc(5);
+      head[0] = start + blockSize >= tar.length ? 1 : 0;
+      head.writeUInt16LE(block.length, 1);
+      head.writeUInt16LE(~block.length & 0xffff, 3);
+      pieces.push(head, block);
+    }
     const trailer = Buffer.alloc(8);
     trailer.writeUInt32LE(Bun.hash.crc32(tar), 0);
     trailer.writeUInt32LE(tar.length, 4);
-    const tgz = Buffer.concat([head, tar, trailer]);
+    const tgz = Buffer.concat([...pieces, trailer]);
     return {
       tgz,
       integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
-      offsetOf: (label: string, delta: number) => head.length + offsets[label] + delta,
+      offsetOf: (label: string, delta: number) => {
+        const inTar = offsets[label] + delta;
+        return 10 + 5 * (Math.floor(inTar / blockSize) + 1) + inTar;
+      },
     };
   }
 
@@ -1097,7 +1142,7 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
     let exited = false;
 
     // The extractor has written package.json, the member in front of the
-    // sparse one: it has read the first piece up to the sparse member.
+    // one under test: it has read the first piece up to that member.
     const wrotePackageJson = () =>
       readdirSync(tmp).some(name => {
         if (!name.endsWith(".sparse-pkg")) return false;
@@ -1179,6 +1224,8 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
   const pax = paxSparseMember();
   const oneExtension = oldGnuSparseMember(1);
   const twoExtensions = oldGnuSparseMember(2);
+  const largePax = largePaxMember();
+  const appleDouble = appleDoubleMember();
 
   // Each cut is `part+offset`: the piece ends before that byte of the part.
   test.each([
@@ -1190,6 +1237,8 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
     ["inside an old GNU extension block", oneExtension, "extension0+3"],
     ["inside the second of two old GNU extension blocks", twoExtensions, "extension1+100"],
     ["inside each of two old GNU extension blocks", twoExtensions, "extension0+200 extension1+300"],
+    ["inside a pax header over 1 MiB", largePax, "paxBody+700000"],
+    ["inside an AppleDouble blob", appleDouble, "blob+100"],
   ] as const)("%s", async (_, member, cuts) => {
     const { tgz, integrity, offsetOf } = buildPackage(member);
     const { stderr, exitCode, file } = await installInPieces(
@@ -1200,7 +1249,7 @@ describe.concurrent("streaming extract: a body piece ends inside a sparse map", 
     expect(stderr.match(/^error:.*$/m)?.[0] ?? null).toBeNull();
     expect(stderr).toContain("Streamed ");
     expect({ length: file?.length, matches: file?.equals(member.expected) }).toEqual({
-      length: realSize,
+      length: member.expected.length,
       matches: true,
     });
     expect(exitCode).toBe(0);

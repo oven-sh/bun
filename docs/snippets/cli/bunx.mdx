@@ -31,8 +31,8 @@ Execute an npm package executable (CLI). If the package isn't installed in `node
 
 <ParamField path="--minimum-release-age" type="number">
   Only install packages published at least N seconds ago. Supply-chain defense: skips versions that are newer than the
-  threshold. Each value gets its own `bunx` cache entry, so an install made without the gate is never reused for a
-  gated run, and a gated run keeps the normal 24h cache. Set to `0` to run without a gate for this invocation.
+  threshold. Each value gets its own `bunx` cache entry, so an install made without the gate is never reused for a gated
+  run, and a gated run keeps the normal 24h cache. Set to `0` to run without a gate for this invocation.
 </ParamField>
 
 ### Examples

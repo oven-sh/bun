@@ -2948,9 +2948,9 @@ export const scanner = {
       expect(exitCode).toBe(0);
 
       const zeroRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest+min-age=0`);
-      expect(JSON.parse(readFileSync(join(zeroRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version).toBe(
-        "3.0.0",
-      );
+      expect(
+        JSON.parse(readFileSync(join(zeroRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version,
+      ).toBe("3.0.0");
       expect(existsSync(binPath)).toBe(true);
     });
 
@@ -3015,52 +3015,55 @@ export const scanner = {
     );
 
     // Same unix-only fake-cache layout as the other warm-cache tests.
-    test.skipIf(isWindows)("--no-install + --minimum-release-age does not run an ungated mismatched-bin cache", async () => {
-      // Bin discovery through the cached package.json must look in the
-      // gate-keyed dir (cold), not the ungated one holding the sentinel.
-      using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
-      using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
-      using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
+    test.skipIf(isWindows)(
+      "--no-install + --minimum-release-age does not run an ungated mismatched-bin cache",
+      async () => {
+        // Bin discovery through the cached package.json must look in the
+        // gate-keyed dir (cold), not the ungated one holding the sentinel.
+        using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
+        using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
+        using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
 
-      const pkgName = "@fake-scope/no-install-mismatch";
-      const realBin = "mytool";
-      const uid = process.getuid?.() ?? 0;
+        const pkgName = "@fake-scope/no-install-mismatch";
+        const realBin = "mytool";
+        const uid = process.getuid?.() ?? 0;
 
-      const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@latest`);
-      const pkgDir = join(cacheRoot, "node_modules", pkgName);
-      const binDir = join(cacheRoot, "node_modules", ".bin");
-      mkdirSync(pkgDir, { recursive: true });
-      mkdirSync(binDir, { recursive: true });
-      chmodSync(cacheRoot, 0o755);
-      // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
-      // chmod it too or `is_trusted_cache_root` refuses under umask 002.
-      chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
+        const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@latest`);
+        const pkgDir = join(cacheRoot, "node_modules", pkgName);
+        const binDir = join(cacheRoot, "node_modules", ".bin");
+        mkdirSync(pkgDir, { recursive: true });
+        mkdirSync(binDir, { recursive: true });
+        chmodSync(cacheRoot, 0o755);
+        // mkdirSync also created the intermediate `bunx-<uid>-@fake-scope` dir;
+        // chmod it too or `is_trusted_cache_root` refuses under umask 002.
+        chmodSync(join(String(tmp), `bunx-${uid}-${pkgName.split("/")[0]}`), 0o755);
 
-      // Root package.json drives the 24h mtime staleness check.
-      writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
-      // Target package's package.json advertises a bin named `mytool`;
-      // the initial-guess bin name is `no-install-mismatch`.
-      writeFileSync(
-        join(pkgDir, "package.json"),
-        JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [realBin]: `./bin/${realBin}.js` } }),
-      );
-      const binPath = join(binDir, realBin);
-      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
-      chmodSync(binPath, 0o755);
+        // Root package.json drives the 24h mtime staleness check.
+        writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+        // Target package's package.json advertises a bin named `mytool`;
+        // the initial-guess bin name is `no-install-mismatch`.
+        writeFileSync(
+          join(pkgDir, "package.json"),
+          JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [realBin]: `./bin/${realBin}.js` } }),
+        );
+        const binPath = join(binDir, realBin);
+        writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+        chmodSync(binPath, 0o755);
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=3155760000", pkgName],
-        cwd: String(dir),
-        env: bunxEnv(String(cacheDir), String(tmp)),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=3155760000", pkgName],
+          cwd: String(dir),
+          env: bunxEnv(String(cacheDir), String(tmp)),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
-      expect(stderr).toContain("--no-install");
-      expect(exitCode).not.toBe(0);
-    });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+        expect(stderr).toContain("--no-install");
+        expect(exitCode).not.toBe(0);
+      },
+    );
 
     test.skipIf(isWindows)("age-gated install lands in its own cache dir with the newest allowed version", async () => {
       using dir = tempDir("bunx-min-age-keyed", {});
@@ -3096,9 +3099,9 @@ export const scanner = {
       expect(exitCode).toBe(0);
 
       const gatedRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest+min-age=${gateSeconds * 1000}`);
-      expect(JSON.parse(readFileSync(join(gatedRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version).toBe(
-        "2.1.0",
-      );
+      expect(
+        JSON.parse(readFileSync(join(gatedRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version,
+      ).toBe("2.1.0");
       expect(existsSync(ungatedBin)).toBe(true);
       expect(readFileSync(ungatedLock, "utf8")).toBe("SENTINEL_LOCKFILE");
 

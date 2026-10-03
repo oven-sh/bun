@@ -1418,8 +1418,7 @@ impl BunxCommand {
         }
 
         if opts.minimum_release_age.is_some() {
-            args.append(min_age_arg.as_slice())
-                .expect("unreachable"); // upper bound is known
+            args.append(min_age_arg.as_slice()).expect("unreachable"); // upper bound is known
         }
 
         let argv_to_use = args.slice();

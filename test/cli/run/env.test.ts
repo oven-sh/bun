@@ -17,6 +17,15 @@ import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
+function readFailsWith(file: string, code: string) {
+  try {
+    fs.readFileSync(file);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === code;
+  }
+  return false;
+}
+
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -646,6 +655,7 @@ describe.concurrent("--env-file", () => {
       ".env.a2": "BUNTEST_A=2",
       ".env.invalid":
         "BUNTEST_A=1\nBUNTEST_B =1\n BUNTEST_C =  1 \n...BUNTEST_invalid1\nBUNTEST_invalid2\nBUNTEST_D=\nBUNTEST_E=1",
+      ".env.empty": "",
       "subdir/.env.s": "BUNTEST_S=1",
       "index.ts":
         "console.log(Object.entries(process.env).flatMap(([k, v]) => k.startsWith('BUNTEST_') ? [`${k}=${v}`] : []).sort().join(','));",
@@ -738,6 +748,10 @@ describe.concurrent("--env-file", () => {
   test("should ignore a file that doesn't exist", async () => {
     const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  test("should load the rest of the list after an empty file", async () => {
+    expect((await runEnvFile(["--env-file=.env.a,.env.empty,.env.b"])).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1");
   });
 });
 
@@ -964,6 +978,76 @@ describe.concurrent("--env-file that is not a regular file", () => {
     expect(app.stdout).toBe("main BUNTEST_A=1\nworker BUNTEST_A=1");
     expect(app.exitCode).toBe(0);
   });
+});
+
+// A file system that makes the content of a file when the file is read does
+// not know the size. procfs reports `st_size` 0 for a regular file that has
+// content, so the loader has to read the file to find its end.
+// `/proc/self/environ` is only a fixture. It holds the environment of the
+// process that opens it: the `KEY=value` strings, each ended by a NUL. The
+// newlines in CARRIER put a dotenv line into that file.
+describe.concurrent("env file on a file system that does not know the size", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "dotenv-size-0" }),
+    ".env.a": "BUNTEST_A=1\n",
+    ".env.local": "BUNTEST_LOCAL=1\n",
+    "index.ts":
+      "console.log(Object.entries(process.env).flatMap(([k, v]) => k.startsWith('BUNTEST_') ? [`${k}=${v}`] : []).sort().join(','));",
+  };
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { CARRIER: "\nBUNTEST_PROCFS=1\n", ...bunEnv, NODE_ENV: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.skipIf(!isLinux)("--env-file with a reported size of 0", async () => {
+    using dir = tempDir("dotenv-size-0-arg", files);
+    expect(fs.statSync("/proc/self/environ").size).toBe(0);
+
+    const script = await run(String(dir), "--env-file=.env.a,/proc/self/environ", "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_A=1,BUNTEST_PROCFS=1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)(".env with a reported size of 0, behind a symlink", async () => {
+    using dir = tempDir("dotenv-size-0-default", files);
+    fs.symlinkSync("/proc/self/environ", path.join(String(dir), ".env"));
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_LOCAL=1,BUNTEST_PROCFS=1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  // sysfs answers a read of the loopback link speed with EINVAL. Default
+  // discovery is best effort: the loader names the file that failed
+  // (`bun install` is not quiet) and loads the other files.
+  const loopbackSpeed = "/sys/class/net/lo/speed";
+  test.skipIf(!isLinux || !readFailsWith(loopbackSpeed, "EINVAL"))(
+    ".env that fails to read, behind a symlink",
+    async () => {
+      using dir = tempDir("dotenv-read-error", files);
+      fs.symlinkSync(loopbackSpeed, path.join(String(dir), ".env"));
+
+      const install = await run(String(dir), "install");
+      expect(install.stderr).toContain("EINVAL error loading .env file");
+      expect(install.exitCode).toBe(0);
+
+      const script = await run(String(dir), "index.ts");
+      expect(script.stderr).toBe("");
+      expect(script.stdout).toBe("BUNTEST_LOCAL=1");
+      expect(script.exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent(".env with a UTF-8 BOM", () => {

@@ -309,8 +309,18 @@ impl Routes {
             .zip(dynamic_match_names.iter())
             .zip(dynamic.iter())
         {
-            if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
+            let case_sensitive_name = &case_sensitive_name[1..];
+            if Pattern::match_::<true>(path, case_sensitive_name, name, params) {
                 return Some(&raw const **route);
+            }
+
+            // `name` is lowercased. Like `static_`, also accept the on-disk spelling.
+            if route.has_uppercase {
+                if Pattern::match_::<true>(path, case_sensitive_name, case_sensitive_name, params) {
+                    return Some(&raw const **route);
+                }
+                // A failed match can leave the params it consumed in the list.
+                params.clear();
             }
         }
 
@@ -1156,11 +1166,11 @@ pub mod pattern {
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
-            // `path` must be lowercased and have no leading slash
+            // must not have a leading slash
             path: &'a [u8],
-            // case-sensitive, must not have a leading slash
+            // the param names come from here; must not have a leading slash
             name: &'a [u8],
-            // case-insensitive, must not have a leading slash
+            // `name`, spelled the way `path` must spell the static segments
             match_name: &[u8],
             params: &mut route_param::List<'a>,
         ) -> bool {

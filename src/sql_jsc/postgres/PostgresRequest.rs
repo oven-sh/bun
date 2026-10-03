@@ -460,8 +460,11 @@ impl PostgresSQLConnection {
         global: &JSGlobalObject,
         request: EncodeRequest<'_>,
     ) -> Result<(), AnyPostgresError> {
+        self.encode_start.set(self.write_buffer.get().len());
         let writer = self.writer();
-        match request {
+        self.is_encoding.set(true);
+        scopeguard::defer! { self.is_encoding.set(false); }
+        let result = match request {
             EncodeRequest::BindAndExecute {
                 statement,
                 binding_value,
@@ -487,7 +490,17 @@ impl PostgresSQLConnection {
                 signature,
                 binding_value,
             } => prepare_and_query_with_signature(global, query, binding_value, writer, signature),
+        };
+        let sent = self.sent_while_encoding.replace(0);
+        if self.status.get() != Status::Connected {
+            // A conversion closed the connection. The close left the buffer to the encoder.
+            self.free_write_buffer();
+            return Err(AnyPostgresError::ConnectionClosed);
         }
+        if sent > 0 {
+            self.consume_write_buffer(sent);
+        }
+        result
     }
 }
 

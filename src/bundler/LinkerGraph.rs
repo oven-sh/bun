@@ -213,6 +213,8 @@ pub use js_meta::{
 pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub(crate) files_live: BitSet,
+    /// Files with a live part that prints something; maintained only with code splitting.
+    pub(crate) files_with_code: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.
     /// Populated by `tree_shaking_and_code_splitting` (regular link) or by
@@ -305,6 +307,7 @@ impl Default for LinkerGraph<'_> {
         LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::default(),
+            files_with_code: BitSet::default(),
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
@@ -666,6 +669,7 @@ impl<'a> LinkerGraph<'a> {
         self.files.set_capacity(sources.len())?;
         self.files.zero();
         self.files_live = BitSet::init_empty(sources.len())?;
+        self.files_with_code = BitSet::init_empty(sources.len())?;
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
         unsafe { self.files.set_len(sources.len()) };
 

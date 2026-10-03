@@ -1533,6 +1533,9 @@ impl<const SSL: bool> Handler<SSL> {
             return client.on_timeout::<SSL>(socket);
         }
         if let Some(session) = tagged.session() {
+            if h2::ClientSession::on_timeout(session) {
+                return;
+            }
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
             h2::ClientSession::on_close(session, crate::Error::Timeout);
         }

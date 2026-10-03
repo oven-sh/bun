@@ -1,7 +1,7 @@
 // A server accepts one Upgrade request that declares a 100-byte body. The client sends a part of that body and ends.
-// The JSON in argv[2] says what the client sends and what the 'upgrade' listener does. Prints `events` (what the upgrade
-// socket and the server emitted, in order) and `received` (how many bytes the client got) when the process exits. A
-// socket that the server never closes does not hold the process, so that run ends too. Also runs in Node.js.
+// Nothing reads the request or the upgrade socket. The JSON in argv[2] says what the client sends and what the 'upgrade'
+// listener does. Prints `events` (what the upgrade socket and the server emitted, in order) and `received` (how many
+// bytes the client got) when the process exits. Also runs in Node.js.
 const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
@@ -48,7 +48,6 @@ server.on("clientError", err => events.push(`clientError: ${err.code}`));
 server.on("upgrade", (req, socket) => {
   // The callback runs when the connection has closed.
   server.close(() => events.push("server close"));
-  req.resume();
   socket.on("error", err => events.push(`socket error: ${err.code}`));
   socket.on("finish", () => events.push("socket finish"));
   socket.on("close", () => events.push("socket close"));
@@ -71,7 +70,8 @@ server.listen(unix ?? 0, () => {
   const options = { ...target, allowHalfOpen: true, rejectUnauthorized: false };
   client = (secure ? tls : net).connect(options, () => (finWithHead ? client.end(request) : client.write(request)));
   client.on("error", () => {});
-  // The client holds the process only until it has the bytes that the listener queued.
+  // The client holds the process only until it has the bytes that the listener queued: a run in which the server
+  // never closes the socket ends too.
   if (!queued) client.unref();
   client.on("data", chunk => {
     const before = received;

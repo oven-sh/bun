@@ -53,6 +53,37 @@ pub struct PatchCommitResult {
     pub(crate) not_in_workspace_root: bool,
 }
 
+/// The folder that `bun patch --commit` diffed. The isolated linker puts its link back.
+pub struct CommittedPatch {
+    real_path: Box<[u8]>,
+    /// False when the diff was empty: the folder equals the package, and no patch is recorded.
+    pub(crate) has_changes: bool,
+}
+
+impl CommittedPatch {
+    fn new(folder: &[u8]) -> sys::Result<CommittedPatch> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Ok(CommittedPatch {
+            real_path: Box::from(real_path_of_folder(folder, &mut buf)?),
+            has_changes: true,
+        })
+    }
+
+    pub(crate) fn is_folder(&self, path: &[u8]) -> bool {
+        // The name rules out most paths without a syscall.
+        if bun_paths::basename(path) != bun_paths::basename(&self.real_path) {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        real_path_of_folder(path, &mut buf).is_ok_and(|real_path| real_path == &*self.real_path)
+    }
+}
+
+fn real_path_of_folder<'a>(folder: &[u8], buf: &'a mut PathBuffer) -> sys::Result<&'a [u8]> {
+    let dir = Dir::cwd().open_dir(folder, sys::OpenDirOptions::default())?;
+    dir.get_fd_path(buf).map(|real_path| &*real_path)
+}
+
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
 /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
@@ -267,6 +298,30 @@ pub fn do_patch_commit(
         }
     };
 
+    // `git diff` records a link as `new file mode 120000`, and no install can apply that.
+    if !is_real_dir_not_symlink(&changes_dir) {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: <b>{}<r> is not a folder that bun patch prepared",
+            bstr::BStr::new(&changes_dir),
+        );
+        bun_core::note!(
+            "Run `<cyan>bun patch {}<r>` first",
+            bstr::BStr::new(manager.options.positionals[1]),
+        );
+        Global::crash();
+    }
+    manager.committed_patch = match CommittedPatch::new(&changes_dir) {
+        Ok(committed) => Some(committed),
+        Err(e) => {
+            Output::err(
+                e,
+                "failed to open directory <b>{s}<r>",
+                (bstr::BStr::new(&changes_dir),),
+            );
+            Global::crash();
+        }
+    };
+
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
@@ -353,6 +408,10 @@ pub fn do_patch_commit(
 
             break 'has_nested_node_modules true;
         };
+        // The diff leaves that folder out. It can hold the `bun patch` copy of a nested package.
+        if has_nested_node_modules {
+            manager.committed_patch = None;
+        }
 
         let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
             b"patch_tmp",
@@ -537,7 +596,21 @@ pub fn do_patch_commit(
             );
             Output::flush();
             drop(contents);
+            if let Some(committed) = &mut manager.committed_patch {
+                committed.has_changes = false;
+            }
             return Ok(None);
+        }
+
+        // The patch parser drops such a file, so the folder has edits that the patch lacks.
+        if strings::split(&contents, b"\n")
+            .any(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"))
+        {
+            bun_core::warn!(
+                "git cannot diff binary files as text. The patch does not include the changes to them in <b>{}<r>",
+                bstr::BStr::new(new_folder),
+            );
+            manager.committed_patch = None;
         }
 
         break 'brk contents;

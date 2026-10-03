@@ -788,7 +788,7 @@ fn entry_files_ahead_of_parent(
                 }
                 parent_ran = true;
             } else if flags[file as usize].wrap != WrapKind::None
-                && let Some(importer) = ancestors().find(|&ancestor| is_live(ancestor))
+                && let Some(importer) = ancestors().next()
                 && is_own(importer)
             {
                 // The file that imports a wrapped file starts it there.

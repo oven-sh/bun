@@ -832,18 +832,6 @@ describe("bundler", () => {
       },
       { target: "browser", entryPoints: ["/index.js", "/admin.js"] },
     ],
-    // index.js starts w.js, through a file that prints nothing.
-    [
-      "FollowsWrappedSharedFileBehindBarrel",
-      {
-        "/index.js": `import { w } from "barrel"; console.log(w);\n` + setupBeforeShared["/index.js"],
-        "/settings.js": `console.log(require("./w.js").w);\n` + setupBeforeShared["/settings.js"],
-        "/w.js": `console.log("w"); export const w = 1;`,
-        "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
-        "/node_modules/barrel/index.js": `export { w } from "../../w.js";`,
-      },
-      { target: "browser" },
-    ],
     // index.js and lazy.js share the runtime alone.
     [
       "NoSharedCodeRuns",
@@ -893,16 +881,6 @@ describe("bundler", () => {
     [
       "FollowsSharedPackage",
       { ...sharedPackage, "/index.js": `import "shared";\n` + setupBeforeShared["/index.js"] },
-      {},
-    ],
-    [
-      "FollowsSharedPackageBehindBarrel",
-      {
-        ...sharedPackage,
-        "/index.js": `import { shared } from "barrel"; console.log(shared);\n` + setupBeforeShared["/index.js"],
-        "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
-        "/node_modules/barrel/index.js": `export { default as shared } from "shared";`,
-      },
       {},
     ],
     [

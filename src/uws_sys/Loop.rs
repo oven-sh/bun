@@ -239,6 +239,21 @@ impl PosixLoop {
         NonNull::new(p)
     }
 
+    /// Why the last [`create`](Self::create) on this thread returned `None`:
+    /// the call that failed (epoll/kqueue, the wakeup source, or its
+    /// registration) and its errno (0 for a `mach_port_*` call, which has
+    /// none). `None` if that `create` did not fail.
+    pub fn create_error() -> Option<(&'static core::ffi::CStr, c_int)> {
+        let mut syscall: *const core::ffi::c_char = core::ptr::null();
+        // SAFETY: `syscall` is a valid out-pointer for the call.
+        let errno = unsafe { c::us_loop_create_error(&raw mut syscall) };
+        if syscall.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, it is a string literal in epoll_kqueue.c.
+        Some((unsafe { core::ffi::CStr::from_ptr(syscall) }, errno))
+    }
+
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
@@ -501,6 +516,8 @@ mod c {
             post_cb: Option<LoopCb>,
             ext_size: c_uint,
         ) -> *mut Loop;
+        #[cfg(not(windows))]
+        pub(super) fn us_loop_create_error(syscall: *mut *const core::ffi::c_char) -> c_int;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub(super) fn us_nq_loop_drain(loop_: *mut Loop);

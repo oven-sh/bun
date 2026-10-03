@@ -217,8 +217,10 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,
                                                    unsigned int ext_size);
 void us_internal_async_close(struct us_internal_async *a);
-void us_internal_async_set(struct us_internal_async *a,
-                           void (*cb)(struct us_internal_async *));
+/* Registers the async with its loop. On failure it returns -1 and has already
+ * released the async: the caller must not use it or close it. */
+int us_internal_async_set(struct us_internal_async *a,
+                          void (*cb)(struct us_internal_async *)) __attribute__((warn_unused_result));
 void us_internal_async_wakeup(struct us_internal_async *a);
 
 /* Eventing related */

@@ -1,7 +1,8 @@
 // An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+// A loop whose own wakeup eventfd is refused must not be handed out at all.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
@@ -10,24 +11,58 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
 // FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
-// Non-socket fds (timerfd, eventfd) always pass through.
+// In those modes non-socket fds (an eventfd) pass through.
+// FAIL_EPOLL_ADD=wakeup: only the FAIL_EPOLL_ADD_NTH-th eventfd registered by
+// FAIL_EPOLL_ADD_THREAD ("main", or a thread name); every socket passes through.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
-static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp
+static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp, 3 = wakeup
+static int wakeup_nth = 1;
+static int wakeup_seen;
+
+static int is_eventfd(int fd) {
+    char path[64], target[64];
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(path, target, sizeof(target) - 1);
+    if (n < 0) return 0;
+    target[n] = 0;
+    return strcmp(target, "anon_inode:[eventfd]") == 0;
+}
+
+static int on_chosen_thread(void) {
+    const char *want = getenv("FAIL_EPOLL_ADD_THREAD");
+    if (!want || strcmp(want, "main") == 0) return syscall(SYS_gettid) == getpid();
+    char name[17] = "";
+    prctl(PR_GET_NAME, name);
+    return strcmp(name, want) == 0;
+}
 
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     if (!real_epoll_ctl) {
         real_epoll_ctl = (int (*)(int, int, int, struct epoll_event *)) dlsym(RTLD_NEXT, "epoll_ctl");
         const char *m = getenv("FAIL_EPOLL_ADD");
-        mode = (m && strcmp(m, "udp") == 0) ? 2 : (m && strcmp(m, "accepted") == 0) ? 1 : 0;
+        const char *nth = getenv("FAIL_EPOLL_ADD_NTH");
+        if (nth) wakeup_nth = atoi(nth);
+        mode = (m && strcmp(m, "wakeup") == 0) ? 3 : (m && strcmp(m, "udp") == 0) ? 2 : (m && strcmp(m, "accepted") == 0) ? 1 : 0;
+    }
+    if (op == EPOLL_CTL_ADD && mode == 3) {
+        if (is_eventfd(fd) && on_chosen_thread() && __atomic_add_fetch(&wakeup_seen, 1, __ATOMIC_SEQ_CST) == wakeup_nth) {
+            errno = ENOSPC;
+            return -1;
+        }
+        return real_epoll_ctl(epfd, op, fd, event);
     }
     if (op == EPOLL_CTL_ADD) {
         int acceptconn = 0, type = 0;
@@ -134,6 +169,61 @@ try {
 }
 `;
 
+// Bun.spawnSync runs the child on a loop of its own, created on the first call.
+// With every stdio ignored the call blocks in waitpid and never waits on that
+// loop; an AbortSignal (WITH_SIGNAL) turns that fast path off.
+const SPAWN_SYNC_FIXTURE = /* js */ `
+const { readdirSync, readFileSync } = require("node:fs");
+const options = { cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] };
+if (process.env.WITH_SIGNAL) options.signal = new AbortController().signal;
+const run = () => Bun.spawnSync(options);
+let first;
+try {
+  run();
+  first = "returned";
+} catch (e) {
+  first = { code: e?.code, errno: e?.errno, syscall: e?.syscall };
+}
+const retry = run().exitCode;
+const threads = readdirSync("/proc/self/task").map(tid => {
+  try {
+    return readFileSync("/proc/self/task/" + tid + "/comm", "utf8").trim();
+  } catch {
+    return "";
+  }
+});
+console.log(JSON.stringify({ first, retry, waiterThread: threads.includes("Waitpid") }));
+`;
+
+// node:child_process reports what Bun.spawnSync throws as result.error.
+const CHILD_PROCESS_FIXTURE = /* js */ `
+const { spawnSync } = require("node:child_process");
+const run = () => {
+  const { status, error } = spawnSync("/bin/sh", ["-c", ":"]);
+  return { status, error: error ? { code: error.code, errno: error.errno, syscall: error.syscall } : null };
+};
+console.log(JSON.stringify({ first: run(), retry: run() }));
+`;
+
+const BUILD_FIXTURE = /* js */ `
+const result = await Bun.build({ entrypoints: [import.meta.dir + "/entry.js"] });
+console.log("built " + result.outputs.length);
+`;
+
+// The HTTP client thread answers what is already queued before it first
+// waits, so it takes a second fetch to need the wakeup.
+const FETCH_TWICE_FIXTURE = /* js */ `
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+try {
+  for (let i = 0; i < 2; i++) {
+    const res = await fetch(server.url, { keepalive: false });
+    console.log("fetch " + i + " " + (await res.text()));
+  }
+} finally {
+  server.stop(true);
+}
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -147,6 +237,12 @@ beforeAll(async () => {
     "fetch.js": FETCH_FIXTURE,
     "connect.js": CONNECT_FIXTURE,
     "udp.js": UDP_FIXTURE,
+    "spawn-sync.js": SPAWN_SYNC_FIXTURE,
+    "child-process.js": CHILD_PROCESS_FIXTURE,
+    "hello.js": `console.log("hello");`,
+    "build.js": BUILD_FIXTURE,
+    "entry.js": `export const x = 1;`,
+    "fetch-twice.js": FETCH_TWICE_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -165,7 +261,7 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-function shimEnv(mode: "listener" | "accepted" | "udp") {
+function shimEnv(mode: "listener" | "accepted" | "udp" | "wakeup") {
   const existing = bunEnv.LD_PRELOAD;
   return { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, FAIL_EPOLL_ADD: mode };
 }
@@ -332,3 +428,106 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect(exitCode).toBe(0);
   },
 );
+
+// Every loop has one eventfd that other threads write to wake it. A loop that
+// is handed out with that eventfd unregistered cannot be woken: what another
+// thread hands to it (a fetch, a Bun.build, a child's exit from the waiter
+// thread) waits until something else ends the loop's wait, or for good. Loop
+// creation has to fail instead.
+describe.skipIf(!isLinux || !cc)("a loop whose wakeup eventfd cannot be registered", () => {
+  // Without the fix some of these children never exit. The kill keeps such a
+  // run from leaving a process behind and makes it fail on an assertion, so
+  // the test timeout has to be the longer of the two.
+  const killAfterMs = 10_000;
+  const testTimeoutMs = 20_000;
+
+  async function runWithRefusedWakeup(script: string, thread: string, nth: number, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      // Three of these children abort on purpose. ulimit -c 0 keeps them from
+      // leaving a core file, and the flag keeps a debug build from spending
+      // seconds on symbolizing the panic.
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `ulimit -c 0 && exec "$@"`,
+        "--",
+        bunExe(),
+        script,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      cwd: String(dir),
+      env: {
+        ...shimEnv("wakeup"),
+        FAIL_EPOLL_ADD_THREAD: thread,
+        FAIL_EPOLL_ADD_NTH: String(nth),
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: killAfterMs,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  function reportOf({ stdout, stderr }: { stdout: string; stderr: string }) {
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    return JSON.parse(line);
+  }
+
+  // The main thread registers its own loop's eventfd first; the loop of
+  // Bun.spawnSync is the second.
+  const thrown = { code: "ENOSPC", errno: -28, syscall: "epoll_ctl" };
+  test.concurrent.each([
+    // This call reaps the child with a blocking waitpid and would not have
+    // used the loop: here the throw is the price of one rule for every call.
+    ["that blocks in waitpid", {}, { first: thrown, retry: 0, waiterThread: false }],
+    // Where pidfd_open is not available a waiter thread reports the child's
+    // exit through the wakeup. Without the fix this call never returns.
+    [
+      "that waits for the waiter thread",
+      { WITH_SIGNAL: "1", BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      { first: thrown, retry: 0, waiterThread: true },
+    ],
+  ])(
+    "a Bun.spawnSync %s throws, and the next call works",
+    async (_name, env, expected) => {
+      const result = await runWithRefusedWakeup("spawn-sync.js", "main", 2, env);
+      expect(reportOf(result)).toEqual(expected);
+      expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    },
+    testTimeoutMs,
+  );
+
+  test.concurrent(
+    "node:child_process spawnSync returns the error, and the next call works",
+    async () => {
+      const result = await runWithRefusedWakeup("child-process.js", "main", 2);
+      expect(reportOf(result)).toEqual({
+        first: { status: null, error: { code: "ENOSPC", errno: -28, syscall: "spawnSync /bin/sh" } },
+        retry: { status: 0, error: null },
+      });
+      expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    },
+    testTimeoutMs,
+  );
+
+  // A per-thread loop has no caller that could carry on without it.
+  test.concurrent.each([
+    ["the main thread", "main", "hello.js"],
+    ["the bundler thread", "Bundler", "build.js"],
+    ["the HTTP client thread", "HTTP Client", "fetch-twice.js"],
+  ])(
+    "%s ends the process with a message",
+    async (_name, thread, script) => {
+      const { stdout, stderr, signalCode } = await runWithRefusedWakeup(script, thread, 1);
+      expect(stderr).toContain("failed to create the event loop: epoll_ctl() failed: ENOSPC");
+      expect({ stdout, signalCode }).toEqual({ stdout: "", signalCode: "SIGABRT" });
+    },
+    testTimeoutMs,
+  );
+});

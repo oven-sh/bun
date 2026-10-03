@@ -2068,19 +2068,19 @@ impl VirtualMachine {
         env: NonNull<bun_dotenv::Loader>,
         build: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
         transform_options: impl FnOnce() -> bun_options_types::schema::api::TransformOptions,
-    ) -> crate::CrateResult<bool> {
+    ) -> crate::CrateResult<()> {
         let Some(current) = &self.macro_build_options else {
-            return Ok(false);
+            return Ok(());
         };
         // A `Bun.Transpiler` used inside a running macro keeps the VM as it is.
         if self.macro_guard_depth != 0 {
-            return Ok(false);
+            return Ok(());
         }
         // A `Worker` frees its loader when it exits; the VM may have been created from its build.
         self.transpiler.env = env.as_ptr();
         // Held strongly, so no later build can reuse this address: identity means the same build.
         if std::sync::Arc::ptr_eq(current, build) {
-            return Ok(false);
+            return Ok(());
         }
         // Modules first: should the options fail to rebuild, the VM is the old build's, only empty.
         self.macro_options_generation += 1;
@@ -2094,7 +2094,7 @@ impl VirtualMachine {
         self.transpiler
             .reset_transform_options(transform_options())?;
         self.macro_build_options = Some(std::sync::Arc::clone(build));
-        Ok(true)
+        Ok(())
     }
 
     pub fn is_watcher_enabled(&self) -> bool {

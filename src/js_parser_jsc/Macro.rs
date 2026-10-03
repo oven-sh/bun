@@ -457,19 +457,18 @@ impl Macro {
         specifier: &[u8],
         hash: i32,
     ) -> crate::Result<Macro> {
-        // `needs_defines`: new transpiler options (a new VM, or one moved to this build).
-        let (vm, needs_defines): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
+        let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
             let vm = VirtualMachine::get_mut_ptr();
             // `Transpiler::init` always sets `env`, and `MacroContext` copies it.
             let env = NonNull::new(env).expect("MacroContext.env is set");
             // SAFETY: `vm` is the per-thread VM; uniquely accessed here. `env`
             // is the build's loader and outlives every macro call of the build.
-            let moved = unsafe {
+            unsafe {
                 (*vm).serve_macro_build(env, build_options, || {
                     macro_vm_transform_options(build_options)
                 })?
             };
-            (vm, moved)
+            vm
         } else {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
@@ -483,10 +482,10 @@ impl Macro {
             })?;
             // SAFETY: `vm` is the freshly-allocated per-thread VM.
             unsafe { (*vm).macro_build_options = Some(Arc::clone(build_options)) };
-            (vm, true)
+            vm
         };
 
-        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+        // Covers `configure_defines` (a macro VM) and `load_macro_entry_point`
         // (which runs the macro module's top-level JS via `wait_for_promise`) so
         // a top-level `Bun.Transpiler#transformSync` doesn't see
         // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
@@ -495,9 +494,12 @@ impl Macro {
         let _init_guard = MacroModeGuard::new(vm);
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
         unsafe { (*(*vm).event_loop()).ensure_waker() };
-        if needs_defines {
-            // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-            unsafe { (*vm).transpiler.configure_defines()? };
+        // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
+        unsafe {
+            // A no-op once loaded: covers a new VM, a moved VM, and a load that failed before.
+            if (*vm).macro_build_options.is_some() {
+                (*vm).transpiler.configure_defines()?;
+            }
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.

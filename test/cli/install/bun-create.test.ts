@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -173,26 +173,27 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
   }
 });
 
+const tarEntry = (name: string, body: Buffer) => {
+  const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
+  const header = buf.subarray(0, 512);
+  header.write(name);
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write(body.length.toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  body.copy(buf, 512);
+  return buf;
+};
+
 it("keeps tarball entry paths within the destination when checking for conflicting files", async () => {
-  const tarEntry = (name: string, body: Buffer) => {
-    const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
-    const header = buf.subarray(0, 512);
-    header.write(name);
-    header.write("0000644", 100);
-    header.write("0000000", 108);
-    header.write("0000000", 116);
-    header.write(body.length.toString(8).padStart(11, "0"), 124);
-    header.write("00000000000", 136);
-    header.write("        ", 148);
-    header.write("0", 156);
-    header.write("ustar\0", 257);
-    header.write("00", 263);
-    let sum = 0;
-    for (const b of header) sum += b;
-    header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
-    body.copy(buf, 512);
-    return buf;
-  };
   const pkg = Buffer.from(
     JSON.stringify({
       name: "conflict-check-template",
@@ -236,6 +237,54 @@ it("keeps tarball entry paths within the destination when checking for conflicti
   expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
   expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
   expect(exitCode).toBe(0);
+});
+
+// The destination has `shared -> ../victim`, and the template has a file in
+// `shared/`. The file must not land in `victim`.
+describe.skipIf(!isPosix)("a symlink in the destination where the template needs a directory", () => {
+  it.each([
+    ["is listed as a conflict", [], "could conflict"],
+    ["stops the extraction with --force", ["--force"], "ELOOP: a symbolic link in dest/ is in the way of shared/f.txt"],
+  ])("%s", async (_name, flags, message) => {
+    const gz = gzipSync(
+      Buffer.concat([
+        tarEntry("pkg/shared/f.txt", Buffer.from("from-tarball")),
+        tarEntry("pkg/package.json", Buffer.from(JSON.stringify({ name: "symlink-template" }))),
+        Buffer.alloc(1024),
+      ]),
+    );
+
+    mkdirSync(join(x_dir, "dest"));
+    mkdirSync(join(x_dir, "victim"));
+    symlinkSync("../victim", join(x_dir, "dest", "shared"));
+
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      fetch() {
+        return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "github.com/owner/symlink-template", "dest", ...flags, "--no-install", "--no-git"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain(message);
+    expect(out).not.toContain("Success!");
+    expect(readdirSync(join(x_dir, "victim"))).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 it("reports an error and exits when the template's package.json entry body is truncated", async () => {

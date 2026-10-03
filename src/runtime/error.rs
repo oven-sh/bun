@@ -287,6 +287,7 @@ impl From<bun_libarchive::Error> for Error {
         match e {
             bun_libarchive::Error::Sys(s) => Self::Sys(s),
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_libarchive::Error::LinkInTheWay(_) => Self::Sys(bun_errno::SystemErrno::ELOOP),
             _ => Self::Unexpected,
         }
     }

@@ -547,7 +547,7 @@ impl CreateCommand {
                     }
                 }
 
-                let _ = Archiver::extract_to_disk(
+                match Archiver::extract_to_disk(
                     &tarball_buf_list,
                     destination,
                     Some(&mut archive_context),
@@ -556,7 +556,21 @@ impl CreateCommand {
                         depth_to_skip: 1,
                         ..Default::default()
                     },
-                )?;
+                ) {
+                    Err(bun_libarchive::Error::LinkInTheWay(entry)) => {
+                        node.end();
+                        progress.refresh();
+                        pretty_errorln!(
+                            "<r>\n<red>error<r><d>:<r> ELOOP: a symbolic link in <b><blue>{}<r>/ is in the way of <b>{}<r>",
+                            bstr::BStr::new(bun_paths::basename(destination)),
+                            bstr::BStr::new(&entry),
+                        );
+                        Global::exit(1);
+                    }
+                    extracted => {
+                        extracted?;
+                    }
+                }
 
                 if !create_options.skip_package_json {
                     let plucker = &archive_context.pluckers[0];

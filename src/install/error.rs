@@ -404,6 +404,7 @@ impl From<bun_libarchive::Error> for Error {
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
             bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
             bun_libarchive::Error::Paths(p) => Self::Paths(p),
+            bun_libarchive::Error::LinkInTheWay(_) => Self::Sys(bun_errno::SystemErrno::ELOOP),
         }
     }
 }

@@ -468,8 +468,7 @@ pub enum ToJsonStyle {
 // `bin_real::StringBuilder` paths still resolve.
 pub use bun_semver::StringBuilder;
 
-/// An 8-byte `Value` member widened to the 16 bytes of the union, so a literal
-/// that names it stores every byte that bun.lockb copies out.
+/// An 8-byte `Value` member widened to the 16 bytes of the union.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct Padded<T: Copy> {

@@ -1221,6 +1221,12 @@ impl<'a> Parser<'a> {
         let mut uses_filename =
             p.symbols.as_slice()[p.filename_ref.inner_index() as usize].use_count_estimate > 0;
 
+        // The REPL transform would turn the `var` below into an assignment to the host's global.
+        if p.options.repl_mode {
+            uses_dirname = false;
+            uses_filename = false;
+        }
+
         // Handle dirname and filename at bundle-time
         // We always inject it at the top of the module
         //

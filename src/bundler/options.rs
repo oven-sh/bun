@@ -2191,6 +2191,24 @@ pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> 
     None
 }
 
+/// The build error for an output path with a NUL byte: no file has that name, and a syscall would act on the bytes before it.
+pub struct NulInOutputPath<'a>(&'a [u8]);
+
+/// `Some` when `path` has a NUL byte.
+pub fn nul_in_output_path(path: &[u8]) -> Option<NulInOutputPath<'_>> {
+    strings::contains_char(path, 0).then_some(NulInOutputPath(path))
+}
+
+impl core::fmt::Display for NulInOutputPath<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Output path {} must not contain null bytes",
+            bun_core::fmt::quote(self.0)
+        )
+    }
+}
+
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
 fn path_template_print<W: bun_io::Write>(

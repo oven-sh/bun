@@ -1,10 +1,10 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 
 $.nothrow();
 
@@ -270,6 +270,68 @@ if (isWindows) {
     }
   });
 }
+
+// A C string ends at the first NUL byte: the lookup would stat the bytes before it and report the whole string.
+test("a command, PATH entry or cwd with a NUL byte finds nothing", () => {
+  const name = isWindows ? "tool.cmd" : "tool";
+  using dir = tempDir("which-nul", { [name]: isWindows ? "@echo ran-tool\r\n" : "#!/bin/sh\necho ran-tool\n" });
+  const base = String(dir);
+  const tool = join(base, name);
+  if (!isWindows) chmodSync(tool, 0o755);
+
+  expect({
+    control: which(name, { PATH: base }),
+    command: which(name + "\0zz", { PATH: base }),
+    absoluteCommand: which(tool + "\0zz"),
+    cwdOfCommandWithSlash: which("./zz", { PATH: base, cwd: tool + "\0" }),
+    cwdOfRelativePathEntry: which("zz", { PATH: "relative", cwd: tool + "\0" }),
+    pathEntry: which("zz", { PATH: tool + "\0" }),
+    pathEntryBeforeValidOne: which(name, { PATH: [tool + "\0", base].join(delimiter) }),
+    unusedCwd: which(name, { PATH: base, cwd: base + "\0zz" }),
+  }).toEqual({
+    control: tool,
+    command: null,
+    absoluteCommand: null,
+    cwdOfCommandWithSlash: null,
+    cwdOfRelativePathEntry: null,
+    pathEntry: null,
+    pathEntryBeforeValidOne: tool,
+    unusedCwd: tool,
+  });
+});
+
+// The fixture is a shell script, which Windows cannot spawn.
+test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command", async () => {
+  using dir = tempDir("which-nul-dotenv", {
+    "tool": "#!/bin/sh\necho ran-tool\n",
+    ".env": "PATH=tool\0\n",
+    "which-fixture.js": `
+      let spawned;
+      try {
+        spawned = Bun.spawnSync(["zz"]).stdout.toString();
+      } catch (error) {
+        spawned = error.code;
+      }
+      console.log(JSON.stringify({ which: Bun.which("zz"), spawned }));
+    `,
+  });
+  chmodSync(join(String(dir), "tool"), 0o755);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "which-fixture.js"],
+    env: { ...bunEnv, PATH: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '{"which":null,"spawned":"ENOENT"}\n',
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 test("Bun.which does not look in the current directory for bins", async () => {
   const cwd = process.cwd();

@@ -376,6 +376,18 @@ impl JSBundleCompletionTask {
 
         let full_outfile_path = executable_path(&self.config, compile_options);
 
+        // Checked before the first mkdir, so a build that fails here leaves nothing on disk.
+        let sourcemap_names = output_files
+            .iter()
+            .filter(|file| file.output_kind == OutputKind::Sourcemap)
+            .map(|file| paths::basename(&file.dest_path));
+        if let Some(err) = core::iter::once(&full_outfile_path[..])
+            .chain(sourcemap_names)
+            .find_map(options::nul_in_output_path)
+        {
+            return CompileResult::fail_fmt(format_args!("{err}"));
+        }
+
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
         let entry_key = executable_entry_point_name(&full_outfile_path);

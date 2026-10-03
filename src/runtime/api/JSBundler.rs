@@ -31,6 +31,11 @@ pub(crate) mod js_bundler {
 
     type OwnedString = MutableString;
 
+    /// A path with a NUL byte names no file: a syscall would act on the bytes before it.
+    fn path_has_nul(path: &[u8]) -> bool {
+        bun_core::strings::contains_char(path, 0)
+    }
+
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
     /// exists upstream).
     fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
@@ -335,9 +340,10 @@ pub(crate) mod js_bundler {
             {
                 let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
-                if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
-                    .unwrap_or(bun_sys::ExistsAtType::Directory)
-                    != bun_sys::ExistsAtType::File
+                if path_has_nul(slice.slice())
+                    || bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
+                        .unwrap_or(bun_sys::ExistsAtType::Directory)
+                        != bun_sys::ExistsAtType::File
                 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "executablePath must be a valid path to a Bun executable"
@@ -364,9 +370,10 @@ pub(crate) mod js_bundler {
                 {
                     let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
-                    if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
-                        .unwrap_or(bun_sys::ExistsAtType::Directory)
-                        != bun_sys::ExistsAtType::File
+                    if path_has_nul(slice.slice())
+                        || bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
+                            .unwrap_or(bun_sys::ExistsAtType::Directory)
+                            != bun_sys::ExistsAtType::File
                     {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "windows.icon must be a valid path to an ico file"
@@ -1028,7 +1035,15 @@ pub(crate) mod js_bundler {
                     );
                 };
 
-                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
+                let opened = if path_has_nul(path.slice()) {
+                    Err(bun_sys::Error::from_code(
+                        bun_sys::E::ENOENT,
+                        bun_sys::Tag::open,
+                    ))
+                } else {
+                    bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice())
+                };
+                let dir = match opened {
                     Ok(d) => d,
                     Err(err) => {
                         return Err(global_this.throw(format_args!(

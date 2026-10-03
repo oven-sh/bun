@@ -303,6 +303,13 @@ impl BytecodeOrder {
         let mut without_hints: Vec<(&'a [u8], Unusable)> = Vec::new();
         for path in paths {
             let read = || -> Result<Result<Self, Unusable>, bun_sys::Error> {
+                // A path with a NUL byte names no file: the open would act on the bytes before it.
+                if bun_core::strings::contains_char(path, 0) {
+                    return Err(bun_sys::Error::from_code(
+                        bun_sys::E::ENOENT,
+                        bun_sys::Tag::open,
+                    ));
+                }
                 let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, bun_sys::O::RDONLY, 0)?;
                 if file.get_end_pos()? > MAX_FILE_SIZE {
                     return Err(too_big());

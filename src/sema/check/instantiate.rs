@@ -444,6 +444,7 @@ impl<'p> Checker<'p> {
                     .map(|&s| self.instantiate_sig(s, mapper))
                     .collect();
                 new.symbol_declared_at = shape.symbol_declared_at;
+                new.spread_rank = shape.spread_rank;
                 new.spread_of = shape.spread_of.map(|(left, right)| {
                     (
                         self.instantiate(left, mapper),

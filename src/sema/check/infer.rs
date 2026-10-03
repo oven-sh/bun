@@ -1006,6 +1006,7 @@ impl<'p> Checker<'p> {
                 .index
                 .push(IndexInfo::new(TypeId::STRING, TypeId::EMPTY_OBJECT, false));
         }
+        shape.literal = Literalness::OfLiteralKeyof;
         self.synth(shape)
     }
 

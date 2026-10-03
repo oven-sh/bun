@@ -796,6 +796,13 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
+    /// `reuseNode`, of a type node.
+    pub(super) fn try_reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
+        self.try_reuse_existing_node_helper(|printer| {
+            printer.visit_existing_type_node(file, node, 0)
+        })
+    }
+
     /// `reuseTypeNode`
     pub(super) fn reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
         if node.is_none() {
@@ -957,9 +964,7 @@ impl<'p> Printer<'_, 'p> {
                     return Some(Node::simple(text));
                 }
                 let declared = self.c.type_from_node(file, node);
-                if mode != ResolutionMode::None
-                    || self.c.instantiate(declared, self.mapper) != declared
-                {
+                if self.c.instantiate(declared, self.mapper) != declared {
                     return None;
                 }
                 // `rewriteModuleSpecifier`
@@ -974,7 +979,12 @@ impl<'p> Printer<'_, 'p> {
                         quoted(self.c.atoms().bytes(spec), quote, false)
                     }
                 };
-                let mut text = cat!(query, b"import(", specifier, b")");
+                let attributes: &[u8] = match mode {
+                    ResolutionMode::None => b"",
+                    ResolutionMode::Import => b", { with: { \"resolution-mode\": \"import\" } }",
+                    ResolutionMode::Require => b", { with: { \"resolution-mode\": \"require\" } }",
+                };
+                let mut text = cat!(query, b"import(", specifier, attributes, b")");
                 for part in hir.texts(name) {
                     text.push(b'.');
                     text.extend_from_slice(&self.text(part));
@@ -1139,7 +1149,8 @@ impl<'p> Printer<'_, 'p> {
                         self.indent = outer;
                         return None;
                     };
-                    elements.push(cat!(self.comments_before(file, hir.node(m)), element));
+                    let comments = self.comments_before(file, hir.node(m));
+                    elements.push(cat!(comments, self.partial_jsdoc(file, m), element));
                 }
                 self.indent = outer;
                 if elements.is_empty() {
@@ -1362,10 +1373,17 @@ impl<'p> Printer<'_, 'p> {
                 self.visit_existing_type_node(file, function.this_ty(self.c.hir(file)), 0)?;
             parameters.push(cat!(b"this: ", this.text));
         }
+        let has_this = !parameters.is_empty();
         for p in function.params.iter() {
             parameters.push(self.visit_parameter_declaration(file, p)?);
         }
-        Some(parameters.join(&b", "[..]))
+        let hir = self.c.hir(file);
+        let ends: Vec<u32> = function.params.iter().map(|p| hir[p].loc.end).collect();
+        if has_this || ends.contains(&0) {
+            return Some(parameters.join(&b", "[..]));
+        }
+        let first_pos = function.params.iter().next().map(|p| hir[p].loc.pos);
+        Some(self.list_text(file, parameters, &ends, first_pos, b",", false, usize::MAX))
     }
 
     /// The type parameters and the parameters of the function-like `f`.

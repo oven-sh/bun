@@ -1481,7 +1481,7 @@ impl<'p> Checker<'p> {
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
         if let TypeData::Synth(widened) = self.data(ty) {
-            shape.spread_of = widened.spread_of;
+            (shape.spread_of, shape.spread_rank) = (widened.spread_of, widened.spread_rank);
             if widened.literal == Literalness::Partial {
                 (shape.literal, shape.is_regular) = (Literalness::Partial, true);
             }

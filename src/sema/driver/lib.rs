@@ -1037,20 +1037,11 @@ fn check_with_references(
                 let output = outputs[i]
                     .as_ref()
                     .map(|it| (it.0.as_slice(), it.1.as_slice()));
-                // No declaration file is written for JavaScript yet: it is read itself.
-                let is_javascript = |path: &[u8]| {
-                    [&b".js"[..], b".jsx", b".mjs", b".cjs"]
-                        .iter()
-                        .any(|it| path.ends_with(it))
-                };
                 let sources = roots[i]
                     .iter()
                     .filter(|path| !is_declaration_file_name(path));
                 sources.map(move |source| {
-                    let output_dts = match is_javascript(source) {
-                        true => None,
-                        false => output_declaration_file_name(source, output),
-                    };
+                    let output_dts = output_declaration_file_name(source, output);
                     (source.clone(), output_dts.unwrap_or_default(), at as u32)
                 })
             })
@@ -1073,7 +1064,8 @@ fn check_with_references(
             .filter(|path| !own.contains(path))
             .collect();
         project.options.is_build = true;
-        project.options.writes_declaration_files = is_read_later(index);
+        // Under `noEmit` nothing is written, and a `.d.ts` next to a `.js` source would be resolved in its place.
+        project.options.writes_declaration_files = is_read_later(index) && !project.options.no_emit;
         let no_emit_on_error = project.options.no_emit_on_error;
         // Not two programs at a time.
         drop(program.take());

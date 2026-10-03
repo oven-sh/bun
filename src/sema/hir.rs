@@ -1617,6 +1617,9 @@ pub struct File {
     pub jsdoc_types: Few<(JsDocTypeOwner, TypeNodeId)>,
     /// `@public`, `@private`, `@protected`, `@readonly` and `@override` on an assignment: the assignment and the modifiers. Sorted.
     pub jsdoc_modifiers: Few<(ExprId, Flags)>,
+    /// `reparseJSDocComment`: the comment of the `@property` or `@param` tag a member of a type literal is made from
+    /// (`GetTextOfJSDocComment`). Sorted.
+    pub jsdoc_member_comments: Few<(MemberId, Box<[u8]>)>,
     /// `checkUnmatchedJSDocParameters`, the part that only needs syntax: the function and the diagnostic for the name in its
     /// `@param` tag. 8024 and 8032 apply unless the function references `arguments`. 8029 applies if it does.
     pub jsdoc_param_errors: Few<(FnId, Diagnostic)>,
@@ -1872,6 +1875,16 @@ impl File {
     }
 
     /// The modifiers JSDoc tags give the assignment `e`.
+    pub fn jsdoc_comment_of_member(&self, m: MemberId) -> &[u8] {
+        match self
+            .jsdoc_member_comments
+            .binary_search_by_key(&m, |it| it.0)
+        {
+            Ok(index) => &self.jsdoc_member_comments[index].1,
+            Err(_) => b"",
+        }
+    }
+
     pub fn jsdoc_modifiers_of(&self, e: ExprId) -> Flags {
         match self.jsdoc_modifiers.binary_search_by_key(&e, |m| m.0) {
             Ok(index) => self.jsdoc_modifiers[index].1,
@@ -1963,6 +1976,7 @@ impl File {
             jsdoc_comments,
             jsdoc_types,
             jsdoc_modifiers,
+            jsdoc_member_comments,
             jsdoc_param_errors,
             diagnostics,
             decorators,

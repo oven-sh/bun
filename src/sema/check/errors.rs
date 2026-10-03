@@ -250,7 +250,6 @@ impl Checker<'_> {
 
     /// `GetDeclarationDiagnostics`. It also runs for files that are not type-checked. `self.reported` must be empty on entry.
     fn get_declaration_diagnostics(&mut self, file: FileId) -> Vec<Reported> {
-        self.check_module_exports_assignments(file);
         let options = &self.files().options;
         if options.emits_declarations && options.writes_declaration_files {
             self.declaration_file = self.emit_declaration_file(file);

@@ -167,6 +167,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         file.jsdoc_types.sort_unstable_by_key(|t| t.0);
         file.jsdoc_modifiers.sort_unstable_by_key(|m| m.0);
+        file.jsdoc_member_comments.sort_unstable_by_key(|m| m.0);
     }
 
     // ───────────────────────────── helpers ─────────────────────────────
@@ -388,6 +389,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             } => (properties, *is_array, *pos),
         };
         let mut members = Vec::with_capacity(properties.len());
+        let mut comments: Vec<(usize, &[u8])> = Vec::new();
         for tag in properties {
             let (TagKind::Property(property) | TagKind::Param(property)) = &tag.kind else {
                 continue;
@@ -402,6 +404,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             if Self::is_optional(property) {
                 flags |= Flags::OPTIONAL;
+            }
+            if !property.comment.is_empty() {
+                comments.push((members.len(), &property.comment));
             }
             members.push(Member {
                 kind: MemberKind::Property,
@@ -421,6 +426,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let end = members.last().map_or(pos, |last| last.loc.end);
         let members = self.b.file.add_members(&members);
+        for (index, comment) in comments {
+            self.b
+                .file
+                .jsdoc_member_comments
+                .push((members.at(index), comment.into()));
+        }
         let literal = self.b.file.ty(TypeNodeKind::Object(members), pos, end);
         if is_array {
             self.b.file.ty(TypeNodeKind::Array(literal), pos, end)

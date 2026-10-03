@@ -557,6 +557,9 @@ pub struct Shape {
     pub default_of: Option<Sym>,
     /// Of what `getSpreadType` makes, which is a new type each time: the left and the right it was made of.
     pub spread_of: Option<(TypeId, TypeId)>,
+    /// How many types the outermost `getSpreadType` had made before this one. `mapType` goes through a union of named unions by its
+    /// origin, which is not the order of `CompareTypes`.
+    pub spread_rank: u32,
     /// Of what `getSignatureInstantiation` makes with `inferredTypeParameters` (`ObjectFlagsSingleSignatureType`), which is a new type
     /// each time: the outer type parameters of the declaration of the signature under `t.mapper`, as a tuple.
     pub single_signature_arguments: Option<TypeId>,
@@ -590,6 +593,8 @@ pub enum Literalness {
     OfUnknown,
     /// `autoArrayType` where there is no global `Array`. It has no symbol.
     AutoArray,
+    /// What `createEmptyObjectTypeFromStringLiteral` makes for an inference from a string literal to `keyof T`. It has no symbol.
+    OfLiteralKeyof,
 }
 
 impl Literalness {
@@ -2258,6 +2263,7 @@ follow_struct!(Shape {
     instantiation_expression,
     default_of,
     spread_of,
+    spread_rank,
     single_signature_arguments
 });
 follow_struct!(SigParam {

@@ -26,6 +26,8 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 use std::rc::Rc;
 
+mod commonjs;
+
 /// What a name is wanted as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Meaning {
@@ -151,6 +153,8 @@ struct SymbolTrackerImpl {
     error_name_node: Node,
     fallback_stack: Vec<Node>,
     late_marked_statements: Vec<StmtId>,
+    watched_class_symbol: Option<Sym>,
+    class_symbol_tracked: bool,
     /// `state.isolatedDeclarations`, with what `getIsolatedDeclarationError` goes by and has made.
     isolated_declarations: Option<Emit>,
 }
@@ -610,6 +614,12 @@ struct DeclarationEmit<'c, 'p> {
     indent: usize,
     /// `generatedNames`
     generated_names: Vec<Vec<u8>>,
+    /// `tempFlags & tempFlagsCountMask`
+    temp_count: u32,
+    cjs_export_assignment: Vec<Statement>,
+    cjs_export_assignment_name: Option<Vec<u8>>,
+    cjs_export_members: Vec<Statement>,
+    witnessed_cjs_exports: Vec<Vec<u8>>,
     /// `detachedCommentsInfo`: `nodePos`, `detachedCommentEndPos`.
     detached_comments: Option<(usize, usize)>,
     /// `expandoHosts`, of the variables that are written as functions: by the statement.
@@ -661,12 +671,7 @@ impl<'p> Checker<'p> {
         let (text, found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
             emit.writes = writes;
-            let text = if module.hir.is_js {
-                emit.transform_javascript_file();
-                None
-            } else {
-                Some(emit.transform_source_file())
-            };
+            let text = Some(emit.transform_source_file());
             (
                 text,
                 emit.tracker.diagnostics,
@@ -675,11 +680,14 @@ impl<'p> Checker<'p> {
         };
         self.eager.pop();
         self.relation_too_complex = saved;
+        // `emitDeclarationFile`: `emitSkipped`, if the transformer has diagnostics.
+        let mut is_skipped = !found.is_empty();
         if let Some(isolated_declarations) = isolated_declarations {
+            is_skipped |= isolated_declarations.has_diagnostics();
             self.finish_isolated_declarations(isolated_declarations);
         }
         self.declaration_indent = None;
-        let mut text = text.filter(|_| writes && found.is_empty());
+        let mut text = text.filter(|_| writes && !is_skipped);
         // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
@@ -717,6 +725,8 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
                 error_name_node: Node::NONE,
                 fallback_stack: Vec::new(),
                 late_marked_statements: Vec::new(),
+                watched_class_symbol: None,
+                class_symbol_tracked: false,
                 isolated_declarations,
             },
             enclosing: top,
@@ -730,6 +740,11 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             result_has_external_module_indicator: false,
             indent: 0,
             generated_names: Vec::new(),
+            temp_count: 0,
+            cjs_export_assignment: Vec::new(),
+            cjs_export_assignment_name: None,
+            cjs_export_members: Vec::new(),
+            witnessed_cjs_exports: Vec::new(),
             detached_comments: None,
             expando_hosts: FxHashMap::default(),
             expando_members: FxHashMap::default(),
@@ -1056,6 +1071,19 @@ impl<'p> Checker<'p> {
     }
 
     /// `isDeclarationVisible`
+    /// `IsImplicitlyExportedJSDocDeclaration`, of a type alias or a namespace with `flags` in `container`.
+    fn is_implicitly_exported_jsdoc_declaration(
+        &self,
+        file: FileId,
+        flags: Flags,
+        container: Parent,
+    ) -> bool {
+        let module = self.files().module(file);
+        flags.contains(Flags::REPARSED)
+            && container == Parent::File
+            && (module.is_module() || module.is_commonjs())
+    }
+
     pub(super) fn is_declaration_visible(&mut self, file: FileId, decl: Decl) -> bool {
         // A name is bound by one node, whatever it is bound as.
         let decl = match decl {
@@ -1147,6 +1175,9 @@ impl<'p> Checker<'p> {
             _ => return false,
         };
         let is_module = self.files().module(file).is_module();
+        if self.is_implicitly_exported_jsdoc_declaration(file, flags, container) {
+            return true;
+        }
         // `IsExternalModuleAugmentation`
         if let Decl::Module(m) = decl
             && !matches!(hir[m].name, ModuleName::Ident(_))
@@ -1256,7 +1287,16 @@ impl<'p> Checker<'p> {
                         return None;
                     };
                     let is_element = root != pat;
-                    if is_element && !flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
+                    // `const { a } = require("m")` in JavaScript
+                    let is_import_like = flags.contains(SymFlags::ALIAS)
+                        && hir.is_js
+                        && matches!(bound.pat_parent[pat.idx()], PatParent::Prop(outer, _) | PatParent::Elem(outer, _)
+                            if outer == root)
+                        && !hir[d].flags.contains(Flags::EXPORT);
+                    if is_element
+                        && !is_import_like
+                        && !flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
+                    {
                         return None;
                     }
                     let statement = bound.var_stmt[d.idx()];
@@ -1899,7 +1939,7 @@ impl<'p> Checker<'p> {
             // `c.program.SourceFiles()`
             for &file in &files.order {
                 let module = files.module(file);
-                // The task that checks a leaf file frees its tree (`Files::free_tree`). Test `is_leaf`, which is immutable after
+                // A leaf file exports no alias. The task that checks it frees its tree (`Files::free_tree`). Test `is_leaf`, which is immutable after
                 // loading, before reading `hir`.
                 if module.is_leaf && self.task.file != Some(file) {
                     continue;
@@ -2468,13 +2508,9 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
         if c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             return false;
         }
-        let is_declared_in_javascript = c
-            .decls_of(symbol)
-            .iter()
-            .any(|declaration| c.hir(declaration.0).is_js);
-        // How JavaScript exports what it declares is not followed: nothing is said of it.
-        if is_declared_in_javascript && !c.is_symbol_accessible_at(symbol, meaning, false, at) {
-            return true;
+        if self.watched_class_symbol == Some(symbol) {
+            self.class_symbol_tracked = true;
+            return false;
         }
         let meaning = Meaning::of(meaning, false);
         let access = c.is_symbol_accessible(symbol, at, meaning, true);
@@ -2545,14 +2581,31 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.set_indent(0);
         let detached = self.detached_comments_text();
         self.precalculate_visibility();
+        self.transform_commonjs_exports();
         self.transform_expando_assignments();
         let hir = self.c.hir(self.file());
         let mut visited = Vec::with_capacity(hir.body.len());
         for s in hir.ids(hir.body) {
             visited.push(self.visit_statement(s));
         }
-        let mut statements = self.transform_late_painted_statements(visited, true);
-        let module = self.c.files().module(self.file());
+        let combined = self.transform_late_painted_statements(visited, true);
+        // `appendCjsExports`
+        let mut statements = std::mem::take(&mut self.cjs_export_assignment);
+        statements.append(&mut self.cjs_export_members);
+        statements.extend(combined);
+        let (file, files) = (self.file(), self.c.files());
+        let module = files.module(file);
+        if hir.is_js
+            && (module.is_module() || module.is_commonjs())
+            && let Some(equals) = files.export(files.file_symbol(file), known::export_equals)
+            && files.decls_of(equals).len() > 1
+        {
+            for (of, declaration) in files.decls(equals) {
+                if let Some(range) = self.c.error_range_of_declaration(of, declaration) {
+                    self.tracker.add_diagnostic(range, 6424, Vec::new());
+                }
+            }
+        }
         if (module.is_module() || module.is_commonjs())
             && (!self.result_has_external_module_indicator
                 || self.needs_scope_fix_marker && !self.result_has_scope_marker)
@@ -2566,11 +2619,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
             shebang = [hir.text[..end].trim_end_with(|c| c == '\r'), b"\n"].concat();
         }
         let directives = self.reference_directives();
+        // `emitDetachedCommentsAfterStatementList`: `statements.Loc.End()` is where the last token of the file ends.
+        let written = hir
+            .ids(hir.body)
+            .filter(|&s| !hir.is_in_jsdoc(hir[s].start));
+        let end = written.map(|s| hir[s].loc.end).max().unwrap_or(0);
+        let mut after = self.leading_comments(end);
+        if after.ends_with(b" ") {
+            after.pop();
+            after.push(b'\n');
+        }
         [
             shebang,
             detached,
             directives,
             self.statements_text(&statements),
+            after,
         ]
         .concat()
     }
@@ -2663,9 +2727,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn detached_comments_text(&mut self) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let text = &hir.text[..];
-        let Some(pos) = hir.ids(hir.body).next().map(|s| hir[s].loc.pos as usize) else {
-            return Vec::new();
-        };
+        // `statements.Loc.Pos()`
+        let pos = 0;
         if !self.writes || self.c.files().options.remove_comments {
             return Vec::new();
         }
@@ -2730,13 +2793,40 @@ impl<'p> DeclarationEmit<'_, 'p> {
         parent_is_file: bool,
         is_always_type: bool,
     ) -> Vec<Flags> {
+        self.ensure_modifiers_of_statement(
+            written,
+            Flags::empty(),
+            Parent::None,
+            parent_is_file,
+            is_always_type,
+        )
+    }
+
+    /// The same, of a statement in `container`. `declared`: the flags of what it declares. A statement that the reparser made has
+    /// clones of the modifiers of its host, which are no rows.
+    fn ensure_modifiers_of_statement(
+        &self,
+        written: Span<ModifierId>,
+        declared: Flags,
+        container: Parent,
+        parent_is_file: bool,
+        is_always_type: bool,
+    ) -> Vec<Flags> {
         let hir = self.c.hir(self.file());
-        let in_order: Vec<Flags> = (written.iter())
+        let mut in_order: Vec<Flags> = (written.iter())
             .filter_map(|m| match hir[m].kind {
-                ModifierKind::Keyword(modifier) => Some(modifier),
+                ModifierKind::Keyword(modifier) => Some(modifier - Flags::REPARSED),
                 ModifierKind::Decorator(_) => None,
             })
             .collect();
+        if declared.contains(Flags::REPARSED) && in_order.is_empty() {
+            in_order.extend(
+                MODIFIERS
+                    .iter()
+                    .map(|it| it.0)
+                    .filter(|&it| declared.contains(it)),
+            );
+        }
         let current = in_order.iter().fold(Flags::empty(), |all, &it| all | it);
         // "No async and override modifiers in declaration files"
         let mut flags = current - (Flags::PUBLIC | Flags::ASYNC | Flags::OVERRIDE);
@@ -2744,6 +2834,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             flags -= Flags::AMBIENT;
         } else if self.needs_declare && !is_always_type {
             flags |= Flags::AMBIENT;
+        }
+        if (self.c).is_implicitly_exported_jsdoc_declaration(self.file(), declared, container) {
+            flags |= Flags::EXPORT;
         }
         if flags.contains(Flags::DEFAULT) {
             flags |= Flags::EXPORT;
@@ -2778,30 +2871,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `NewUniqueNameEx(base, GeneratedIdentifierFlagsOptimistic)`, `makeUniqueName`: `base` if nothing in the file is called that.
     fn unique_name(&mut self, base: &[u8]) -> Vec<u8> {
-        let text = &self.c.hir(self.file()).text[..];
-        let is_part = |byte: Option<&u8>| {
-            byte.is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80)
-        };
-        let is_taken = |name: &[u8], generated: &[Vec<u8>]| {
-            generated.iter().any(|it| it == name) || {
-                let mut from = 0;
-                loop {
-                    let Some(at) = strings::index_of(&text[from..], name).map(|at| from + at)
-                    else {
-                        break false;
-                    };
-                    if !is_part(at.checked_sub(1).and_then(|before| text.get(before)))
-                        && !is_part(text.get(at + name.len()))
-                    {
-                        break true;
-                    }
-                    from = at + 1;
-                }
-            }
-        };
         let mut name = base.to_vec();
         let mut number = 0;
-        while is_taken(&name, &self.generated_names) {
+        while !self.is_unique_name(&name) {
             number += 1;
             name = [base, b"_", number.to_string().as_bytes()].concat();
         }
@@ -2809,16 +2881,77 @@ impl<'p> DeclarationEmit<'_, 'p> {
         name
     }
 
+    /// `makeTempVariableName(tempFlagsAuto)`
+    fn temp_variable_name(&mut self) -> Vec<u8> {
+        loop {
+            let count = self.temp_count;
+            self.temp_count += 1;
+            // "Skip over 'i' and 'n'"
+            if count == 8 || count == 13 {
+                continue;
+            }
+            let name = match count {
+                0..26 => vec![b'_', b'a' + count as u8],
+                _ => [b"_", (count - 26).to_string().as_bytes()].concat(),
+            };
+            if self.is_unique_name(&name) {
+                self.generated_names.push(name.clone());
+                return name;
+            }
+        }
+    }
+
+    /// `isUniqueName`
+    fn is_unique_name(&self, name: &[u8]) -> bool {
+        if self.generated_names.iter().any(|it| it == name) {
+            return false;
+        }
+        let text = &self.c.hir(self.file()).text[..];
+        let is_part = |byte: Option<&u8>| {
+            byte.is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80)
+        };
+        let mut from = 0;
+        while let Some(at) = strings::index_of(&text[from..], name).map(|at| from + at) {
+            if !is_part(at.checked_sub(1).and_then(|before| text.get(before)))
+                && !is_part(text.get(at + name.len()))
+            {
+                return false;
+            }
+            from = at + 1;
+        }
+        true
+    }
+
     /// `<A, B>`, or nothing.
     fn visit_type_parameters(&mut self, type_parameters: Span<TypeParamId>) -> Vec<u8> {
-        let mut texts = Vec::with_capacity(type_parameters.len());
-        for tp in type_parameters.iter() {
-            texts.push(self.visit_type_parameter(tp));
-        }
-        if texts.is_empty() {
+        let file = self.file();
+        let hir = self.c.hir(file);
+        let Some(first) = type_parameters.iter().next() else {
             return Vec::new();
+        };
+        // `Pos()` of the first: where the `<` ends. Only trivia is between the two.
+        let start = hir[first].start;
+        let before = match self.writes && !hir.is_in_jsdoc(start) {
+            true => &hir.text[..(start as usize).min(hir.text.len())],
+            false => &[],
+        };
+        // A comment between the two may have a `<` of its own.
+        let mut pos = (before.iter().enumerate().rev())
+            .filter(|&(_, &byte)| byte == b'<')
+            .take(4)
+            .map(|(at, _)| at + 1)
+            .find(|&after| self.c.skip_trivia_from(file, after as u32) == start);
+        let mut elements = Vec::with_capacity(type_parameters.len());
+        for tp in type_parameters.iter() {
+            let end = hir[tp].end;
+            elements.push(Element {
+                range: pos.map(|pos| (pos, end as usize)),
+                text: self.visit_type_parameter(tp),
+            });
+            let comma = self.c.skip_trivia_from(file, end) as usize;
+            pos = (pos.is_some() && hir.text.get(comma) == Some(&b',')).then_some(comma + 1);
         }
-        [b"<", &texts.join(&b", "[..])[..], b">"].concat()
+        [b"<", &self.list_text(elements, false, false)[..], b">"].concat()
     }
 
     /// The same of type arguments, which have been gone through.
@@ -3005,18 +3138,29 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let holder = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
+                    // It is written in the namespace of its host.
+                    let mut depth = 1;
+                    let mut around = root.map(|root| bound.stmt_parent[root.idx()]);
+                    while let Some(Parent::Module(module)) = around {
+                        depth += 1;
+                        around = hir[module].stmt.some().map(|s| bound.stmt_parent[s.idx()]);
+                    }
+                    let outer = self.indent;
+                    self.set_indent(depth);
                     let ty = self.create_type_of_declaration(
                         Some(hir.node(e)),
                         ty,
                         DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     );
+                    self.set_indent(outer);
                     // "use exportName as localName if there won't be any conflicts or keyword issues"
                     let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
                     let scope = self.enclosing.scope;
                     let local_name = if files.resolve_name(file, scope, property, any).is_some()
                         || is_non_contextual_keyword(export_name)
                     {
-                        self.unique_name(&[export_name, b"_1"].concat())
+                        // `NewGeneratedNameForNode`, of the assignment
+                        self.temp_variable_name()
                     } else {
                         export_name.to_vec()
                     };
@@ -3099,58 +3243,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `visitSourceFile`, of JavaScript, as far as it is followed: the variables at the top of the file, and what
-    /// `Object.defineProperty(exports, "name", descriptor)` exports. Of what may be wrong with them only a name that cannot be used
-    /// outside of its module is told.
-    fn transform_javascript_file(&mut self) {
-        self.precalculate_visibility();
-        self.transform_defined_exports();
-        let hir = self.c.hir(self.file());
-        for s in hir.ids(hir.body) {
-            if matches!(hir[s].kind, StmtKind::Var(_)) {
-                self.visit_statement(s);
-            }
-        }
-        while !self.tracker.late_marked_statements.is_empty() {
-            let next = self.tracker.late_marked_statements.remove(0);
-            if matches!(hir[next].kind, StmtKind::Var(_)) {
-                self.transform_top_level_declaration(next);
-            }
-        }
-        self.tracker.diagnostics.retain(|found| found.code == 4023);
-    }
-
-    /// `transformCommonJSExport`, of each `Object.defineProperty(exports, "name", descriptor)` that is the first to export its name.
-    fn transform_defined_exports(&mut self) {
-        let files = self.c.files();
-        if !files.module(self.file()).is_commonjs() {
-            return;
-        }
-        let hir = self.c.hir(self.file());
-        for (_, symbol) in files.exports(files.file_symbol(self.file())) {
-            let Some(&(file, Decl::ExportsProperty(e))) = self.c.decls_of(symbol).first() else {
-                continue;
-            };
-            if file != self.file() || crate::bind::define_property_call(hir, e).is_none() {
-                continue;
-            }
-            let saved = (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            );
-            (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            ) = (Node::NONE, Context::ForNode(hir.node(e)));
-            let ty = self.c.type_of_symbol(symbol);
-            self.create_type_of_declaration(None, ty, DECLARATION_EMIT_NODE_BUILDER_FLAGS);
-            (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            ) = saved;
-        }
-    }
-
     /// `markLinkedAliases`
     fn mark_linked_aliases(&mut self, target: Option<Sym>) {
         let files = self.c.files();
@@ -3200,7 +3292,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 Visited::Statements(vec![Statement::new(StatementKind::Other, text)])
             }
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                Visited::Statements(self.transform_export_assignment(s, e))
+                let is_export_equals = matches!(statement.kind, StmtKind::ExportAssign(_));
+                let node = hir.node(s);
+                Visited::Statements(self.transform_export_assignment(
+                    node,
+                    node,
+                    e,
+                    is_export_equals,
+                ))
             }
             StmtKind::Import(_)
             | StmtKind::Fn(_)
@@ -3485,7 +3584,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.enter(bound.alias_scope[a.idx()]);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 self.needs_declare = false;
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                let container = bound.stmt_parent[s.idx()];
+                let written = hir[s].modifiers;
+                let modifiers = self.ensure_modifiers_of_statement(
+                    written,
+                    hir[a].flags,
+                    container,
+                    parent_is_file,
+                    false,
+                );
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
                 self.visit_type(hir[a].ty, true);
                 let ty = self.text_of(Written::Type(hir[a].ty));
@@ -3534,7 +3641,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 if self.expando_members.contains_key(&s) {
                     Some(self.expando_host(s, hir[f].name, &signature))
                 } else {
-                    let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                    // A function is not `IsImplicitlyExportedJSDocDeclaration`.
+                    let (written, declared) = (hir[s].modifiers, hir[f].flags);
+                    let modifiers = self.ensure_modifiers_of_statement(
+                        written,
+                        declared,
+                        Parent::None,
+                        parent_is_file,
+                        false,
+                    );
                     let name = self.name(hir[f].name);
                     other(
                         modifiers,
@@ -3552,9 +3667,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             StmtKind::Module(m) => Some(vec![self.transform_module_declaration(m, s)]),
             StmtKind::Class(c) => Some(self.transform_class_declaration(c, s)),
-            StmtKind::Var(decls) => self
-                .transform_variable_statement(decls, s)
-                .map(|it| vec![it]),
+            StmtKind::Var(decls) => self.transform_variable_statement(decls, s),
             _ => Some(Vec::new()),
         };
         (
@@ -3691,7 +3804,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let module = &hir[m];
         self.enter(bound.module_scope[m.idx()]);
         let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
-        let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        let container = bound.stmt_parent[s.idx()];
+        let written = hir[s].modifiers;
+        let modifiers = self.ensure_modifiers_of_statement(
+            written,
+            module.flags,
+            container,
+            parent_is_file,
+            false,
+        );
         self.needs_declare = false;
         let (kind, head) = match module.name {
             // `IsAmbientModule`: `IsGlobalScopeAugmentation` too.
@@ -3825,7 +3946,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         &mut self,
         decls: Span<VarDeclId>,
         s: StmtId,
-    ) -> Option<Statement> {
+    ) -> Option<Vec<Statement>> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         if !decls
             .iter()
@@ -3834,6 +3955,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return None;
         }
         let mut declarations: Vec<Vec<u8>> = Vec::new();
+        let mut extra_imports: Vec<Statement> = Vec::new();
         let scope = match bound.stmt_parent[s.idx()] {
             Parent::File => ScopeId(0),
             Parent::Module(m) => bound.module_scope[m.idx()],
@@ -3842,18 +3964,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let is_commonjs = bound.commonjs_indicator.is_some();
         for d in decls.iter() {
             let pat = hir[d].pat;
-            if self.c.should_strip_internal(self.file(), hir[d].loc.pos)
-                || !self.is_binding_name_visible(pat)
-            {
+            if self.c.should_strip_internal(self.file(), hir[d].loc.pos) {
                 continue;
             }
-            // `transformCjsRequireVariableDeclaration`: it is written as an import. What JSDoc says of a type is not gone through.
-            if hir.is_js
-                && (hir[d].ty.is_some()
-                    || is_commonjs
-                        && hir[d].init.is_some()
-                        && crate::bind::required_specifier(hir, hir[d].init).is_some())
-            {
+            // `IsVariableDeclarationInitializedToRequire`
+            let is_require = is_commonjs
+                && hir.is_js
+                && hir[d].init.is_some()
+                && crate::bind::required_specifier(hir, hir[d].init).is_some();
+            if is_require {
+                extra_imports.extend(self.transform_cjs_require_variable_declaration(d));
+                continue;
+            }
+            if !self.is_binding_name_visible(pat) {
                 continue;
             }
             let saved = (
@@ -3884,7 +4007,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             ) = saved;
         }
         if declarations.is_empty() {
-            return None;
+            return (!extra_imports.is_empty()).then_some(extra_imports);
         }
         let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
         let keyword: &[u8] = match decls.iter().next().map(|d| hir[d].kind) {
@@ -3892,12 +4015,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             Some(VarKind::Let) => b"let ",
             Some(VarKind::Const | VarKind::Using | VarKind::AwaitUsing) => b"const ",
         };
-        Some(Statement {
+        extra_imports.push(Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
             modifiers: self.ensure_modifiers(hir[s].modifiers, parent_is_file, false),
             text: [keyword, &declarations.join(&b", "[..])[..], b";"].concat(),
-        })
+        });
+        Some(extra_imports)
     }
 
     /// `recreateBindingPattern`, and `walkBindingPattern`, which does not ask what is visible: each name with its type.
@@ -4036,6 +4160,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         written.append(&mut self.create_late_bound_index_signatures(c));
         written.append(&mut parameter_properties);
+        written.append(&mut self.collect_this_property_assignments(c));
         for m in members.iter() {
             written.extend(self.visit_member(m));
         }
@@ -4064,6 +4189,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     continue;
                 }
                 let components = self.c.index_components(info.components);
+                // `anyBaseTypeIndexInfo`: "inherited, but looks like a late-bound signature because it has no declarations"
+                if components.is_empty() {
+                    continue;
+                }
                 // `getIndexInfosOfIndexSymbol(instanceIndexSymbol, ..)`: those of the class itself.
                 let is_own = |component: &IndexComponent| {
                     matches!(*component, IndexComponent::Member(of, m)
@@ -4225,11 +4354,23 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `transformExportAssignment`
-    fn transform_export_assignment(&mut self, s: StmtId, e: ExprId) -> Vec<Statement> {
+    fn transform_export_assignment(
+        &mut self,
+        input: Node,
+        assignment: Node,
+        e: ExprId,
+        is_export_equals: bool,
+    ) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        self.result_has_external_module_indicator |= bound.stmt_parent[s.idx()] == Parent::File;
+        // `input.Parent`, `input.Pos()`
+        let (parent, pos) = match hir.data(input) {
+            NodeData::Stmt(s) => (bound.stmt_parent[s.idx()], Some(hir[s].loc.pos)),
+            _ => (Parent::None, None),
+        };
+        let comments = |emit: &mut Self| pos.map_or(Vec::new(), |pos| emit.leading_comments(pos));
+        self.result_has_external_module_indicator |= parent == Parent::File;
         self.result_has_scope_marker = true;
-        let keyword: &[u8] = if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
+        let keyword: &[u8] = if is_export_equals {
             b"export = "
         } else {
             b"export default "
@@ -4242,10 +4383,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         if let ExprKind::Ident(name) = hir[e].kind
             && !is_parenthesized(self.c.hir(self.file()), e)
-            && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+            && matches!(parent, Parent::File | Parent::Module(_))
         {
             let mut written = export_of(self.name(name));
-            written.comments = self.leading_comments(hir[s].loc.pos);
+            written.comments = comments(self);
             return vec![written];
         }
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
@@ -4271,10 +4412,23 @@ impl<'p> DeclarationEmit<'_, 'p> {
             _ => Atom::NONE,
         };
         let name = if own_name.is_some() && own_name != known::default {
-            self.unique_name(self.name(own_name))
+            // `IsNameResolvable`
+            let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+            let at = self.enclosing;
+            match self
+                .c
+                .files()
+                .resolve_name(at.file, at.scope, own_name, any)
+            {
+                Some(_) => self.unique_name(self.name(own_name)),
+                None => self.name(own_name).to_vec(),
+            }
+        } else if is_export_equals && hir.is_js {
+            self.unique_name(b"_exports")
         } else {
             self.unique_name(b"_default")
         };
+        self.cjs_export_assignment_name = Some(name.clone());
         let declare = if self.needs_declare {
             vec![Flags::AMBIENT]
         } else {
@@ -4283,14 +4437,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
         match hir[unwrapped].kind {
             ExprKind::Class(c) => {
                 let mut class = self.transform_class_expression(c, &name, declare);
-                class.comments = self.leading_comments(hir[s].loc.pos);
+                class.comments = comments(self);
                 return vec![export_of(&name), class];
             }
             ExprKind::Fn(f) => {
                 let signature = self.transform_signature(f);
                 let function = Statement {
                     kind: StatementKind::Other,
-                    comments: self.leading_comments(hir[s].loc.pos),
+                    comments: comments(self),
                     modifiers: declare,
                     text: [b"function ", &name[..], &signature[..], b";"].concat(),
                 };
@@ -4298,7 +4452,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             _ => {}
         }
-        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(hir.node(s));
+        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
         // `IsPrimitiveLiteralValue`: it is written as it is.
         let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
             // `CreateLiteralConstValue`
@@ -4307,14 +4461,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let enclosing = Some(self.enclosing);
             Ensured::Initializer(self.c.type_to_type_node(literal, enclosing, flags, None))
         } else {
-            self.tracker.fallback_stack.push(hir.node(s));
-            let ensured = self.ensure_type(hir.node(s), false);
+            self.tracker.fallback_stack.push(assignment);
+            let ensured = self.ensure_type(assignment, false);
             self.tracker.fallback_stack.pop();
             ensured
         };
         let variable = Statement {
             kind: StatementKind::Other,
-            comments: self.leading_comments(hir[s].loc.pos),
+            comments: comments(self),
             modifiers: declare,
             text: [b"const ", &name[..], &ensured.text()[..], b";"].concat(),
         };
@@ -4596,7 +4750,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     if !is_private {
                         self.visit_type(hir[f].this_ty(hir), false);
                         if let Some(parameter) = hir[f].params.iter().next() {
-                            value = Some(self.ensure_parameter(parameter));
+                            let loc = hir[parameter].loc;
+                            let element = Element {
+                                range: (loc.end != 0)
+                                    .then_some((loc.pos as usize, loc.end as usize)),
+                                text: self.ensure_parameter(parameter),
+                            };
+                            value = Some(self.list_text(vec![element], false, false));
                         }
                     }
                     let value = value.unwrap_or_else(|| {
@@ -4831,8 +4991,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && !matches!(hir.data(node), NodeData::Param(p)
                 if self.c.requires_adding_implicit_undefined(file, p, Some(self.enclosing)))
         {
-            self.visit_type(annotation, false);
-            return Ensured::Type(self.text_of(Written::Type(annotation)));
+            if !hir.is_js {
+                self.visit_type(annotation, false);
+                return Ensured::Type(self.text_of(Written::Type(annotation)));
+            }
+            let flags = if self.in_class_expression {
+                DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
+            } else {
+                DECLARATION_EMIT_NODE_BUILDER_FLAGS
+            };
+            let (at, tracker) = (self.enclosing, &mut self.tracker);
+            if let Some(text) = self
+                .c
+                .try_js_type_node_to_type_node(file, annotation, at, flags, tracker)
+            {
+                return Ensured::Type(text);
+            }
         }
         let saved = (
             self.tracker.error_name_node,
@@ -4854,6 +5028,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 }
                 _ => None,
             },
+            NodeData::Expr(e) if hir.is_js && !self.c.bound(file).is_expando_declaration(e) => {
+                let ty = self.type_of_commonjs_declaration(e);
+                ty.map(|ty| self.c.widen_literal(ty))
+            }
             _ if self.c.iso_has_inferred_type(file, node) => {
                 self.c.iso_type_of_declared(file, node)
             }

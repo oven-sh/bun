@@ -966,6 +966,161 @@ export const c: 1 = handler;
         `"packages/app/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
       );
     });
+
+    describe("a referenced project written in JavaScript", () => {
+      const library = {
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...options,
+            allowJs: true,
+            checkJs: true,
+            module: "nodenext",
+            moduleResolution: "nodenext",
+            rootDir: "src",
+            outDir: "dist",
+          },
+          include: ["src"],
+        }),
+        "packages/lib/src/main.js": `/** @typedef {{ id: number, name: string }} User */
+
+/**
+ * Says hello.
+ * @param {User} user
+ */
+function greet(user) {
+  return "hi " + user.name;
+}
+
+class Counter {
+  constructor() {
+    this.count = 0;
+    /** @type {string | undefined} */
+    this.label = undefined;
+  }
+  /** @protected */
+  reset() {
+    this.count = 0;
+  }
+}
+
+exports.greet = greet;
+exports.Counter = Counter;
+exports.limit = 10;
+exports.Box = class {
+  /** @param {number} size */
+  constructor(size) {
+    this.size = size;
+  }
+};
+`,
+        "packages/lib/src/single.js": `const { Counter } = require("./main");
+
+/** @param {number} start */
+module.exports = function make(start) {
+  const counter = new Counter();
+  counter.count = start;
+  return counter;
+};
+`,
+        "packages/lib/src/esm.mjs": `/** @template T @param {T} value @returns {T[]} */
+export function wrap(value) {
+  return [value];
+}
+export default class Shape {
+  static kind = "shape";
+  area() {
+    return 1;
+  }
+}
+`,
+        "packages/app/src/index.ts": `import lib = require("../../lib/src/main.js");
+import make = require("../../lib/src/single.js");
+import Shape, { wrap } from "../../lib/src/esm.mjs";
+
+const user: lib.User = { id: "1", name: "Ada" };
+const text: number = lib.greet({ id: 1, name: "Ada" });
+const counter = new lib.Counter();
+counter.reset();
+const label: string = counter.label;
+const limit: string = lib.limit;
+const size: string = new lib.Box(1).size;
+const made: string = make(1);
+const wrapped: number[] = wrap("a");
+const kind: number = Shape.kind;
+`,
+      };
+      const app = (compilerOptions: object) =>
+        JSON.stringify({
+          compilerOptions: { ...options, module: "nodenext", moduleResolution: "nodenext", ...compilerOptions },
+          include: ["src"],
+          references: [{ path: "../lib" }],
+        });
+
+      test("is seen through its declaration files", async () => {
+        using dir = monorepo({ ...library, "packages/app/tsconfig.json": app({ allowJs: true }) });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "packages/app/src/index.ts(5,26): error TS2322: Type 'string' is not assignable to type 'number'.
+          packages/app/src/index.ts(6,7): error TS2322: Type 'string' is not assignable to type 'number'.
+          packages/app/src/index.ts(8,9): error TS2445: Property 'reset' is protected and only accessible within class 'Counter' and its subclasses.
+          packages/app/src/index.ts(9,7): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+            Type 'undefined' is not assignable to type 'string'.
+          packages/app/src/index.ts(10,7): error TS2322: Type 'number' is not assignable to type 'string'.
+          packages/app/src/index.ts(11,7): error TS2322: Type 'number' is not assignable to type 'string'.
+          packages/app/src/index.ts(12,7): error TS2322: Type 'Counter' is not assignable to type 'string'.
+          packages/app/src/index.ts(13,7): error TS2322: Type 'string[]' is not assignable to type 'number[]'.
+            Type 'string' is not assignable to type 'number'.
+          packages/app/src/index.ts(14,7): error TS2322: Type 'string' is not assignable to type 'number'."
+        `);
+      });
+
+      test("has no declaration files under noEmit", async () => {
+        // A `helpers.d.ts` next to `helpers.js` would be resolved in its place by the second project.
+        const compilerOptions = {
+          ...options,
+          module: "nodenext",
+          moduleResolution: "nodenext",
+          allowJs: true,
+          checkJs: true,
+          noEmit: true,
+        };
+        const index = (name: string) => `const { help } = require("../helpers");\nexports.${name} = help();\n`;
+        using dir = project({
+          "tsconfig.json": JSON.stringify({
+            compilerOptions,
+            include: ["./helpers.js"],
+            references: [{ path: "./one" }, { path: "./two" }],
+          }),
+          "console.d.ts": "",
+          "helpers.js": `exports.help = () => 1;\n`,
+          "one/tsconfig.json": JSON.stringify({ compilerOptions, include: ["./*.js"] }),
+          "one/index.js": index("one"),
+          "two/tsconfig.json": JSON.stringify({ compilerOptions, include: ["./*.js"] }),
+          "two/index.js": index("two"),
+        });
+        const { stdout } = await check(dir);
+        expect(stdout.split("\n").filter(line => line.includes("TS6307")).map(line => line.slice(0, 40))).toEqual([
+          "one/index.js(1,26): error TS6307: File '",
+          "two/index.js(1,26): error TS6307: File '",
+        ]);
+      });
+
+      test("is imported without allowJs where an untyped import is no error", async () => {
+        using dir = monorepo({ ...library, "packages/app/tsconfig.json": app({ noImplicitAny: false }) });
+        const { stdout } = await check(dir);
+        expect(stdout.split("\n").filter(line => line.includes("error TS")).length).toBe(9);
+      });
+
+      test("cannot be imported by a project that does not allow JavaScript", async () => {
+        using dir = monorepo({ ...library, "packages/app/tsconfig.json": app({}) });
+        const { stdout } = await check(dir);
+        expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(":", line.indexOf("TS"))))).toEqual([
+          "packages/app/src/index.ts(1,22): error TS7016",
+          "packages/app/src/index.ts(2,23): error TS7016",
+          "packages/app/src/index.ts(3,29): error TS7016",
+        ]);
+      });
+    });
   });
 
   describe("files that are not imported", () => {
@@ -1615,6 +1770,41 @@ export class Chain<M extends Model | Runnable<string, string>> extends Base {
       });
       const { stdout } = await check(dir);
       expect(stdout).toBe("");
+    });
+
+    test("an inference from a string literal to keyof T that does not satisfy the constraint of T", async () => {
+      // The object made up for the literal has no implicit index signature, so T is its constraint.
+      using dir = project({
+        "a.ts": `
+type ToolSet = Record<string, { input: any }>;
+type Call<T extends ToolSet> = { [N in keyof T]: { toolName: N & string; input: T[N]["input"] } }[keyof T];
+type Step<T extends ToolSet> = { calls: Call<T>[] };
+declare function has<T extends ToolSet>(...names: Array<keyof T | (string & {})>): (steps: Step<T>[]) => boolean;
+declare const steps: Step<ToolSet>[];
+has("weather")(steps);
+export const wrong: number = has("weather");
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(8,14): error TS2322: Type '(steps: Step<ToolSet>[]) => boolean' is not assignable to type 'number'."`,
+      );
+    });
+
+    test("the members of a spread union of named unions are in the order of the named unions", async () => {
+      using dir = project({
+        "a.ts": `
+type Out = { execute: () => void } | { execute?: never };
+type Fn = Out & { type?: "function" };
+type Dyn = Out & { type: "dynamic" };
+declare const tool: Fn | Dyn;
+export const wrong: number = { ...tool, kind: 1 };
+`,
+      });
+      const { stdout } = await check(dir, ["--noErrorTruncation"]);
+      expect(stdout.split("\n")[0]).toBe(
+        `a.ts(6,14): error TS2322: Type '{ execute: () => void; type: "dynamic"; kind: number; } | { execute?: undefined; type: "dynamic"; kind: number; } | { execute: () => void; type?: "function" | undefined; kind: number; } | { execute?: undefined; type?: "function" | undefined; kind: number; }' is not assignable to type 'number'.`,
+      );
     });
   });
 

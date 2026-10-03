@@ -107,6 +107,10 @@ impl Emit {
             inference_fallbacks: Vec::new(),
         }
     }
+
+    pub(super) fn has_diagnostics(&self) -> bool {
+        !self.said.is_empty()
+    }
 }
 
 impl<'p> Checker<'p> {

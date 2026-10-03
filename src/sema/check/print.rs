@@ -403,6 +403,29 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `NodeBuilder.TryJSTypeNodeToTypeNode`
+    pub(super) fn try_js_type_node_to_type_node(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> Option<Vec<u8>> {
+        let enclosing_declaration = Some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            Some(tracker),
+            flags,
+            |printer| {
+                printer
+                    .try_reuse_type_node(file, node)
+                    .map(|node| node.text)
+            },
+        )
+    }
+
     /// What the printer makes of `what`, a node of `file` that the declaration transformer takes over as it is written. The transformer
     /// has gone through it for what stands in the way, so nothing is tracked.
     pub(super) fn text_of_written(
@@ -3075,6 +3098,28 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `preservePartialJsDoc`, and what the printer makes of the synthetic comment: the comment of the tag that the member `m` of a
+    /// type literal is made from.
+    pub(super) fn partial_jsdoc(&self, file: FileId, m: MemberId) -> Vec<u8> {
+        let description = self.c.hir(file).jsdoc_comment_of_member(m);
+        let Some(indent) = self
+            .indent
+            .filter(|_| self.is_transformer && !description.is_empty())
+        else {
+            return Vec::new();
+        };
+        if self.c.files().options.remove_comments {
+            return Vec::new();
+        }
+        let margin = b"    ".repeat(indent);
+        let mut text = b"/**\n".to_vec();
+        for line in description.split(|&byte| byte == b'\n') {
+            text.extend_from_slice(&cat!(margin, b" * ", line, b"\n"));
+        }
+        text.extend_from_slice(&cat!(margin, b" */\n", margin));
+        text
     }
 
     /// `setCommentRange`, and what the printer makes of it: the comments before the declaration `node` of `file`, if a declaration file

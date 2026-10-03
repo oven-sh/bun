@@ -80,6 +80,8 @@ pub(crate) struct Property {
     pub(crate) is_bracketed: bool,
     pub(crate) is_name_first: bool,
     pub(crate) ty: TagType,
+    /// `GetTextOfJSDocComment(tag.CommentList())`, of a tag that is nested in another. Empty for any other tag.
+    pub(crate) comment: Box<[u8]>,
 }
 
 /// `JSDocSignature`
@@ -444,6 +446,9 @@ struct Reader<'p, 'a> {
     has_newline_before: bool,
     /// The token is the one the lexer of the parser is at.
     is_in_lexer: bool,
+    /// `tag_comments` collects the text in `comment_text`.
+    saves_comment_text: bool,
+    comment_text: Vec<u8>,
 }
 
 impl<'p, 'a> Reader<'p, 'a> {
@@ -470,6 +475,8 @@ impl<'p, 'a> Reader<'p, 'a> {
             end: start + 3,
             has_newline_before: false,
             is_in_lexer: false,
+            saves_comment_text: false,
+            comment_text: Vec::new(),
         };
         let tags = reader.comment(start);
         JsDoc {
@@ -1139,11 +1146,18 @@ impl<'p, 'a> Reader<'p, 'a> {
         let mut in_fenced_code_block = false;
         let mut margin: Option<usize> = None;
         let mut has_text = false;
+        self.comment_text.clear();
         if let Some(initial_margin) = initial_margin {
             // Straight to saving comments if there is some initial indentation.
             if initial_margin != 0 {
                 margin = Some(indent);
                 indent += initial_margin;
+                if self.saves_comment_text {
+                    let before = self.full_start();
+                    self.comment_text.extend_from_slice(
+                        &self.text[before.saturating_sub(initial_margin)..before],
+                    );
+                }
             }
             state = State::SawAsterisk;
         }
@@ -1161,6 +1175,9 @@ impl<'p, 'a> Reader<'p, 'a> {
                     state = State::BeginningOfLine;
                     indent = 0;
                     is_text = false;
+                    if self.saves_comment_text {
+                        self.comment_text.extend_from_slice(self.token_text());
+                    }
                 }
                 Token::At if !in_fenced_code_block && self.can_follow_at() => {
                     self.reset_pos(self.end - 1);
@@ -1169,8 +1186,14 @@ impl<'p, 'a> Reader<'p, 'a> {
                 Token::EndOfFile => break,
                 Token::Whitespace => {
                     // Whitespace that crosses the margin is part of the comment.
-                    if margin.is_some_and(|margin| indent + self.token_len() > margin) {
+                    if let Some(margin) =
+                        margin.filter(|&margin| indent + self.token_len() > margin)
+                    {
                         state = State::saving(in_fenced_code_block);
+                        if self.saves_comment_text {
+                            let past_margin = &self.token_text()[margin.saturating_sub(indent)..];
+                            self.comment_text.extend_from_slice(past_margin);
+                        }
                     }
                     indent += self.token_len();
                     is_text = false;
@@ -1200,6 +1223,9 @@ impl<'p, 'a> Reader<'p, 'a> {
                 margin.get_or_insert(indent);
                 indent += self.token_len();
                 has_text |= !self.token_text().trim_ascii().is_empty();
+                if self.saves_comment_text {
+                    self.comment_text.extend_from_slice(self.token_text());
+                }
             }
             if state.is_saving() {
                 self.next_comment_text(state == State::SavingBackticks);
@@ -1413,6 +1439,18 @@ impl<'p, 'a> Reader<'p, 'a> {
             ty = self.try_type_expression();
         }
         self.trailing_comments(start, indent, indent_text);
+        // `removeLeadingNewlines`, `removeTrailingWhitespace`
+        let comment: Box<[u8]> = match self.saves_comment_text {
+            true => {
+                let text = self.comment_text.trim_ascii_end();
+                let newlines = text
+                    .iter()
+                    .take_while(|&&byte| byte == b'\r' || byte == b'\n')
+                    .count();
+                text[newlines..].into()
+            }
+            false => Box::default(),
+        };
         let ty = match self.nested_type_literal(ty, &name, target, indent) {
             Some(literal) => {
                 is_name_first = true;
@@ -1425,6 +1463,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             is_bracketed,
             is_name_first,
             ty,
+            comment,
         };
         Tag {
             kind: if target == PROPERTY {
@@ -1736,7 +1775,10 @@ impl<'p, 'a> Reader<'p, 'a> {
         if target & fits == 0 {
             return None;
         }
-        Some(self.parameter_or_property_tag(start, name, target, indent))
+        let saved = std::mem::replace(&mut self.saves_comment_text, true);
+        let tag = self.parameter_or_property_tag(start, name, target, indent);
+        self.saves_comment_text = saved;
+        Some(tag)
     }
 
     /// `parseModifiersEx`, before the name of a type parameter.

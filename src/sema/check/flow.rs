@@ -921,7 +921,7 @@ impl<'p> Checker<'p> {
 
     /// `tryGetElementAccessExpressionName`: the property `a[index]` names, if the syntax says, or a constant that stands for one name
     /// does. A key in parentheses of its own says nothing.
-    fn literal_key(&mut self, file: FileId, index: ExprId) -> Option<Atom> {
+    pub(super) fn literal_key(&mut self, file: FileId, index: ExprId) -> Option<Atom> {
         let hir = self.hir(file);
         if is_parenthesized(hir, index) {
             return None;

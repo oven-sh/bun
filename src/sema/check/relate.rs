@@ -6928,7 +6928,7 @@ impl<'p> Checker<'p> {
             TypeData::Synth(shape)
                 if matches!(
                     shape.literal,
-                    Literalness::OfUnknown | Literalness::AutoArray
+                    Literalness::OfUnknown | Literalness::AutoArray | Literalness::OfLiteralKeyof
                 ) =>
             {
                 false

@@ -2497,7 +2497,16 @@ impl Files {
                 }
             }
             for (i, module) in modules.iter_mut().enumerate() {
-                module.is_leaf = module.adds_nothing && !is_referred_to[i];
+                // `getAlternativeContainingModules` looks for a symbol among the exports of every module of the program.
+                let is_alternative_container = options.emits_declarations
+                    && (module.hir.stmts.iter()).any(|statement| {
+                        matches!(
+                            statement.kind,
+                            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }
+                        )
+                    });
+                module.is_leaf =
+                    module.adds_nothing && !is_referred_to[i] && !is_alternative_container;
             }
         }
         let mut include_errors = Vec::new();
@@ -2948,8 +2957,14 @@ impl Files {
                     continue;
                 };
                 let increases_depth = resolved.is_external_library_import;
+                // `GetResolutionDiagnostic`, `needAllowJs`: the file is not added, so it is not redirected either.
+                let needs_allow_js = is_javascript(&resolved.file_name)
+                    && !options.allow_js
+                    && options.no_implicit_any;
                 // `getParseFileRedirect`: the declaration file is read in place of a source of a referenced project.
-                if let Some(output) = of_program.parse_file_redirect(&resolved.file_name) {
+                if !needs_allow_js
+                    && let Some(output) = of_program.parse_file_redirect(&resolved.file_name)
+                {
                     if host.is_file(output) {
                         let brings_in = i < imported || !is_module_name;
                         imports.push((spec, mode, output.to_vec(), brings_in, increases_depth));

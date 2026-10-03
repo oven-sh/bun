@@ -1188,8 +1188,13 @@ impl<'h> Resolver<'h> {
                 found.push(pair);
             }
         };
+        // The imports of a file of a referenced project are resolved by the resolver of that project.
         let mut links = self.links.lock().clone();
+        for redirected in &self.redirected {
+            links.extend(redirected.links.lock().iter().cloned());
+        }
         links.sort();
+        links.dedup();
         for (link, real) in &links {
             note(real, link);
         }

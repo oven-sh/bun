@@ -1719,7 +1719,9 @@ impl<'p> Checker<'p> {
             // TypeScript has them by id, in the order `getSpreadType` made them: `mapType` goes through the left, and for each of its
             // members through the right.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
-                (Some((l, r)), Some((m, s))) => types(l, m).then_with(|| types(r, s)),
+                (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
+                    .then_with(|| types(l, m))
+                    .then_with(|| types(r, s)),
                 _ => match (x.single_signature_arguments, y.single_signature_arguments) {
                     (Some(x), Some(y)) => types(x, y),
                     (x, y) => y.is_some().cmp(&x.is_some()),

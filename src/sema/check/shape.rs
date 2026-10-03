@@ -3114,6 +3114,26 @@ impl<'p> Checker<'p> {
 
     /// `getSpreadType`: `{ ...left, ...right }`
     pub fn spread(&mut self, left: TypeId, right: TypeId) -> TypeId {
+        self.spread_ranked(left, right, &mut 0)
+    }
+
+    /// The members of the union `ty` in the order `mapType` visits them.
+    fn members_in_map_type_order(&self, ty: TypeId, members: &mut Vec<TypeId>) {
+        let types: &[TypeId] = match self.origin(ty) {
+            UnionOrigin::Union(origin) => origin,
+            _ => self.parts(ty),
+        };
+        for &member in types {
+            if self.is_union(member) {
+                self.members_in_map_type_order(member, members);
+            } else {
+                members.push(member);
+            }
+        }
+    }
+
+    /// `rank`: see `Shape::spread_rank`.
+    fn spread_ranked(&mut self, left: TypeId, right: TypeId, rank: &mut u32) -> TypeId {
         if self.is_any(left) || self.is_any(right) {
             return if left == TypeId::UNRESOLVED || right == TypeId::UNRESOLVED {
                 TypeId::UNRESOLVED
@@ -3135,12 +3155,11 @@ impl<'p> Checker<'p> {
             if !self.check_cross_product_union(&[left, right]) {
                 return TypeId::ERROR;
             }
-            // `mapType`: in the order of `CompareTypes`. What is made here is ordered by when it was made.
-            let spread: Vec<TypeId> = self
-                .parts(left)
-                .iter()
-                .copied()
-                .map(|p| self.spread(p, right))
+            let mut members = Vec::new();
+            self.members_in_map_type_order(left, &mut members);
+            let spread: Vec<TypeId> = members
+                .into_iter()
+                .map(|p| self.spread_ranked(p, right, rank))
                 .collect();
             return self.union(&spread);
         }
@@ -3149,11 +3168,11 @@ impl<'p> Checker<'p> {
             if !self.check_cross_product_union(&[left, right]) {
                 return TypeId::ERROR;
             }
-            let spread: Vec<TypeId> = self
-                .parts(right)
-                .iter()
-                .copied()
-                .map(|p| self.spread(left, p))
+            let mut members = Vec::new();
+            self.members_in_map_type_order(right, &mut members);
+            let spread: Vec<TypeId> = members
+                .into_iter()
+                .map(|p| self.spread_ranked(left, p, rank))
                 .collect();
             return self.union(&spread);
         }
@@ -3176,7 +3195,7 @@ impl<'p> Checker<'p> {
                 && self.is_non_generic_object_type(right)
             {
                 let mut parts = others.to_vec();
-                parts.push(self.spread(last, right));
+                parts.push(self.spread_ranked(last, right, rank));
                 return self.intersection(&parts);
             }
             return self.intersection(&[left, right]);
@@ -3357,6 +3376,8 @@ impl<'p> Checker<'p> {
             Literalness::WithSpread
         };
         b.shape.spread_of = Some((left, right));
+        b.shape.spread_rank = *rank;
+        *rank += 1;
         self.synth(b.shape)
     }
 

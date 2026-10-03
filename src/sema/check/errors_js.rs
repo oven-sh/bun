@@ -57,28 +57,6 @@ impl Checker<'_> {
         hir.check_directive != Some(false)
             && (!hir.is_js || self.is_plain_js(file) || self.is_check_js(file))
     }
-
-    /// `transformSourceFile` of the declaration transformer: 6424, on each `module.exports = ..` of a module that has several.
-    pub(super) fn check_module_exports_assignments(&mut self, file: FileId) {
-        let files = self.files();
-        if !self.hir(file).is_js || !files.options.emits_declarations {
-            return;
-        }
-        let Some(equals) = files.export(files.file_symbol(file), known::export_equals) else {
-            return;
-        };
-        let declarations = files.decls(equals);
-        if declarations.len() < 2 {
-            return;
-        }
-        for (of, declaration) in declarations {
-            if of == file
-                && let Some((start, end)) = self.error_range_of_declaration(file, declaration)
-            {
-                self.error_at((file, start, end), 6424, &[]);
-            }
-        }
-    }
 }
 
 impl Checker<'_> {

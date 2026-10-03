@@ -94,6 +94,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         jsdoc_comments,
         jsdoc_types,
         jsdoc_modifiers,
+        jsdoc_member_comments: _,
         jsdoc_param_errors,
         ids: _,
         numbers: _,

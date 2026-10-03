@@ -317,6 +317,20 @@ test("new File([file], name) does not rename the source", () => {
   expect([d.name, e.name]).toEqual(["d.txt", "e.txt"]);
 });
 
+// #43691
+test("new Blob([file]) is a Blob, not a File", async () => {
+  const file = new File(["hello"], "original.txt", { lastModified: 1000 });
+  const blob = new Blob([file]);
+  expect(blob instanceof File).toBe(false);
+  expect(blob).toBeInstanceOf(Blob);
+  expect((blob as any).name).toBeUndefined();
+  // a plain Blob prints neither a name nor a lastModified
+  expect(Bun.inspect(blob)).toBe("Blob (5 bytes)");
+  expect(await blob.text()).toBe("hello");
+  // the source is unchanged
+  expect([file.name, file.lastModified]).toEqual(["original.txt", 1000]);
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

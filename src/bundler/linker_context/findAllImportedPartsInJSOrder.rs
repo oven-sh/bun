@@ -246,10 +246,12 @@ impl WalkPlan {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
             let css = c.graph.ast.items_css();
-            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
+            // The second map: the chunks of `early_entry_files`, which have the key of their entry point's chunk.
+            let mut chunk_of_key: [StringHashMap<u32>; 2] = Default::default();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
-                    bun_core::handle_oom(chunk_of_key.put(
+                    let is_early = c.is_early_entry_file(chunk.entry_point.source_index());
+                    bun_core::handle_oom(chunk_of_key[usize::from(is_early)].put(
                         chunk.entry_bits().bytes(entry_points.len()),
                         chunk_index as u32,
                     ));
@@ -260,8 +262,9 @@ impl WalkPlan {
                 let file = source_index.get() as usize;
                 if c.graph.files_live.is_set(file)
                     && css[file].is_none()
-                    && let Some(&chunk_index) =
-                        chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
+                    && let Some(&chunk_index) = chunk_of_key
+                        [usize::from(c.is_early_entry_file(file as u32))]
+                    .get(file_entry_bits[file].bytes(entry_points.len()))
                 {
                     plan.chunk_of_file[file] = chunk_index;
                 }
@@ -881,7 +884,7 @@ fn reached_chunks_in_order(
             visited.set(source_index as usize);
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
-                entry_bits.eql(&file_entry_bits[source_index as usize])
+                chunk_of_file[source_index as usize] == chunk_index
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

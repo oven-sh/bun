@@ -741,10 +741,9 @@ The renamed symbols are then used during final code generation to produce output
 - Computes, per `import()` entry point, which other entry points are guaranteed to be loaded already whenever it loads
 - Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
-- Leaves an entry point's own chunk alone when the entry point has exports and with `--compile`
-- Folds nothing into an entry point without `[hash]` in its name: its host can load it as `entry.js?v=1`, so no other chunk may import from it
-- Folds that entry point's own chunk into the parent chunk of the class where the parent runs ahead of a file that it must follow (`Pin::Name`, `moving_entry_files_repairs_order`)
-- Does so only when nothing else changes its place: the two are all that evaluates code when the entry point loads (`order_can_matter`), the files read no `import.meta` and `import` no external module behind another file, no file has a direct `eval` or an `import` that tree shaking dropped, and both chunks are written into one directory (`entry_points_beside_chunks`)
+- Leaves an entry point's own chunk alone when the entry point has exports, with `--compile`, and for an entry point without `[hash]` in its name (its host can load it as `entry.js?v=1`, so no chunk may import it)
+- Gives the files of the last kind's own chunk that must run ahead of the parent chunk of the class a chunk of their own (`entry_files_ahead_of_parent`, `LinkerContext::early_entry_files`). It has the key of the entry point's chunk, so only that chunk imports it, in evaluation order
+- Does so only when nothing else changes its place: the entry point loads no other chunk that evaluates code (`order_can_matter`), the new chunk imports neither the entry point's chunk nor the parent, and it is written into the directory of the entry point's chunk (`entry_points_beside_chunks`)
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 

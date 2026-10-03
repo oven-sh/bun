@@ -621,14 +621,14 @@ Nothing folds into the chunk of an entrypoint whose name has no `[hash]`, which 
 
 The shared code goes into one hashed chunk next to the entrypoint, and that chunk runs before the code in `index.js`.
 
-That is too early when `index.js` imports a module of its own ahead of the shared code, such as a setup file that the shared code depends on. Bun then puts the entrypoint's own code into the hashed chunk too, in import order. `index.js` keeps none of the code and imports the chunk.
+That is too early when `index.js` imports a module of its own ahead of the shared code, such as a setup file that the shared code depends on. Bun puts such modules into a second hashed chunk, which `index.js` imports first.
 
-Bun moves the code only when nothing else changes. The entrypoint keeps its own code in `index.js` when:
+Bun does this only when nothing else changes. The modules stay in `index.js`, and run after the shared code, when for example:
 
 - the entrypoint has exports, is a CommonJS module, or the build uses `compile`
-- a module that only the entrypoint imports reads `import.meta`, or imports an [external](#external) package after another module
-- a module uses a direct `eval`, or tree shaking removed an `import` of a shared module
-- the entrypoint also loads code that is in neither place, such as a module that another entrypoint shares
+- the module is CommonJS, reads `import.meta`, uses a direct `eval`, or imports shared code itself
+- an [external](#external) package or a CommonJS module is imported ahead of it
+- the entrypoint also loads a module that another entrypoint shares
 - `naming` puts chunks and the entrypoint into different directories
 
 Entrypoints that an HTML file loads, and entrypoints with `[hash]` in `naming.entry`, fold the shared code into their own chunk.

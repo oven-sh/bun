@@ -151,13 +151,12 @@ impl LinkerContext<'_> {
     }
 }
 
-/// Which folds a group stays out of. Only an entry point's own chunk is pinned.
+/// A pinned group is neither merged nor merged into. Only an entry point's own chunk is pinned.
 #[derive(Clone, Copy, PartialEq)]
 enum Pin {
     None,
-    /// No chunk may import it, so it is never merged into. Rule 1 merges it into the parent of its class where that only repairs the order.
+    /// Only because no chunk may import it. See `entry_files_ahead_of_parent`.
     Name,
-    /// Neither merged nor merged into.
     Files,
 }
 
@@ -724,87 +723,139 @@ fn entries_loaded_mid_evaluation(
     Ok(loads)
 }
 
-/// The parent chunk runs first. Whether the load of `entry_file` evaluates a file that only this entry point loads
-/// (`is_own`) ahead of a file of the parent chunk (`is_in_parent`), and one chunk with both keeps every other file in its place.
-fn moving_entry_files_repairs_order(
+/// The parent chunk runs ahead of the entry point's own chunk. The files that only this entry point loads (`is_own`) and
+/// that its load evaluates ahead of every file of the parent (`is_in_parent`): a chunk of their own runs ahead of the parent.
+/// Empty, or short of a file, where that would change more than the order of these files and the parent.
+fn entry_files_ahead_of_parent(
     this: &LinkerContext,
     entry_file: u32,
     is_own: impl Fn(u32) -> bool,
     is_in_parent: impl Fn(u32) -> bool,
-) -> Result<bool, bun_alloc::AllocError> {
+) -> Result<Vec<u32>, bun_alloc::AllocError> {
     enum Frame {
         Enter(u32),
         Leave(u32),
     }
     let flags = this.graph.meta.items_flags();
+    let ast_flags = this.graph.ast.items_flags();
     let import_records = this.graph.ast.items_import_records();
     let module_scopes = this.graph.ast.items_module_scope();
+    let is_import = |record: &bun_ast::ImportRecord| {
+        record.kind == ImportKind::Stmt && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+    };
     let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
-    let mut own_file_ran = false;
-    let mut parent_file_ran = false;
-    let mut repairs = false;
+    let mut is_early = AutoBitSet::init_empty(this.graph.files.len())?;
+    let mut early: Vec<u32> = Vec::new();
+    let mut runs_something = false;
+    // No later file may run ahead of one that stays.
+    let mut open = true;
+    let mut parent_follows = false;
+    // Each runs something ahead of an early file, so it must be early too.
+    let mut must_be_early: Vec<u32> = Vec::new();
     let mut stack = vec![Frame::Enter(entry_file)];
     while let Some(frame) = stack.pop() {
-        match frame {
+        let file = match frame {
             Frame::Enter(file) => {
                 if entered.is_set(file as usize) || !this.graph.files_live.is_set(file as usize) {
                     continue;
-                }
-                // It reads top-level names, and one chunk renames those that two files declare.
-                if module_scopes[file as usize].contains_direct_eval {
-                    return Ok(false);
-                }
-                // An external `import` runs ahead of its whole chunk. That is its place only ahead of every file of the parent.
-                if is_own(file) && file != Index::RUNTIME.value() {
-                    let mut follows_a_file = parent_file_ran;
-                    for record in import_records[file as usize].iter() {
-                        if record.kind != ImportKind::Stmt
-                            || record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                        {
-                            continue;
-                        }
-                        if record.source_index.is_valid() {
-                            follows_a_file = true;
-                        } else if follows_a_file && !record.path.is_disabled {
-                            return Ok(false);
-                        }
-                    }
                 }
                 entered.set(file as usize);
                 stack.push(Frame::Leave(file));
                 let mark = stack.len();
                 this.for_each_file_loaded_by(file, |other| stack.push(Frame::Enter(other)));
-                // Tree shaking dropped the `import`, so the chunk has that file later than here, maybe behind a file of the entry point.
-                if import_records[file as usize].iter().any(|record| {
-                    record.kind == ImportKind::Stmt
+                // Tree shaking dropped the `import`, so this walk has that file later than the source has it.
+                if open
+                    && import_records[file as usize].iter().any(|record| {
+                    is_import(record)
                         && record.source_index.is_valid()
-                        && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
                         && this.graph.files_live.is_set(record.source_index.get() as usize)
                         && !entered.is_set(record.source_index.get() as usize)
                         && !is_own(record.source_index.get())
                         && !stack[mark..].iter().any(
                             |frame| matches!(frame, Frame::Enter(other) if *other == record.source_index.get()),
                         )
-                }) {
-                    return Ok(false);
+                })
+                {
+                    return Ok(Vec::new());
                 }
                 stack[mark..].reverse();
+                continue;
             }
-            Frame::Leave(file) => {
-                if is_own(file) {
-                    // The file that imports a wrapped file starts it there.
-                    own_file_ran |= file != entry_file
-                        && file != Index::RUNTIME.value()
-                        && (flags[file as usize].wrap != WrapKind::None
-                            || !this.loading_file_has_no_side_effects(file));
-                } else if is_in_parent(file) && this.order_can_matter(file) {
-                    parent_file_ran = true;
-                    repairs |= own_file_ran;
-                }
-            }
+            Frame::Leave(file) => file,
+        };
+        if file == Index::RUNTIME.value() {
+            continue;
         }
+        let ancestors = || {
+            stack.iter().rev().filter_map(|frame| match *frame {
+                Frame::Leave(ancestor) => Some(ancestor),
+                Frame::Enter(_) => None,
+            })
+        };
+        if !is_own(file) {
+            if is_in_parent(file) && this.order_can_matter(file) {
+                parent_follows = true;
+                break;
+            }
+            // The file that imports a wrapped file starts it there.
+            if open
+                && flags[file as usize].wrap != WrapKind::None
+                && let Some(importer) = ancestors().next().filter(|&importer| is_own(importer))
+            {
+                must_be_early.push(importer);
+            }
+            continue;
+        }
+        // The chunk is elsewhere and runs ahead of `__chunks()`. It imports neither the entry point's chunk, which no chunk
+        // may, nor the parent, which would run first. A wrapped file runs where it is called.
+        if !open {
+            continue;
+        }
+        let mut can_move = file != entry_file
+            && flags[file as usize].wrap == WrapKind::None
+            && !ast_flags[file as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+            && !module_scopes[file as usize].contains_direct_eval
+            && !(this.module_preload()
+                && import_records[file as usize]
+                    .iter()
+                    .any(|record| record.kind == ImportKind::Dynamic));
+        this.for_each_file_loaded_by(file, |other| {
+            can_move &= is_early.is_set(other as usize) || !(is_own(other) || is_in_parent(other));
+        });
+        if !can_move {
+            open = false;
+            continue;
+        }
+        // An external `import` runs ahead of its whole chunk, so it ran ahead of this file.
+        let mut child = file;
+        for ancestor in ancestors() {
+            if import_records[ancestor as usize]
+                .iter()
+                .filter(|record| is_import(record))
+                .take_while(|record| record.source_index.get() != child)
+                .any(|record| !record.source_index.is_valid() && !record.path.is_disabled)
+            {
+                must_be_early.push(ancestor);
+            }
+            child = ancestor;
+        }
+        if must_be_early.contains(&entry_file) {
+            open = false;
+            continue;
+        }
+        is_early.set(file as usize);
+        early.push(file);
+        runs_something |= !this.loading_file_has_no_side_effects(file);
     }
-    Ok(repairs)
+    if !runs_something
+        || !parent_follows
+        || must_be_early
+            .iter()
+            .any(|&file| file != entry_file && !is_early.is_set(file as usize))
+    {
+        early.clear();
+    }
+    Ok(early)
 }
 
 /// Folds code-splitting chunks into other chunks where that is unobservable,
@@ -846,8 +897,7 @@ fn moving_entry_files_repairs_order(
 ///
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
-/// cross-chunk imports) sees the merged layout. Returns the entry points
-/// (by id) whose own chunk it merged into the parent of their class (`Pin::Name`).
+/// cross-chunk imports) sees the merged layout. Returns `LinkerContext::early_entry_files`.
 /// `beside_chunks`: the entry points whose chunk is written into the directory
 /// of the chunks that are no entry point's.
 pub(crate) fn merge_small_chunks(
@@ -855,7 +905,7 @@ pub(crate) fn merge_small_chunks(
     temp: &Arena,
     min_chunk_size: u64,
     beside_chunks: &AutoBitSet,
-) -> crate::Result<AutoBitSet> {
+) -> crate::Result<Option<AutoBitSet>> {
     let _trace = bun_core::perf::trace("Bundler.mergeSmallChunks");
     debug_assert!(this.graph.code_splitting);
 
@@ -864,20 +914,19 @@ pub(crate) fn merge_small_chunks(
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let kinds = this.graph.files.items_entry_point_kind();
     let fold_pure = min_chunk_size > 0;
-    let mut files_in_parent = AutoBitSet::init_empty(entry_points_len)?;
+    let mut early_entry_files: Option<AutoBitSet> = None;
     if !fold_pure
         && !entry_source_indices
             .iter()
             .any(|&source_index| kinds[source_index as usize] == EntryPoint::Kind::DynamicImport)
     {
-        return Ok(files_in_parent);
+        return Ok(early_entry_files);
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
     let parts = this.graph.ast.items_parts();
     let flags = this.graph.meta.items_flags();
-    let ast_flags = this.graph.ast.items_flags();
     let file_entry_bits = this.graph.files.items_entry_bits();
     let files_len = this.graph.files.len();
 
@@ -1107,7 +1156,6 @@ pub(crate) fn merge_small_chunks(
     let host_names_url = |source_index: usize| {
         !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
     };
-    let export_stars = this.graph.ast.items_export_star_import_records();
     let entry_chunk_pin = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
         if (!is_dynamic_entry(entry_id) && this.options.compile_mode.is_executable())
@@ -1118,11 +1166,8 @@ pub(crate) fn merge_small_chunks(
             Pin::Files
         } else if is_dynamic_entry(entry_id) || !host_names_url(source_index) {
             Pin::None
-        } else if export_stars[source_index].is_empty() {
-            Pin::Name
         } else {
-            // `export * from "external"` adds no alias. It is printed with the file.
-            Pin::Files
+            Pin::Name
         }
     };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
@@ -1191,13 +1236,6 @@ pub(crate) fn merge_small_chunks(
         group.size += size;
         group.pure &= pure;
         group.order_can_matter |= this.order_can_matter(source_index);
-        // `import.meta` describes the chunk that holds it.
-        if group.pin == Pin::Name
-            && source_index != Index::RUNTIME.value()
-            && ast_flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-        {
-            group.pin = Pin::Files;
-        }
         if group.target != Some(target) {
             group.target = None;
         }
@@ -1318,9 +1356,6 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
-        // One chunk runs what it imports first. So the files of the entry point go into the parent only when they
-        // and the parent are all that runs, and only when the parent runs ahead of one of them that it must follow.
-        let mut takes_entry_files = false;
         if let Some(&own) = members
             .iter()
             .find(|&&i| groups.values()[i].pin == Pin::Name)
@@ -1330,26 +1365,36 @@ pub(crate) fn merge_small_chunks(
             let joins_parent = |i: usize| {
                 unpinned().any(|member| member == i) && groups[i].target == Some(target_platform)
             };
-            takes_entry_files = beside_chunks.is_set(entry_id)
+            // Another chunk that evaluates code has its place among the imports of the entry point, by its first file alone.
+            if beside_chunks.is_set(entry_id)
                 && groups.iter().enumerate().all(|(i, group)| {
                     i == own
                         || !group.order_can_matter
                         || !group.bits.is_set(entry_id)
                         || joins_parent(i)
                 })
-                && moving_entry_files_repairs_order(
+            {
+                for file in entry_files_ahead_of_parent(
                     this,
                     entry_source_indices[entry_id],
                     |file| group_of_file[file as usize] == own,
                     |file| joins_parent(group_of_file[file as usize]),
-                )?;
+                )? {
+                    if early_entry_files.is_none() {
+                        early_entry_files = Some(AutoBitSet::init_empty(this.graph.files.len())?);
+                    }
+                    early_entry_files
+                        .as_mut()
+                        .expect("set above")
+                        .set(file as usize);
+                }
+            }
         }
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index
-                || group.pin == Pin::Files
+                || group.pin != Pin::None
                 || group.target != Some(target_platform)
-                || (group.pin == Pin::Name && !takes_entry_files)
             {
                 continue;
             }
@@ -1359,9 +1404,6 @@ pub(crate) fn merge_small_chunks(
                     bstr::BStr::new(sources[group.first_source as usize].path.pretty)
                 );
                 continue;
-            }
-            if group.pin == Pin::Name {
-                files_in_parent.set(group.bits.find_first_set().expect("one bit set"));
             }
             fold(groups.values_mut(), member, target_index);
             folded_same += 1;
@@ -1373,7 +1415,7 @@ pub(crate) fn merge_small_chunks(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
         );
-        return Ok(files_in_parent);
+        return Ok(early_entry_files);
     }
 
     // An `import()` entry every load path of which passes through entry `e`
@@ -1768,7 +1810,7 @@ pub(crate) fn merge_small_chunks(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
     );
-    Ok(files_in_parent)
+    Ok(early_entry_files)
 }
 
 fn rekey_files(

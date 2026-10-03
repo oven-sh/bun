@@ -6199,8 +6199,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.lower_import_meta_main_for_node_js {
             self.record_usage_of_runtime_require();
         }
-        // Also made from `require.main === module`. The CommonJS wrapper of the runtime counts its arguments by this flag.
-        self.has_import_meta |= self.options.bundle;
         Expr {
             loc,
             data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }),

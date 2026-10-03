@@ -1318,8 +1318,6 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    /// The chunk that holds this entry point's files, when `merge_small_chunks` moved them out of this chunk.
-    pub(crate) parent_chunk: Option<u32>,
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with
     /// side effects: the order the unbundled modules would run them in.

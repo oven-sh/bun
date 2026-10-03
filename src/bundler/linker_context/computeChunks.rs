@@ -375,7 +375,7 @@ pub(crate) fn compute_chunks(
             }
         }
     }
-    let files_in_parent = if code_splitting && this.options.fold_chunks {
+    if code_splitting && this.options.fold_chunks {
         // A build with chunks for two targets has two sets of names.
         let beside_chunks = if could_be_browser_target_from_server_build || has_server_html_imports
         {
@@ -390,10 +390,8 @@ pub(crate) fn compute_chunks(
             entry_points_beside_chunks(this, &options.entry_naming, &options.chunk_naming)?
         };
         let min_chunk_size = this.options.min_chunk_size;
-        merge_small_chunks(this, temp, min_chunk_size, &beside_chunks)?
-    } else {
-        AutoBitSet::init_empty(this.graph.entry_points.len())?
-    };
+        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size, &beside_chunks)?;
+    }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 
@@ -422,6 +420,7 @@ pub(crate) fn compute_chunks(
     };
 
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
+    let early_entry_files = this.early_entry_files.as_ref();
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
@@ -440,8 +439,15 @@ pub(crate) fn compute_chunks(
                         if !contributes_code.is_set(source_index.get() as usize) {
                             continue;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let is_early = early_entry_files
+                            .is_some_and(|files| files.is_set(source_index.get() as usize));
+                        let js_chunk_key: &[u8] = temp.alloc_slice_copy(
+                            &[
+                                entry_bits.bytes(this.graph.entry_points.len()),
+                                &[1][..usize::from(is_early)],
+                            ]
+                            .concat(),
+                        );
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
@@ -656,25 +662,6 @@ pub(crate) fn compute_chunks(
             entry_point_chunk_indices[chunk.entry_point.source_index() as usize] =
                 u32::try_from(chunk_id).expect("int cast");
         }
-    }
-
-    for chunk_index in 0..chunks.len() {
-        let entry_point = chunks[chunk_index].entry_point;
-        if !entry_point.is_entry_point()
-            || !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_))
-            || !files_in_parent.is_set(entry_point.entry_point_id() as usize)
-        {
-            continue;
-        }
-        let bits = &this.graph.files.items_entry_bits()[entry_point.source_index() as usize];
-        // `None`: no file of the parent prints code, so it has no chunk.
-        let parent = chunks.iter().position(|chunk| {
-            !chunk.entry_point.is_entry_point()
-                && matches!(chunk.content, chunk::Content::Javascript(_))
-                && chunk.entry_bits().eql(bits)
-        });
-        chunks[chunk_index].content.javascript_mut().parent_chunk =
-            parent.map(|parent| parent as u32);
     }
 
     // Determine the order of JS files (and parts) within the chunk ahead of time

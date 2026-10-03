@@ -2551,6 +2551,8 @@ impl From<ToUTF16Error> for crate::CrateError {
 /// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
 /// U+FFFD. When `sentinel` is set the result
 /// includes a trailing 0 u16.
+///
+/// Reads `bytes` twice: copy a SharedArrayBuffer before calling.
 pub fn to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,
@@ -2582,9 +2584,10 @@ pub fn to_utf16_alloc(
         )
     };
     if res.is_successful() && out_length > 0 {
-        // SAFETY: on success simdutf has initialised exactly `out_length` u16s
-        // at the start of `out`'s allocation, and `out_length <= capacity`.
-        unsafe { out.set_len(out_length) };
+        // Commit what simdutf wrote, not what the length pass predicted.
+        let written = res.count.min(out.capacity());
+        // SAFETY: simdutf initialised `res.count` u16s and `written <= capacity`.
+        unsafe { out.set_len(written) };
         if sentinel {
             out.push(0);
         }

@@ -622,6 +622,8 @@ describe("bundler", () => {
       expect(outputsWith(api, `"index"`)).toEqual(["index.js"]);
       // The chunk with store.js imports nothing, so it loads without setup.js.
       api.expectFile("/out/" + chunkContaining(api, "class Store")).not.toContain("import");
+      // Node takes a .js file without `import` or `export` for CommonJS, which is not strict.
+      api.expectFile("/out/" + chunkContaining(api, "globalThis.APP = ")).toMatch(/export\s*\{\s*\}/);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["index.entry.js", "settings.js"]);
@@ -679,6 +681,29 @@ describe("bundler", () => {
     onAfterBundle: noChunkImportsIndex,
     run: { file: "/out/index.js", stdout: "util\nsetup\next\nafter 1\nindex the app the app true\nsettings the app" },
   });
+  // The `import` of such a package counts where it is, not where its binding is used.
+  itBundled("splitting/PackageWithoutSideEffectsRunsBeforeEntrySetupImport", {
+    files: {
+      ...setupBeforeShared,
+      "/index.js": /* js */ `
+        import { registry } from "pure";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name, registry.size);
+        import("./settings.js");
+      `,
+      "/setup.js": `globalThis.REGISTRY.set("a", 1); globalThis.APP = { name: "app" };`,
+      "/node_modules/pure/package.json": `{ "name": "pure", "sideEffects": false }`,
+      "/node_modules/pure/index.js": `export * from "./registry.js";`,
+      "/node_modules/pure/registry.js": `export const registry = (globalThis.REGISTRY ??= new Map());`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app 1\nsettings app" },
+  });
   itBundled("splitting/EntrySetupImportThatThrowsLeavesSharedCodeToLazyChunk", {
     files: {
       ...setupBeforeShared,
@@ -722,7 +747,15 @@ describe("bundler", () => {
   };
   for (const [name, files, options] of [
     ["ReadsImportMeta", { "/setup.js": `globalThis.APP = { name: import.meta.file };` }, {}],
-    ["HasDirectEval", { "/setup.js": `globalThis.APP = { name: eval("'app'") };` }, {}],
+    ["HasDirectEval", { "/setup.js": `export const name = eval("'app'"); globalThis.APP = { name };` }, {}],
+    [
+      "RequiresSplitModule",
+      {
+        "/setup.js": `export {}; globalThis.APP = { name: "app" }; require("./required.js");`,
+        "/required.js": `console.log("required"); export const r = 1;`,
+      },
+      {},
+    ],
     ["IsCommonJS", { "/setup.js": `globalThis.APP = { name: "app" }; module.exports = {};` }, {}],
     [
       "HasImportCallInBrowserBuild",
@@ -745,6 +778,26 @@ describe("bundler", () => {
       {
         "/index.js": `import "./meta.js";\n` + setupBeforeShared["/index.js"],
         "/meta.js": `console.log(import.meta.url);`,
+      },
+      {},
+    ],
+    [
+      "FollowsCommonJSFile",
+      {
+        "/index.js": `import "./first.cjs";\n` + setupBeforeShared["/index.js"],
+        "/first.cjs": `console.log("first"); module.exports = {};`,
+        "/admin.js": `import "./admin.cjs";`,
+        "/admin.cjs": `console.log("admin"); module.exports = {};`,
+      },
+      { entryPoints: ["/index.js", "/admin.js"] },
+    ],
+    [
+      "FollowsSharedPackageWithoutSideEffects",
+      {
+        "/index.js": `import { v } from "pure"; console.log(v);\n` + setupBeforeShared["/index.js"],
+        "/settings.js": `import { v } from "pure"; console.log(v);\n` + setupBeforeShared["/settings.js"],
+        "/node_modules/pure/package.json": `{ "name": "pure", "sideEffects": false }`,
+        "/node_modules/pure/index.js": `export const v = typeof APP;`,
       },
       {},
     ],

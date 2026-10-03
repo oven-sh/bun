@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
+use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
 use crate::linker_context_mod::debug;
 use crate::options::{Loader, Target};
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
@@ -756,34 +757,24 @@ fn entry_files_ahead_of_parent(
     while let Some(frame) = stack.pop() {
         let file = match frame {
             Frame::Enter(file) => {
-                if entered.is_set(file as usize) || !this.graph.files_live.is_set(file as usize) {
+                if entered.is_set(file as usize) {
                     continue;
                 }
                 entered.set(file as usize);
                 stack.push(Frame::Leave(file));
                 let mark = stack.len();
-                this.for_each_file_loaded_by(file, |other| stack.push(Frame::Enter(other)));
-                // Tree shaking dropped the `import`, so this walk has that file later than the source has it.
-                if open
-                    && import_records[file as usize].iter().any(|record| {
-                    is_import(record)
-                        && record.source_index.is_valid()
-                        && this.graph.files_live.is_set(record.source_index.get() as usize)
-                        && !entered.is_set(record.source_index.get() as usize)
-                        && !is_own(record.source_index.get())
-                        && !stack[mark..].iter().any(
-                            |frame| matches!(frame, Frame::Enter(other) if *other == record.source_index.get()),
-                        )
-                })
-                {
-                    return Ok(Vec::new());
-                }
+                let runs = this.graph.files_live.is_set(file as usize);
+                for_each_edge(this, file, runs, |_, edge| {
+                    if let Edge::Import(other) = edge {
+                        stack.push(Frame::Enter(other));
+                    }
+                });
                 stack[mark..].reverse();
                 continue;
             }
             Frame::Leave(file) => file,
         };
-        if file == Index::RUNTIME.value() {
+        if file == Index::RUNTIME.value() || !this.graph.files_live.is_set(file as usize) {
             continue;
         }
         let ancestors = || {
@@ -800,13 +791,15 @@ fn entry_files_ahead_of_parent(
             // The file that imports a wrapped file starts it there.
             if open
                 && flags[file as usize].wrap != WrapKind::None
-                && let Some(importer) = ancestors().next().filter(|&importer| is_own(importer))
+                && let Some(importer) = ancestors()
+                    .find(|&ancestor| this.graph.files_live.is_set(ancestor as usize))
+                    .filter(|&importer| is_own(importer))
             {
                 must_be_early.push(importer);
             }
             continue;
         }
-        // The chunk is elsewhere and runs ahead of `__chunks()`. It imports neither the entry point's chunk, which no chunk
+        // The chunk is elsewhere and runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the entry point's chunk, which no chunk
         // may, nor the parent, which would run first. A wrapped file runs where it is called.
         if !open {
             continue;
@@ -815,10 +808,10 @@ fn entry_files_ahead_of_parent(
             && flags[file as usize].wrap == WrapKind::None
             && !ast_flags[file as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
             && !module_scopes[file as usize].contains_direct_eval
-            && !(this.module_preload()
-                && import_records[file as usize]
-                    .iter()
-                    .any(|record| record.kind == ImportKind::Dynamic));
+            && !import_records[file as usize].iter().any(|record| {
+                this.is_external_dynamic_import(record, file)
+                    && (this.module_preload() || record.kind == ImportKind::Require)
+            });
         this.for_each_file_loaded_by(file, |other| {
             can_move &= is_early.is_set(other as usize) || !(is_own(other) || is_in_parent(other));
         });

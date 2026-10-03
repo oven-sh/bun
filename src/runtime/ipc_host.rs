@@ -136,8 +136,9 @@ pub(crate) fn do_send(
     if message.is_undefined() {
         return Err(global_object.throw_missing_arguments_value(&["message"]));
     }
+    // node checks `typeof message`, and a function is an object to `is_object()`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L780-L786
     if !message.is_string()
-        && !message.is_object()
+        && !(message.is_object() && !message.is_callable())
         && !message.is_number()
         && !message.is_boolean()
         && !message.is_null()

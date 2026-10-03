@@ -1721,7 +1721,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
       // The request assertions below need a cache of their own per project: the
       // environment's cache dir takes precedence over bunfig, and a package
       // extracted there by one of the concurrent tests is not downloaded again.
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir(cwd) },
       stdout: "pipe",
       stderr: "pipe",
       // Only matters if an install never returns.
@@ -1730,6 +1730,19 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
     return { out, err };
+  }
+
+  function cacheDir(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  // How many manifests the project's installs have written to its cache. The
+  // entries are written by a thread pool task that bun install does not wait
+  // for before exiting (`save_async` in src/install/npm.rs), so the last
+  // manifest an install fetches is occasionally missing. An install that has
+  // to fetch it again writes it again.
+  function cachedManifests(cwd: string) {
+    return Array.from(new Bun.Glob("*.npm").scanSync(cacheDir(cwd))).length;
   }
 
   it.concurrent("declared by a registry package", async () => {
@@ -1767,6 +1780,16 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await install(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+
+    // The resolve below needs both manifests cached. peer-target's was the last
+    // thing the first install fetched, and nothing was left to do after it, so
+    // its entry is the one that is occasionally missing (see cachedManifests);
+    // resolving without the lockfile fetches and writes it again.
+    for (let retries = 5; retries > 0 && cachedManifests(String(dir)) < 2; retries--) {
+      await rm(lockfilePath);
+      await install(String(dir));
+    }
+    expect(cachedManifests(String(dir))).toBe(2);
 
     // Resolve from scratch again. Both manifests are cached now, so the peer
     // is looked up synchronously instead of through a network task.

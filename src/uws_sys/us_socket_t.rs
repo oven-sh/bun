@@ -388,7 +388,13 @@ impl us_socket_t {
                 }
             }
         };
-        bun_core::scoped_log!(uws, "write_shortened({:p}, {}) = {}", self, request, written);
+        bun_core::scoped_log!(
+            uws,
+            "write_shortened({:p}, {}) = {}",
+            self,
+            request,
+            written
+        );
         if written == request {
             c::us_socket_sendfile_needs_more(self);
         }

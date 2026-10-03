@@ -2686,6 +2686,19 @@ describe.skipIf(isWindows)("Bun.file().stream() over a device the event loop can
     expect(bytes).toEqual(new Uint8Array(length));
   });
 
+  // A native sink reads through `read()`, a JS reader through `read_into()`.
+  it("is uploaded as a fetch() body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(String((await req.bytes()).length)),
+    });
+    const upload = body => fetch(server.url, { method: "POST", body }).then(res => res.text());
+    expect({
+      zero: await upload(Bun.file("/dev/zero").slice(0, 300_000).stream()),
+      null: await upload(Bun.file("/dev/null").stream()),
+    }).toEqual({ zero: "300000", null: "0" });
+  });
+
   it("the process exits with a stream left unfinished", async () => {
     await using proc = Bun.spawn({
       cmd: [

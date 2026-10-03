@@ -119,6 +119,42 @@ test.concurrent("onmessage/onerror assignment through a Proxy of globalThis", as
   expect(exitCode).toBe(0);
 });
 
+// isTrusted is an own accessor of every event, with no setter, and it is not configurable.
+test.concurrent("a Proxy of an event checks its traps against isTrusted", async () => {
+  const script = `
+    const results = {};
+    for (const event of [new Event("a"), new MessageEvent("b")]) {
+      const name = event.constructor.name;
+      const attempt = (trap, fn) => {
+        try {
+          results[name + "." + trap] = fn();
+        } catch (error) {
+          results[name + "." + trap] = error.constructor.name;
+        }
+      };
+      attempt("has", () => "isTrusted" in new Proxy(event, { has: () => false }));
+      attempt("set", () => Reflect.set(new Proxy(event, { set: () => true }), "isTrusted", true));
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    results: {
+      "Event.has": "TypeError",
+      "Event.set": "TypeError",
+      "MessageEvent.has": "TypeError",
+      "MessageEvent.set": "TypeError",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("worker: onmessage assignment through a Proxy of self", async () => {
   using dir = tempDir("worker-proxy-onmessage", {
     "worker.js": `

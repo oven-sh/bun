@@ -15,6 +15,34 @@ test("hasNonReifiedStatic", () => {
   expect(hasNonReifiedStatic(Bun)).toBe(false);
 });
 
+test("a Proxy of Bun checks its get trap before anything has constructed a property of Bun", async () => {
+  // Bun.version is not writable and not configurable, so a get trap has to return its value. The check used to
+  // start only once a property like it had been constructed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let version;
+       try {
+         version = new Proxy(Bun, { get: () => 42 }).version;
+       } catch (error) {
+         version = error.constructor.name;
+       }
+       const { hasNonReifiedStatic } = require("bun:internal-for-testing");
+       console.log(JSON.stringify({ version, stillLazy: hasNonReifiedStatic(Bun) }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { version: "TypeError", stillLazy: true },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("require('bun')", () => {
   const str = eval("'bun'");
   expect(require(str)).toBe(Bun);

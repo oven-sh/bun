@@ -129,12 +129,16 @@ isTrusted  jsEvent_isTrusted  DontDelete|ReadOnly|CustomAccessor|DOMAttribute
 
 // The generated .lut.h defines JSEventTable with nullptr for classForThis,
 // but DOMAttribute properties require it for type checking. Rename the
-// generated table and redefine it with the correct classForThis.
+// generated table and copy it with the correct classForThis.
 #define JSEventTable JSEventTable_GENERATED
 #include "JSEvent.lut.h"
 #undef JSEventTable
 
-static const HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
+static constexpr HashTable JSEventTable = [] {
+    HashTable table = JSEventTable_GENERATED;
+    table.classForThis = JSEvent::info();
+    return table;
+}();
 /* Hash table for constructor */
 
 static const HashTableValue JSEventConstructorTableValues[] = {

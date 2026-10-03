@@ -805,6 +805,134 @@ it("process exitCode range (#6284)", () => {
   expect(stdout.toString().trim()).toBe("PASS");
 });
 
+// The accessors of process are entries of a static table. An assignment finds their setters only when the Structure
+// of process says that the table has accessors, which used to hold by accident: the prototype of process has one.
+describe("the accessors of process after its prototype is replaced", () => {
+  const assign = `
+    const argv = ["a", "b"];
+    process.title = "assigned";
+    process.argv = argv;
+    process.execArgv = ["--x"];
+    process.debugPort = 9230;
+    process.exitCode = 2;
+    process.exitCode += 1;
+    new Function("process.exitCode = process.exitCode + 1")();
+    const reflected = Reflect.set(process, "exitCode", process.exitCode + 1);
+    Object.assign(process, { exitCode: process.exitCode + 1 });
+    const result = {
+      title: process.title,
+      argv: process.argv === argv,
+      execArgv: process.execArgv,
+      debugPort: process.debugPort,
+      reflected,
+      exitCode: process.exitCode,
+    };
+  `;
+  const assigned = { title: "assigned", argv: true, execArgv: ["--x"], debugPort: 9230, reflected: true, exitCode: 6 };
+
+  it.concurrent.each([
+    ["an empty object", `Object.setPrototypeOf(process, {});`],
+    ["null", `Object.setPrototypeOf(process, null);`],
+    ["EventEmitter.prototype", `Object.setPrototypeOf(process, require("node:events").prototype);`],
+    ["an assignment to __proto__", `process.__proto__ = {};`],
+  ])("by %s", async (_, replace) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${replace}\n${assign}\nconsole.log(JSON.stringify(result));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      result: assigned,
+      stderr: "",
+      exitCode: 6,
+    });
+  });
+
+  it.concurrent("in a Worker", async () => {
+    using dir = tempDir("process-accessors-worker", {
+      "worker.js": `
+        Object.setPrototypeOf(process, {});
+        process.title = "assigned";
+        process.exitCode = 2;
+        process.exitCode += 1;
+        postMessage({ title: process.title, exitCode: process.exitCode });
+      `,
+      "index.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        worker.onmessage = event => {
+          console.log(JSON.stringify(event.data));
+          worker.terminate();
+        };
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      result: { title: "assigned", exitCode: 3 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+it("a Proxy of process checks its traps against the properties of process that are not configurable", async () => {
+  // process.exitCode is not configurable. Nothing reads a property of process first: the check used to start
+  // only once one of those properties had been constructed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      "use strict";
+      const results = {};
+      const attempt = (name, fn) => {
+        try {
+          results[name] = fn();
+        } catch (error) {
+          results[name] = error.constructor.name;
+        }
+      };
+      attempt("has", () => "exitCode" in new Proxy(process, { has: () => false }));
+      attempt("deleteProperty", () => delete new Proxy(process, { deleteProperty: () => true }).exitCode);
+      attempt("getOwnPropertyDescriptor", () =>
+        Object.getOwnPropertyDescriptor(new Proxy(process, { getOwnPropertyDescriptor: () => undefined }), "exitCode"),
+      );
+      attempt("ownKeys", () => Reflect.ownKeys(new Proxy(process, { ownKeys: () => [] })).length);
+      attempt("defineProperty", () =>
+        Reflect.defineProperty(new Proxy(process, { defineProperty: () => true }), "exitCode", { configurable: true, value: 1 }),
+      );
+      // process.title is configurable, so a trap can say that it does not exist.
+      attempt("hasConfigurable", () => "title" in new Proxy(process, { has: () => false }));
+      console.log(JSON.stringify(results));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    results: {
+      has: "TypeError",
+      deleteProperty: "TypeError",
+      getOwnPropertyDescriptor: "TypeError",
+      ownKeys: "TypeError",
+      defineProperty: "TypeError",
+      hasConfigurable: false,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.exit", () => {
   const { exitCode, stdout } = spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "process-exit-fixture.js")],

@@ -26,6 +26,39 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
   });
 
+  test("a Proxy of Module checks its traps against Module.prototype", async () => {
+    // Module.prototype is not configurable. Nothing reads a property of Module first: the check used to start
+    // only once such a property had been constructed.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `"use strict";
+         const Module = process.getBuiltinModule("node:module");
+         const results = {};
+         const attempt = (name, fn) => {
+           try {
+             results[name] = fn();
+           } catch (error) {
+             results[name] = error.constructor.name;
+           }
+         };
+         attempt("has", () => "prototype" in new Proxy(Module, { has: () => false }));
+         attempt("deleteProperty", () => delete new Proxy(Module, { deleteProperty: () => true }).prototype);
+         console.log(JSON.stringify(results));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      results: { has: "TypeError", deleteProperty: "TypeError" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });

@@ -7,6 +7,24 @@ const platform = process.env.TARGET_PLATFORM ?? process.platform;
 
 const create_hash_table = path.join(import.meta.dirname, "./create_hash_table");
 
+/**
+ * JSC sets the flags of a class's Structure from `HashTable::seenPropertyAttributes`, which has to be the union of
+ * the attributes of the table's rows. WebKit's create_hash_table prints a bool there and ours is re-synced from it,
+ * so the compiler checks the field of every generated table against the rows.
+ */
+function seenPropertyAttributesCheck(table: string, values: string): string {
+  return `static_assert(${table}.seenPropertyAttributes == [] {
+    unsigned seen = 0;
+    for (auto& row : ${values}) {
+        seen |= row.m_attributes;
+        if (!(row.m_attributes & (PropertyAttribute::CustomAccessor | PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyPropertyOrConstant)))
+            seen |= static_cast<unsigned>(PropertyAttribute::CustomValue);
+    }
+    return static_cast<uint8_t>(seen);
+}(), "${table}.seenPropertyAttributes is not the union of the attributes of its rows: src/codegen/create_hash_table has to print that union");
+`;
+}
+
 /** Writes to `output` the JSC hash tables for the `@begin ... @end` blocks in `input`. */
 export function createHashTable(input: string, output: string): void {
   const input_text = readFileSync(input, "utf8");
@@ -38,6 +56,23 @@ export function createHashTable(input: string, output: string): void {
   str = str.replaceAll(`} // namespace JSC`, "");
   str = str.replaceAll(/NativeFunctionType,\s([a-zA-Z0-99_]+)/gm, "NativeFunctionType, &$1");
   str = str.replaceAll("&Generated::", "Generated::");
+
+  // constexpr, so that the rows and the table can be read at compile time.
+  str = str.replaceAll("static constinit const struct HashTableValue ", "static constexpr struct HashTableValue ");
+  const tables = str.split("static constinit const struct HashTable ").length - 1;
+  let checks = 0;
+  str = str.replaceAll(
+    /^static constinit const struct HashTable ([\w:]+) =\n(.*, (\w+), \w+ \};)\n/gm,
+    (_, table: string, initializer: string, values: string) => {
+      checks++;
+      return `static constexpr struct HashTable ${table} =\n${initializer}\n${seenPropertyAttributesCheck(table, values)}`;
+    },
+  );
+  if (checks !== tables) {
+    console.log(`Failed to generate ${output}: found ${tables} tables and could add the check to ${checks} of them`);
+    process.exit(1);
+  }
+
   str = "#pragma once" + "\n" + "// File generated via `create-hash-table.ts`\n" + str.trim() + "\n";
 
   writeIfNotChanged(output, str);

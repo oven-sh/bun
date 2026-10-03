@@ -37,8 +37,6 @@ my @values = ();
 my @table = ();
 my @links = ();
 
-my $hasSetter = "false";
-
 my $includeBuiltin = 0;
 my $inside = 0;
 my $name;
@@ -109,7 +107,6 @@ while (<IN>) {
             if (!($att =~ m/ReadOnly/)) {
                 $put = "set" . jsc_ucfirst($val);
             }
-            $hasSetter = "true";
             push(@values, { "type" => "PropertyAttribute::Property", "get" => $get, "put" => $put });
         } else {
             push(@values, { "type" => "Lexer", "value" => $val });
@@ -383,6 +380,11 @@ sub output() {
         my $packedSize = scalar @keys;
 	$hashTableString .= "static constinit const struct HashTableValue ${nameEntries}\[$packedSize\] = {\n";
 
+        # HashTable::seenPropertyAttributes is the union of the attributes of the rows, and the flags of the Structure
+        # of the class are set from it. Upstream's copy of this script prints a bool ($hasSetter) there:
+        # https://commits.webkit.org/261082@main changed the field and CodeGeneratorJS.pm, not this script.
+        my %seenPropertyAttributes;
+
         my $i = 0;
         foreach my $key (@keys) {
             my $typeTag = "";
@@ -419,6 +421,11 @@ sub output() {
                 $hasSecondValue = 0;
             }
 
+            my %rowAttributes = map { $_ => 1 } split(/\|/, $attrs[$i]);
+            # A row with none of these attributes is a custom value (JSObject::putInlineSlow).
+            $rowAttributes{"CustomValue"} = 1 unless grep { $rowAttributes{$_} } qw(CustomAccessor Accessor Builtin Function CellProperty ClassStructure PropertyCallback ConstantInteger);
+            @seenPropertyAttributes{keys %rowAttributes} = ();
+
             my $attributes = "PropertyAttribute::" . $attrs[$i];
             $attributes =~ s/\|/\|PropertyAttribute::/g;
             $attributes = "static_cast<unsigned>(" . $attributes . ")";
@@ -435,8 +442,10 @@ sub output() {
         }
         $hashTableString .= "};\n";
         $hashTableString .= "\n";
+        delete $seenPropertyAttributes{"None"};
+        my $seenPropertyAttributes = join(" | ", map { "PropertyAttribute::$_" } ("None", sort keys %seenPropertyAttributes));
         $hashTableString .= "static constinit const struct HashTable $name =\n";
-        $hashTableString .= "    \{ $packedSize, $compactHashSizeMask, $hasSetter, nullptr, $nameEntries, $nameIndex \};\n";
+        $hashTableString .= "    \{ $packedSize, $compactHashSizeMask, static_cast<uint8_t>($seenPropertyAttributes), nullptr, $nameEntries, $nameIndex \};\n";
         $hashTableString .= "\n";
 
         @table = ();

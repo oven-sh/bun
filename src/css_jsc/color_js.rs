@@ -323,6 +323,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
 
         input = args[0].to_utf8(global)?;
+        if css::css_parser::check_input_len(input.slice()).is_err() {
+            return Err(global.throw(format_args!(
+                "color() input is too large to parse (2 GiB maximum)"
+            )));
+        }
 
         // MimallocArena::new() calls mi_heap_new(), so defer creation to the
         // paths that actually allocate.

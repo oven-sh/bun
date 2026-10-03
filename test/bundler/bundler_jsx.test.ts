@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -693,6 +694,206 @@ describe("bundler", () => {
       onAfterBundle(api) {
         expect(api.readFile("out.js")).toContain("React(React, null)");
       },
+    });
+
+    // The printer writes the members verbatim, so an option that is not a dotted
+    // chain of identifiers used to come out as, for example,
+    // `h;alert(1);h("a", null)` from a build that reported success.
+    describe("not a member expression", () => {
+      const expected = {
+        factory: `Must be an identifier or a dotted chain of identifiers, for example "h" or "React.createElement"`,
+        fragment: `Must be an identifier, a dotted chain of identifiers or a constant, for example "Fragment", "React.Fragment" or "'['"`,
+      };
+      const invalid = [
+        "h;alert(1);h",
+        "(0,h)",
+        "a b",
+        "a-b",
+        "0h",
+        "React.create Element",
+        "h\n",
+        ".",
+        // The first member is looked up as a variable, so it cannot be a reserved word.
+        "if",
+        "class.h",
+        "import.h",
+        // Not a constant that the printer can write as it is.
+        `'a.b'`,
+        `"\\n"`,
+        `'a"`,
+        `'a'b'`,
+        `"a\nb"`,
+        "`[`",
+        "0123",
+        "1.5",
+      ];
+      // The text, and how the printer writes it.
+      const valid = [
+        ["h", "h"],
+        ["React.createElement", "React.createElement"],
+        ["$", "$"],
+        ["_.h", "_.h"],
+        ["é.ü", "é.ü"],
+        ["h.", "h"],
+        ["a.if.class", "a.if.class"],
+        ["this.h", "this.h"],
+        ["import.meta.h", "import.meta.h"],
+        ["null", "null"],
+      ] as const;
+      // esbuild also takes a JSON scalar for the fragment. Mithril's is '['.
+      const constants = [`'['`, `"["`, `''`, `'é'`, "true", "false", "0", "123"];
+
+      // The statement `Bun.build` prints for an element and a fragment, or what it throws.
+      async function build(option: "factory" | "fragment", text: string) {
+        using dir = tempDir("jsx-member-expression", { "index.jsx": `console.log(<a></a>, <></>);` });
+        try {
+          const result = await Bun.build({
+            entrypoints: [`${dir}/index.jsx`],
+            jsx: { runtime: "classic", factory: "f", fragment: "F", [option]: text },
+          });
+          const output = await result.outputs[0].text();
+          return output.split("\n").find(line => line.startsWith("console.log"));
+        } catch (e) {
+          return { name: (e as Error).name, message: (e as Error).message };
+        }
+      }
+      const printed = (factory: string, fragment: string) =>
+        `console.log(/* @__PURE__ */ ${factory}("a", null), /* @__PURE__ */ ${factory}(${fragment}, null));`;
+      const rejected = (option: "factory" | "fragment", text: string) => ({
+        name: "TypeError",
+        message: `Invalid jsx.${option}: ${JSON.stringify(text)}. ${expected[option]}`,
+      });
+
+      describe.each(["factory", "fragment"] as const)("Bun.build jsx.%s", option => {
+        test.each(invalid)("rejects %j", async text => {
+          expect(await build(option, text)).toEqual(rejected(option, text));
+        });
+
+        test.each(valid)("accepts %j", async (text, members) => {
+          expect(await build(option, text)).toBe(option === "factory" ? printed(members, "F") : printed("f", members));
+        });
+
+        test.each(constants)("constant %j", async text => {
+          expect(await build(option, text)).toEqual(option === "factory" ? rejected(option, text) : printed("f", text));
+        });
+
+        test("an empty string is unset", async () => {
+          expect(await build(option, "")).toBe(
+            option === "factory" ? printed("React.createElement", "F") : printed("f", "React.Fragment"),
+          );
+        });
+      });
+
+      test.concurrent.each([
+        ["build", "--jsx-factory", "factory"],
+        ["build", "--jsx-fragment", "fragment"],
+        ["run", "--jsx-factory", "factory"],
+        ["run", "--jsx-fragment", "fragment"],
+      ] as const)("bun %s rejects %s", async (command, flag, option) => {
+        using dir = tempDir("jsx-flag-not-a-member-expression", {
+          "index.jsx": `console.log(<a></a>, <></>);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), command, "--jsx-runtime=classic", `${flag}=a b`, "index.jsx"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "",
+          stderr: `error: Invalid value for ${flag}: "a b". ${expected[option]}\n`,
+          exitCode: 1,
+        });
+      });
+
+      test.concurrent("bun build --compile rejects --jsx-factory and writes no executable", async () => {
+        using dir = tempDir("jsx-flag-compile-not-a-member-expression", {
+          "index.jsx": `console.log(<a></a>, <></>);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            "--jsx-runtime=classic",
+            "--jsx-factory=a b",
+            "--outfile=out",
+            "index.jsx",
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "",
+          stderr: `error: Invalid value for --jsx-factory: "a b". ${expected.factory}\n`,
+          exitCode: 1,
+        });
+        expect(readdirSync(String(dir))).toEqual(["index.jsx"]);
+      });
+
+      test.concurrent("bun build accepts a constant --jsx-fragment", async () => {
+        using dir = tempDir("jsx-flag-constant-fragment", {
+          "index.jsx": `console.log(<a></a>, <></>);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--jsx-runtime=classic", "--jsx-factory=m", "--jsx-fragment='['", "index.jsx"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain(printed("m", "'['"));
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent.each([
+        ["jsxFactory", "factory"],
+        ["jsxFragment", "fragment"],
+      ] as const)("bunfig.toml rejects %s", async (key, option) => {
+        using dir = tempDir("jsx-bunfig-not-a-member-expression", {
+          "bunfig.toml": `jsx = "react"\n${key} = "a b"\n`,
+          "index.jsx": `console.log(<a></a>, <></>);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "index.jsx"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(`error: Invalid ${key}: "a b". ${expected[option]}\n`);
+        expect(exitCode).toBe(1);
+      });
+
+      itBundled("jsx/TsconfigFactoryReservedWordKeepsDefault", {
+        files: {
+          "/index.tsx": /* tsx */ `
+            ${defaultFactoryPrelude}
+            console.log(JSON.stringify([<a></a>, <></>]));
+          `,
+          "/tsconfig.json": /* json */ `{
+            "compilerOptions": {
+              "jsx": "react",
+              "jsxFactory": "if",
+              "jsxFragmentFactory": "import.Fragment"
+            }
+          }`,
+        },
+        target: "bun",
+        bundleWarnings: {
+          "/tsconfig.json": ['Invalid JSX member expression: "if"', 'Invalid JSX member expression: "import"'],
+        },
+        run: { stdout: defaultFactoryStdout },
+      });
     });
   });
 

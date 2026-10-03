@@ -1,8 +1,3 @@
-10-02_14:40:09 anon=98MB pids=48 load=588.32 top=bun.f4d755a9c:118MB
-10-02_14:40:41 anon=63MB pids=40 load=624.79 top=bun.f4d755a9c:84MB
-10-02_14:41:18 anon=69MB pids=40 load=740.86 top=bun.f4d755a9c:89MB
-10-02_14:41:52 anon=79MB pids=47 load=817.45 top=bun.f4d755a9c:92MB
-10-02_14:42:23 anon=81MB pids=47 load=747.33 top=bun.f4d755a9c:77MB
 10-02_14:43:03 anon=14MB pids=40 load=788.66 top=runc:[2:INIT]:9MB
 10-02_14:43:43 anon=14MB pids=40 load=863.38 top=bun.f4d755a9c:35MB
 10-02_14:44:19 anon=30MB pids=98 load=874.49 top=bun.bc7a813b1:54MB
@@ -398,3 +393,8 @@
 10-03_01:46:02 anon=72MB pids=39 load=2240.94 top=rustc:222MB
 10-03_01:47:10 anon=78MB pids=39 load=1962.21 top=rustc:216MB
 10-03_01:48:21 anon=72MB pids=39 load=1792.54 top=rustc:217MB
+10-03_01:48:58 anon=59MB pids=41 load=1630.99 top=rustc:94MB
+10-03_01:50:25 anon=104MB pids=41 load=1585.17 top=rustc:198MB
+10-03_01:51:40 anon=118MB pids=37 load=1531.99 top=rustc:252MB
+10-03_01:52:37 anon=187MB pids=45 load=1443.68 top=rustc:278MB
+10-03_01:54:26 anon=191MB pids=41 load=1557.61 top=rustc:339MB

@@ -2,6 +2,7 @@ use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
+use crate::bundled_ast::Flags as AstFlags;
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
@@ -131,6 +132,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         files: Vec::with_capacity(chunk.files_with_parts_in_chunk.count()),
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
+        namespace_objects: Vec::new(),
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
@@ -155,11 +157,13 @@ pub(crate) fn find_imported_parts_in_js_order(
         files,
         part_ranges,
         parts_prefix,
+        namespace_objects,
         ..
     } = layout;
     let mut parts_in_chunk_order: Vec<PartRange> =
-        Vec::with_capacity(part_ranges.len() + parts_prefix.len());
+        Vec::with_capacity(parts_prefix.len() + namespace_objects.len() + part_ranges.len());
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
+    parts_in_chunk_order.extend_from_slice(&namespace_objects);
     parts_in_chunk_order.extend_from_slice(&part_ranges);
 
     let reached_chunks = if this.graph.code_splitting {
@@ -330,6 +334,7 @@ enum Edge {
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
+/// A JavaScript file runs where it is imported, not where its bindings are used: `part.dependencies` does not place it.
 fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
@@ -351,6 +356,7 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     let parts_live = &c.graph.parts_live[source_index as usize];
+    let ast_flags = c.graph.ast.items_flags();
     for (part_index, part) in parts.iter().enumerate() {
         let runs_here = runs && parts_live.is_set(part_index);
         let part_index = part_index as u32;
@@ -371,23 +377,15 @@ fn for_each_edge(
                 },
             );
         }
-        // A file that the `import` statements did not reach: ahead of the part that uses it.
-        if runs_here && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
+        // A file that is only a value (CSS class names, JSON, an asset) runs nothing: ahead of the part that names it.
+        // A chunk that names CSS class names through a re-export in another chunk gets its own copy here.
+        if runs_here {
             for dependency in part.dependencies.iter() {
-                each(part_index, Edge::Import(dependency.source_index.get()));
+                let other = dependency.source_index.get();
+                if ast_flags[other as usize].contains(AstFlags::HAS_LAZY_EXPORT) {
+                    each(part_index, Edge::Import(other));
+                }
             }
-        }
-    }
-    // The namespace export part is ahead of the `import` statements and only holds getters.
-    if let Some(namespace_export) = parts.get(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-        && runs
-        && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-    {
-        for dependency in namespace_export.dependencies.iter() {
-            each(
-                parts.len() as u32,
-                Edge::Import(dependency.source_index.get()),
-            );
         }
     }
 }
@@ -700,6 +698,8 @@ struct ChunkLayout<'a, 'ctx> {
     files: Vec<IndexInt>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
+    /// A namespace object exists before any file runs: these print ahead of `part_ranges`.
+    namespace_objects: Vec<PartRange>,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
@@ -760,11 +760,24 @@ impl ChunkLayout<'_, '_> {
                             .c
                             .should_include_part(source_index, &parts[part_index as usize]))
                 {
-                    self.append_or_extend_range(
-                        source_index == Index::RUNTIME.value() && !is_namespace_export,
-                        source_index,
-                        part_index,
-                    );
+                    let is_runtime = source_index == Index::RUNTIME.value();
+                    // The part is empty in the dev server format, which takes one range per file.
+                    if is_namespace_export
+                        && !is_runtime
+                        && !parts[part_index as usize].stmts.slice().is_empty()
+                    {
+                        self.namespace_objects.push(PartRange {
+                            source_index: Index::init(source_index),
+                            part_index_begin: part_index,
+                            part_index_end: part_index + 1,
+                        });
+                    } else {
+                        self.append_or_extend_range(
+                            is_runtime && !is_namespace_export,
+                            source_index,
+                            part_index,
+                        );
+                    }
                 }
             }
         }

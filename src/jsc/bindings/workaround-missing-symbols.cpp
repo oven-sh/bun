@@ -106,6 +106,7 @@ std::atomic<int> wtfStringCopyCount;
 
 BUN_SYMVER(exp, BUN_GLIBC_BASE);
 BUN_SYMVER(exp2, BUN_GLIBC_BASE);
+BUN_SYMVER(exp2f, BUN_GLIBC_BASE);
 BUN_SYMVER(expf, BUN_GLIBC_BASE);
 BUN_SYMVER(log, BUN_GLIBC_BASE);
 BUN_SYMVER(log2, BUN_GLIBC_BASE);
@@ -124,6 +125,7 @@ extern "C" {
 
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
 double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
+float BUN_WRAP_GLIBC_SYMBOL(exp2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
@@ -135,6 +137,7 @@ int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
 ssize_t BUN_WRAP_GLIBC_SYMBOL(getrandom)(void*, size_t, unsigned int);
 
 float __wrap_expf(float x) { return expf(x); }
+float __wrap_exp2f(float x) { return exp2f(x); }
 float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_logf(float x) { return logf(x); }
 float __wrap_log2f(float x) { return log2f(x); }

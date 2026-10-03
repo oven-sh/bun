@@ -84,6 +84,13 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
+    // objc: WebGPU (src/webgpu). wgpu's Metal backend talks to the Objective-C
+    // runtime, which libSystem already loads into every process. The Metal,
+    // Foundation, CoreFoundation and CoreGraphics frameworks are NOT linked:
+    // src/webgpu/apple.rs dlopen()s them on first use of navigator.gpu, because
+    // CoreFoundation's initializer changes the environment of every process
+    // that loads it.
+    libs.push("-lobjc");
   }
 
   if (cfg.freebsd) {

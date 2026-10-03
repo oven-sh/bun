@@ -54,6 +54,13 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: the length a Rust us_socket_t write wrapper hands to
+     * us_socket_write and its siblings. The wrappers shorten a request to
+     * INT_MAX bytes, which needs a buffer over 2 GiB to reach. A rule lowers
+     * that bound to clamp_bytes. Only US_FAULT_SHORT applies. Unlike a send
+     * rule, us_socket_write sees the shortened length as the whole request,
+     * so it does not arm the writable poll when the kernel takes all of it. */
+    US_FAULT_WRITE_REQUEST,
     US_FAULT_COUNT
 };
 
@@ -61,8 +68,8 @@ enum us_fault_action {
     US_FAULT_NONE,
     /* return -1 and set errno = errno_value */
     US_FAULT_ERRNO,
-    /* recv/send/writev: clamp the length to clamp_bytes, then run the real syscall.
-     * Other syscalls have no length to clamp; the JS setter rejects them. */
+    /* recv/send/writev/write_request: clamp the length to clamp_bytes, then run
+     * the real call. Other syscalls have no length to clamp; the JS setter rejects them. */
     US_FAULT_SHORT,
     /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0
      * (treated as backpressure). The JS setter rejects other syscalls. */

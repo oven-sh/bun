@@ -9,6 +9,25 @@ bun_core::declare_scope!(uws, visible);
 
 const MAX_I32: usize = i32::MAX as usize;
 
+/// The most bytes one write request hands to C, whose length parameters are `int`.
+#[inline(always)]
+fn max_request() -> usize {
+    #[cfg(socket_fault_injection)]
+    return crate::fault_inject::write_request_cap(MAX_I32);
+    #[cfg(not(socket_fault_injection))]
+    MAX_I32
+}
+
+/// The C write that takes a request `max_request()` shortened.
+enum ShortenedWrite<'a> {
+    Plain,
+    Raw,
+    CheckError(*mut i32),
+    #[cfg(not(windows))]
+    WithFd(c_int),
+    Two(&'a [u8]),
+}
+
 // Rust bindings for `us_socket_t`.
 //
 // TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
@@ -117,13 +136,18 @@ impl us_socket_t {
     /// not wired up here yet).
     pub(crate) fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         let mut fatal: i32 = 0;
+        let max = max_request();
+        if data.len() > max {
+            let to = ShortenedWrite::CheckError(&raw mut fatal);
+            return (self.write_shortened(data, max, to), fatal);
+        }
         // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
-        // (clamped to i32) and `fatal` outlives the call as the out-parameter.
+        // (at most `max`) and `fatal` outlives the call as the out-parameter.
         let written = unsafe {
             c::us_socket_write_check_error(
                 self,
                 data.as_ptr().cast(),
-                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                i32::try_from(data.len()).expect("int cast"),
                 &raw mut fatal,
             )
         };
@@ -339,13 +363,48 @@ impl us_socket_t {
         c::us_socket_set_ssl_raw_tap(self, enabled as c_int);
     }
 
+    /// Arms the writable poll when C takes a shortened request whole: C arms it only for a short write.
+    #[cold]
+    #[inline(never)]
+    fn write_shortened(&self, data: &[u8], max: usize, to: ShortenedWrite<'_>) -> i32 {
+        let s = ptr::from_ref(self).cast_mut();
+        let request = i32::try_from(max).expect("int cast");
+        // SAFETY: `self` is a live socket; `data` plus any second slice cover at least `request` bytes.
+        let written = unsafe {
+            match to {
+                ShortenedWrite::Plain => c::us_socket_write(s, data.as_ptr(), request),
+                ShortenedWrite::Raw => c::us_socket_raw_write(s, data.as_ptr(), request),
+                ShortenedWrite::CheckError(fatal) => {
+                    c::us_socket_write_check_error(self, data.as_ptr().cast(), request, fatal)
+                }
+                #[cfg(not(windows))]
+                ShortenedWrite::WithFd(fd) => {
+                    c::us_socket_ipc_write_fd(s, data.as_ptr(), request, fd)
+                }
+                ShortenedWrite::Two(second) => {
+                    let first_len = i32::try_from(data.len().min(max)).expect("int cast");
+                    let second_len = request - first_len;
+                    c::us_socket_write2(s, data.as_ptr(), first_len, second.as_ptr(), second_len)
+                }
+            }
+        };
+        if written == request {
+            c::us_socket_sendfile_needs_more(self);
+        }
+        written
+    }
+
     pub fn write(&mut self, data: &[u8]) -> i32 {
+        let max = max_request();
+        if data.len() > max {
+            return self.write_shortened(data, max, ShortenedWrite::Plain);
+        }
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_write(
                 self,
                 data.as_ptr(),
-                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                i32::try_from(data.len()).expect("int cast"),
             )
         };
         bun_core::scoped_log!(uws, "us_socket_write({:p}, {}) = {}", self, data.len(), rc);
@@ -354,12 +413,17 @@ impl us_socket_t {
 
     #[cfg(not(windows))]
     pub(crate) fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
+        let max = max_request();
+        if data.len() > max {
+            let to = ShortenedWrite::WithFd(file_descriptor.native());
+            return self.write_shortened(data, max, to);
+        }
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes; fd is a valid native descriptor
             c::us_socket_ipc_write_fd(
                 self,
                 data.as_ptr(),
-                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                i32::try_from(data.len()).expect("int cast"),
                 file_descriptor.native(),
             )
         };
@@ -375,14 +439,18 @@ impl us_socket_t {
     }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
+        let max = max_request();
+        if first.len() + second.len() > max {
+            return self.write_shortened(first, max, ShortenedWrite::Two(second));
+        }
         let rc = unsafe {
             // SAFETY: both slices valid for their respective lengths
             c::us_socket_write2(
                 self,
                 first.as_ptr(),
-                first.len(),
+                i32::try_from(first.len()).expect("int cast"),
                 second.as_ptr(),
-                second.len(),
+                i32::try_from(second.len()).expect("int cast"),
             )
         };
         bun_core::scoped_log!(
@@ -416,12 +484,16 @@ impl us_socket_t {
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
+        let max = max_request();
+        if data.len() > max {
+            return self.write_shortened(data, max, ShortenedWrite::Raw);
+        }
         unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_raw_write(
                 self,
                 data.as_ptr(),
-                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                i32::try_from(data.len()).expect("int cast"),
             )
         }
     }
@@ -533,9 +605,9 @@ mod c {
         pub(super) fn us_socket_write2(
             s: *mut us_socket_t,
             header: *const u8,
-            len: usize,
+            len: i32,
             payload: *const u8,
-            len2: usize,
+            len2: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
@@ -563,7 +635,7 @@ mod c {
         ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
-        pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
+        pub(super) safe fn us_socket_sendfile_needs_more(socket: &us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;

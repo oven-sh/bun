@@ -5180,11 +5180,13 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eq_ascii(b"write_request") {
+                fi::WRITE_REQUEST
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, write_request"
                 )));
             };
 
@@ -5217,9 +5219,16 @@ pub(crate) mod testing_apis {
                 && syscall != fi::RECV
                 && syscall != fi::SEND
                 && syscall != fi::WRITEV
+                && syscall != fi::WRITE_REQUEST
             {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\", \"writev\" or \"write_request\""
+                )));
+            }
+
+            if syscall == fi::WRITE_REQUEST && action == fi::ACTION_ERRNO {
+                return Err(global.throw(format_args!(
+                    "rule.action \"errno\" is not supported for syscall \"write_request\""
                 )));
             }
 
@@ -5271,18 +5280,21 @@ pub(crate) mod testing_apis {
                 )));
             }
 
-            // ssl_loop_buffer/session_buffer are allocations, not socket
+            // ssl_loop_buffer/session_buffer/write_request are not socket
             // operations: their hooks pass fd = -1, so a rule pinned to a
             // descriptor would arm and then silently never fire.
             let target_fd = get_i32("fd", -1)?;
-            if (syscall == fi::SSL_LOOP_BUFFER || syscall == fi::SESSION_BUFFER) && target_fd != -1
+            if matches!(
+                syscall,
+                fi::SSL_LOOP_BUFFER | fi::SESSION_BUFFER | fi::WRITE_REQUEST
+            ) && target_fd != -1
             {
                 return Err(global.throw(format_args!(
                     "rule.fd is not supported for syscall \"{}\"",
-                    if syscall == fi::SSL_LOOP_BUFFER {
-                        "ssl_loop_buffer"
-                    } else {
-                        "session_buffer"
+                    match syscall {
+                        fi::SSL_LOOP_BUFFER => "ssl_loop_buffer",
+                        fi::SESSION_BUFFER => "session_buffer",
+                        _ => "write_request",
                     }
                 )));
             }

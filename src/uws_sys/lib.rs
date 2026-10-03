@@ -453,6 +453,7 @@ pub mod socket;
 #[cfg(socket_fault_injection)]
 pub mod fault_inject {
     use core::ffi::c_int;
+    use core::sync::atomic::{AtomicI32, Ordering};
 
     pub const RECV: c_int = 0;
     pub const SEND: c_int = 1;
@@ -472,6 +473,8 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
+    /// Not a syscall: the length a `us_socket_t` write wrapper hands to C.
+    pub const WRITE_REQUEST: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -489,10 +492,24 @@ pub mod fault_inject {
     }
 
     unsafe extern "C" {
+        safe static us_fault_armed: AtomicI32;
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear_all();
         pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
         -> c_int;
+    }
+
+    /// The bound a `write_request` rule puts on one write request, else `default`.
+    #[inline]
+    pub(crate) fn write_request_cap(default: usize) -> usize {
+        if us_fault_armed.load(Ordering::Acquire) == 0 {
+            return default;
+        }
+        let mut out: isize = 0;
+        let mut clamp = c_int::try_from(default).unwrap_or(c_int::MAX);
+        // SAFETY: `out` and `clamp` are valid for the duration of the call.
+        unsafe { us_fault_hit(WRITE_REQUEST, -1, &raw mut out, &raw mut clamp) };
+        usize::try_from(clamp).unwrap_or(default)
     }
 }
 pub use socket::{

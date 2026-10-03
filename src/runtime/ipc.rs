@@ -894,9 +894,6 @@ enum ContinueSendReason {
     OnWritable,
 }
 
-/// The most bytes one write request carries: the transport reports the count it took as an `i32`.
-const MAX_WRITE_LEN: usize = i32::MAX as usize;
-
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
@@ -1539,7 +1536,6 @@ impl SendQueue {
         enum Done {
             AwaitAck,
             Completed(SendHandle),
-            Capped,
             Partial,
             NoProgress,
             Error,
@@ -1547,10 +1543,7 @@ impl SendQueue {
         let done = self.queue.with_mut(|queue| {
             let first = &mut queue[0];
             let to_send_len = first.data.list.len() - first.data.cursor;
-            let Ok(written) = usize::try_from(n) else {
-                return Done::Error;
-            };
-            if written == to_send_len {
+            if n as usize == to_send_len {
                 if first.handle.is_some() {
                     // the message was fully written, but it had a handle.
                     // we must wait for ACK or NACK before sending any more messages.
@@ -1568,16 +1561,12 @@ impl SendQueue {
                     // shift the queue and try to send the next item immediately.
                     Done::Completed(queue.remove(0))
                 }
-            } else if written > 0 && written < to_send_len {
+            } else if n > 0 && (n as usize) < to_send_len {
                 // the item was partially sent; update the cursor and wait for writable to send the rest
                 // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-                first.data.cursor += written;
-                if written == MAX_WRITE_LEN {
-                    Done::Capped
-                } else {
-                    Done::Partial
-                }
-            } else if written == 0 {
+                first.data.cursor += usize::try_from(n).expect("int cast");
+                Done::Partial
+            } else if n == 0 {
                 // no bytes written; wait for writable
                 Done::NoProgress
             } else {
@@ -1592,11 +1581,12 @@ impl SendQueue {
                 item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
-            Done::Capped => {
-                // The transport took a whole capped request, so no writable event follows.
+            Done::Partial => {
+                // A libuv pipe write completes whole and has no writable event.
+                #[cfg(windows)]
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
-            Done::Partial | Done::NoProgress => {}
+            Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
@@ -1720,7 +1710,7 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
-                let write_len = data.len().min(MAX_WRITE_LEN);
+                let write_len = data.len().min(i32::MAX as usize);
                 Box::from(&data[0..write_len])
             });
 
@@ -1775,7 +1765,6 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
-                let data = &data[..data.len().min(MAX_WRITE_LEN)];
                 if let Some(fd_unwrapped) = fd {
                     socket.write_fd(data, fd_unwrapped.native())
                 } else {

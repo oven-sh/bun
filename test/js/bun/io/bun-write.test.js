@@ -7,6 +7,8 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isFreeBSD,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -536,6 +538,91 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
       expect(exitCode).toBe(0);
     });
+  });
+
+  // macOS and FreeBSD open /dev/fd/N, /dev/stdout and /dev/stderr as a dup of
+  // that descriptor. The new fd shares its offset and O_APPEND, and O_TRUNC
+  // does not empty the file. So the destination is the caller's descriptor:
+  // the bytes go to its position and the rest of the file stays. Linux opens
+  // the file again, so there these paths behave like any other path.
+  describe.skipIf(!isMacOS && !isFreeBSD)("a destination path that opens as a dup of a descriptor", () => {
+    // "AAASS" -> "A×3 S×2"
+    const runs = text => text.replace(/(.)\1*/gs, run => `${run[0]}×${run.length} `).trim();
+
+    // [title, expression that writes `size` bytes of "S" to `dest`, size, what the expression evaluates to]
+    const writers = [
+      ["Bun.write(path, Bun.file(src))", dest => `await Bun.write("${dest}", Bun.file(process.env.SRC))`, 100, "100"],
+      ["Bun.write(path, string)", dest => `await Bun.write("${dest}", Buffer.alloc(100, "S").toString())`, 100, "100"],
+      ["Bun.write(path, Uint8Array)", dest => `await Bun.write("${dest}", Buffer.alloc(100, "S"))`, 100, "100"],
+      [
+        "Bun.write(path, string above 256 KiB)",
+        dest => `await Bun.write("${dest}", Buffer.alloc(300_000, "S").toString())`,
+        300_000,
+        "300000",
+      ],
+      [
+        "fs.writeFileSync(path, string)",
+        dest => `fs.writeFileSync("${dest}", Buffer.alloc(100, "S").toString())`,
+        100,
+        "undefined",
+      ],
+      ["fs.copyFileSync(src, path)", dest => `fs.copyFileSync(process.env.SRC, "${dest}")`, 100, "undefined"],
+    ];
+
+    // [title, sh command, destination path, fd that reports the result, JS to run first, bytes in the file before the write]
+    const redirects = [
+      ["a file that stdout appends to (>>)", `"$BUN" -e "$SCRIPT" >> "$LOG"`, "/dev/stdout", 2, "", "A×200"],
+      [
+        "a file that stdout already wrote to (>)",
+        `"$BUN" -e "$SCRIPT" > "$LOG"`,
+        "/dev/stdout",
+        2,
+        `fs.writeSync(1, Buffer.alloc(200, "H"));`,
+        "H×200",
+      ],
+      ["a file that stderr appends to (2>>)", `"$BUN" -e "$SCRIPT" 2>> "$LOG"`, "/dev/stderr", 1, "", "A×200"],
+      ["a file that fd 3 appends to (3>>)", `"$BUN" -e "$SCRIPT" 3>> "$LOG"`, "/dev/fd/3", 2, "", "A×200"],
+    ];
+
+    async function run(shell, script) {
+      using dir = tempDir("bun-write-fdesc", {
+        "src.bin": Buffer.alloc(100, "S").toString(),
+        "log.txt": Buffer.alloc(200, "A").toString(),
+      });
+      const log = join(String(dir), "log.txt");
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", shell],
+        env: { ...bunEnv, BUN: bunExe(), SCRIPT: script, SRC: join(String(dir), "src.bin"), LOG: log },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, log: runs(fs.readFileSync(log, "utf8")) };
+    }
+
+    for (const [writerTitle, write, size, result] of writers) {
+      for (const [redirectTitle, shell, dest, reportFd, before, existing] of redirects) {
+        it(`${writerTitle} keeps the other bytes of ${redirectTitle}`, async () => {
+          const script = `const fs = require("fs"); ${before} const result = ${write(dest)}; fs.writeSync(${reportFd}, String(result));`;
+          const { stdout, stderr, exitCode, log } = await run(shell, script);
+
+          expect({ reported: reportFd === 1 ? stdout : stderr, other: reportFd === 1 ? stderr : stdout, log }).toEqual({
+            reported: result,
+            other: "",
+            log: `${existing} S×${size}`,
+          });
+          expect(exitCode).toBe(0);
+        });
+      }
+
+      it(`${writerTitle} writes to a pipe through /dev/stdout`, async () => {
+        const script = `const fs = require("fs"); const result = ${write("/dev/stdout")}; fs.writeSync(2, String(result));`;
+        const { stdout, stderr, exitCode } = await run(`"$BUN" -e "$SCRIPT" | cat`, script);
+
+        expect({ stdout: runs(stdout), stderr }).toEqual({ stdout: `S×${size}`, stderr: result });
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop

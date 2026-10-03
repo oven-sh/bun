@@ -435,7 +435,8 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 /// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
 /// asserted ≥ 1024 elsewhere) and the longest possible payload here —
 /// `name@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
-/// `@@host__16hex` scope suffix — is bounded well under that. Debug builds
+/// `@@host__16hex` scope suffix — is bounded well under that, or it is the
+/// exact-size buffer of `cached_git_clone_folder_name_print`. Debug builds
 /// keep the bounds check; release elides it so no panic-format code is
 /// reachable from this module.
 struct ByteCursor<'a> {
@@ -488,13 +489,14 @@ impl<'a> ByteCursor<'a> {
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
-    /// The first 16 bytes of `sha256(url)` as 32 lower-hex digits; collision-resistant on purpose.
+    /// `sha256(url)[..URL_DIGEST_BYTES]` as lower hex.
     #[inline(always)]
     fn put_url_digest(&mut self, url: &[u8]) {
         use bun_sha_hmac::sha::hashers::SHA256;
         let mut digest = [0u8; SHA256::DIGEST];
         SHA256::hash(url, &mut digest);
-        self.at += bun_fmt::bytes_to_hex_lower(&digest[..16], &mut self.buf[self.at..]);
+        let prefix = &digest[..URL_DIGEST_BYTES];
+        self.at += bun_fmt::bytes_to_hex_lower(prefix, &mut self.buf[self.at..]);
     }
 
     /// `@@@{d}` when set.
@@ -536,8 +538,11 @@ pub fn cached_git_folder_name_print<'a>(
     w.finish_z()
 }
 
+/// Bytes of `sha256(url)` in a cache entry's name; collision-resistant on purpose.
+const URL_DIGEST_BYTES: usize = 16;
+
 /// Bytes in `<url digest>.git` and its NUL.
-pub const GIT_CLONE_FOLDER_NAME_BUF_LEN: usize = 32 + b".git".len() + 1;
+pub const GIT_CLONE_FOLDER_NAME_BUF_LEN: usize = URL_DIGEST_BYTES * 2 + b".git".len() + 1;
 
 /// `<url digest>.git`: the bare clone of the repository at `url`.
 pub fn cached_git_clone_folder_name_print<'a>(

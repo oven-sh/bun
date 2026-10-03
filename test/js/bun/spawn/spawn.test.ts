@@ -2371,14 +2371,17 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
 
 // Startup opens /dev/null on a closed fd 0, 1 or 2. It finds a closed fd by the EBADF of isatty(),
 // which an open O_PATH descriptor returns too. That descriptor stays on its slot, as in node.
-describe.if(isLinux)("startup with an O_PATH descriptor on a stdio fd", () => {
+describe.skipIf(!isPosix)("startup with a closed or an O_PATH stdio fd", () => {
   const O_PATH = 0o10000000;
   // Reports on fd 3 what fds 0-2 are after startup, and the result of a write to fd 1 and to fd 2.
   const script = `
     const fs = require("node:fs");
+    const devNull = fs.statSync("/dev/null").rdev;
     const at = fd => {
-      const link = fs.readlinkSync("/proc/self/fd/" + fd);
-      return /^(pipe|socket):/.test(link) ? "pipe" : link;
+      const stat = fs.fstatSync(fd);
+      if (stat.isCharacterDevice() && stat.rdev === devNull) return "/dev/null";
+      if (stat.isDirectory()) return "directory";
+      return stat.isFIFO() || stat.isSocket() ? "pipe" : "other";
     };
     const write = fd => {
       try {
@@ -2391,9 +2394,13 @@ describe.if(isLinux)("startup with an O_PATH descriptor on a stdio fd", () => {
     console.error("err");
     fs.writeSync(3, JSON.stringify({ fds: [at(0), at(1), at(2)], writes: [write(1), write(2)] }));
   `;
-  const after = { opath: "/", closed: "/dev/null", pipe: "pipe" };
-
-  it.concurrent.each<(keyof typeof after)[]>([
+  const after = { opath: "directory", closed: "/dev/null", pipe: "pipe" };
+  type Slot = keyof typeof after;
+  const closed: Slot[][] = [
+    ["closed", "closed", "closed"],
+    ["pipe", "closed", "pipe"],
+  ];
+  const opath: Slot[][] = [
     ["opath", "pipe", "pipe"],
     ["pipe", "opath", "pipe"],
     ["pipe", "pipe", "opath"],
@@ -2402,9 +2409,10 @@ describe.if(isLinux)("startup with an O_PATH descriptor on a stdio fd", () => {
     ["opath", "closed", "pipe"],
     ["pipe", "opath", "closed"],
     ["opath", "closed", "closed"],
-    ["closed", "closed", "closed"],
-  ])("fd 0 %s, fd 1 %s, fd 2 %s", async (...slots) => {
-    const opath = openSync("/", O_PATH);
+  ];
+
+  it.concurrent.each<Slot[]>([...closed, ...(isLinux ? opath : [])])("fd 0 %s, fd 1 %s, fd 2 %s", async (...slots) => {
+    const directory = slots.includes("opath") ? openSync("/", O_PATH) : undefined;
     let reportFd: number | undefined;
     try {
       // Bun.spawn cannot leave a slot closed, so sh closes it and then execs bun.
@@ -2412,7 +2420,7 @@ describe.if(isLinux)("startup with an O_PATH descriptor on a stdio fd", () => {
       await using proc = spawn({
         cmd: closes ? ["sh", "-c", `exec "$0" "$@" ${closes}`, bunExe(), "-e", script] : [bunExe(), "-e", script],
         env: bunEnv,
-        stdio: [...slots.map(slot => (slot === "opath" ? opath : "pipe")), "pipe"],
+        stdio: [...slots.map(slot => (slot === "opath" ? directory! : "pipe")), "pipe"],
       });
       reportFd = proc.stdio[3] as number;
       const exitCode = await proc.exited;
@@ -2427,7 +2435,7 @@ describe.if(isLinux)("startup with an O_PATH descriptor on a stdio fd", () => {
         signalCode: null,
       });
     } finally {
-      closeSync(opath);
+      if (directory !== undefined) closeSync(directory);
       if (reportFd !== undefined) closeSync(reportFd);
     }
   });

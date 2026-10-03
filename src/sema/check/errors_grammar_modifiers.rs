@@ -1,11 +1,12 @@
-//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as the tree has it.
+//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as stored in
+//! the HIR.
 
 use super::*;
 use crate::bind::{MemberOwner, Parent};
 use smallvec::SmallVec;
 
-/// What `grammarErrorOnNode` is given: where the node is, the code of the message, and its arguments. `""`: no argument. An `end` of 0:
-/// that of the token at `start`.
+/// The arguments of `grammarErrorOnNode`: the span of the node, the message code, and the message
+/// arguments. `""`: no argument. An `end` of 0 means the end of the token at `start`.
 #[derive(Copy, Clone)]
 pub(super) struct GrammarError {
     start: u32,
@@ -45,7 +46,7 @@ impl Checker<'_> {
         true
     }
 
-    /// The same, of a statement that has modifiers, with what hangs on it.
+    /// The same for a statement that has modifiers, with the checks that depend on the result.
     pub(super) fn check_grammar_modifiers_of_statement(&mut self, file: FileId, s: StmtId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if has_parse_diagnostics(hir) {
@@ -66,7 +67,8 @@ impl Checker<'_> {
             self.reported
                 .retain(|d| !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start));
         }
-        // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these take none.
+        // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these accept
+        // no modifiers.
         let takes_none = match (statement.kind, bound.stmt_parent[s.idx()]) {
             (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
             (
@@ -87,7 +89,7 @@ impl Checker<'_> {
         }
     }
 
-    /// The same, of a member that has modifiers.
+    /// The same for a member that has modifiers.
     pub(super) fn check_grammar_modifiers_of_member(&mut self, file: FileId, m: MemberId) {
         let member = &self.hir(file)[m];
         // `checkGrammarIndexSignature`: `c.checkGrammarModifiers(node) || c.checkGrammarIndexSignatureParameters(node)`. The front
@@ -100,7 +102,8 @@ impl Checker<'_> {
         }
     }
 
-    /// What `checkGrammarModifiers(node)` reports. The arms for decorators on members and parameters are still in decorators.rs.
+    /// The error `checkGrammarModifiers(node)` reports. The arms for decorators on members and
+    /// parameters are still in decorators.rs.
     pub(super) fn grammar_error_in_modifiers(
         &self,
         file: FileId,
@@ -116,8 +119,9 @@ impl Checker<'_> {
             NodeData::TypeParam(p) => hir[p].modifiers,
             _ => return None,
         };
-        // The binder objects to those of `export as namespace N`. `parseTypeMember` reads none before a signature without a name. Those
-        // of a static block are the front end's (`findFirstIllegalModifier`).
+        // The binder reports those of `export as namespace N`. `parseTypeMember` parses none before
+        // a signature without a name. Those of a static block are reported by the front end
+        // (`findFirstIllegalModifier`).
         if modifiers.is_empty()
             || matches!(
                 kind,
@@ -178,7 +182,8 @@ impl Checker<'_> {
             matches!(parent, Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)));
         // `reportObviousModifierErrors`, `findFirstIllegalModifier`: the only modifier that may come first.
         let allowed_first = match kind {
-            // `checkGrammarModuleElementContext`: elsewhere these are given up on before their modifiers are looked at.
+            // `checkGrammarModuleElementContext`: elsewhere the check of these bails out before
+            // their modifiers are checked.
             Kind::ModuleDeclaration
             | Kind::ImportDeclaration
             | Kind::ImportEqualsDeclaration
@@ -186,7 +191,7 @@ impl Checker<'_> {
                 true => None,
                 false => return None,
             },
-            // `checkExportAssignment`: so is one in a namespace.
+            // `checkExportAssignment`: the same applies to one in a namespace.
             Kind::ExportAssignment => match is_module_element && !is_in_namespace {
                 true => None,
                 false => return None,
@@ -253,7 +258,8 @@ impl Checker<'_> {
         let mut seen = Flags::empty();
         let (mut last_static, mut last_declare, mut last_async, mut last_override) = (0, 0, 0, 0);
         for (modifier, start) in keywords {
-            // `modifier.Flags&NodeFlagsReparsed == 0`. One that is made from a tag of a JSDoc comment is as long as the tag.
+            // `modifier.Flags&NodeFlagsReparsed == 0`. A modifier synthesized from a JSDoc tag has
+            // the length of the tag.
             let is_written = !modifier.contains(Flags::REPARSED);
             let end = match is_written {
                 true => 0,
@@ -371,7 +377,7 @@ impl Checker<'_> {
                             | Kind::ModuleDeclaration
                     )
                     && parent == Parent::File
-                    && self.xm_emits_commonjs(file)
+                    && self.modules_emits_commonjs(file)
                 {
                     return error(1287, ["", ""]);
                 }

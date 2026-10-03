@@ -1,8 +1,9 @@
-//! The symbol at every name of a file: what TypeScript's test harness writes into `.symbols` baselines
-//! (`typeWriterWalker.getSymbols`, `GetSymbolAtLocation`, `SymbolToStringEx`).
+//! The symbol at every name of a file: the content TypeScript's test harness writes into `.symbols`
+//! baselines (`typeWriterWalker.getSymbols`, `GetSymbolAtLocation`, `SymbolToStringEx`).
 //!
-//! Members of classes, interfaces, type literals and object literals have no `SymbolId`: such a symbol is a [`Prop`], and its
-//! declarations are those the binder and `lateBindMember` have put together with the first of them.
+//! Members of classes, interfaces, type literals and object literals have no `SymbolId`: such a
+//! symbol is a [`Prop`], and its declarations are those the binder and `lateBindMember` have merged
+//! with the first one.
 
 use super::enclosing_declaration::Enclosing;
 use super::print::quoted;
@@ -44,9 +45,10 @@ enum Found {
     },
     /// A symbol without declarations: `undefined`, `arguments`, `globalThis`, `getUnresolvedSymbolForEntityName`.
     Undeclared(String),
-    /// The `prototype` of a class: no declarations, and the class for a parent.
+    /// The `prototype` of a class: no declarations, and the class as its parent.
     Prototype(Sym),
-    /// The `default` that `createDefaultPropertyWrapperForModule` makes: no declarations, and the module for a parent.
+    /// The `default` that `createDefaultPropertyWrapperForModule` creates: no declarations, and the
+    /// module as its parent.
     SyntheticDefault(Sym),
     /// `getApplicableIndexSymbol`: `__index`, declared by the index signature that applies. The parent is `t.symbol`.
     IndexSignature {
@@ -55,10 +57,11 @@ enum Found {
     },
 }
 
-/// `symbol.Parent`, of a property.
+/// `symbol.Parent` of a property.
 enum PropertyParent {
     Symbol(Sym),
-    /// A function expression that has no `SymbolId`, by the name `getNameOfSymbolAsWritten` gives it.
+    /// A function expression that has no `SymbolId`, identified by the name
+    /// `getNameOfSymbolAsWritten` returns for it.
     Named(String),
 }
 
@@ -109,7 +112,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
             return;
         }
-        // The scope of the file stands in for a scope the binder did not record.
+        // The file scope substitutes for a scope the binder did not record.
         let scope = if scope.is_some() { scope } else { ScopeId(0) };
         let (name, declarations) = match found {
             Found::Symbol(symbol) => self.describe_symbol(*symbol, scope),
@@ -136,8 +139,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         true,
                         Enclosing::at_scope(self.file, scope),
                     );
-                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file is no external module, so it is written. It has an
-                // `export =`, which is what an import of it stands for, so no alias names the file.
+                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file is not an external
+                // module, so it is printed. It has an `export =`, which is what an import of it
+                // resolves to, so no alias refers to the file.
                 let is_json = self.c.hir(module.file).kind == FileKind::Json;
                 if is_json {
                     chain = vec![*module];
@@ -206,9 +210,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 if matches!(kind, VisitedKind::DeclarationName(..)) {
                     return Some(Found::Symbol(symbol));
                 }
-                // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as b }`.
-                // `getTargetOfModuleDefault`: a default that is made up is `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`,
-                // which stops at the `export =` of the module.
+                // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as
+                // b }`.
+                // `getTargetOfModuleDefault`: a synthesized default is
+                // `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`, which stops at the
+                // `export =` of the module.
                 if let Some((specifier, mode, known::default)) =
                     files.external_module_member_of(file, decl)
                     && let Some(module) = files.module_of_specifier_as(file, specifier, mode)
@@ -219,7 +225,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 }
                 match files.alias_target(symbol) {
                     Some(target) => Some(Found::Symbol(files.canonical(target))),
-                    // `getExternalModuleMember`: a property of the value a module says it is with `export =`.
+                    // `getExternalModuleMember`: a property of the value a module exports with
+                    // `export =`.
                     None => self
                         .c
                         .property_of_alias(symbol)
@@ -231,8 +238,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             VisitedKind::LiteralInEnumMemberName(m) => Some(Found::Symbol(
                 files.sym(file, bound.enum_member_symbol[m.idx()]),
             )),
-            // `declareSymbolEx`: a name that names nothing, `#x` with no class around it or `1n`, gives a symbol all the same
-            // (`InternalSymbolNameMissing`), which is in no table.
+            // `declareSymbolEx`: a name that declares nothing, `#x` outside a class or `1n`, still
+            // gets a symbol (`InternalSymbolNameMissing`), which is in no symbol table.
             VisitedKind::MemberName(m) | VisitedKind::LiteralInMemberName(m) => {
                 let start = hir[m].name_pos;
                 (!matches!(hir[m].key, PropKey::None) || is_literal_name_at(hir, start))
@@ -323,7 +330,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     Some((prop, _)) => Some(Found::Property(prop)),
                     None => match self.get_applicable_index_symbol(elements, name) {
                         Some(found) => Some(found),
-                        // An index signature nothing declares, as `Record<string, any>` gives: `intrinsicElementsType.symbol`.
+                        // An index signature without a declaration, such as that of `Record<string,
+                        // any>`: `intrinsicElementsType.symbol`.
                         None => {
                             let members = self.c.members(elements)?;
                             self.c.applicable_index_info_for_name(&members, name)?;
@@ -351,7 +359,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 match self.c.resolve_entity(file, scope, &names, meaning) {
                     Some(symbol) => Some(Found::Symbol(symbol)),
                     None if !matches!(kind, VisitedKind::TypeReferenceName(..)) => None,
-                    // `getUnresolvedSymbolForEntityName`, which is `unknownSymbol` for a name the parser missed.
+                    // `getUnresolvedSymbolForEntityName`, which is `unknownSymbol` for a missing
+                    // name.
                     None if names.last() == Some(&known::empty) => {
                         Some(Found::Symbol(files.unknown_symbol))
                     }
@@ -385,7 +394,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let module =
                     files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
                 let mut found = files.module_value(module);
-                // `getTypeFromImportTypeNode`, `isTypeOf`: each name is a property of the type of what is before it.
+                // `getTypeFromImportTypeNode`, `isTypeOf`: each name is a property of the type of
+                // the preceding part.
                 if is_typeof {
                     let mut ty = self.c.type_of_symbol(found);
                     let mut last = None;
@@ -448,7 +458,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
     }
 
-    /// `getSymbolAtLocation`, of the expression `e`, or of the name it ends with.
+    /// `getSymbolAtLocation` for the expression `e`, or for its final name.
     fn get_symbol_of_expression(&mut self, e: ExprId, is_name: bool) -> Option<Found> {
         let file = self.file;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -495,7 +505,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     None if queried_module.is_some() => queried_module
                         .and_then(|module| self.c.files().namespace_member(module, name))
                         .map(Found::Symbol),
-                    // `checkExpressionCached(name.Expression())`: the type as it is, with its `undefined`.
+                    // `checkExpressionCached(name.Expression())`: the type unchanged, including its
+                    // `undefined`.
                     None => {
                         let ty = self.c.type_of_expr(file, obj);
                         self.get_applicable_index_symbol(ty, name)
@@ -517,9 +528,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 {
                     return Some(found);
                 }
-                // `IsInExpressionContext`: not the `this` of a bare `typeof this`, whose parent is the type query, so it is
-                // `getThisType(node).symbol`, which no narrowing changes. That of `typeof this.x` is under a qualified name, which
-                // is an expression node.
+                // `IsInExpressionContext`: false for the `this` of a bare `typeof this`, whose
+                // parent is the type query, so its symbol is `getThisType(node).symbol`, which
+                // narrowing does not affect. The `this` of `typeof this.x` is under a qualified
+                // name, which is an expression node.
                 if is_queried
                     && !matches!(bound.expr_parent[e.idx()], Parent::Expr(_))
                     && let Some(function) = function
@@ -539,7 +551,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             ExprKind::ImportMeta if is_name => {
                 Some(Found::Undeclared("ImportMetaExpression.meta".to_owned()))
             }
-            // `getSymbolAtLocation`, `KindMetaProperty`: the name has a symbol only if it is the right one.
+            // `getSymbolAtLocation`, `KindMetaProperty`: the name has a symbol only if it is the
+            // expected one.
             ExprKind::NewTarget(name) if is_name && self.c.atoms().bytes(name) != b"target" => None,
             // `checkExpression(node).symbol`. The `target` of `new.target` has the same symbol.
             ExprKind::Super | ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
@@ -550,9 +563,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
     }
 
-    /// `isInNameOfExpressionWithTypeArguments`, in what a class extends: `e` is an entity name expression that is all of it, and
-    /// is looked for as a value, or what is before a dot in it, and is looked for as a namespace. An alias counts whatever it
-    /// stands for.
+    /// `isInNameOfExpressionWithTypeArguments`, in the extends clause of a class: `e` is either the
+    /// whole entity name expression, resolved with the value meaning, or the part before a dot in
+    /// it, resolved with the namespace meaning. An alias matches regardless of its target.
     fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         let mut whole = e;
@@ -604,7 +617,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         found.map(Found::Symbol)
     }
 
-    /// `getSymbolAtLocation`, of a string, a number or a template without substitutions.
+    /// `getSymbolAtLocation` for a string, a number or a template without substitutions.
     fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
@@ -663,7 +676,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             // the property in JavaScript.
             ExprKind::Call(_) if hir.is_js && !matches!(hir[e].kind, ExprKind::Number(_)) => {
                 let (object, key) = crate::bind::define_property_call(hir, parent)?;
-                // Nil where the binder took the call for no declaration: `Object.defineProperty(module, "exports", ..)`.
+                // Nil where the binder did not treat the call as a declaration:
+                // `Object.defineProperty(module, "exports", ..)`.
                 let is_declaration = bound.is_expando_declaration(parent)
                     || crate::bind::assignment_declaration_kind(hir, parent)
                         == crate::bind::JsDeclarationKind::ObjectDefinePropertyExports;
@@ -677,7 +691,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
     }
 
-    /// `member.Symbol`, of a member of the file that is written.
+    /// `member.Symbol` for a member of the file being written.
     fn property_of_member(&mut self, member: MemberId) -> Found {
         let file = self.file;
         let name = self
@@ -739,9 +753,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     // ───────────────────────────── `getSymbolAtLocation` ─────────────────────────────
 
-    /// `resolveEntityName(name, SymbolFlagsValue, ..)`, of the identifier `e` for which `checkIdentifier` has `exported`. That asks
-    /// for `ExportValue` too, and goes on from the local symbol it finds to `ExportSymbol`. Without it a local symbol that is no
-    /// value is passed over, for what the table of exports has.
+    /// `resolveEntityName(name, SymbolFlagsValue, ..)` for the identifier `e` that
+    /// `checkIdentifier` resolves to `exported`. `checkIdentifier` also requests `ExportValue`, and
+    /// follows the local symbol it finds to `ExportSymbol`. Without `ExportValue` a local symbol
+    /// that is not a value is skipped in favor of the entry in the exports table.
     fn resolve_without_export_value(&self, e: ExprId, name: Atom, exported: Sym) -> Option<Sym> {
         let (file, files, bound) = (self.file, self.c.files(), self.c.bound(self.file));
         let mut scope = self.c.enclosing_scope_of_expr(file, e);
@@ -764,12 +779,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         Some(exported)
     }
 
-    /// `getSymbolOfNameOrPropertyAccessExpression`, of an identifier that is an expression.
+    /// `getSymbolOfNameOrPropertyAccessExpression` for an identifier that is an expression.
     fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
 
-        // `export default a`, `export = a`: every meaning counts.
+        // `export default a`, `export = a`: all meanings are accepted.
         if let Parent::Stmt(statement) = bound.expr_parent[e.idx()]
             && statement.is_some()
             && matches!(
@@ -793,7 +808,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             .resolve_identifier(file, e, name, true)
             .unwrap_or(None)
         {
-            // `getSymbol`: an alias that stands for no value is not there.
+            // `getSymbol`: an alias whose target is not a value is not found.
             Some(symbol) if !files.means(symbol, SymFlags::VALUE) => None,
             Some(symbol) => self
                 .resolve_without_export_value(e, name, symbol)
@@ -822,7 +837,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let ty = self.c.reduced_apparent_type(ty);
         if !matches!(self.c.data(ty), TypeData::Union(_)) {
             let members = self.c.members(ty)?;
-            // `typeOnlyExportStarMap`: what a module has through `export type *` is listed and is not there for the asking.
+            // `typeOnlyExportStarMap`: a member that a module has through `export type *` is listed
+            // but cannot be looked up.
             if members.shape().prop(name).is_some() && self.c.prop_ref(ty, name).is_none() {
                 return None;
             }
@@ -847,7 +863,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                             },
                         ..
                     } => {
-                        // `resolveESModuleSymbol`: `moduleSymbol`, not what it says it is with `export =`.
+                        // `resolveESModuleSymbol`: `moduleSymbol`, not its `export =` target.
                         let (files, at) = (self.c.files(), originating_import.file);
                         let declarations = &files.symbol(*originating_import).decls;
                         declarations.iter().find_map(|decl| match *decl {
@@ -884,7 +900,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// `getApplicableIndexSymbol`, for the key `name`.
     fn get_applicable_index_symbol(&mut self, ty: TypeId, name: Atom) -> Option<Found> {
-        // `getIndexInfosOfType`: `getReducedApparentType`. What `getUnionIndexInfos` makes has no declaration.
+        // `getIndexInfosOfType`: `getReducedApparentType`. An index info created by
+        // `getUnionIndexInfos` has no declaration.
         let apparent = self.c.reduced_apparent_type(ty);
         if self.c.is_union(apparent) {
             return None;
@@ -1069,7 +1086,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         symbol.is_some().then(|| self.c.files().sym(file, symbol))
     }
 
-    /// `symbol.Parent`, of a property. The symbol of a type literal or an object literal is never written.
+    /// `symbol.Parent` of a property. The symbol of a type literal or an object literal is never
+    /// printed.
     fn parent_of_property(&mut self, prop: &Prop) -> Option<PropertyParent> {
         let (file, member) = match &prop.source {
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
@@ -1122,7 +1140,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `declaration.Pos()`
     fn pos_of_declaration(&self, file: FileId, declaration: Declaration) -> u32 {
         let hir = self.c.hir(file);
-        // Where the first token starts, and the flags of the declaration.
+        // The start of the first token, and the flags of the declaration.
         let (start, flags) = match declaration {
             Declaration::Bound(decl) => match self.c.files().loc_of_declaration(file, decl) {
                 Some(loc) => return loc.pos,
@@ -1144,8 +1162,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 (this.pos, this.flags)
             }
         };
-        // Where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is, and the scanner of
-        // JSDoc comments has no trivia.
+        // The end of the previous token. `finishReparsedNode`: a node synthesized from a JSDoc tag
+        // has the position of the tag, and the scanner of JSDoc comments has no trivia.
         if flags.contains(Flags::REPARSED) {
             start
         } else {
@@ -1198,11 +1216,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         match &prop.source {
-            // A member goes on as a property: `describe_symbol` does not know the way to it.
+            // A member is handled as a property: `describe_symbol` cannot reach it.
             PropSource::Symbol(symbol) if !self.c.is_member_symbol(*symbol) => {
                 return self.describe_symbol(*symbol, at);
             }
-            // The name, the parent and the declarations of what it is a copy of.
+            // The name, the parent and the declarations of the symbol it is a copy of.
             PropSource::Copy(_, of, true) if of.len() == 1 => {
                 return self.describe_property(&of[0], at);
             }
@@ -1233,7 +1251,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         {
             return (self.symbol_chain_to_string(false, &[alias]), declarations);
         }
-        // `getNameOfSymbolAsWritten`: as the first declaration writes it.
+        // `getNameOfSymbolAsWritten`: the source text of the name in the first declaration.
         let source = match declarations.first() {
             Some(&(
                 file,
@@ -1294,7 +1312,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 
-    /// `getSymbolChain`, of a symbol that is in no table: the chain of its parent, and `name`.
+    /// `getSymbolChain` for a symbol that is in no symbol table: the chain of its parent, followed
+    /// by `name`.
     fn qualified_by_parent(
         &mut self,
         parent: Option<PropertyParent>,
@@ -1340,12 +1359,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         text
     }
 
-    /// `getNameOfSymbolAsWritten`, and the specifier `createExpressionFromSymbolChain` writes for an external module. `is_initial`:
-    /// `FlagsInInitialEntityName`.
+    /// `getNameOfSymbolAsWritten`, and the specifier `createExpressionFromSymbolChain` prints for
+    /// an external module. `is_initial`: `FlagsInInitialEntityName`.
     fn get_name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> String {
         let files = self.c.files();
         let declared = files.symbol(symbol);
-        // `InternalSymbolNameMissing`: a class declaration without a name that is no default export. The binder keeps it as `default`.
+        // `InternalSymbolNameMissing`: a class declaration without a name that is not a default
+        // export. The binder stores it as `default`.
         if let [Decl::Class(class)] = declared.decls[..]
             && self.c.hir(symbol.file)[class].name.is_none()
             && !self.c.hir(symbol.file)[class]
@@ -1359,12 +1379,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             return "__missing".to_owned();
         }
         let is_default_export = declared.name == known::default;
-        // `isDefaultBindingContext`, as far as files go.
+        // `isDefaultBindingContext`, at file granularity.
         if is_default_export && (!is_initial || symbol.file != self.file) {
             return "default".to_owned();
         }
         let name = crate::messages::text(&self.c.symbol_to_string(symbol));
-        // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
+        // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` augments keeps
+        // its own name.
         if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
             let specifier =
                 self.c
@@ -1378,13 +1399,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 }
 
-/// Whether a `#x` or a number is written at `pos`, where the tree keeps no name.
+/// Whether the source has a `#x` or a number at `pos`, where the HIR stores no name.
 fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
     matches!(hir.text.get(pos as usize), Some(b'#' | b'0'..=b'9'))
 }
 
-/// `createExpressionFromSymbolChain`, past the first symbol: `.name`, or `[name]` for what is no identifier. The brackets of a
-/// computed name are not doubled.
+/// `createExpressionFromSymbolChain`, after the first symbol: `.name`, or `[name]` for a name that
+/// is not an identifier. The brackets of a computed name are not doubled.
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     let bare = name.strip_prefix('#').unwrap_or(name);
     // `canUsePropertyAccess`
@@ -1399,7 +1420,7 @@ fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     };
     text.push('[');
     match inner.chars().next() {
-        // A string literal of what is between the first and the last character, whatever that is.
+        // A string literal of the text between the first and the last character, whatever it is.
         Some(quote @ ('"' | '\'')) if !is_enum_member => {
             let literal = quoted(unquote_string(inner).as_bytes(), quote as u8, true);
             text.push_str(&crate::messages::text(&literal));
@@ -1432,7 +1453,8 @@ fn unquote_string(text: &str) -> String {
     unquoted
 }
 
-/// How many UTF-16 code units the character takes whose UTF-8 encoding `byte` is a byte of, counted at its first byte.
+/// The number of UTF-16 code units of the character whose UTF-8 encoding contains `byte`, counted
+/// at its first byte.
 fn utf16_length(byte: u8) -> usize {
     match byte {
         0x80..=0xBF => 0,

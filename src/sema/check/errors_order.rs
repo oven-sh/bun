@@ -1,4 +1,4 @@
-//! What is used before it is there: 2448 2449 2450 2729.
+//! Use before declaration: 2448 2449 2450 2729.
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
@@ -11,8 +11,8 @@ impl Checker<'_> {
             return;
         }
         let index = self.exprs_by_kind(file);
-        // By symbol: where the statement that declares it ends, plus one. Every arm of the rule says yes to a use after that, so most
-        // uses cost one comparison. 0: not worked out yet.
+        // Indexed by symbol: the end of its declaring statement, plus one. Every branch of the rule
+        // accepts a use after that position, so most uses cost one comparison. 0: not computed yet.
         let mut declared_by = vec![0u32; bound.symbols.len()];
         for &e in index.of(ExprTag::Ident) {
             let local = bound.expr_symbol[e.idx()];
@@ -29,7 +29,7 @@ impl Checker<'_> {
                     });
                 declared_by[local.idx()] = match hir.data(statement) {
                     NodeData::Stmt(s) => hir[s].loc.end + 1,
-                    // There is nothing to be used before.
+                    // No declaration, so no use can precede it.
                     NodeData::None => 1,
                     _ => u32::MAX,
                 };
@@ -38,11 +38,12 @@ impl Checker<'_> {
                 self.check_resolved_block_scoped_variable(file, e);
             }
         }
-        // Without a class only what is in the initializer of a member or in a static block is looked at.
+        // In a file without a class, only the contents of member initializers and static blocks are
+        // checked.
         if hir.classes.is_empty() && !hir.members.iter().any(|m| m.init.is_some()) {
             return;
         }
-        // `isInPropertyInitializerOrClassStaticBlock` can only say yes in one of these.
+        // `isInPropertyInitializerOrClassStaticBlock` can only be true inside one of these.
         let is_place =
             |m: &&Member| matches!(m.kind, MemberKind::Property | MemberKind::StaticBlock);
         let places = Places::new(hir.members.iter().filter(is_place).map(|m| m.loc));
@@ -54,8 +55,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Where the statement ends that declares `local`, plus one, by the binder's tables: of what has one declaration, which is a
-    /// variable, a class statement or an enum. 0: they do not tell.
+    /// The end of the statement that declares `local`, plus one, read from the binder's tables.
+    /// Only for a symbol with a single declaration that is a variable, a class statement or an
+    /// enum. 0: the tables do not determine it.
     fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = &bound.symbols[local.idx()];
@@ -66,7 +68,7 @@ impl Checker<'_> {
         let &[declaration] = &symbol.decls[..] else {
             return 0;
         };
-        // What `block_scoped_declaration` has more to say about.
+        // Cases that `block_scoped_declaration` handles specially.
         let is_more = SymFlags::MERGED
             | SymFlags::FUNCTION
             | SymFlags::FUNCTION_SCOPED_VARIABLE
@@ -104,7 +106,7 @@ impl Checker<'_> {
         hir[statement].loc.end + 1
     }
 
-    /// The declaration `checkResolvedBlockScopedVariable` looks at. `NONE`: it looks at none.
+    /// The declaration `checkResolvedBlockScopedVariable` checks. `NONE`: it checks none.
     fn block_scoped_declaration(&self, file: FileId, local: SymbolId) -> Node {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = &bound.symbols[local.idx()];
@@ -116,8 +118,9 @@ impl Checker<'_> {
         {
             return Node::NONE;
         }
-        // `mergeSymbol`: what does not go with what an earlier file declared is left out, and the name goes on meaning that. And
-        // what another file declares counts as declared.
+        // `mergeSymbol`: a declaration that conflicts with one from an earlier file is not merged,
+        // and the name still resolves to the earlier one. A declaration in another file counts as
+        // declared.
         if flags.contains(SymFlags::MERGED) {
             let sym = self.files().sym(file, local);
             let first = self
@@ -126,7 +129,7 @@ impl Checker<'_> {
                 .into_iter()
                 .find(|&(of, d)| match d {
                     Decl::Var(_) | Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) => true,
-                    // A namespace with something in it goes with a class or an enum, not with a variable.
+                    // A non-empty namespace merges with a class or an enum, not with a variable.
                     Decl::Module(m) => {
                         flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
                             && self.bound(of).module_instance_state[m.idx()]
@@ -146,7 +149,8 @@ impl Checker<'_> {
         declaration.unwrap_or(Node::NONE)
     }
 
-    /// `checkResolvedBlockScopedVariable`, of a name that is not written after the statement that declares it.
+    /// `checkResolvedBlockScopedVariable` for a name that does not appear after its declaring
+    /// statement.
     fn check_resolved_block_scoped_variable(&mut self, file: FileId, e: ExprId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()];
@@ -172,7 +176,8 @@ impl Checker<'_> {
         self.report_use_before_declaration(file, hir[e].pos, code, name, declaration);
     }
 
-    /// The error `code` at `start`, which names what is written at `name`, and `'{0}' is declared here.` at `declaration`.
+    /// Reports the error `code` at `start`, with the source text at `name` as its argument, and the
+    /// related information `'{0}' is declared here.` at `declaration`.
     fn report_use_before_declaration(
         &mut self,
         file: FileId,
@@ -188,7 +193,7 @@ impl Checker<'_> {
             .add_related_info(related);
     }
 
-    /// `isBlockScopedNameDeclaredBeforeUse`, of a declaration and a use in `file`.
+    /// `isBlockScopedNameDeclaredBeforeUse` for a declaration and a use in `file`.
     pub(super) fn is_block_scoped_name_declared_before_use(
         &mut self,
         file: FileId,
@@ -374,7 +379,8 @@ impl Checker<'_> {
         found.is_some()
     }
 
-    /// `isPropertyInitializedInStaticBlocks`, of the property `declaration` and the static blocks of its class that start by `end`.
+    /// `isPropertyInitializedInStaticBlocks` for the property `declaration` and the static blocks
+    /// of its class that start no later than `end`.
     fn is_property_initialized_in_static_blocks(
         &mut self,
         file: FileId,
@@ -446,7 +452,7 @@ impl Checker<'_> {
         Some((file, self.hir(file).node(decl)))
     }
 
-    /// `checkPropertyNotUsedBeforeDeclaration`, of the property access `e`.
+    /// `checkPropertyNotUsedBeforeDeclaration` for the property access `e`.
     fn check_property_not_used_before_declaration(
         &mut self,
         file: FileId,
@@ -467,7 +473,7 @@ impl Checker<'_> {
         let is_in_place = may_be_in_place
             && hir.is_in_property_initializer_or_class_static_block(node, false)
             && !hir.kind(hir.expression(node)).is_access_expression();
-        // Elsewhere only a class declaration counts, one that a namespace exports.
+        // Elsewhere only a class declaration exported by a namespace is considered.
         if !is_in_place && hir.classes.is_empty() {
             return;
         }
@@ -494,7 +500,7 @@ impl Checker<'_> {
         let Some((declared_in, declaration)) = self.value_declaration_of(prop) else {
             return;
         };
-        // What another file declares counts as declared.
+        // A declaration in another file counts as declared.
         if declared_in != file
             || self.is_block_scoped_name_declared_before_use(file, declaration, right)
         {
@@ -520,7 +526,7 @@ impl Checker<'_> {
         self.report_use_before_declaration(file, name_pos, code, name_pos, declaration);
     }
 
-    /// `isPropertyDeclaredInAncestorClass`, of the property `name` that `declaration` declares.
+    /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.
     fn is_property_declared_in_ancestor_class(
         &mut self,
         file: FileId,
@@ -549,7 +555,8 @@ impl Checker<'_> {
             .is_some()
     }
 
-    /// What is around what `parent` stands for, patterns and `extends` included. `None`: it is not kept track of.
+    /// The parent of the node `parent` refers to, including patterns and `extends` clauses. `None`:
+    /// not tracked.
     #[inline]
     pub(super) fn outward(&self, file: FileId, parent: Parent) -> Parent {
         match parent {

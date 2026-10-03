@@ -1,17 +1,17 @@
-//! Replacing type parameters by what they stand for.
+//! Instantiation: substituting type arguments for type parameters.
 
 use super::alias::NewAlias;
 use super::*;
 
-/// The last answers to questions that go by two numbers, not both 0. It belongs to one checker and stands in front of something that
-/// takes longer to ask. An answer takes the place of whichever one was in its place.
+/// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
+/// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
 #[derive(Default)]
 pub(super) struct Recent {
-    /// The two numbers and the answer. There are none to begin with, then a power of two of them.
+    /// The two key numbers and the result. Initially empty, then a power of two of entries.
     places: Vec<[u32; 3]>,
-    /// What is left of a hash shifted by so much is a place.
+    /// A hash shifted right by this amount is a slot index.
     shift: u32,
-    /// How many answers were put in since the places were last made more.
+    /// Number of entries inserted since the table last grew.
     added: usize,
 }
 
@@ -42,7 +42,7 @@ impl Recent {
         self.places[place] = [a, b, answer];
     }
 
-    /// Most files need few places, and the few that need many are where the time goes.
+    /// Most files need few slots, and the few that need many dominate the time.
     #[cold]
     fn grow(&mut self) {
         let len = (self.places.len() * 4).max(64);
@@ -117,7 +117,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `first`, then `second`, for the parameters `first` is about.
+    /// `first`, then `second`, for the parameters `first` maps.
     pub fn map_mapper(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if first == MapperId::IDENTITY || second == MapperId::IDENTITY {
             return first;
@@ -149,9 +149,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `instantiateType(t, c.restrictiveMapper)`, `instantiateType(t, c.permissiveMapper)`: `map` is the mapper. What is deferred says
-    /// what each type parameter around it stands for, so a mapper reaches the type parameters `any_type_in` finds and no other.
-    /// `getObjectTypeInstantiation` maps the outer type parameters: those a signature in `t` declares stay.
+    /// `instantiateType(t, c.restrictiveMapper)`, `instantiateType(t, c.permissiveMapper)`: `map`
+    /// is the mapper. A deferred type records the mapping of each of its outer type parameters, so
+    /// a mapper reaches the type parameters `any_type_in` finds and no others.
+    /// `getObjectTypeInstantiation` maps the outer type parameters: those declared by a signature
+    /// in `t` stay.
     fn instantiate_type_parameters(
         &mut self,
         t: TypeId,
@@ -185,7 +187,8 @@ impl<'p> Checker<'p> {
                 Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
             ) => param,
             // `getConstraintDeclaration(tp) == nil`
-            // A clone may have been given something to extend (`tp.constraint == nil`): `syntheticParam` of `reportErrorResults`.
+            // A clone may have been assigned a constraint (`tp.constraint == nil`):
+            // `syntheticParam` of `reportErrorResults`.
             TypeData::TypeParam(file, tp, MapperId::IDENTITY)
                 if c.hir(*file)[*tp].constraint.is_none() =>
             {
@@ -237,7 +240,8 @@ impl<'p> Checker<'p> {
         self.instantiate_cached(ty, mapper)
     }
 
-    /// `instantiate`, of a type that mentions type parameters, is none itself and was not asked about lately.
+    /// `instantiate` for a type that mentions type parameters, is not one itself and is not in the
+    /// cache of recent results.
     #[inline(never)]
     fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         if let Some(known) = self.p.instantiations.get(&mut self.task, &(ty, mapper)) {
@@ -249,7 +253,7 @@ impl<'p> Checker<'p> {
             && let Some(&(under, known)) = self.instantiations_up_to_a_limit.get(&(ty, mapper))
             && under == outermost
         {
-            // Reading it leaves the marks that working it out again would.
+            // A cache hit records the same marks as recomputing it would.
             self.note_limit();
             self.mark_tainted_from(0);
             return known;
@@ -269,7 +273,7 @@ impl<'p> Checker<'p> {
             Ok(stored) => {
                 let kept =
                     (self.p.instantiations).insert(&mut self.task, (ty, mapper), result, stored);
-                // The table keeps nothing local under a key that is shared.
+                // The table stores nothing task-local under a shared key.
                 if ty.is_local() || mapper.is_local() || !result.is_local() {
                     self.recent_instantiations.put(ty.0, mapper.0, kept.0);
                 }
@@ -285,8 +289,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of returns only type parameters declared
-    /// around it. A context sensitive function adds those of its contextual signature (`assignContextualParameterTypes`).
+    /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of
+    /// returns only type parameters declared in its enclosing declarations. A context sensitive
+    /// function adds those of its contextual signature (`assignContextualParameterTypes`).
     fn has_only_declared_outer_type_params(&self, file: FileId, written: PropId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let literal = bound.prop_owner[written.idx()];
@@ -310,8 +315,9 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `getObjectTypeInstantiation`, of a deferred type reference: only what the type parameters around the node stand for changes.
-    /// `alias`: what it is handed, or else `instantiateTypeAlias(t.alias, m)`.
+    /// `getObjectTypeInstantiation` for a deferred type reference: only the mapping of the type
+    /// parameters enclosing the node changes.
+    /// `alias`: the alias passed in, or else `instantiateTypeAlias(t.alias, m)`.
     pub(super) fn instantiate_deferred_type_reference(
         &mut self,
         ty: TypeId,
@@ -354,7 +360,7 @@ impl<'p> Checker<'p> {
             return self.instantiate_deferred_type_reference(ty, mapper, None);
         }
         match self.data(ty) {
-            // `instantiateTypeWorker`: what does not change stays as it is, unreduced if it was.
+            // `instantiateTypeWorker`: an unchanged type is returned as is, unreduced if it was.
             TypeData::Union(_) | TypeData::Intersection(_) => {
                 self.instantiate_union_or_intersection(ty, mapper, None)
             }
@@ -540,8 +546,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `createNormalizedTupleType`, as far as the variadic elements go: `...T` is spelled out wherever `T` is known. `tuple` does
-    /// the rest.
+    /// `createNormalizedTupleType`, the part for variadic elements: `...T` is expanded wherever `T`
+    /// is known. `tuple` does the rest.
     pub fn normalized_tuple(
         &mut self,
         elems: &[TypeId],
@@ -556,7 +562,7 @@ impl<'p> Checker<'p> {
         if let Some(i) = (0..elems.len())
             .find(|&i| is_spread(i) && (elems[i].is_never() || self.is_union(elems[i])))
         {
-            // What is too complex to represent is taken for an array.
+            // A type that is too complex to represent is treated as an array.
             let spread: Vec<TypeId> = (0..elems.len())
                 .filter(|&j| is_spread(j))
                 .map(|j| elems[j])
@@ -583,7 +589,8 @@ impl<'p> Checker<'p> {
                 out_flags.push(ElemFlags::REST.with_label(flag.label()));
                 continue;
             }
-            // What is generic stays as it is: `TypeFlagsInstantiableNonPrimitive`, `isGenericMappedType`.
+            // A generic element stays as it is: `TypeFlagsInstantiableNonPrimitive`,
+            // `isGenericMappedType`.
             let waits = match self.data(elem) {
                 TypeData::TypeParam(..)
                 | TypeData::ThisParam(_)
@@ -619,11 +626,12 @@ impl<'p> Checker<'p> {
                 out_flags.extend_from_slice(inner_flags);
                 continue;
             }
-            // Anything else is taken for an array.
+            // Anything else is treated as an array.
             let element = match self.array_element(elem) {
                 Some(element) => element,
                 None => {
-                    // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. What is not like an array is an error.
+                    // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. A type that is not
+                    // array-like is an error.
                     let found = if self.is_array_like(elem) {
                         self.index_type_of_type(elem, TypeId::NUMBER)
                     } else {
@@ -638,8 +646,8 @@ impl<'p> Checker<'p> {
         self.tuple(&out_elems, &out_flags, readonly)
     }
 
-    /// Where `instantiations` keeps what goes with the single signature type `ty` and `arguments`: under a mapper from `ty`
-    /// itself, which nothing is instantiated with.
+    /// The key under which `instantiations` caches the entry for the single signature type `ty` and
+    /// `arguments`: a mapper from `ty` itself, which no instantiation uses.
     fn single_signature_key(&self, ty: TypeId, arguments: TypeId) -> (TypeId, MapperId) {
         (ty, self.types().mapper_of(&[(ty, arguments)]))
     }
@@ -653,17 +661,17 @@ impl<'p> Checker<'p> {
         returned: TypeId,
         inferred: MapperId,
     ) -> TypeId {
-        let made = self.type_of_signature(sig, construct);
+        let created = self.type_of_signature(sig, construct);
         let (TypeData::Fns { mapper: outer, .. }, TypeData::Synth(shape)) =
-            (self.data(returned), self.data(made))
+            (self.data(returned), self.data(created))
         else {
-            return made;
+            return created;
         };
         let arguments: Vec<TypeId> = (self.mapping_in_declaration_order(*outer).iter())
             .map(|&(param, _)| self.types().map(inferred, param).unwrap_or(param))
             .collect();
-        if arguments.is_empty() || !self.has_type_variables(made) {
-            return made;
+        if arguments.is_empty() || !self.has_type_variables(created) {
+            return created;
         }
         let flags = vec![ElemFlags::REQUIRED; arguments.len()];
         let arguments = self.tuple(&arguments, &flags, false);
@@ -673,9 +681,10 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getObjectTypeInstantiation` of a type with `single_signature_arguments`. `ObjectType.instantiations` is keyed on the
-    /// type arguments for the outer type parameters of the declaration: the first instantiation with the same ones is the
-    /// answer, whatever else `mapper` says. `instantiated`: `ty` under `mapper`, and `stored`: how its computation ended.
+    /// `getObjectTypeInstantiation` of a type with `single_signature_arguments`.
+    /// `ObjectType.instantiations` is keyed on the type arguments for the outer type parameters of
+    /// the declaration: the first instantiation with the same ones is the result, whatever else
+    /// `mapper` maps. `instantiated`: `ty` under `mapper`, and `stored`: how its computation ended.
     fn single_signature_instantiation(
         &mut self,
         ty: TypeId,
@@ -739,8 +748,9 @@ impl<'p> Checker<'p> {
                 is_union,
                 ..
             } => {
-                // `instantiateSignatureEx`: the type parameters that are still to be given are made anew where what is around them
-                // changes, and everything in the signature speaks of the new ones.
+                // `instantiateSignatureEx`: the type parameters that have no type arguments yet are
+                // cloned where their outer mapping changes, and everything in the signature refers
+                // to the clones.
                 let mut remaining: Vec<TypeId> = Vec::with_capacity(type_params.len());
                 let mut fresh: Vec<(TypeId, TypeId)> = Vec::new();
                 for &param in type_params.iter() {
@@ -786,11 +796,12 @@ impl<'p> Checker<'p> {
                     is_union: *is_union,
                 }
             }
-            // `cloneSignature` with a return type of its own, which goes through the same mapper as the rest.
+            // `cloneSignature` with its own return type, which is instantiated with the same mapper
+            // as the rest.
             SigData::WithReturn { sig: inner, ret } => {
                 let (inner, ret) = (*inner, *ret);
                 let sig = self.instantiate_sig(inner, mapper);
-                // That mapper begins with the type parameters made anew.
+                // That mapper begins with the cloned type parameters.
                 let (old, new) = (self.sig_type_params(inner), self.sig_type_params(sig));
                 let mapper = if old.len() == new.len() && old != new {
                     let fresh = self.mapper_from(&old, &new);
@@ -812,9 +823,10 @@ impl<'p> Checker<'p> {
         matches!(*self.data(ty), TypeData::TypeParam(f, tp, MapperId::IDENTITY) if f == file && list.range().contains(&tp.idx()))
     }
 
-    /// The type parameter `tp` of `func` as a signature of `func` that has `mapper` has it, if it is still to be given: the
-    /// declared one, or the one made anew for what `mapper` says of the type parameters around the signature. Anything else it
-    /// stands for is a type argument, be it the declared one (`f<T>(x)` inside `f`) or that of another instantiation.
+    /// The type parameter `tp` of `func` as seen by a signature of `func` that has `mapper`, if it
+    /// has no type argument yet: the declared one, or the clone created for the mapping `mapper`
+    /// gives the outer type parameters of the signature. Anything else it maps to is a type
+    /// argument, be it the declared one (`f<T>(x)` inside `f`) or that of another instantiation.
     pub(super) fn open_type_param(
         &self,
         file: FileId,
@@ -843,10 +855,11 @@ impl<'p> Checker<'p> {
         (around == self.types().mapper(outer)).then_some(value)
     }
 
-    /// `instantiateSignatureEx`: the mapper of a signature of `func` that has `own`, after `second`. It says what the type
-    /// parameters around the signature stand for and what its own were given. One of its own that is still to be given stands for
-    /// one made anew (`cloneTypeParameter`) wherever something is filled in around the signature: that may mention the declared
-    /// one (`then` of what `then` returns), and means another.
+    /// `instantiateSignatureEx`: the mapper of a signature of `func` that has `own`, composed with
+    /// `second`. It maps the outer type parameters of the signature and records the type arguments
+    /// of its own. One of its own without a type argument maps to a clone (`cloneTypeParameter`)
+    /// wherever an outer type parameter is instantiated: the instantiation may mention the declared
+    /// one (`then` of the return type of `then`), and means a different one.
     fn sig_mapper(
         &mut self,
         file: FileId,
@@ -867,10 +880,10 @@ impl<'p> Checker<'p> {
             // `sig.typeParameters = context.typeParameters`: they are its own, and `own` need not mention them.
             if self.takes_context(file, func).is_some() {
                 for param in self.adopted_type_params_of(file, func, own) {
-                    if let Some(given) = self.types().map(second, param)
+                    if let Some(actual) = self.types().map(second, param)
                         && !pairs.iter().any(|pair| pair.0 == param)
                     {
-                        pairs.push((param, given));
+                        pairs.push((param, actual));
                     }
                 }
             }
@@ -881,11 +894,12 @@ impl<'p> Checker<'p> {
         for tp in type_params.iter() {
             let declared = self.type_param(file, tp);
             match self.open_type_param(file, func, tp, own) {
-                // `second` goes by what the signature has.
+                // `second` is keyed by the type parameter the signature has.
                 Some(open) => match self.types().map(second, open) {
-                    Some(given) => pairs.push((declared, given)),
+                    Some(actual) => pairs.push((declared, actual)),
                     None => {
-                        // Where nothing is filled in it is the declared one, which needs no saying.
+                        // Where no outer type parameter is instantiated it is the declared one,
+                        // which needs no entry.
                         let around =
                             *around.get_or_insert_with(|| self.types().mapper_of(&pairs[..outer]));
                         let fresh = self.cloned_type_param(file, tp, around);
@@ -895,8 +909,8 @@ impl<'p> Checker<'p> {
                     }
                 },
                 None => {
-                    if let Some(given) = self.types().map(own, declared) {
-                        pairs.push((declared, self.instantiate(given, second)));
+                    if let Some(actual) = self.types().map(own, declared) {
+                        pairs.push((declared, self.instantiate(actual, second)));
                     }
                 }
             }
@@ -904,14 +918,16 @@ impl<'p> Checker<'p> {
         self.types().mapper_of(&pairs)
     }
 
-    /// The same of a construct signature of `class`, whose type parameters are those of the class. They are not made anew.
+    /// The same for a construct signature of `class`, whose type parameters are those of the class.
+    /// They are not cloned.
     fn class_sig_mapper(&mut self, class: Sym, own: MapperId, second: MapperId) -> MapperId {
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
         for &(param, value) in self.mapping_in_declaration_order(own).iter() {
             pairs.push((param, self.instantiate(value, second)));
         }
-        // Those of what the class is declared in count as well: its static side is instantiated with them
-        // (`getObjectTypeInstantiation`, `resolveAnonymousTypeMembers`).
+        // The type parameters of the declarations enclosing the class count as well: its static
+        // side is instantiated with them (`getObjectTypeInstantiation`,
+        // `resolveAnonymousTypeMembers`).
         for param in self.all_type_params_of_symbol(class).iter().copied() {
             if self.types().map(own, param).is_none()
                 && let Some(value) = self.types().map(second, param)
@@ -922,12 +938,14 @@ impl<'p> Checker<'p> {
         self.types().mapper_of(&pairs)
     }
 
-    /// `getReturnTypeOfSignature`, `getTypePredicateOfSignature`: what `signature.target` has, through `signature.mapper`. `ty`: what
-    /// `func` is declared to return or to assert. A signature of `func` that was given type arguments is an instantiation of the
-    /// one found where the type parameters around it stand for what `mapper` says, so `ty` goes through that first and through
-    /// the type arguments after. By then `unknown | U` is `unknown` and `any & U` is `any`, which only `any` and `never` for `U`
-    /// would have come out on top of: with other type arguments one step comes to the same. The types of parameters go
-    /// through both at once (`instantiateSymbol`).
+    /// `getReturnTypeOfSignature`, `getTypePredicateOfSignature`: the value of `signature.target`,
+    /// instantiated with `signature.mapper`. `ty`: the declared return type or predicate type of
+    /// `func`. A signature of `func` with type arguments is an instantiation of the signature whose
+    /// outer type parameters are mapped as `mapper` specifies, so `ty` is instantiated with that
+    /// mapping first and with the type arguments afterwards. By then `unknown | U` is `unknown` and
+    /// `any & U` is `any`, which only `any` and `never` for `U` would have overridden: with other
+    /// type arguments a single step yields the same result. The types of parameters are
+    /// instantiated with both at once (`instantiateSymbol`).
     pub(super) fn instantiate_result_of_sig(
         &mut self,
         ty: TypeId,
@@ -951,7 +969,8 @@ impl<'p> Checker<'p> {
             .copied()
             .filter(|pair| !self.is_declared_among(pair.0, file, own))
             .collect();
-        // Nothing is filled in around it: it is an instantiation of the declared one.
+        // No outer type parameter is instantiated: it is an instantiation of the declared
+        // signature.
         if first.iter().all(|pair| pair.0 == pair.1) {
             return self.instantiate(ty, mapper);
         }
@@ -959,11 +978,11 @@ impl<'p> Checker<'p> {
         let mut second: smallvec::SmallVec<[(TypeId, TypeId); 4]> = smallvec::SmallVec::new();
         for tp in own.iter() {
             let declared = self.type_param(file, tp);
-            if let Some(given) = self.types().map(mapper, declared) {
+            if let Some(actual) = self.types().map(mapper, declared) {
                 let open = self.cloned_type_param(file, tp, around);
                 first.push((declared, open));
-                if given != open {
-                    second.push((open, given));
+                if actual != open {
+                    second.push((open, actual));
                 }
             }
         }

@@ -1,5 +1,5 @@
-//! `bun_sema` with Bun's parser in front of it and the file system underneath: what its tests and the `bun-sema`
-//! command line tool are made of. The bundler does not use this crate.
+//! `bun_sema` with Bun's parser as its front end, backed by the file system: the basis of its tests
+//! and of the `bun-sema` command line tool. The bundler does not use this crate.
 
 pub mod baseline;
 pub mod hir_dump;
@@ -8,7 +8,7 @@ pub mod native;
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 
-/// Parses `text` with default options. The extension of `path` says what kind of file it is.
+/// Parses `text` with default options. The extension of `path` determines the file kind.
 pub fn parse(
     path: &str,
     text: &[u8],
@@ -43,13 +43,14 @@ pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sy
     });
 }
 
-/// The most memory the process has had resident, in bytes.
-/// How many instructions the process has gone through and how many cycles that took, on all threads. The first hardly differs from one run to
-/// the next, which the time taken does. (0, 0) where it cannot be told.
+/// Peak resident memory of the process, in bytes.
+/// The number of instructions the process has executed and the cycles they took, on all threads.
+/// The instruction count is nearly constant between runs, unlike the elapsed time. (0, 0) where it
+/// is not available.
 pub fn instructions_and_cycles() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: all zeros is a `rusage_info_v4`.
+        // SAFETY: all zeros is a valid `rusage_info_v4`.
         let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {
@@ -62,10 +63,10 @@ pub fn instructions_and_cycles() -> (u64, u64) {
     (0, 0)
 }
 
-/// How many columns the terminal standard output goes to has. 0 if it goes elsewhere.
+/// The column count of the terminal that standard output is attached to. 0 if it is not a terminal.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
-    // SAFETY: all zeros is a `winsize`, which the call fills in.
+    // SAFETY: all zeros is a valid `winsize`, which the call fills in.
     unsafe {
         let mut size: libc::winsize = core::mem::zeroed();
         if libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) == 0 {
@@ -75,12 +76,12 @@ pub fn terminal_width() -> usize {
     0
 }
 
-/// The most memory the process has had at any time, as the system counts it against it. What has been given back and not been taken yet, which
-/// `getrusage` counts, is not in it.
+/// Peak memory of the process, as the operating system accounts it to the process. Excludes memory
+/// that has been released but not yet reclaimed, which `getrusage` counts.
 pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: all zeros is a `rusage_info_v4`.
+        // SAFETY: all zeros is a valid `rusage_info_v4`.
         let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {
@@ -96,7 +97,7 @@ pub fn peak_memory() -> u64 {
 pub fn current_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: all zeros is a `rusage_info_v4`.
+        // SAFETY: all zeros is a valid `rusage_info_v4`.
         let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {

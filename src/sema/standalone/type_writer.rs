@@ -1,5 +1,5 @@
-//! The type at every expression and declaration name of a file: what TypeScript's test harness writes into `.types` baselines
-//! (`typeWriterWalker`, `GetTypeAtLocation`).
+//! The type at every expression and declaration name of a file: the content TypeScript's test
+//! harness writes into `.types` baselines (`typeWriterWalker`, `GetTypeAtLocation`).
 
 use super::enclosing_declaration::Enclosing;
 use super::visit_node::{VisitedKind, VisitedNode};
@@ -12,14 +12,14 @@ pub struct TypeAtLocation {
     pub start: u32,
     pub end: u32,
     pub type_text: String,
-    /// For telling apart where a difference comes from.
+    /// For diagnosing the source of a difference.
     pub kind: VisitedKind,
 }
 
-/// What the walk for the types of a file keeps from one node to the next.
+/// State carried from node to node during the type walk of a file.
 struct TypeWalk {
-    /// The type that was written last for an expression, and how it is written. The parentheses around an expression and the name of a
-    /// property access repeat it.
+    /// The last type printed for an expression, and its text. The parentheses around an expression
+    /// and the name of a property access reuse it.
     text_of_expr: Vec<Option<(TypeId, String)>>,
 }
 
@@ -41,9 +41,11 @@ impl Checker<'_> {
         results
     }
 
-    /// Where the type of a node of `file` is the error type, and what kind of node it is: the walk of `types_at_locations` without the
-    /// printing. TypeScript makes the error type only where it reports an error or was handed one, so in a file without errors each of
-    /// these is a bug. Nothing for a file whose semantic errors are not reported, or only some of them. The file must have been checked.
+    /// The position and the kind of each node of `file` whose type is the error type: the walk of
+    /// `types_at_locations` without the printing. TypeScript produces the error type only where it
+    /// reports an error or receives an error type as input, so in a file without errors each of
+    /// these is a bug. Empty for a file whose semantic errors are not reported, or only partly
+    /// reported. The file must have been checked.
     pub fn error_types_at_locations(&mut self, file: FileId) -> Vec<(u32, String)> {
         if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
             return Vec::new();
@@ -133,12 +135,12 @@ impl Checker<'_> {
         text
     }
 
-    /// What `writeTypeOrSymbol` leaves out of the walk for types.
+    /// Whether `writeTypeOrSymbol` omits the node from the type walk.
     fn is_omitted_from_types(&self, file: FileId, kind: VisitedKind) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
             VisitedKind::Expression(e) => match hir[e].kind {
-                // `IsPartOfTypeNode` takes the keyword `null` for a type wherever it is written.
+                // `IsPartOfTypeNode` treats the keyword `null` as a type wherever it appears.
                 ExprKind::Null => true,
                 // An assertion whose type node is reparsed from a `@type` or `@satisfies` tag.
                 ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => {
@@ -147,8 +149,9 @@ impl Checker<'_> {
                 ExprKind::AsConst(_) => hir.is_js,
                 _ => false,
             },
-            // `GetMeaningFromDeclaration(node.Parent)` is without `SemanticMeaningValue`. The name of a type alias is written all the
-            // same, and that of a namespace if it is `ModuleInstanceStateInstantiated`.
+            // `GetMeaningFromDeclaration(node.Parent)` lacks `SemanticMeaningValue`. The name of a
+            // type alias is printed anyway, and that of a namespace if it is
+            // `ModuleInstanceStateInstantiated`.
             VisitedKind::DeclarationName(Decl::Interface(_) | Decl::TypeParam(_), _) => true,
             VisitedKind::DeclarationName(Decl::Module(m), _) => {
                 matches!(hir[m].name, ModuleName::Ident(_))
@@ -156,14 +159,17 @@ impl Checker<'_> {
             }
             // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` a type node.
             VisitedKind::ConstOfAsConst(_) | VisitedKind::TypePredicateParameter(_) => true,
-            // `isPartOfTypeNodeInParent`: of `A.B.C` only `C` and the whole are right under a type node.
-            // In a heritage clause the same holds of the property accesses (`isPartOfTypeExpressionWithTypeArguments`).
+            // `isPartOfTypeNodeInParent`: of `A.B.C` only `C` and the whole name are direct
+            // children of a type node.
+            // In a heritage clause the same applies to the property accesses
+            // (`isPartOfTypeExpressionWithTypeArguments`).
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
             | VisitedKind::HeritageClausePropertyAccess(node, index) => {
                 !matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 != name.len())
             }
-            // The `b` of `typeof import("m").a.b` is not: `isPartOfTypeNodeInParent` leaves out an `ImportType` with `IsTypeOf`.
+            // The `b` of `typeof import("m").a.b` is not: `isPartOfTypeNodeInParent` excludes an
+            // `ImportType` with `IsTypeOf`.
             VisitedKind::ImportTypeQualifierName(node, index) => {
                 matches!(hir[node].kind, TypeNodeKind::Import { name, is_typeof: false, .. }
                     if index as usize + 1 == name.len())
@@ -172,7 +178,8 @@ impl Checker<'_> {
         }
     }
 
-    /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is written `any` in a test without errors too.
+    /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is printed as
+    /// `any` even in a test without errors.
     fn is_error_type_printed_as_any(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         let parent = hir.parent(node);
@@ -200,10 +207,11 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeOfNode`, and before it what `writeTypeOrSymbol` asks of the node after the `extends` of a class.
+    /// `getTypeOfNode`, preceded by the special case of `writeTypeOrSymbol` for the node after the
+    /// `extends` of a class.
     fn get_type_of_visited_node(&mut self, file: FileId, node: VisitedNode) -> TypeId {
         let hir = self.hir(file);
-        // No semantic question is answered within a `with` block.
+        // Semantic queries are not answered inside a `with` block.
         if hir.is_in_with(node.start) {
             return TypeId::ERROR;
         }
@@ -213,7 +221,8 @@ impl Checker<'_> {
             | VisitedKind::AccessName(e) => {
                 // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
                 let parent = hir.parent(node.node);
-                // What a class extends after the first has no `ExpressionWithTypeArguments` around it.
+                // The base expressions of a class after the first are not wrapped in an
+                // `ExpressionWithTypeArguments`.
                 if matches!(parent.part(), Some(Part::Base | Part::Extends)) {
                     let class = self.class_sym(file, hir.class_of(parent.row()));
                     if let Some(&base) = self.base_types(class).first()
@@ -226,7 +235,8 @@ impl Checker<'_> {
                 self.type_of_visited_expression(file, e)
             }
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
-            // `IsJsxTagName`: the identifier is an expression (`checkIdentifier`). Nothing goes by the name `a-b`.
+            // `IsJsxTagName`: the identifier is an expression (`checkIdentifier`). The name `a-b`
+            // never resolves.
             VisitedKind::JsxIntrinsicTagName(_, tag) => match hir[tag].kind {
                 ExprKind::Ident(_) => {
                     let ty = self.type_of_expr(file, tag);
@@ -237,13 +247,13 @@ impl Checker<'_> {
             VisitedKind::DeclarationName(decl, symbol) => {
                 self.type_of_declaration_name(file, decl, symbol, node.start)
             }
-            // `getImmediateAliasedSymbol`: the type of what the specifier stands for.
+            // `getImmediateAliasedSymbol`: the type of the symbol the specifier aliases.
             VisitedKind::SpecifierPropertyName(_, symbol) => {
                 let sym = self.files().sym(file, symbol);
                 self.type_of_symbol(sym)
             }
             VisitedKind::MemberName(m) => self.type_of_member_name(file, m),
-            // `declareSymbolEx`: what has no name has a symbol of its own.
+            // `declareSymbolEx`: a declaration without a name has its own symbol.
             VisitedKind::PropertyName(p) if matches!(hir[p].key, PropKey::None) => {
                 self.get_type_of_literal_member(file, p)
             }
@@ -271,7 +281,8 @@ impl Checker<'_> {
                 _ => TypeId::ERROR,
             },
             VisitedKind::ThisParameter(f) => self.type_of_this_parameter(file, f),
-            // `getRegularTypeOfExpression` of the access, and of the name it ends with (`isRightSideOfQualifiedNameOrPropertyAccess`).
+            // `getRegularTypeOfExpression` of the access, and of its final name
+            // (`isRightSideOfQualifiedNameOrPropertyAccess`).
             VisitedKind::HeritageClauseName(reference, index)
             | VisitedKind::HeritageClausePropertyAccess(reference, index) => {
                 let TypeNodeKind::Ref { name, .. } = hir[reference].kind else {
@@ -299,8 +310,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeOfNode` of an expression, of the parentheses around it, and of the name a property access ends with
-    /// (`isRightSideOfQualifiedNameOrPropertyAccess`).
+    /// `getTypeOfNode` of an expression, of the parentheses around it, and of the final name of a
+    /// property access (`isRightSideOfQualifiedNameOrPropertyAccess`).
     fn type_of_visited_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -332,8 +343,8 @@ impl Checker<'_> {
     fn type_of_binding_name(&mut self, file: FileId, pat: PatId) -> TypeId {
         let (declared_in, first) = self.value_declaration_of_variable_name(file, pat);
         let ty = self.type_of_pat(declared_in, first);
-        // `bindVariableDeclarationOrBindingElement`: `const x = require(..)` declares an alias. `getTypeOfNode` of its name is
-        // the type of what the alias stands for.
+        // `bindVariableDeclarationOrBindingElement`: `const x = require(..)` declares an alias.
+        // `getTypeOfNode` of its name is the type of the alias target.
         let required = self.bound(file).pat_symbol[pat.idx()];
         if required.is_some()
             && self.bound(file).symbols[required.idx()]
@@ -347,7 +358,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Of the string or the number at `start`, which is written in brackets for the name `key`.
+    /// The type of the string or number literal at `start`, which is the bracketed form of the name
+    /// `key`.
     fn type_of_literal_in_computed_name(
         &mut self,
         file: FileId,
@@ -369,8 +381,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `getSymbolOfPartOfRightHandSideOfImportEquals`: of `import x = a.b.c`, `a` and `a.b` mean namespaces, and so does the `a` of
-    /// `import x = a`. `getTypeOfNode`: the declared type of what a name means, or else its type.
+    /// `getSymbolOfPartOfRightHandSideOfImportEquals`: in `import x = a.b.c`, `a` and `a.b` have
+    /// the namespace meaning, and so does the `a` of `import x = a`. `getTypeOfNode`: the declared
+    /// type of the symbol a name resolves to, or else the type of that symbol.
     fn type_of_import_equals_name(
         &mut self,
         file: FileId,
@@ -410,7 +423,7 @@ impl Checker<'_> {
             }
             None => TypeId::ERROR,
         };
-        // A lone name means a namespace, which is `any` only in error.
+        // A single name has the namespace meaning, and its type is `any` only on error.
         if names.len() == 1 && ty.is_any() {
             TypeId::ERROR
         } else {
@@ -418,8 +431,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeOfNode` of the bare name in `export = a` or `export default a`, which `IsInExpressionContext` does not count as an
-    /// expression (`isInRightSideOfImportOrExportAssignment`): the declared type of what it names, or else the type of that symbol.
+    /// `getTypeOfNode` of the bare name in `export = a` or `export default a`, which
+    /// `IsInExpressionContext` does not count as an expression
+    /// (`isInRightSideOfImportOrExportAssignment`): the declared type of the symbol it resolves to,
+    /// or else the type of that symbol.
     fn type_of_export_assignment_name(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let ExprKind::Ident(name) = hir[e].kind else {
@@ -488,7 +503,8 @@ impl Checker<'_> {
             Decl::ExportSpec(spec) => hir[hir[spec].export].type_only,
             _ => false,
         };
-        // `IsTypeDeclarationName`: a name that is a string literal is not one. `parseImportSpecifier` makes an identifier of it.
+        // `IsTypeDeclarationName`: a name that is a string literal is not one.
+        // `parseImportSpecifier` converts it to an identifier.
         let is_identifier = matches!(decl, Decl::ImportSpec(_))
             || !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
         if is_type_declaration && is_identifier {
@@ -498,7 +514,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration`, of an import or an export.
+    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration`, for an import or an
+    /// export.
     fn mode_of_module_specifier_of_declaration(
         &self,
         file: FileId,
@@ -548,8 +565,9 @@ impl Checker<'_> {
             MemberOwner::TypeLiteral(node) => self.type_from_node(file, node),
             MemberOwner::None => return TypeId::ERROR,
         };
-        // What is no property of its container has the type its own declaration gives it: `[e]` whose `e` has no type that names a
-        // property, or is not written as a name (`isLateBindableAST`); `#x` where there is no class to declare it; `1n`.
+        // A member that is not a property of its container has the type of its own declaration:
+        // `[e]` whose `e` has no type usable as a property name, or is not syntactically a name
+        // (`isLateBindableAST`); `#x` outside a class; `1n`.
         let prop = self
             .member_name(file, member.key)
             .and_then(|name| self.prop_of(container, name));
@@ -574,7 +592,8 @@ impl Checker<'_> {
             return self.type_of_prop(&prop, MapperId::IDENTITY);
         };
         let name = prop.name;
-        // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: what the symbol of that name refused has a symbol of its own.
+        // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: a declaration that the symbol of that
+        // name rejected has its own symbol.
         let has_own_symbol = match Self::value_declaration(&prop) {
             Some(in_table @ PropSource::Symbol(_)) => *in_table != own,
             // Put together of declarations that have type parameters of their own: what the binder says. `prototype`, which
@@ -606,9 +625,11 @@ impl Checker<'_> {
                 .copied()
                 .find(|&declaration| hir[declaration].kind == kind)
         };
-        // `getTypeOfAccessors` is asked first: the get accessor says what the property is, or else the set accessor. Otherwise
-        // `getTypeOfVariableOrParameterOrPropertyWorker`: `checkPropertyAssignment`, `checkJsxAttribute` and the like of
-        // `symbol.ValueDeclaration`, the first declaration (`SetValueDeclaration`). None of them widens.
+        // `getTypeOfAccessors` takes precedence: the get accessor determines the type of the
+        // property, or else the set accessor. Otherwise
+        // `getTypeOfVariableOrParameterOrPropertyWorker`: `checkPropertyAssignment`,
+        // `checkJsxAttribute` and the like for `symbol.ValueDeclaration`, the first declaration
+        // (`SetValueDeclaration`). None of them widens.
         let declaration = of_kind(PropKind::Getter)
             .or_else(|| of_kind(PropKind::Setter))
             .unwrap_or(declarations[0]);
@@ -616,8 +637,9 @@ impl Checker<'_> {
     }
 }
 
-/// What is written for a node whose type is the error type: `error` (`IntrinsicName()`) if the test has no errors, or else `any`
-/// (`typeWriterWalker.hadErrorBaseline`). Whoever has the report of the test replaces it.
+/// Placeholder printed for a node whose type is the error type: `error` (`IntrinsicName()`) if the
+/// test has no errors, or else `any` (`typeWriterWalker.hadErrorBaseline`). The caller that has the
+/// report of the test replaces it.
 pub const ERROR_TYPE_TEXT: &str = "\u{1}error";
 
 impl<'p> Checker<'p> {
@@ -629,7 +651,7 @@ impl<'p> Checker<'p> {
     /// type (`instantiateTypeWithSingleGenericCallSignature`). The cached type of an argument is the one from which the type
     /// arguments of its call were inferred.
     pub(super) fn get_type_of_expression_after_check(&mut self, file: FileId, e: ExprId) -> TypeId {
-        // The first check, in which the calls around `e` are resolved.
+        // The first check, which resolves the calls enclosing `e`.
         self.type_of_expr(file, e);
         let outer = self.begin_recheck();
         let ty = match self.quick_type_of_expr(file, e) {
@@ -643,7 +665,8 @@ impl<'p> Checker<'p> {
     /// `getTypeOfSymbol` for a member of an object literal or a JSX attribute whose `symbol.ValueDeclaration` is `p`. The first
     /// request runs `checkPropertyAssignment`, `checkJsxAttribute` or the equivalent. `checkObjectLiteral` does not request it.
     pub(super) fn get_type_of_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
-        // `checkShorthandPropertyAssignment(declaration, true)`: of `{ a = 1 }` it is the name that is checked.
+        // `checkShorthandPropertyAssignment(declaration, true)`: for `{ a = 1 }` the name is
+        // checked.
         let hir = self.hir(file);
         if hir[p].kind == PropKind::Shorthand
             && let ExprKind::Assign { target, .. } = hir[hir[p].value].kind

@@ -1,19 +1,22 @@
-//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that is no module.
+//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that is not
+//! a module.
 //!
-//! With `importHelpers`, what the target does not have is emitted as calls of functions imported from `tslib`, and they have to be
-//! there. Follows `checkExternalEmitHelpers`, `resolveHelpersModule`, `getHelperNames` and whatever calls the first, of TypeScript
-//! 7.0.2's checker.go.
+//! With `importHelpers`, syntax the target does not support is emitted as calls of functions
+//! imported from `tslib`, which must exist. Follows `checkExternalEmitHelpers`,
+//! `resolveHelpersModule`, `getHelperNames` and the callers of the first, of TypeScript 7.0.2's
+//! checker.go.
 //!
-//! A file asks for each helper once, where `checkSourceFile` first comes upon syntax that needs it. So the places that ask are
-//! collected and put in the order it gets to them: as they are written, but for what `checkNodeDeferred` puts off until all else
-//! is checked. An expression that is checked ahead of its turn, because its type is asked for, is taken in its turn here.
+//! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
+//! the requesting positions are collected and sorted in the order it visits them: source order,
+//! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
+//! that is checked early, because its type is requested, is handled in its regular order here.
 
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
 
-// `ExternalEmitHelpers`, but for the two nothing asks for.
+// `ExternalEmitHelpers`, except the two that are never requested.
 const REST: u32 = 1 << 0;
 const DECORATE: u32 = 1 << 1;
 const METADATA: u32 = 1 << 2;
@@ -67,7 +70,7 @@ fn helper_names(helper: u32, legacy_decorators: bool) -> &'static [&'static str]
 /// A call of `checkExternalEmitHelpers`.
 #[derive(Copy, Clone)]
 struct Request {
-    /// How many times checking is put off on the way there, and where in the file it is got to.
+    /// The number of deferrals on the way to it, and its position in the file.
     order: (u32, u32),
     /// `GetErrorRangeForNode` of the location.
     start: u32,
@@ -88,17 +91,17 @@ impl Checker<'_> {
         {
             return;
         }
-        let mut requests = self.eh_requests(file);
+        let mut requests = self.emit_helpers_requests(file);
         requests.sort_by_key(|request| request.order);
         // `externalHelpersModule`, `requestedExternalEmitHelpers`
         let (mut resolved, mut requested) = (None, 0);
         for request in requests {
-            // `checkWithStatement` does not look at the body.
+            // `checkWithStatement` does not check the body.
             if module.hir.is_in_with(request.start) {
                 continue;
             }
-            let found =
-                *resolved.get_or_insert_with(|| self.eh_resolve_helpers_module(file, request));
+            let found = *resolved
+                .get_or_insert_with(|| self.emit_helpers_resolve_helpers_module(file, request));
             let Some(helpers_module) = found else {
                 return;
             };
@@ -121,7 +124,9 @@ impl Checker<'_> {
                                 CLASS_PRIVATE_FIELD_SET => 4,
                                 _ => continue,
                             };
-                            if self.eh_has_signature_with_arity_greater_than(symbol, arity) {
+                            if self
+                                .emit_helpers_has_signature_with_arity_greater_than(symbol, arity)
+                            {
                                 continue;
                             }
                             args.push(super::sink::number_text(arity + 1));
@@ -138,9 +143,14 @@ impl Checker<'_> {
         }
     }
 
-    /// `resolveHelpersModule`, and `resolveExternalModule` for the import of `tslib` the loader made up. Nothing is said of a `tslib`
-    /// that is JavaScript nothing declares the types of (`errorOnImplicitAnyModule`).
-    fn eh_resolve_helpers_module(&mut self, file: FileId, request: Request) -> Option<Sym> {
+    /// `resolveHelpersModule`, and `resolveExternalModule` for the synthetic import of `tslib` the
+    /// loader added. Nothing is reported for a `tslib` that is untyped JavaScript
+    /// (`errorOnImplicitAnyModule`).
+    fn emit_helpers_resolve_helpers_module(
+        &mut self,
+        file: FileId,
+        request: Request,
+    ) -> Option<Sym> {
         let files = self.files();
         let (tslib, module) = (known::tslib, files.module(file));
         let mode = module.default_mode;
@@ -160,8 +170,12 @@ impl Checker<'_> {
         None
     }
 
-    /// `hasSignatureWithArityGreaterThan`, of what `symbol` stands for (`resolveSymbol`).
-    fn eh_has_signature_with_arity_greater_than(&mut self, symbol: Sym, arity: usize) -> bool {
+    /// `hasSignatureWithArityGreaterThan` for the symbol `symbol` aliases (`resolveSymbol`).
+    fn emit_helpers_has_signature_with_arity_greater_than(
+        &mut self,
+        symbol: Sym,
+        arity: usize,
+    ) -> bool {
         let files = self.files();
         let flags = files.flags(symbol);
         // `IsNonLocalAlias`
@@ -200,7 +214,7 @@ impl Checker<'_> {
 
     // ───────────────────────────── who asks ─────────────────────────────
 
-    fn eh_requests(&mut self, file: FileId) -> Vec<Request> {
+    fn emit_helpers_requests(&mut self, file: FileId) -> Vec<Request> {
         // `GetEmitScriptTarget`
         let target = match self.files().options.target {
             ScriptTarget::None => ScriptTarget::ES2025,
@@ -208,20 +222,21 @@ impl Checker<'_> {
         };
         let index = self.exprs_by_kind(file);
         let mut requests = Vec::new();
-        self.eh_of_async_functions(file, target, &index, &mut requests);
-        self.eh_of_statements(file, target, &mut requests);
-        self.eh_of_rest_elements(file, target, &index, &mut requests);
-        self.eh_of_decorators(file, target, &mut requests);
-        self.eh_of_class_expressions(file, target, &mut requests);
-        self.eh_of_private_names(file, target, &index, &mut requests);
+        self.emit_helpers_of_async_functions(file, target, &index, &mut requests);
+        self.emit_helpers_of_statements(file, target, &mut requests);
+        self.emit_helpers_of_rest_elements(file, target, &index, &mut requests);
+        self.emit_helpers_of_decorators(file, target, &mut requests);
+        self.emit_helpers_of_class_expressions(file, target, &mut requests);
+        self.emit_helpers_of_private_names(file, target, &index, &mut requests);
         requests
     }
 
-    /// How many times `checkNodeDeferred` puts off what is directly in `at`. Checked later are the body of a function expression, of
-    /// an arrow function and of a method of an object literal, all of an accessor of an object literal, the members of a class
-    /// expression, the operand of `void`, and what is in a JSX element. `None`: it is ambient (`NodeFlagsAmbient`), or it is not
-    /// kept track of what it is in.
-    fn eh_place(&self, file: FileId, mut at: Parent) -> Option<u32> {
+    /// The number of times `checkNodeDeferred` defers a direct child of `at`. Deferred are the body
+    /// of a function expression, of an arrow function and of a method of an object literal, the
+    /// whole of an accessor of an object literal, the members of a class expression, the operand of
+    /// `void`, and the contents of a JSX element. `None`: it is ambient (`NodeFlagsAmbient`), or
+    /// its parent is not tracked.
+    fn emit_helpers_span(&self, file: FileId, mut at: Parent) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut deferred = 0;
         loop {
@@ -232,9 +247,9 @@ impl Checker<'_> {
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
                 Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                Parent::FnBody(f) => self.eh_out_of_fn(file, f, false, &mut deferred)?,
+                Parent::FnBody(f) => self.emit_helpers_out_of_fn(file, f, false, &mut deferred)?,
                 Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    self.eh_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
+                    self.emit_helpers_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
                 }
                 Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
                     let MemberOwner::Class(class) = bound.member_owner[m.idx()] else {
@@ -278,8 +293,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `eh_place`, one step: out of the function `f`, from its parameters (`is_head`) or from its body.
-    fn eh_out_of_fn(
+    /// `emit_helpers_span`, one step: out of the function `f`, from its parameters (`is_head`) or from its body.
+    fn emit_helpers_out_of_fn(
         &self,
         file: FileId,
         f: FnId,
@@ -307,7 +322,7 @@ impl Checker<'_> {
     }
 
     /// `checkSignatureDeclaration`, `checkYieldExpression`
-    fn eh_of_async_functions(
+    fn emit_helpers_of_async_functions(
         &self,
         file: FileId,
         target: ScriptTarget,
@@ -339,8 +354,8 @@ impl Checker<'_> {
             let f = FnId(i as u32);
             let mut deferred = 0;
             let Some(place) = self
-                .eh_out_of_fn(file, f, true, &mut deferred)
-                .and_then(|around| self.eh_place(file, around))
+                .emit_helpers_out_of_fn(file, f, true, &mut deferred)
+                .and_then(|around| self.emit_helpers_span(file, around))
             else {
                 continue;
             };
@@ -357,7 +372,7 @@ impl Checker<'_> {
                 && self
                     .containing_generator(file, e)
                     .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                && let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
             {
                 let start = self.error_start_inside_parentheses(file, e);
                 requests.push(Request {
@@ -372,7 +387,12 @@ impl Checker<'_> {
 
     /// `checkImportDeclaration`, `checkImportBinding`, `checkExportDeclaration`, `checkExportSpecifier`, `checkForOfStatement`,
     /// `checkVariableDeclarationList`
-    fn eh_of_statements(&self, file: FileId, target: ScriptTarget, requests: &mut Vec<Request>) {
+    fn emit_helpers_of_statements(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        requests: &mut Vec<Request>,
+    ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         // `GetEmitModuleFormatOfFile(file) == ModuleKindCommonJS`
         let is_commonjs = match files.module(file).implied_format {
@@ -382,8 +402,8 @@ impl Checker<'_> {
         };
         for (i, stmt) in hir.stmts.iter().enumerate() {
             let (s, around) = (StmtId(i as u32), bound.stmt_parent[i]);
-            // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`: elsewhere a module can only be named in what
-            // is ambient.
+            // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`:
+            // elsewhere a module can only be referenced in an ambient context.
             let is_module_element = is_commonjs && around == Parent::File;
             let mut ask = |deferred: u32, (start, end): (u32, u32), helpers: u32| {
                 requests.push(Request {
@@ -396,7 +416,7 @@ impl Checker<'_> {
             match stmt.kind {
                 StmtKind::Import(x) if is_module_element => {
                     let import = hir[x];
-                    if !self.eh_import_clause_is_checked(file, s, &import) {
+                    if !self.emit_helpers_import_clause_is_checked(file, s, &import) {
                         continue;
                     }
                     let whole = (stmt.start, self.end_of_stmt(file, s));
@@ -413,7 +433,11 @@ impl Checker<'_> {
                             let named = hir[spec];
                             if named.imported == known::default {
                                 let name = named.pos.min(named.imported_pos);
-                                let start = self.eh_start_of_specifier(file, name, named.type_only);
+                                let start = self.emit_helpers_start_of_specifier(
+                                    file,
+                                    name,
+                                    named.type_only,
+                                );
                                 ask(
                                     0,
                                     (start, self.end_of_import_spec(file, spec)),
@@ -427,14 +451,15 @@ impl Checker<'_> {
                     }
                 }
                 StmtKind::ExportNamed(x) if is_module_element && hir[x].spec.is_some() => {
-                    if !self.eh_has_only_string_attributes(file, s) {
+                    if !self.emit_helpers_has_only_string_attributes(file, s) {
                         continue;
                     }
                     for spec in hir[x].items.iter() {
                         let named = hir[spec];
                         if named.local == known::default {
                             let name = named.pos.min(named.local_pos);
-                            let start = self.eh_start_of_specifier(file, name, named.type_only);
+                            let start =
+                                self.emit_helpers_start_of_specifier(file, name, named.type_only);
                             ask(
                                 0,
                                 (start, self.end_of_export_spec(file, spec)),
@@ -444,7 +469,7 @@ impl Checker<'_> {
                     }
                 }
                 StmtKind::ExportStar { spec, alias, .. } if is_module_element && spec.is_some() => {
-                    if self.eh_has_only_string_attributes(file, s) {
+                    if self.emit_helpers_has_only_string_attributes(file, s) {
                         let whole = (stmt.start, self.end_of_stmt(file, s));
                         ask(
                             0,
@@ -462,7 +487,7 @@ impl Checker<'_> {
                     if self
                         .enclosing_fn(file, around)
                         .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                        && let Some(deferred) = self.eh_place(file, around)
+                        && let Some(deferred) = self.emit_helpers_span(file, around)
                     {
                         ask(
                             deferred,
@@ -478,7 +503,8 @@ impl Checker<'_> {
                     if !matches!(hir[first].kind, VarKind::Using | VarKind::AwaitUsing) {
                         continue;
                     }
-                    let Some(deferred) = self.eh_place(file, Parent::VarInit(first)) else {
+                    let Some(deferred) = self.emit_helpers_span(file, Parent::VarInit(first))
+                    else {
                         continue;
                     };
                     ask(
@@ -495,14 +521,21 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `checkImportDeclaration` gets to what the clause of `import`, the statement `s` at the top of the file, binds:
-    /// `checkExternalImportOrExportDeclaration` and `checkGrammarImportClause` have nothing against it.
-    fn eh_import_clause_is_checked(&self, file: FileId, s: StmtId, import: &Import) -> bool {
+    /// Whether `checkImportDeclaration` reaches the bindings of the clause of `import`, the
+    /// top-level statement `s`: `checkExternalImportOrExportDeclaration` and
+    /// `checkGrammarImportClause` report no error for it.
+    fn emit_helpers_import_clause_is_checked(
+        &self,
+        file: FileId,
+        s: StmtId,
+        import: &Import,
+    ) -> bool {
         let hir = self.hir(file);
-        if import.spec.is_none() || !self.eh_has_only_string_attributes(file, s) {
+        if import.spec.is_none() || !self.emit_helpers_has_only_string_attributes(file, s) {
             return false;
         }
-        // `grammarErrorOnNode` says nothing of a file that does not parse, and then nothing is given up on.
+        // `grammarErrorOnNode` reports nothing in a file with parse errors, and then no check bails
+        // out.
         if has_parse_diagnostics(hir) {
             return true;
         }
@@ -521,7 +554,7 @@ impl Checker<'_> {
     }
 
     /// `checkExternalImportOrExportDeclaration`: every import attribute of the statement `s` is given as a string literal.
-    fn eh_has_only_string_attributes(&self, file: FileId, s: StmtId) -> bool {
+    fn emit_helpers_has_only_string_attributes(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
         if hir.import_attributes.is_empty() {
             return true;
@@ -539,8 +572,9 @@ impl Checker<'_> {
             })
     }
 
-    /// Where the import or export specifier starts whose first name is at `name`: at its `type`, if it has one.
-    fn eh_start_of_specifier(&self, file: FileId, name: u32, type_only: bool) -> u32 {
+    /// Start of the import or export specifier whose first name is at `name`: its `type` modifier,
+    /// if it has one.
+    fn emit_helpers_start_of_specifier(&self, file: FileId, name: u32, type_only: bool) -> u32 {
         let end = self.end_of_token_before(file, name) as usize;
         let is_after_type =
             type_only && end >= 4 && self.hir(file).text.get(end - 4..end) == Some(&b"type"[..]);
@@ -548,7 +582,7 @@ impl Checker<'_> {
     }
 
     /// `checkVariableLikeDeclaration`, `checkObjectLiteralDestructuringPropertyAssignment`
-    fn eh_of_rest_elements(
+    fn emit_helpers_of_rest_elements(
         &self,
         file: FileId,
         target: ScriptTarget,
@@ -563,7 +597,7 @@ impl Checker<'_> {
             let p = PatPropId(i as u32);
             if element.is_rest
                 && let Some(deferred) =
-                    self.eh_place(file, self.outward(file, Parent::PatPropDefault(p)))
+                    self.emit_helpers_span(file, self.outward(file, Parent::PatPropDefault(p)))
             {
                 let (start, end) = self.error_range_of_pat_prop(file, p);
                 requests.push(Request {
@@ -578,17 +612,17 @@ impl Checker<'_> {
             let ExprKind::Object(props) = hir[e].kind else {
                 continue;
             };
-            // One that is not the last is refused (2462).
+            // One that is not the last is rejected (2462).
             let Some(last) = props.iter().next_back().map(|p| hir[p]) else {
                 continue;
             };
             if last.kind != PropKind::Spread
                 || last.value.is_none()
-                || !self.eh_is_taken_apart(file, e)
+                || !self.emit_helpers_is_destructured(file, e)
             {
                 continue;
             }
-            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let dots_end = self.end_of_token_before(file, self.start_of(file, last.value));
@@ -602,9 +636,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `checkDestructuringAssignment` takes the object literal `e` apart. In parentheses it is an expression like any other
-    /// (`checkReferenceAssignment`).
-    fn eh_is_taken_apart(&self, file: FileId, e: ExprId) -> bool {
+    /// Whether `checkDestructuringAssignment` destructures the object literal `e`. Parenthesized,
+    /// it is an ordinary expression (`checkReferenceAssignment`).
+    fn emit_helpers_is_destructured(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut node = e;
         loop {
@@ -639,14 +673,19 @@ impl Checker<'_> {
         }
     }
 
-    /// From the `@` of the decorator whose expression is `e` to where it ends.
-    fn eh_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
+    /// The span from the `@` of the decorator whose expression is `e` to its end.
+    fn emit_helpers_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
         let written = self.decorator_position(file, e);
         (written.at_sign, written.end)
     }
 
     /// `checkDecorators`, `markDecoratorAliasReferenced`
-    fn eh_of_decorators(&self, file: FileId, target: ScriptTarget, requests: &mut Vec<Request>) {
+    fn emit_helpers_of_decorators(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        requests: &mut Vec<Request>,
+    ) {
         let (hir, bound, options) = (self.hir(file), self.bound(file), &self.files().options);
         let mut decorated: Vec<DecoratorOwner> = Vec::new();
         for &(owner, e) in hir.decorators.iter() {
@@ -659,7 +698,7 @@ impl Checker<'_> {
             if bound.refused_decorators.contains(&e) {
                 continue;
             }
-            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let mut helpers = 0;
@@ -675,7 +714,9 @@ impl Checker<'_> {
                         if let ClassOwner::Stmt(_) = bound.class_owner[class.idx()]
                             && (hir[class].name.is_none()
                                 || self
-                                    .eh_first_transformable_static_element(file, class, target)
+                                    .emit_helpers_first_transformable_static_element(
+                                        file, class, target,
+                                    )
                                     .is_some())
                         {
                             helpers |= SET_FUNCTION_NAME;
@@ -703,7 +744,7 @@ impl Checker<'_> {
             if helpers == 0 {
                 continue;
             }
-            let (start, end) = self.eh_range_of_decorator(file, e);
+            let (start, end) = self.emit_helpers_range_of_decorator(file, e);
             requests.push(Request {
                 order: (deferred, start),
                 start,
@@ -714,7 +755,7 @@ impl Checker<'_> {
     }
 
     /// `getFirstTransformableStaticClassElement`: `GetErrorRangeForNode` of it.
-    fn eh_first_transformable_static_element(
+    fn emit_helpers_first_transformable_static_element(
         &self,
         file: FileId,
         class: ClassId,
@@ -743,7 +784,7 @@ impl Checker<'_> {
             if let Some(first) = of_class
                 && decorator_of(DecoratorOwner::Member(m)).is_some()
             {
-                return Some(self.eh_range_of_decorator(file, first));
+                return Some(self.emit_helpers_range_of_decorator(file, first));
             }
             // `IsPrivateIdentifierClassElementDeclaration`, `IsInitializedProperty`
             let is_transformed = member.kind == MemberKind::StaticBlock
@@ -760,7 +801,7 @@ impl Checker<'_> {
     }
 
     /// `checkClassExpressionExternalHelpers`
-    fn eh_of_class_expressions(
+    fn emit_helpers_of_class_expressions(
         &self,
         file: FileId,
         target: ScriptTarget,
@@ -791,7 +832,8 @@ impl Checker<'_> {
             {
                 node = outer;
             }
-            // `IsNamedEvaluationSource`, and whether what gives the name is a property with a computed name.
+            // `IsNamedEvaluationSource`, and whether the name source is a property with a computed
+            // name.
             let has_computed_name = match bound.expr_parent[node.idx()] {
                 Parent::Prop(p) => {
                     let (prop, owner) = (hir[p], bound.prop_owner[p.idx()]);
@@ -843,7 +885,7 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let id = ClassId(i as u32);
@@ -857,8 +899,8 @@ impl Checker<'_> {
                         .find(|d| d.0 == DecoratorOwner::Class(id))
                 };
             let location = match decorator {
-                Some(first) => Some(self.eh_range_of_decorator(file, first.1)),
-                None => self.eh_first_transformable_static_element(file, id, target),
+                Some(first) => Some(self.emit_helpers_range_of_decorator(file, first.1)),
+                None => self.emit_helpers_first_transformable_static_element(file, id, target),
             };
             let Some((start, end)) = location else {
                 continue;
@@ -877,7 +919,7 @@ impl Checker<'_> {
     }
 
     /// `checkPropertyAccessExpressionOrQualifiedName`, `checkInExpression`
-    fn eh_of_private_names(
+    fn emit_helpers_of_private_names(
         &self,
         file: FileId,
         target: ScriptTarget,
@@ -895,7 +937,7 @@ impl Checker<'_> {
             if !is_private_name_at(hir, name_pos) {
                 continue;
             }
-            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let start = self.start_inside_parentheses(file, e);
@@ -923,7 +965,7 @@ impl Checker<'_> {
             if matches!(hir[left].kind, ExprKind::String(_))
                 && is_private_name_at(hir, start)
                 && !is_parenthesized(self.hir(file), left)
-                && let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
             {
                 requests.push(Request {
                     order: (deferred, start),

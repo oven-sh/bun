@@ -1,5 +1,5 @@
-//! `enclosingDeclaration` for the nodes `typeWriterWalker` visits: the innermost scope around `node.Parent`, that of `node.Parent`
-//! included if it has locals.
+//! `enclosingDeclaration` for the nodes `typeWriterWalker` visits: the innermost scope enclosing
+//! `node.Parent`, including that of `node.Parent` itself if it has locals.
 
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
@@ -8,12 +8,14 @@ use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Enclosing {
     pub(super) file: FileId,
-    /// Where names are looked up from: its locals, or those of the innermost node around it that has any.
+    /// The scope name resolution starts from: its locals, or those of the innermost enclosing node
+    /// that has locals.
     pub(super) scope: ScopeId,
-    /// It is that variable declaration.
+    /// The enclosing declaration is this variable declaration.
     pub(super) variable: VarDeclId,
-    /// It is a block that `enterNewScope` made up for the parameters or the type parameters of a signature, and the rest says what
-    /// that is in. Which block: they are numbered from 1. 0: none.
+    /// The enclosing declaration is a synthetic block that `enterNewScope` created for the
+    /// parameters or the type parameters of a signature, and the other fields describe what
+    /// encloses it. The blocks are numbered from 1. 0: none.
     pub(super) fake_scope: u32,
 }
 
@@ -28,12 +30,13 @@ impl Enclosing {
     }
 }
 
-/// The scope of the file stands in for a scope the binder did not record.
+/// The file scope is the fallback for a scope the binder did not record.
 pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
     if scope.is_some() { scope } else { ScopeId(0) }
 }
 
-/// The scope the enum makes that `m` is a member of. `NONE`: the binder did not get there, so it has no owner.
+/// The scope of the enum that contains `m`. `NONE`: the binder did not reach it, so it has no
+/// owner.
 fn scope_of_enum_member(bound: &Bound, m: EnumMemberId) -> ScopeId {
     let scope = bound.enum_scope.get(bound.enum_member_owner[m.idx()].idx());
     scope.copied().unwrap_or(ScopeId::NONE)
@@ -65,9 +68,9 @@ impl Checker<'_> {
         or_file_scope(self.bound(file).fns[f.idx()].scope)
     }
 
-    /// Of a child of the statement `s` that is not a statement.
+    /// For a child of the statement `s` that is not itself a statement.
     fn enclosing_scope_of_statement(&self, file: FileId, s: StmtId) -> ScopeId {
-        // The head of a loop is in the scope the loop opens, as its body is.
+        // The loop header is in the scope the loop creates, like its body.
         let inside = match self.hir(file)[s].kind {
             StmtKind::For { body, .. }
             | StmtKind::ForIn { body, .. }
@@ -88,7 +91,7 @@ impl Checker<'_> {
             return ScopeId(0);
         }
         or_file_scope(match self.hir(file)[s].kind {
-            // The variable of a `catch` clause is in the scope the clause opens, as its block is.
+            // The variable of a `catch` clause is in the scope the clause creates, like its block.
             StmtKind::Try { param, handler, .. } if param == d && handler.is_some() => {
                 bound.stmt_scope[handler.idx()]
             }
@@ -96,9 +99,9 @@ impl Checker<'_> {
         })
     }
 
-    /// Of the computed property name `[e]`.
+    /// For the computed property name `[e]`.
     fn enclosing_scope_of_computed_name(&self, file: FileId, e: ExprId) -> ScopeId {
-        // Of a member of a class or an interface.
+        // For a member of a class or an interface.
         if let Some(&computed_name) = self.bound(file).expr_scope.get(&e) {
             return computed_name;
         }
@@ -112,7 +115,7 @@ impl Checker<'_> {
         }
     }
 
-    /// Of the expression `e`, and of the name of a property access `e`.
+    /// For the expression `e`, and for the name of a property access `e`.
     pub(super) fn enclosing_scope_of_expr(&self, file: FileId, e: ExprId) -> ScopeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
@@ -155,7 +158,7 @@ impl Checker<'_> {
                     if s.is_none() {
                         return ScopeId(0);
                     }
-                    // The clauses are in the scope the case block opens, as their statements are.
+                    // The clauses are in the scope the case block creates, like their statements.
                     if let StmtKind::Switch { cases, .. } = hir[s].kind
                         && let Some(first) = cases.iter().find_map(|c| hir.ids(hir[c].body).next())
                     {
@@ -189,7 +192,7 @@ impl Checker<'_> {
         }
     }
 
-    /// Of the name `pat` of a variable, a parameter or a binding element.
+    /// For the name `pat` of a variable, a parameter or a binding element.
     pub(super) fn enclosing_scope_of_pat(&self, file: FileId, pat: PatId) -> ScopeId {
         let bound = self.bound(file);
         let mut at = pat;
@@ -205,7 +208,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Of the name and the initializer of the member `m` of a class, an interface or a type literal.
+    /// For the name and the initializer of the member `m` of a class, an interface or a type
+    /// literal.
     pub(super) fn enclosing_scope_of_member(&self, file: FileId, m: MemberId) -> ScopeId {
         let func = self.hir(file)[m].func;
         if func.is_some() {
@@ -214,7 +218,7 @@ impl Checker<'_> {
         or_file_scope(self.bound(file).member_scope[m.idx()])
     }
 
-    /// Of the name of the property `p` of an object literal, or of the JSX attribute `p`.
+    /// For the name of the property `p` of an object literal, or of the JSX attribute `p`.
     pub(super) fn enclosing_scope_of_property(&self, file: FileId, p: PropId) -> ScopeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let prop = hir[p];
@@ -233,7 +237,7 @@ impl Checker<'_> {
         self.enclosing_scope_of_expr(file, owner)
     }
 
-    /// Of the name of the declaration `decl`.
+    /// For the name of the declaration `decl`.
     pub(super) fn enclosing_scope_of_declaration(&self, file: FileId, decl: Decl) -> ScopeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         or_file_scope(match decl {

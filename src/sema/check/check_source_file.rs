@@ -1,15 +1,16 @@
-//! `checkSourceFile`: the statements of a file from top to bottom, each with all that is in it, then what was put off on the way
-//! (`checkDeferredNodes`).
+//! `checkSourceFile`: checks the statements of a file from top to bottom, each with everything
+//! nested in it, then the nodes deferred on the way (`checkDeferredNodes`).
 //!
-//! A function here has the name of the function of checker.go it is the port of. It visits what that one visits, in that order, and
-//! returns where that one returns. So every question is asked for the first time in the place TypeScript asks it, and where the
-//! answer depends on what is under way, it is the same answer.
+//! A function here has the name of the checker.go function it ports. It visits what that one
+//! visits, in that order, and returns where that one returns. So every query is first made at the
+//! point where TypeScript makes it, and where the result depends on what is in progress, it is the
+//! same result.
 
-use super::errors_x_operators::{
+use super::errors_operators::{
     check_grammar_rest_element, check_instance_of_expression, check_satisfies,
     check_tagged_template, check_template_spans, check_yield_result,
 };
-use super::errors_x_statements::is_with_statement;
+use super::errors_statements::is_with_statement;
 use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
@@ -17,22 +18,27 @@ use crate::types::LinkCounts;
 use crate::util::InParallel;
 use smallvec::SmallVec;
 
-/// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. ONE CONSTANT, on every thread, on every
-/// platform, in the product and in the harness: where a task runs out of stack has to be a function of the program. The smallest stack
-/// of a thread of the pool is 4 MB (`DEFAULT_THREAD_STACK_SIZE`: Linux with glibc or musl, macOS). `StackCheck` keeps up to 512 KB of it
-/// back (under a sanitizer), and the frames of the pool and of the driver come off too.
+/// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. One
+/// constant, on every thread, on every platform, in the product and in the harness: the point where
+/// a task runs out of stack has to be a function of the program. The smallest stack of a pool
+/// thread is 4 MB (`DEFAULT_THREAD_STACK_SIZE`: Linux with glibc or musl, macOS). `StackCheck`
+/// reserves up to 512 KB of it (under a sanitizer), and the frames of the pool and of the driver
+/// are subtracted too.
 const TASK_STACK: usize = 3 << 20;
 
-/// THE BARRIER after a step. `finished`: the tasks of that step, in task order. No task is running.
+/// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl Program {
-    /// OPTIMISTIC CONCURRENCY CONTROL: validation, before link and publish. `getVariancesWorker` returns an empty list for a symbol whose
-    /// variances are being computed and caches whatever results from that, so the variances of mutually recursive types depend on
-    /// which type of the cycle is queried first. THE SERIAL ORDER is step order, then program order within a step, which is task order.
-    /// (Not quite program order: the warm-up steps are a sample of the program. Deferring what their tasks publish until all earlier
-    /// files are checked makes a check 17% slower.) A task is INVALID if it computed a different value than an earlier task or step
-    /// did and a result of the task depends on the difference (`OrderDependent`). The caller aborts an invalid task: it discards the
-    /// task's output and retries its files, which then read `serial_variances`. The first task to compute the variances of a symbol
-    /// is valid with respect to that symbol. Returns whether each task is invalid.
+    /// Optimistic concurrency control: validation, before link and publish. `getVariancesWorker`
+    /// returns an empty list for a symbol whose variances are being computed and caches whatever
+    /// results from that, so the variances of mutually recursive types depend on which type of the
+    /// cycle is queried first. The serial order is step order, then program order within a step,
+    /// which is task order. (Not quite program order: the warm-up steps are a sample of the
+    /// program. Deferring what their tasks publish until all earlier files are checked makes a
+    /// check 17% slower.) A task is invalid if it computed a different value than an earlier task
+    /// or step did and a result of the task depends on the difference (`OrderDependent`). The
+    /// caller aborts an invalid task: it discards the task's output and retries its files, which
+    /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
+    /// with respect to that symbol. Returns whether each task is invalid.
     pub fn validate(&self, finished: &[Finished]) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
         let is_invalid = |finished: &Finished, serial: &FxHashMap<Sym, Arc<[u8]>>| {
@@ -56,11 +62,12 @@ impl Program {
             .collect()
     }
 
-    /// The first half. Of the types, signatures, mappers and component lists that several tasks have created, the lowest task's stays.
-    /// Each task gets its `Link`, through which `publish` rewrites its keys and values.
+    /// The first half. Of the types, signatures, mappers and component lists that several tasks
+    /// have created, the copy of the lowest task is kept. Each task gets its `Link`, through which
+    /// `publish` rewrites its keys and values.
     pub fn link(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> LinkCounts {
         let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
-        // For a union whose order rested on ids of the task's own. Few steps have one.
+        // For a union whose member order depended on task-local ids. Few steps have one.
         let checker = std::cell::OnceCell::new();
         let (links, counts) =
             (self.types).link(&self.files.atoms, own.collect(), in_parallel, &|types| {
@@ -72,8 +79,9 @@ impl Program {
         counts
     }
 
-    /// The second half. The entries of the buffers go to the published state, and the first entry for a key stays. Then the diagnostics:
-    /// the first task to report under a query is the one that reports, so this is called for the steps in plan order, on one thread.
+    /// The second half. The buffered entries are moved to the published state, and the first entry
+    /// for a key wins. Then the diagnostics: the first task to report under a query is the one that
+    /// reports, so this is called for the steps in plan order, on one thread.
     /// `with_digest`: `Published::digest` is computed.
     pub fn publish(
         &self,
@@ -83,7 +91,7 @@ impl Program {
     ) -> Published {
         let published = task::publish(self, finished, in_parallel, with_digest);
         if finished.iter().any(|finished| finished.closed_a_cycle) {
-            (self.closed_a_circle).store(true, std::sync::atomic::Ordering::Relaxed);
+            (self.closed_a_cycle).store(true, std::sync::atomic::Ordering::Relaxed);
         }
         for finished in finished {
             self.publish_diagnostics(finished);
@@ -93,7 +101,7 @@ impl Program {
 }
 
 impl Checker<'_> {
-    /// Where a task begins, or a checker outside the plan. See `TASK_STACK`.
+    /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
         let left = bun_core::StackCheck::init().remaining();
         assert!(
@@ -103,16 +111,18 @@ impl Checker<'_> {
         self.set_stack_limit(TASK_STACK);
     }
 
-    /// Before `check_file`. `step` counts from 0. `index`: the place of the task in its step, in task order.
-    /// `is_read_later`: whether anything will read what this task publishes. If not, only its diagnostics go to the barrier.
-    /// A checker for which this is not called is outside the plan: what it writes is dropped with it.
+    /// Called before `check_file`. `step` counts from 0. `index`: the position of the task in its
+    /// step, in task order.
+    /// `is_read_later`: whether anything will read what this task publishes. If not, only its
+    /// diagnostics go to the barrier.
+    /// A checker for which this is not called is outside the plan: its writes are dropped with it.
     pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
         self.task.begin(step, index, is_read_later);
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
     }
 
-    /// On the thread of the task, after everything else that this checker does.
+    /// Called on the thread of the task, after everything else this checker does.
     pub fn end_task(&mut self) -> Finished {
         let diagnostics = self.take_diagnostics();
         self.task.finish(self.p, diagnostics)
@@ -123,8 +133,9 @@ impl Checker<'_> {
         self.ran_out_of_stack.replace(false)
     }
 
-    /// How many entries of `relations` this checker has stored under a generic key whose hash took in an id of the task's own. Such an
-    /// entry is bound to its task: after the link the same two references hash to something else. A function of the program.
+    /// How many entries of `relations` this checker has stored under a generic key whose hash
+    /// included a task-local id. Such an entry is bound to its task: after the link the same two
+    /// references hash differently. A function of the program.
     pub fn generic_relation_entries_not_published(&self) -> u64 {
         self.generic_relation_entries_not_published
     }
@@ -140,7 +151,8 @@ impl Checker<'_> {
             || hir.classes.iter().any(|it| is_ambient(it.flags))
             || hir.fns.iter().any(|it| is_ambient(it.flags));
         self.parsed_again_for_await = None;
-        // The kinds that `type_of_expr_uncached` puts off. By position: one evaluation comes to them in that order.
+        // The kinds that `type_of_expr_uncached` defers. Sorted by position: a single evaluation
+        // reaches them in that order.
         let index = self.exprs_by_kind(file);
         let tags = [ExprTag::Fn, ExprTag::Class, ExprTag::Jsx, ExprTag::Unary];
         let mut earlier: Vec<ExprId> = (tags.iter())
@@ -172,9 +184,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkNodeDeferred`. `links.deferredNodes` belongs to the file of the node and is in the order of the calls, whichever file was being
-    /// checked at the time. So what is evaluated on demand before `checkSourceFile` of its file comes first there: `Program::deferred_nodes`
-    /// has it until then.
+    /// `checkNodeDeferred`. `links.deferredNodes` belongs to the file of the node and is in call
+    /// order, whichever file was being checked at the time. So nodes evaluated on demand before
+    /// `checkSourceFile` of their file come first: `Program::deferred_nodes` holds them until then.
     pub(super) fn check_node_deferred(&mut self, file: FileId, e: ExprId) {
         if self.task.file != Some(file) {
             (self.p.deferred_nodes).insert(&self.task, (file, e), (), Stored::new());
@@ -183,7 +195,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkDeferredNodes`: what is put off meanwhile goes to the end of the line.
+    /// `checkDeferredNodes`: nodes deferred in the meantime are appended to the queue.
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
             self.check_deferred_node(file, e);
@@ -237,7 +249,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkDecorators`: those of what cannot be decorated are not looked at.
+    /// `checkDecorators`: decorators on a node that cannot be decorated are not checked.
     fn check_decorators(&mut self, file: FileId, modifiers: Span<ModifierId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for modifier in hir.modifier_list(modifiers) {
@@ -270,7 +282,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkTypeParametersNotReferenced`: 2744, of what is in the default `root` of the one at `index`.
+    /// `checkTypeParametersNotReferenced`: 2744, for the nodes in the default `root` of the type
+    /// parameter at `index`.
     fn check_type_parameters_not_referenced(
         &mut self,
         file: FileId,
@@ -369,7 +382,7 @@ impl Checker<'_> {
             PatKind::Ident(name) => name,
             _ => Atom::NONE,
         };
-        // `NodeIsPresent(fn.Body())`: written, whether or not it is kept.
+        // `NodeIsPresent(fn.Body())`: present in the source, whether or not it is stored.
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
         if p != hir[func].this_param {
@@ -459,7 +472,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkFunctionOrMethodDeclaration`: the body is not put off.
+    /// `checkFunctionOrMethodDeclaration`: the body is not deferred.
     fn check_function_or_method_declaration(&mut self, file: FileId, func: FnId) {
         if func.is_none() {
             return;
@@ -497,7 +510,8 @@ impl Checker<'_> {
         exits
     }
 
-    /// `checkVariableLikeDeclaration`, as far as `node.Name()` goes: a name, or the elements of a pattern (`checkBindingElement`).
+    /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
+    /// pattern (`checkBindingElement`).
     fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
         if pat.is_none() {
             return;
@@ -635,7 +649,7 @@ impl Checker<'_> {
         }
     }
 
-    /// What a loop starts with: a `VariableDeclarationList`, or an expression.
+    /// The initializer of a loop: a `VariableDeclarationList`, or an expression.
     fn check_for_initializer(&mut self, file: FileId, initializer: StmtId, parent: Kind) {
         match initializer.some().map(|s| self.hir(file)[s].kind) {
             Some(StmtKind::Var(decls)) => self.check_variable_declaration_list(file, decls, parent),
@@ -647,7 +661,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkVariableLikeDeclaration`, of a variable.
+    /// `checkVariableLikeDeclaration` for a variable.
     fn check_variable_declaration(&mut self, file: FileId, d: VarDeclId) {
         let decl = &self.hir(file)[d];
         self.check_type_node(file, decl.ty);
@@ -694,9 +708,10 @@ impl Checker<'_> {
             let sym = self.files().sym(file, symbol);
             let declared = self.declared_type(sym);
             let bases = self.base_types(sym);
-            // `typeWithThis`, and `getTypeWithThisArgument(baseType, t.thisType)`: made before the members are looked at, and
-            // `isDeeplyNestedType` goes by the order in which types are made. An interface without type parameters may be thisless,
-            // which costs to tell.
+            // `typeWithThis`, and `getTypeWithThisArgument(baseType, t.thisType)`: created before
+            // the members are checked, and `isDeeplyNestedType` depends on the type creation order.
+            // An interface without type parameters may be thisless, which is expensive to
+            // determine.
             if !decl.type_params.is_empty() {
                 let this = self.intern(TypeData::ThisParam(sym));
                 self.type_with_this_argument(declared, this);
@@ -739,7 +754,7 @@ impl Checker<'_> {
             if !member.modifiers.is_empty() {
                 self.check_grammar_modifiers_of_member(file, m);
             }
-            // The default library is not looked into for how it is written.
+            // The syntax of the default library is not checked.
             if !is_lib {
                 match member.kind {
                     MemberKind::IndexSignature => {
@@ -804,8 +819,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkPropertyDeclaration`: 1267. `checkMethodDeclaration`: 1245. `checkAccessorDeclaration`: 2676, 2808. Of a member of a class
-    /// that says `abstract`, `private` or `protected`.
+    /// `checkPropertyDeclaration`: 1267. `checkMethodDeclaration`: 1245.
+    /// `checkAccessorDeclaration`: 2676, 2808. For a class member declared `abstract`, `private` or
+    /// `protected`.
     fn check_abstract_member_or_accessor_pair(&mut self, file: FileId, m: MemberId) {
         let hir = self.hir(file);
         let (member, name) = (&hir[m], hir.name(hir.node(m)));
@@ -859,14 +875,14 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkSourceElements`, of type nodes.
+    /// `checkSourceElements` for type nodes.
     fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.check_type_node(file, node);
         }
     }
 
-    /// `checkSourceElement`, of a type node.
+    /// `checkSourceElement` for a type node.
     pub(super) fn check_type_node(&mut self, file: FileId, node: TypeNodeId) {
         if node.is_none() || self.is_stack_low() {
             return;
@@ -993,7 +1009,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkSourceElement`, of a statement.
+    /// `checkSourceElement` for a statement.
     fn check_source_element(&mut self, file: FileId, s: StmtId) {
         let within_unreachable_code = self.within_unreachable_code;
         if s.is_some()
@@ -1008,13 +1024,15 @@ impl Checker<'_> {
         self.within_unreachable_code = within_unreachable_code;
     }
 
-    /// `checkSourceElementWorker`. The head of a `for` and the object of a `with` are kept as statements and are none.
+    /// `checkSourceElementWorker`. The head of a `for` and the object of a `with` are stored as
+    /// statements but are not statements.
     fn check_source_element_worker(&mut self, file: FileId, s: StmtId) {
         if s.is_none() {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `checkGrammarStatementInAmbientContext`, of the statements that go on whatever it says.
+        // `checkGrammarStatementInAmbientContext`, for the statements that continue regardless of
+        // its result.
         if self.has_ambient_context
             && match hir[s].kind {
                 StmtKind::Debugger
@@ -1026,7 +1044,8 @@ impl Checker<'_> {
                 | StmtKind::Switch { .. }
                 | StmtKind::Try { .. } => true,
                 StmtKind::Block(_) => !is_with_statement(hir, s),
-                // An import or an export whose specifier is not a string is kept as an empty statement.
+                // An import or an export whose specifier is not a string is stored as an empty
+                // statement.
                 StmtKind::Empty => {
                     !is_word_at(&hir.text, hir[s].start as usize, b"import")
                         && !is_word_at(&hir.text, hir[s].start as usize, b"export")
@@ -1041,14 +1060,14 @@ impl Checker<'_> {
         }
         match hir[s].kind {
             StmtKind::Expr(e) | StmtKind::Throw(e) => self.check_expression(file, e),
-            // `checkExportAssignment`: out of place, or in a namespace, it is not looked at.
+            // `checkExportAssignment`: misplaced, or in a namespace, it is not checked.
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                let is_looked_at = match bound.stmt_parent[s.idx()] {
+                let is_visited = match bound.stmt_parent[s.idx()] {
                     Parent::File => true,
                     Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
                     _ => false,
                 };
-                if is_looked_at {
+                if is_visited {
                     self.check_expression(file, e);
                     if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
                         self.check_grammar_export_equals(file, s);
@@ -1064,8 +1083,9 @@ impl Checker<'_> {
                     self.error(file, s, 1294, &[]);
                 }
             }
-            // `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a name in it. Said of the first. With a
-            // default import as well it is 1363. Past `checkGrammarModuleElementContext`.
+            // `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a
+            // name in it. Reported on the first. With a default import as well it is 1363. After
+            // `checkGrammarModuleElementContext`.
             StmtKind::Import(x) if hir[x].type_only && hir[x].default.is_none() => {
                 if matches!(bound.stmt_parent[s.idx()], Parent::File)
                     && let Some(item) = hir[x].named.iter().find(|&item| hir[item].type_only)
@@ -1089,8 +1109,9 @@ impl Checker<'_> {
                     }
                 }
             }
-            // `checkReturnStatement`: in no function, or in a static block, what is returned is not looked at. Elsewhere it is asked
-            // what the function returns first.
+            // `checkReturnStatement`: outside a function, or in a static block, the returned
+            // expression is not checked. Elsewhere the return type of the function is resolved
+            // first.
             StmtKind::Return(e) => {
                 if let Some(func) = self.check_grammar_return_statement(file, s) {
                     self.return_type_of_fn(file, func);
@@ -1150,13 +1171,13 @@ impl Checker<'_> {
                 self.check_expression(file, update);
                 self.check_source_element(file, body);
             }
-            // `checkForInStatement`: the object first.
+            // `checkForInStatement`: the object expression is checked first.
             StmtKind::ForIn { left, expr, body } => {
                 self.check_grammar_for_in_or_for_of_statement(file, s, left);
                 self.check_expression(file, expr);
                 self.check_for_initializer(file, left, Kind::ForInStatement);
                 self.check_for_in_statement(file, left, expr);
-                // The keys of an object are strings: there is nothing to take apart.
+                // The keys of an object are strings: there is nothing to destructure.
                 match hir[left].kind {
                     StmtKind::Var(decls) => {
                         if let Some(d) = decls.iter().next()
@@ -1178,8 +1199,9 @@ impl Checker<'_> {
                 }
                 self.check_source_element(file, body);
             }
-            // `checkForOfStatement`: what is iterated is looked at for the variable (`checkRightHandSideOfForOf`), so not at all
-            // where none is declared, and before what is written in the place of a declaration.
+            // `checkForOfStatement`: the iterated expression is checked for the variable
+            // (`checkRightHandSideOfForOf`), so not at all if none is declared, and before an
+            // expression that takes the place of a declaration.
             StmtKind::ForOf {
                 left,
                 expr,
@@ -1215,7 +1237,7 @@ impl Checker<'_> {
                 self.check_source_element(file, body);
                 self.check_truthiness_expression(file, test);
             }
-            // `checkWithStatement`: the object, and not the body.
+            // `checkWithStatement`: checks the object, not the body.
             StmtKind::Block(list) if is_with_statement(hir, s) => {
                 self.check_with_statement(file, s, list)
             }
@@ -1306,7 +1328,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkExpression`: `e`, then whatever in it that did not need looking at.
+    /// `checkExpression`: `e`, then the subexpressions that checking `e` did not need to visit.
     pub(super) fn check_expression(&mut self, file: FileId, e: ExprId) {
         if e.is_none() || self.is_stack_low() {
             return;
@@ -1326,7 +1348,7 @@ impl Checker<'_> {
                 for x in hir.ids(exprs) {
                     self.check_expression(file, x);
                 }
-                // `checkTemplateExpression`. `checkTaggedTemplateExpression` never comes to it.
+                // `checkTemplateExpression`. `checkTaggedTemplateExpression` never reaches it.
                 if matches!(hir[e].kind, ExprKind::Template { .. }) {
                     check_template_spans(self, file, exprs);
                 }
@@ -1369,7 +1391,8 @@ impl Checker<'_> {
                     }
                 }
             }
-            // `checkFunctionExpressionOrObjectLiteralMethod`: the signature now, and what it returns if something is expected of it.
+            // `checkFunctionExpressionOrObjectLiteralMethod`: the signature now, and its return
+            // type if it is contextually typed.
             ExprKind::Fn(func) => {
                 if hir[func].kind == FnKind::Expr {
                     self.check_collisions_for_declaration_name(file, e, hir[func].name);
@@ -1393,7 +1416,7 @@ impl Checker<'_> {
                 self.check_class_like_declaration(file, class);
                 self.check_node_deferred(file, e);
             }
-            // `checkYieldExpression`: outside a generator what is yielded is not looked at.
+            // `checkYieldExpression`: outside a generator the yielded expression is not checked.
             ExprKind::Yield { value, .. } => {
                 // `checkGrammarYieldExpression`
                 if hir.is_in_parameter_initializer_before_containing_function(hir.node(e)) {
@@ -1462,7 +1485,7 @@ impl Checker<'_> {
             {
                 self.check_expression(file, value);
                 self.check_destructuring_assignment_target(file, target);
-                // One that is a default in a pattern is looked at with the pattern.
+                // One that is a default in a pattern is checked with the pattern.
                 if !self.is_definite_assignment_target(file, e) {
                     let source_type = self.type_of_expr(file, value);
                     self.check_destructuring_assignment(file, target, source_type);
@@ -1537,8 +1560,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkDestructuringAssignment`, as far as what it looks at goes: a literal is taken apart, and anything else, a literal in
-    /// parentheses too, is an expression (`checkReferenceAssignment`). One with a default is an assignment of its own.
+    /// `checkDestructuringAssignment`, restricted to what it visits: a literal is destructured, and
+    /// anything else, including a parenthesized literal, is an expression
+    /// (`checkReferenceAssignment`). A target with a default is an assignment of its own.
     fn check_destructuring_assignment_target(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         if e.is_none() {
@@ -1550,7 +1574,8 @@ impl Checker<'_> {
                     if let PropKey::Computed(key) = hir[p].key {
                         self.check_expression(file, key);
                     }
-                    // A rest that is not the last is refused, and not gone into. Neither is what is no property assignment.
+                    // A rest element that is not last is rejected and not visited. Neither is a
+                    // member that is not a property assignment.
                     let continues = match hir[p].kind {
                         PropKind::Init | PropKind::Shorthand => true,
                         PropKind::Spread => i + 1 == properties.len(),

@@ -58,7 +58,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut name_loc = p.lexer.loc();
             name_text = p.lexer.identifier;
             if p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant {
-                // `createIdentifierWithDiagnostic`: a private name is objected to and is the name all the same.
+                // `createIdentifierWithDiagnostic`: a private name is reported as an error and
+                // still used as the name.
                 let range = p.lexer.range();
                 p.lexer.ts_error(range, 18016);
                 p.lexer.next()?;
@@ -125,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.is_typescript_declare
                 || func.flags.contains(Flags::Function::IsForwardDeclaration)
             {
-                // The type checker is told of every declaration.
+                // Every declaration is passed to the type checker.
                 if p.preserves_type_syntax() {
                     p.pop_scope();
                     if has_if_scope {
@@ -192,8 +193,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    /// `createIdentifierWithDiagnostic`, where the name of a function declaration is missing. Nothing is consumed.
-    /// Returns where the empty name is (`createMissingIdentifier`).
+    /// `createIdentifierWithDiagnostic`, where the name of a function declaration is missing.
+    /// Nothing is consumed.
+    /// Returns the position of the empty name (`createMissingIdentifier`).
     #[cold]
     #[inline(never)]
     fn report_missing_fn_name(&mut self) -> Result<bun_ast::Loc, Error> {
@@ -267,7 +269,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
-        // A private name in the place of a parameter's name has an error of its own. `parseNameOfParameter`
+        // A private name in place of a parameter name has its own error. `parseNameOfParameter`
         let name_of_parameter = ParseBindingOptions {
             private_name_code: 18009,
             ..Default::default()
@@ -275,7 +277,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        // `parseParameterEx` takes decorators and modifiers before any parameter of any function. The checker objects.
+        // `parseParameterEx` accepts decorators and modifiers before any parameter of any function.
+        // The checker reports them.
         let takes_any_modifiers = Self::IS_TYPESCRIPT_ENABLED && p.lexer.tolerant;
         let mut has_this_parameter = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
@@ -289,7 +292,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let parameter_start = p.lexer.loc();
             let parameter_full_start = p.lexer.full_start();
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
-            // Where the first decorator or modifier starts, and whether a modifier keyword is among them.
+            // Start of the first decorator or modifier, and whether a modifier keyword is among
+            // them.
             let mut modifiers: Option<(bun_ast::Range, bool)> = None;
             let mut modifiers_base = 0;
             if takes_any_modifiers {
@@ -340,7 +344,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 arg_has_decorators = true;
             }
 
-            // TypeScript's parser takes the dots before any parameter. `checkGrammarParameterList` objects.
+            // TypeScript's parser accepts the dots before any parameter.
+            // `checkGrammarParameterList` reports them.
             let mut dots = bun_ast::Loc::EMPTY;
             if p.lexer.token == T::TDotDotDot
                 && (!func.flags.contains(Flags::Function::HasRestArg) || p.lexer.tolerant)
@@ -584,7 +589,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_static = false;
         loop {
             if p.lexer.token == T::TAt && !has_trailing_modifier {
-                // Decorators are parsed in the [Await] context around the function.
+                // Decorators are parsed in the [Await] context enclosing the function.
                 let inner_await = p.fn_or_arrow_data_parse.allow_await;
                 p.fn_or_arrow_data_parse.allow_await = outer_await;
                 let parsed = p.parse_type_script_decorators();
@@ -633,7 +638,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         found
     }
 
-    /// `nextTokenCanFollowModifier`, at a modifier keyword. Moves the lexer: the caller restores it.
+    /// `nextTokenCanFollowModifier`, at a modifier keyword. Advances the lexer: the caller restores
+    /// it.
     fn next_token_can_follow_modifier(&mut self) -> bool {
         let p = self;
         let keyword = p.lexer.token;
@@ -668,7 +674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if is_after_default {
             // `nextTokenCanFollowDefaultKeyword`
-            let wanted = match p.lexer.token {
+            let expected = match p.lexer.token {
                 T::TClass | T::TFunction | T::TAt => return true,
                 T::TIdentifier => match p.lexer.raw() {
                     b"interface" => return true,
@@ -679,7 +685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => return false,
             };
             return p.lexer.next().is_ok()
-                && p.lexer.token == wanted
+                && p.lexer.token == expected
                 && !p.lexer.has_newline_before;
         }
         // `canFollowModifier`. Only "static" and "export" may be followed by a line break.
@@ -698,10 +704,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ))
     }
 
-    /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc` is that of the function.
-    /// Only the first parameter is the "this" parameter (`getSignatureFromDeclaration`). Any other is returned as a parameter
-    /// named "this", which the checker objects to (2680). `start`, `full_start`: where the first token of the parameter is, and its
-    /// `TokenFullStart`. `first_modifier`: `Loc` of the first of its modifiers, if it has any: those pushed since there were `modifiers_base`.
+    /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc`
+    /// is that of the function. Only the first parameter is the "this" parameter
+    /// (`getSignatureFromDeclaration`). Any other is returned as a parameter named "this", which
+    /// the checker reports (2680). `start`, `full_start`: the position of the parameter's first
+    /// token, and its `TokenFullStart`. `first_modifier`: `Loc` of its first modifier, if it has
+    /// any. Its modifiers are those pushed since the stack had `modifiers_base` entries.
     #[cold]
     #[inline(never)]
     fn parse_this_parameter(
@@ -778,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.lexer.put_up_with(before)?;
         p.note_loc(&mut func.open_parens_loc, Mark::MissingBody, range.loc);
-        // Tells a missing block from no body, whose `loc` stays empty.
+        // Distinguishes a missing block from an absent body, whose `loc` stays empty.
         func.body.loc = range.loc;
         Ok(())
     }
@@ -908,8 +916,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.parse_arrow_body_with_flags(args, data, EFlags::None)
     }
 
-    /// `flags` are those the arrow function itself is parsed with. Only tolerant mode hands them on to a body that is an expression
-    /// (`parseArrowFunctionExpressionBody`, `allowReturnTypeInArrowFunction`).
+    /// `flags` are those the arrow function itself is parsed with. Only tolerant mode passes them
+    /// on to an expression body (`parseArrowFunctionExpressionBody`,
+    /// `allowReturnTypeInArrowFunction`).
     pub(crate) fn parse_arrow_body_with_flags(
         &mut self,
         args: &'a mut [G::Arg],
@@ -919,8 +928,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let arrow_loc = p.lexer.loc();
 
-        // Newlines are not allowed before "=>". TypeScript's parser takes the arrow wherever it is:
-        // `checkGrammarArrowFunction` objects to the line break.
+        // Newlines are not allowed before "=>". TypeScript's parser accepts the arrow anywhere:
+        // `checkGrammarArrowFunction` reports the line break.
         if p.lexer.has_newline_before && !p.lexer.tolerant {
             p.log().add_range_error(
                 Some(p.source),
@@ -931,7 +940,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let has_arrow = p.lexer.token == T::TEqualsGreaterThan;
-        // `parseExpectedToken`: one that is missing is where the token before it ends.
+        // `parseExpectedToken`: a missing token is at the end of the previous token.
         let arrow_token = if has_arrow || !p.lexer.tolerant {
             arrow_loc
         } else {
@@ -1041,8 +1050,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(body)
     }
 
-    /// `parseArrowFunctionExpressionBody`: whether a statement that is no expression statement follows the "=>". Then the "{" of a
-    /// block was forgotten.
+    /// `parseArrowFunctionExpressionBody`: whether a statement that is not an expression statement
+    /// follows the "=>". In that case the "{" of a block is missing.
     #[cold]
     #[inline(never)]
     fn is_arrow_body_missing_open_brace(&mut self) -> bool {
@@ -1084,8 +1093,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parseParenthesizedArrowFunctionExpression`: with neither "=>" nor "{", the body is `parseIdentifier()`. What that says of a
-    /// missing identifier is dropped: the "=>" was reported as missing at the same place.
+    /// `parseParenthesizedArrowFunctionExpression`: with neither "=>" nor "{", the body is
+    /// `parseIdentifier()`. Its diagnostic for the missing identifier is dropped: the "=>" was
+    /// reported as missing at the same position.
     #[cold]
     #[inline(never)]
     fn parse_arrow_body_without_arrow(&mut self) -> Result<Expr, Error> {

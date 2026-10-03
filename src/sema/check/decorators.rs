@@ -1,20 +1,22 @@
-//! Decorators: what one is called with, and whether it can be: 1206 1207 1249 1497, 1329, 1238 1239 1240 1241, 1270 1271.
+//! Decorators: the arguments a decorator is called with, and whether that call is valid: 1206 1207
+//! 1249 1497, 1329, 1238 1239 1240 1241, 1270 1271.
 //!
-//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and what
-//! `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go and grammarchecks.go.
+//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`,
+//! `checkDecorator` and the decorator checks of `checkGrammarModifiers`, of TypeScript 7.0.2's
+//! checker.go and grammarchecks.go.
 
 use super::call::CallLike;
 use super::*;
 use crate::bind::MemberOwner;
 
-/// Where a decorator is written.
+/// The source span of a decorator.
 #[derive(Copy, Clone)]
 pub(super) struct Written {
     /// Its `@`.
     pub(super) at_sign: u32,
-    /// Its expression, from the parenthesis on if it is in parentheses.
+    /// Start of its expression, including the opening parenthesis if it is parenthesized.
     pub(super) start: u32,
-    /// Where the expression ends, and the decorator with it.
+    /// End of the expression, which is also the end of the decorator.
     pub(super) end: u32,
     is_parenthesized: bool,
 }
@@ -70,7 +72,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getGlobalType` with `reportErrors`: that there is none is said, of no file.
+    /// `getGlobalType` with `reportErrors`: a missing global type is reported, without a file.
     fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
         let found = self
             .atoms()
@@ -83,7 +85,8 @@ impl<'p> Checker<'p> {
         Some(self.type_reference(sym, args))
     }
 
-    /// What the member is, as a value: the function a method is, what a property or an accessor holds.
+    /// The type of the member's value: the function type of a method, the value type of a property
+    /// or an accessor.
     fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
         let member = self.hir(file)[m];
         let sym = self.class_sym(file, class);
@@ -101,7 +104,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The function this one declaration of a method is, whatever others there are of it:
+    /// The function type of this single declaration of a method, ignoring its other declarations:
     /// `getOrCreateTypeFromSignature(getSignatureFromDeclaration(node))`.
     fn type_of_method_declaration(&mut self, file: FileId, m: MemberId) -> TypeId {
         let bound = self.bound(file);
@@ -114,7 +117,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getDecoratorCallSignature`. `None`: what is decorated cannot be.
+    /// `getDecoratorCallSignature`. `None`: the target cannot be decorated.
     pub(super) fn decorator_call_signature(
         &mut self,
         file: FileId,
@@ -135,7 +138,7 @@ impl<'p> Checker<'p> {
             // `getClassElementPropertyKeyType`
             let key_of = |c: &mut Self, m: MemberId| match hir[m].key {
                 PropKey::Name(name) => c.string_literal(name, false),
-                // What can be taken for a symbol stays what it is (`isTypeAssignableToKind`).
+                // A type assignable to symbol is used unchanged (`isTypeAssignableToKind`).
                 PropKey::Computed(e) => {
                     let ty = c.type_of_expr(file, e);
                     if c.is_symbol_like(ty) || c.is_assignable(ty, TypeId::SYMBOL) {
@@ -144,7 +147,7 @@ impl<'p> Checker<'p> {
                         TypeId::STRING
                     }
                 }
-                // `#x` is no key: the error type.
+                // `#x` is not a property key: the error type.
                 PropKey::Private(_) => TypeId::ERROR,
                 PropKey::None => TypeId::STRING,
             };
@@ -270,12 +273,14 @@ impl<'p> Checker<'p> {
                 // `newClassMemberDecoratorContextTypeForNode`, `getClassMemberDecoratorContextOverrideType`
                 let is_private = matches!(hir[m].key, PropKey::Private(_));
                 let name = match hir[m].key {
-                    // `#x` as it is written, without what tells it from the `#x` of other classes.
+                    // `#x` as in the source, without the part that distinguishes it from the `#x`
+                    // of other classes.
                     PropKey::Private(name) => {
                         let written = self.atoms().intern(self.written_name(name));
                         self.string_literal(written, false)
                     }
-                    // `getLiteralTypeFromPropertyName`: a number only where a number is written.
+                    // `getLiteralTypeFromPropertyName`: a number literal type only where the source
+                    // has a numeric literal.
                     PropKey::Name(name)
                         if matches!(
                             hir.text.get(hir[m].name_pos as usize),
@@ -349,7 +354,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Where the decorator with the expression `e` is written.
+    /// The span of the decorator with the expression `e`.
     pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> Written {
         let start = self.start_of(file, e);
         Written {
@@ -362,7 +367,8 @@ impl<'p> Checker<'p> {
 
     pub(super) fn report_decorators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Those of a missing declaration or of a `this` parameter: `checkDecorators` never looks at them.
+        // Decorators of a missing declaration or of a `this` parameter: `checkDecorators` never
+        // visits them.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
             self.reported.retain(|d| d.start < start || d.start >= end);
@@ -375,7 +381,8 @@ impl<'p> Checker<'p> {
             }
             let written = self.decorator_position(file, e);
             let at_sign = written.at_sign;
-            // Where it cannot be: said once for what is decorated, and nothing else is said from there to what is decorated.
+            // A decorator in an invalid position: reported once per decorated declaration, and no
+            // other diagnostic is reported between it and the declaration.
             if bound.refused_decorators.contains(&e) {
                 let end = match owner {
                     DecoratorOwner::Class(c) => hir[c].name_pos,
@@ -412,7 +419,7 @@ impl<'p> Checker<'p> {
             {
                 self.error_at((file, at_sign, written.end), 18036, &[]);
             }
-            // The two accessors of a property are one thing to decorate.
+            // The two accessors of a property count as one decoration target.
             if hir.legacy_decorators
                 && let DecoratorOwner::Member(m) = owner
                 && matches!(hir[m].kind, MemberKind::Getter | MemberKind::Setter)
@@ -450,15 +457,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkGrammarDecorator`: its `errorNode`, from where to where. Of all in `e` that is more than a name, `a.b.c`, or a call of either,
-    /// what comes first, and a `?.` rather than what it is in.
+    /// `checkGrammarDecorator`: the span of its `errorNode`. The first part of `e` that is not a
+    /// name, `a.b.c`, or a call of either, and a `?.` token rather than the node that contains it.
     fn invalid_syntax_in_decorator(&self, file: FileId, e: ExprId) -> Option<(u32, u32)> {
         let hir = self.hir(file);
         let question_dot_after = |before: ExprId| {
             let at = self.skip_trivia_from(file, self.end_of_expr(file, before));
             (at, at + 2)
         };
-        // Worked out only for what is reported: it reads the text.
+        // Computed only for the reported node: it reads the source text.
         let whole = |node: ExprId| (self.start_of(file, node), self.end_of_expr(file, node));
         let (mut node, mut can_have_call, mut found) = (e, true, None);
         loop {
@@ -523,7 +530,8 @@ impl<'p> Checker<'p> {
             DecoratorOwner::Member(_) => 1241,
         };
         let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
-        // `isPotentiallyUncalledDecorator`, which goes by the parameters as declared: one that takes `void` is required.
+        // `isPotentiallyUncalledDecorator`, which uses the declared parameters: a parameter of type
+        // `void` counts as required.
         if !sigs.is_empty()
             && !is_parenthesized
             && lists.iter().all(|params| {
@@ -569,11 +577,11 @@ impl<'p> Checker<'p> {
             Some(head),
         );
         // A decorator has no entry in `calls`.
-        if let Some(said) = self.call_resolution_errors.take() {
-            self.reported.extend(said);
+        if let Some(reported) = self.call_resolution_errors.take() {
+            self.reported.extend(reported);
         }
         let returned = self.with_return_type(resolved).ret;
-        let wanted = self.sig_return(expected);
+        let expected_type = self.sig_return(expected);
         if self.is_any(returned) {
             return;
         }
@@ -586,6 +594,11 @@ impl<'p> Checker<'p> {
             }
             _ => 1270,
         };
-        self.check_type_assignable_to(returned, wanted, Some((file, start, end)), Some(code));
+        self.check_type_assignable_to(
+            returned,
+            expected_type,
+            Some((file, start, end)),
+            Some(code),
+        );
     }
 }

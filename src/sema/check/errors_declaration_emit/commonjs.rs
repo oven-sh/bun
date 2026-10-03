@@ -113,7 +113,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `getNameExpressionPreferringIdentifier`, of a string or numeric literal.
+    /// `getNameExpressionPreferringIdentifier` for a string or numeric literal.
     fn name_expression_preferring_identifier(&mut self, e: ExprId) -> ExportName {
         let file = self.file();
         let text = match self.c.literal_key(file, e) {
@@ -289,7 +289,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.tracker.watched_class_symbol = Some(self.c.class_sym(file, c));
         self.tracker.class_symbol_tracked = false;
         let names_differ = !name.is_identifier || class_name != name.text;
-        // In the namespace the class is one level deeper, and whether it refers to itself is known once it is written.
+        // In the namespace the class is one level deeper, and whether it refers to itself is known
+        // once it is emitted.
         let mut class = None;
         if !names_differ {
             class =
@@ -362,7 +363,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ]
     }
 
-    /// `wrapInCJSExportNamespace`. The members were written one level deeper.
+    /// `wrapInCJSExportNamespace`. The members were emitted one level deeper.
     fn wrap_in_cjs_export_namespace(&mut self, mut members: Vec<Statement>) -> Vec<Statement> {
         let Some(name) = self.cjs_export_assignment_name.clone() else {
             return members;
@@ -578,7 +579,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
         false
     }
 
-    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))`, of an assignment or a call that is a declaration in JavaScript.
+    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for an assignment or a call that is a
+    /// declaration in JavaScript.
     pub(super) fn type_of_commonjs_declaration(&mut self, e: ExprId) -> Option<TypeId> {
         let file = self.file();
         let (hir, files) = (self.c.hir(file), self.c.files());

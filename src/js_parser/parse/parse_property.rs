@@ -52,7 +52,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if (kind == PropertyKind::Get || kind == PropertyKind::Set)
                             && p.lexer.tolerant
                         {
-                            // `checkAccessorDeclaration` objects to the word; the string is a name like any other.
+                            // `checkAccessorDeclaration` reports the identifier; the string is an
+                            // ordinary name.
                             if !matches!(
                                 p.lexer.contents.get(key_range.loc.start as usize),
                                 Some(b'"' | b'\'')
@@ -137,7 +138,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "class Foo { foo(): void; foo(): void {} }"
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
-            // A member of an object literal stays in the tree. The type checker is told of every member of a class.
+            // A member of an object literal stays in the AST. Every member of a class is passed to
+            // the type checker.
             let stays = p.lexer.tolerant && !opts.is_class || p.preserves_type_syntax();
             if !stays {
                 // Skip this property entirely
@@ -274,9 +276,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    /// `parsePropertyDeclaration`: the initializer of a field is outside the await and yield contexts of what is around
-    /// the class, so both words are names here. `parse_prefix` still takes one for the start of an expression if an operand
-    /// follows (`isAwaitExpression`, `isYieldExpression`).
+    /// `parsePropertyDeclaration`: the initializer of a field is outside the await and yield
+    /// contexts enclosing the class, so both keywords are identifiers here. `parse_prefix` still
+    /// treats one as the start of an expression if an operand follows (`isAwaitExpression`,
+    /// `isYieldExpression`).
     #[cold]
     #[inline(never)]
     fn parse_initializer_out_of_await_and_yield(&mut self) -> crate::CrateResult<Expr> {
@@ -302,8 +305,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut kind = kind_;
         let mut errors = errors_;
-        // Tolerant mode: modifiers taken before a member of an object literal. `lone_object_modifier` is the only one,
-        // if `checkGrammarMethod` reports it (1184).
+        // Tolerant mode: modifiers consumed before a member of an object literal.
+        // `lone_object_modifier` is the only one, if `checkGrammarMethod` reports it (1184).
         let mut has_object_modifier = false;
         let mut lone_object_modifier: Option<bun_ast::Range> = None;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
@@ -313,7 +316,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut key: Expr;
             let key_range = p.lexer.range();
             let mut is_computed = false;
-            // Tolerant mode: the "?" or "!" after the name of an object literal member was taken.
+            // Tolerant mode: the "?" or "!" after the name of an object literal member was
+            // consumed.
             let mut has_postfix_token = false;
 
             match p.lexer.token {
@@ -338,8 +342,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                 }
                 T::TPrivateIdentifier => {
-                    // `parsePropertyNameWorker` takes a private name whatever decorates the member;
-                    // `checkGrammarModifiers` objects to the decorators.
+                    // `parsePropertyNameWorker` accepts a private name regardless of the member's
+                    // decorators; `checkGrammarModifiers` reports the decorators.
                     if !opts.is_class
                         || (opts.ts_decorators.len() > 0
                             && !p.options.features.standard_decorators
@@ -359,7 +363,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                 }
                 T::TOpenBracket => {
-                    // `parseClassElement` asks `isIndexSignature` after get/set and before a computed name.
+                    // `parseClassElement` calls `isIndexSignature` after get/set and before a
+                    // computed name.
                     if Self::IS_TYPESCRIPT_ENABLED
                         && p.lexer.tolerant
                         && opts.is_class
@@ -383,8 +388,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && was_identifier
                             && matches!(expr.data, js_ast::ExprData::EIdentifier(_)))
                     {
-                        // `parseComputedPropertyName` takes any expression; `checkGrammarComputedPropertyName`
-                        // objects to the comma. In a class other checks of the member come first.
+                        // `parseComputedPropertyName` accepts any expression;
+                        // `checkGrammarComputedPropertyName` reports the comma. In a class other
+                        // checks of the member run first.
                         let start = p.real_loc(expr.loc);
                         p.parse_suffix(&mut expr, Level::Lowest, None, js_ast::expr::EFlags::None)?;
                         if !opts.is_class {
@@ -471,7 +477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if could_be_modifier_keyword {
                             // TODO: micro-optimization, use a smaller list for non-typescript files.
                             if let Some(keyword) = PropertyModifierKeyword::find(name) {
-                                // `parseObjectLiteralElement` takes modifiers too.
+                                // `parseObjectLiteralElement` accepts modifiers too.
                                 if !opts.is_class
                                     && p.lexer.tolerant
                                     && Self::IS_TYPESCRIPT_ENABLED
@@ -485,7 +491,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && (keyword == PropertyModifierKeyword::PStatic
                                         || !p.lexer.has_newline_before)
                                 {
-                                    // `checkGrammarModifiers` has errors of its own for these three on a method.
+                                    // `checkGrammarModifiers` has separate errors for these three
+                                    // on a method.
                                     let is_plain = !matches!(
                                         keyword,
                                         PropertyModifierKeyword::PReadonly
@@ -502,8 +509,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                                 match keyword {
                                     PropertyModifierKeyword::PGet => {
-                                        // `parseClassElement` takes every modifier first, "async" too, and then looks for "get". The
-                                        // accessor is not parsed in an await context, and the checker reports the "async" (1042).
+                                        // `parseClassElement` consumes every modifier first,
+                                        // including "async", and then checks for "get". The
+                                        // accessor is not parsed in an await context, and the
+                                        // checker reports the "async" (1042).
                                         if (!opts.is_async || p.lexer.tolerant)
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PGet)
@@ -528,15 +537,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAsync => {
-                                        // `tryParseModifier` refuses no word for having been said, but `static`.
+                                        // `tryParseModifier` rejects no repeated modifier except
+                                        // `static`.
                                         if (!opts.is_async || p.lexer.tolerant)
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAsync)
                                             && !p.lexer.has_newline_before
                                         {
                                             if opts.is_async && !opts.is_class {
-                                                // `checkGrammarModifiers`. Those of a class member are gone over
-                                                // when it is lowered.
+                                                // `checkGrammarModifiers`. Those of a class member
+                                                // are checked when it is lowered.
                                                 p.lexer.ts_grammar_error(name_range, 1030);
                                             }
                                             opts.is_async = true;
@@ -594,7 +604,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAbstract => {
-                                        // `tryParseModifier`: a modifier the second time too.
+                                        // `tryParseModifier`: a repeated occurrence is a modifier
+                                        // too.
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
                                             && !p.lexer.has_newline_before
@@ -710,7 +721,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
                                 class_static_block: Some(js_ast::StoreRef::from_bump(block)),
-                                // For the type checker only: nothing else expects a static block to have any.
+                                // For the type checker only: no other consumer expects a static
+                                // block to have any.
                                 ts_decorators: if p.preserves_type_syntax() {
                                     ExprNodeList::from_slice(&opts.ts_decorators)
                                 } else {
@@ -747,7 +759,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     key = p.new_expr(E::EString::init(name), name_range.loc);
 
-                    // `parseObjectLiteralElement` takes a "?" or "!" after the name. The checker reports it (1162, 1255).
+                    // `parseObjectLiteralElement` accepts a "?" or "!" after the name. The checker
+                    // reports it (1162, 1255).
                     if matches!(p.lexer.token, T::TQuestion | T::TExclamation)
                         && !opts.is_class
                         && kind == PropertyKind::Normal
@@ -781,16 +794,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if p.fn_or_arrow_data_parse.is_top_level
                                 && p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr
                             {
-                                // At the top of a file `await` is a name to `parseObjectLiteralElement`;
-                                // `checkContextualIdentifier` objects to it if the file is a module.
+                                // At the top level of a file `parseObjectLiteralElement` treats
+                                // `await` as an identifier; `checkContextualIdentifier` reports it
+                                // if the file is a module.
                                 p.log().add_range_error(
                                     Some(p.source),
                                     name_range,
                                     b"Cannot use \"yield\" or \"await\" here.",
                                 );
                             } else {
-                                // `parseObjectLiteralElement`: `isIdentifier` refuses the word in its own context,
-                                // so this is no shorthand and a `:` is expected.
+                                // `parseObjectLiteralElement`: `isIdentifier` rejects the keyword
+                                // in its own context, so this is not a shorthand property and a `:`
+                                // is expected.
                                 is_shorthand_property = false;
                             }
                         } else if name == b"await" {
@@ -901,7 +916,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (opts.is_static && str_.eql_comptime(b"prototype"))
                             {
                                 if p.lexer.tolerant {
-                                    // TypeScript's parser accepts both names. The string "constructor" is a name like any other.
+                                    // TypeScript's parser accepts both names. The string
+                                    // "constructor" is an ordinary name.
                                     is_constructor_keyword = str_.eql_comptime(b"constructor")
                                         && !matches!(
                                             p.lexer.contents.get(key_range.loc.start as usize),
@@ -1044,8 +1060,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     return Err(crate::Error::SyntaxError);
                 }
-                // `parsePropertyOrMethodDeclaration`: a method all the same.
-                // `checkGrammarModifiers` objects to `accessor`.
+                // `parsePropertyOrMethodDeclaration`: still a method.
+                // `checkGrammarModifiers` reports `accessor`.
                 kind = PropertyKind::Normal;
             }
 
@@ -1100,7 +1116,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `tryParseModifier` for the words of `IsModifierKind` that `PropertyModifierKeyword` lacks: const, default, export, in, out.
+    /// `tryParseModifier` for the keywords of `IsModifierKind` that `PropertyModifierKeyword`
+    /// lacks: const, default, export, in, out.
     /// Called on the token after `word`, which is one that `canFollowModifier` accepts.
     #[cold]
     #[inline(never)]
@@ -1146,7 +1163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `nextTokenCanFollowDefaultKeyword`, on the token after `default`.
     fn can_follow_default_keyword(&mut self) -> bool {
-        let wanted = match self.lexer.token {
+        let expected = match self.lexer.token {
             T::TClass | T::TFunction | T::TAt => return true,
             T::TIdentifier => match self.lexer.raw() {
                 b"interface" => return true,
@@ -1159,7 +1176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let here = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let found = self.lexer.next().is_ok()
-            && self.lexer.token == wanted
+            && self.lexer.token == expected
             && !self.lexer.has_newline_before;
         self.lexer.restore(&here);
         found
@@ -1183,8 +1200,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseIdentifierName` at a token that is no name: reports 1003 and makes a missing name (`createMissingIdentifier`).
-    /// Consumes nothing.
+    /// `parseIdentifierName` at a token that is not a name: reports 1003 and creates a missing name
+    /// (`createMissingIdentifier`). Consumes nothing.
     #[cold]
     #[inline(never)]
     fn missing_property_name(&mut self) -> crate::CrateResult<Expr> {

@@ -1,7 +1,7 @@
-//! Types, signatures and type-parameter mappings, hash-consed: equal ones have equal ids.
+//! Types, signatures and type mappers, hash-consed: equal ones have equal ids.
 //!
-//! An object type says where it comes from (a declaration, a piece of syntax, and what the type parameters around it
-//! stand for), not what is in it. What is in it is asked of the checker, which works it out once.
+//! An object type records its origin (a declaration, a syntax node, and the mapper for the
+//! enclosing type parameters), not its members. The checker resolves the members on demand, once.
 
 use crate::atom::{Atom, Interner};
 use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
@@ -27,34 +27,37 @@ pub struct ComponentsId(pub u32);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Intrinsic {
-    /// The resolver does not know. Behaves like `any`, and spreads.
+    /// Unknown to the resolver. Behaves like `any`, and propagates.
     Unresolved,
     Any,
-    /// `errorType`: what an expression or a type that is in error has. It has `TypeFlagsAny` and behaves like `any`, except where
-    /// `isErrorType` is asked.
+    /// `errorType`: the type of an erroneous expression or type node. It has `TypeFlagsAny` and
+    /// behaves like `any`, except where `isErrorType` is checked.
     Error,
-    /// `autoType`: the declared type of a variable whose type at a place is what control flow finds assigned to it. It has
-    /// `TypeFlagsAny`.
+    /// `autoType`: the declared type of a variable whose type at each reference is determined by
+    /// control flow analysis of its assignments. It has `TypeFlagsAny`.
     Auto,
     Unknown,
     Never,
-    /// `silentNeverType`: the `never` that a reference is narrowed to from the incomplete type of a loop that is being analysed.
-    /// It has `TypeFlagsNever`, and what is done to it is `silentNeverType` again and reports nothing.
+    /// `silentNeverType`: the `never` that a reference is narrowed to from the incomplete type of a
+    /// loop under analysis. It has `TypeFlagsNever`, and operations on it yield `silentNeverType`
+    /// again and report nothing.
     SilentNever,
-    /// `unreachableNeverType`: what control flow analysis has for a reference past an assignment control does not get to, or past
-    /// a call that never returns. It has `TypeFlagsNever`. `getFlowTypeOfReference` turns it into the declared type.
+    /// `unreachableNeverType`: the control flow type of a reference after an unreachable
+    /// assignment, or after a call that never returns. It has `TypeFlagsNever`.
+    /// `getFlowTypeOfReference` converts it to the declared type.
     UnreachableNever,
-    /// `implicitNeverType`: what is in `[]` under `strictNullChecks`. It has `TypeFlagsNever`. `isEmptyLiteralType` knows it.
+    /// `implicitNeverType`: the element type of `[]` under `strictNullChecks`. It has
+    /// `TypeFlagsNever`. `isEmptyLiteralType` recognizes it.
     ImplicitNever,
     Void,
     Undefined,
-    /// The `undefined` of a property or an element that is not there. `missingType`
+    /// The `undefined` of a missing property or element. `missingType`
     Missing,
-    /// `undefined` written as a type without strictNullChecks: like the plain one, which is then what expressions give
-    /// (`undefinedWideningType`), but never widened to `any`. `undefinedType`
+    /// `undefined` as a type node without strictNullChecks: like the plain one, which is then the
+    /// type of expressions (`undefinedWideningType`), but never widened to `any`. `undefinedType`
     UndefinedDeclared,
     Null,
-    /// The same of `null`. `nullType`
+    /// The same for `null`. `nullType`
     NullDeclared,
     String,
     Number,
@@ -62,9 +65,10 @@ pub enum Intrinsic {
     Symbol,
     /// `object`
     Object,
-    /// `intrinsicMarkerType`: what the keyword `intrinsic` is as a type. It has `TypeFlagsAny`.
+    /// `intrinsicMarkerType`: the type of the keyword `intrinsic`. It has `TypeFlagsAny`.
     IntrinsicMarker,
-    /// `wildcardType`: what `getPermissiveInstantiation` puts for a type parameter. It has `TypeFlagsAny`.
+    /// `wildcardType`: the type `getPermissiveInstantiation` substitutes for a type parameter. It
+    /// has `TypeFlagsAny`.
     Wildcard,
 }
 
@@ -100,7 +104,7 @@ bitflags::bitflags! {
 }
 
 impl ElemFlags {
-    /// `TupleElementInfo.labeledDeclaration`, as far as its name goes, is kept above the flags.
+    /// The name of `TupleElementInfo.labeledDeclaration` is stored in the bits above the flags.
     const LABEL_SHIFT: u32 = 8;
 
     /// `name` in `[name: T]`. `NONE`: the element has no label.
@@ -112,7 +116,7 @@ impl ElemFlags {
         }
     }
 
-    /// The same flags, with `label` for a label.
+    /// The same flags with the label `label`.
     #[inline]
     pub fn with_label(self, label: Atom) -> ElemFlags {
         debug_assert!(!label.is_own(), "a label is a declared name");
@@ -138,7 +142,7 @@ pub enum StringMappingKind {
     Uncapitalize,
 }
 
-/// Syntax or a declaration that an anonymous object type is the type of.
+/// The syntax node or declaration whose type is an anonymous object type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Origin {
     /// `{ a: T }`
@@ -153,8 +157,8 @@ pub enum Origin {
     /// 3. `CONTAINS_WIDENING_TYPE` and `NON_INFERRABLE_TYPE`, propagated from the member types when the type was created.
     /// 4. `ObjectFlagsFreshLiteral`.
     ObjectLiteral(FileId, ExprId, bool, bool, ObjectFlags, bool),
-    /// `getWidenedTypeOfObjectLiteral` of it. The first two fields after the node are the same. The last one is
-    /// `ObjectFlagsNonInferrableType`, which widening keeps.
+    /// `getWidenedTypeOfObjectLiteral` of it. The first two fields after the node are the same. The
+    /// last one is `ObjectFlagsNonInferrableType`, which widening preserves.
     WidenedLiteral(FileId, ExprId, bool, bool, bool),
     /// The constructor function of a class, with its static members.
     ClassStatic(Sym),
@@ -163,10 +167,12 @@ pub enum Origin {
     EnumObject(Sym),
     /// A module or namespace, as a value.
     Module(Sym),
-    /// The type of the symbol `cloneTypeAsModuleType` makes for an `import * as ns` that is not the module as it stands
-    /// (`resolveESModuleSymbol`): the properties and index signatures of `module` (a module, or what it `export =`s), no call or
-    /// construct signatures, and, if `with_default`, over them a `default` that is `module` itself. `originating_import`: the
-    /// alias `ns`. Each such import makes a symbol, and so a type, of its own.
+    /// The type of the symbol `cloneTypeAsModuleType` creates for an `import * as ns` that does not
+    /// resolve to the module itself (`resolveESModuleSymbol`): the properties and index signatures
+    /// of `module` (a module, or its `export =` target), no call or construct signatures, and, if
+    /// `with_default`, a `default` that overrides theirs and is `module` itself.
+    /// `originating_import`: the alias `ns`. Each such import creates its own symbol, and so its
+    /// own type.
     Namespace {
         module: Sym,
         with_default: bool,
@@ -183,11 +189,12 @@ pub enum UniqueSymbolDeclaration {
     Variable(Sym),
     /// A `readonly` property of a class, an interface or a type literal, which has no `Sym`: `symbol.Declarations[0]`.
     Member(FileId, crate::hir::MemberId),
-    /// A property of the global `SymbolConstructor`, which goes by its name alone.
+    /// A property of the global `SymbolConstructor`, identified by its name alone.
     SymbolConstructor,
 }
 
-/// `TypeReference.resolvedTypeArguments`. Whoever wants them asks `Checker::type_arguments` (`getTypeArguments`).
+/// `TypeReference.resolvedTypeArguments`. Callers read them through `Checker::type_arguments`
+/// (`getTypeArguments`).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeArguments {
     /// `createTypeReference`
@@ -198,8 +205,9 @@ pub enum TypeArguments {
 
 const _: () = assert!(size_of::<TypeArguments>() == 16);
 
-/// `TypeReference.node` and `mapper`: the reference to a generic class or interface, the array type or the tuple type written at
-/// `node`, in the declaration of a type alias, and what the type parameters around the node stand for. What they resolve to is in
+/// `TypeReference.node` and `mapper`: the type reference to a generic class or interface, the array
+/// type node or the tuple type node at `node`, in the declaration of a type alias, and the mapper
+/// for the type parameters enclosing the node. The resolved type arguments are in
 /// `Program::resolved_type_arguments`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct DeferredTypeArguments {
@@ -215,9 +223,9 @@ impl TypeArguments {
 
     /// `None`: they are deferred.
     #[inline]
-    pub fn given(&self) -> Option<&[TypeId]> {
+    pub fn actual(&self) -> Option<&[TypeId]> {
         match self {
-            TypeArguments::Given(given) => Some(given),
+            TypeArguments::Given(actual) => Some(actual),
             TypeArguments::Deferred(_) => None,
         }
     }
@@ -239,20 +247,20 @@ impl Default for TypeArguments {
 }
 
 impl From<Box<[TypeId]>> for TypeArguments {
-    fn from(given: Box<[TypeId]>) -> Self {
-        TypeArguments::Given(given)
+    fn from(actual: Box<[TypeId]>) -> Self {
+        TypeArguments::Given(actual)
     }
 }
 
 impl From<Vec<TypeId>> for TypeArguments {
-    fn from(given: Vec<TypeId>) -> Self {
-        TypeArguments::Given(given.into())
+    fn from(actual: Vec<TypeId>) -> Self {
+        TypeArguments::Given(actual.into())
     }
 }
 
 impl From<&[TypeId]> for TypeArguments {
-    fn from(given: &[TypeId]) -> Self {
-        TypeArguments::Given(given.into())
+    fn from(actual: &[TypeId]) -> Self {
+        TypeArguments::Given(actual.into())
     }
 }
 
@@ -264,9 +272,10 @@ pub enum Marker {
     Other,
     SuperForCheck,
     SubForCheck,
-    /// `getRestrictiveTypeParameter`: the type parameter, extending nothing.
+    /// `getRestrictiveTypeParameter`: the type parameter without a constraint.
     Restrictive(TypeId),
-    /// `createTupleTargetType`: `typeParameters` and `thisType`. All targets share them: nothing but a mapper ever sees them.
+    /// `createTupleTargetType`: `typeParameters` and `thisType`. All targets share them: only a
+    /// mapper ever observes them.
     TupleElement(u32),
     TupleThis,
 }
@@ -274,9 +283,10 @@ pub enum Marker {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeData {
     Intrinsic(Intrinsic),
-    /// What a reference to a type name that does not resolve has (`getUnresolvedSymbolForEntityName`, `getTypeFromTypeAliasReference`):
-    /// an intrinsic type with `TypeFlagsAny` and an alias. `isErrorType` holds for it, it is not `errorType`, and it is printed as
-    /// it is written. `name` is the whole entity name, `A.B.C`.
+    /// The type of a type reference whose name does not resolve
+    /// (`getUnresolvedSymbolForEntityName`, `getTypeFromTypeAliasReference`): an intrinsic type
+    /// with `TypeFlagsAny` and an alias. `isErrorType` is true for it, it is not `errorType`, and
+    /// it is printed as in the source. `name` is the whole entity name, `A.B.C`.
     UnresolvedName {
         name: Atom,
         args: Box<[TypeId]>,
@@ -309,17 +319,19 @@ pub enum TypeData {
         symbol: Sym,
         fresh: bool,
     },
-    /// `let a = []` on the way to a place where it is read: an array of what has been put in it so far.
-    /// Only while control flow is followed; what comes out is an ordinary array.
+    /// `let a = []` during control flow analysis of a reference to it: an array of the types
+    /// assigned to its elements so far.
+    /// Only exists during control flow analysis. The final result is an ordinary array.
     EvolvingArray(TypeId),
-    /// `UniqueESSymbolType`: the symbol one declaration holds.
+    /// `UniqueESSymbolType`: the unique symbol of one declaration.
     UniqueSymbol {
         symbol: UniqueSymbolDeclaration,
         name: Atom,
     },
-    /// With `IDENTITY`, the type parameter as declared. Otherwise that of a signature found in something instantiated
-    /// (`cloneTypeParameter`): another type, whose constraint and default are the declared ones with the mapper filled in.
-    /// The mapper says what the type parameters around the signature stand for there, and nothing of the signature's own.
+    /// With `IDENTITY`, the type parameter as declared. Otherwise the type parameter of a signature
+    /// inside an instantiated type (`cloneTypeParameter`): a distinct type, whose constraint and
+    /// default are the declared ones instantiated with the mapper. The mapper maps the type
+    /// parameters enclosing the signature, and none of the signature's own.
     TypeParam(FileId, TypeParamId, MapperId),
     /// The `this` type of a class or an interface.
     ThisParam(Sym),
@@ -348,33 +360,38 @@ pub enum TypeData {
     },
     /// An object type that was computed: a spread, a rest, `Pick<T, K>`.
     Synth(Box<Shape>),
-    /// What `{ [P in keyof T]: X }` (`mapped`) was made from to come out as `source`; `of` is the `T`. Its members are worked
-    /// out when asked for. `createReverseMappedType`
+    /// The type for which `{ [P in keyof T]: X }` (`mapped`) yields `source`. `of` is the `T`. Its
+    /// members are resolved on demand. `createReverseMappedType`
     ReverseMapped {
         source: TypeId,
         mapped: TypeId,
         of: TypeId,
     },
-    /// `check extends E ? X : Y` that cannot be decided yet.
+    /// A deferred `check extends E ? X : Y`.
     Cond {
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
-        /// `forConstraint` of `getConditionalTypeKey`. `getConditionalType` makes a new type whenever it defers, and
-        /// `getConditionalTypeInstantiation` keeps what it returns under the type arguments IT was given: those of a union that is
-        /// distributed over, those a tail call began with. These are they, for a type that was made for a constraint, so that it is
-        /// the same type as another exactly where it is in tsgo. `IDENTITY`: it was not made for a constraint.
+        /// `forConstraint` of `getConditionalTypeKey`. `getConditionalType` creates a new type
+        /// whenever it defers, and `getConditionalTypeInstantiation` caches the result under the
+        /// type arguments that it was itself given: those of a union that is distributed over,
+        /// those a tail call started with. This field holds those type arguments for a type created
+        /// for a constraint, so that two types are identical exactly where they are in tsgo.
+        /// `IDENTITY`: it was not created for a constraint.
         for_constraint: MapperId,
     },
     IndexedAccess {
         obj: TypeId,
         index: TypeId,
-        /// Read in an expression under noUncheckedIndexedAccess: what an index signature gives may be missing.
-        /// `AccessFlagsIncludeUndefined`, the one access flag that is kept (`AccessFlagsPersistent`).
+        /// Read in an expression under noUncheckedIndexedAccess: a value from an index signature
+        /// may be missing.
+        /// `AccessFlagsIncludeUndefined`, the only access flag that is stored
+        /// (`AccessFlagsPersistent`).
         undefined: bool,
     },
     Keyof(TypeId),
-    /// `SubstitutionType`: `base`, which is known to be a `constraint`. With the constraint `unknown` it is `NoInfer<base>`.
+    /// `SubstitutionType`: `base`, which is known to satisfy `constraint`. With the constraint
+    /// `unknown` it is `NoInfer<base>`.
     Substitution {
         base: TypeId,
         constraint: TypeId,
@@ -400,63 +417,78 @@ bitflags::bitflags! {
         const PROTECTED = 32;
         /// A setter without a getter.
         const WRITE_ONLY = 64;
-        /// Of a widened object literal: the object literals in its type are widened too.
+        /// For a property of a widened object literal: the object literal types in its type are
+        /// widened too.
         const WIDEN = 128;
-        /// The name looks like a number but is a string: `{ "0": x }`, the elements of a tuple, a mapped key that is a string
-        /// literal. It stands for `nameType` and the name node, which `getLiteralTypeFromProperty` goes by.
+        /// The name looks numeric but is a string: `{ "0": x }`, the elements of a tuple, a mapped
+        /// key that is a string literal. It replaces `nameType` and the name node, which
+        /// `getLiteralTypeFromProperty` uses.
         const STRING_NAME = 256;
-        /// The `children` property synthesized from the body of a JSX element. The parent of its declaration is the attributes node
-        /// (`createJsxAttributesTypeFromAttributesProperty`), so `shouldCheckAsExcessProperty` accepts it like a written attribute,
-        /// unlike a property copied by a spread. `jsx_attributes_type` sets it only when the attributes type is fresh.
+        /// The `children` property synthesized from the body of a JSX element. The parent of its
+        /// declaration is the attributes node (`createJsxAttributesTypeFromAttributesProperty`), so
+        /// `shouldCheckAsExcessProperty` accepts it like an attribute in the source, unlike a
+        /// property copied by a spread. `jsx_attributes_type` sets it only when the attributes type
+        /// is fresh.
         const JSX_CHILDREN = 512;
-        /// A member of an object literal as `checkObjectLiteral` makes it anew in a check under a pushed contextual type: a symbol with
-        /// the type just found and the `ValueDeclaration` of the member. The parent of that is the literal, so
-        /// `shouldCheckAsExcessProperty` accepts it, unlike a property a spread brought along, which is a `PropSource::Copy` too.
+        /// A member of an object literal as `checkObjectLiteral` recreates it when checking under a
+        /// pushed contextual type: a symbol with the newly computed type and the `ValueDeclaration`
+        /// of the member. The parent of that declaration is the literal, so
+        /// `shouldCheckAsExcessProperty` accepts it, unlike a property copied by a spread, which is
+        /// also a `PropSource::Copy`.
         const WRITTEN = 1024;
-        /// Of an object literal type that is no longer fresh: nor is an object literal that is its type
-        /// (`getRegularTypeOfObjectLiteral`, `transformTypeOfMembers`).
+        /// For a property of an object literal type that is no longer fresh: an object literal type
+        /// that is its type is not fresh either (`getRegularTypeOfObjectLiteral`,
+        /// `transformTypeOfMembers`).
         const REGULAR = 2048;
-        /// `OPTIONAL`, and yet `undefined` is not added to the type of the symbol: the `?` is on a declaration after
-        /// `symbol.ValueDeclaration`, the one `isOptionalDeclaration` is asked about, or on a parameter property, whose type has it.
+        /// `OPTIONAL`, but `undefined` is not added to the type of the symbol: the `?` is on a
+        /// declaration after `symbol.ValueDeclaration`, which is the one `isOptionalDeclaration`
+        /// checks, or on a parameter property, whose type already includes it.
         const WITHOUT_OPTIONALITY = 4096;
-        /// `CheckFlags` of what `createUnionOrIntersectionProperty` makes for a union.
+        /// `CheckFlags` of the property `createUnionOrIntersectionProperty` creates for a union.
         const READ_PARTIAL = 1 << 13;
         const WRITE_PARTIAL = 1 << 14;
         const HAS_NON_UNIFORM_TYPE = 1 << 15;
         const HAS_LITERAL_TYPE = 1 << 16;
         const ABSTRACT = 1 << 17;
-        /// Without any of these a property is within reach from everywhere but through `super`
-        /// (`checkPropertyAccessibilityAtLocation`). Of accessors the one in use has the say, so they are looked at.
+        /// Without any of these a property is accessible everywhere except through `super`
+        /// (`checkPropertyAccessibilityAtLocation`). For accessors the accessor in use decides, so
+        /// they are inspected.
         const MAY_BE_OUT_OF_REACH = Self::PRIVATE.bits() | Self::PROTECTED.bits() | Self::ABSTRACT.bits() | Self::ACCESSOR.bits();
     }
 }
 
-/// Where the type of a property comes from.
+/// The origin of the type of a property.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropSource {
-    /// It is made up: nothing declares it.
+    /// Synthesized: it has no declaration.
     Type(TypeId),
     /// A property of an object literal.
     Literal(FileId, crate::hir::PropId),
-    /// A member of a class, an interface or a type literal, a parameter property, an export of a module or a namespace, a member of an
-    /// enum, what `f.name = value`, `this.name = value` or `Object.defineProperty(f, "name", descriptor)` declare. A late bound symbol
-    /// goes by the symbol the binder gave the first of its declarations.
+    /// A member of a class, an interface or a type literal, a parameter property, an export of a
+    /// module or a namespace, a member of an enum, or a property declared by `f.name = value`,
+    /// `this.name = value` or `Object.defineProperty(f, "name", descriptor)`. A late bound symbol
+    /// is identified by the symbol the binder created for its first declaration.
     Symbol(Sym),
-    /// Of the intersection given: the properties of that name that several of its members have. It is all of them at once.
+    /// A property of the given intersection: the properties of that name in several of its
+    /// constituents. It combines all of them.
     Intersected(TypeId, Box<[Prop]>),
-    /// A property of the mapped type given (`containingType`). Its type is the template of that type instantiated with
-    /// `Prop::mapper`: the mapper of the mapped type plus its type parameter mapped to `keyType`. `type_of_mapped_prop` resolves it
-    /// on demand (`getTypeOfMappedSymbol`). The flag is `CheckFlagsStripOptional`: `-?` removes `undefined` from the type.
-    /// Last, the symbols whose `Declarations` it has, those of `modifiersProp` (`addMemberForKeyTypeWorker`), by the rule of `Copy`.
+    /// A property of the given mapped type (`containingType`). Its type is the template of that
+    /// type instantiated with `Prop::mapper`: the mapper of the mapped type plus its type parameter
+    /// mapped to `keyType`. `type_of_mapped_prop` resolves it on demand (`getTypeOfMappedSymbol`).
+    /// The flag is `CheckFlagsStripOptional`: `-?` removes `undefined` from the type.
+    /// The last field holds the symbols whose `Declarations` it has, those of `modifiersProp`
+    /// (`addMemberForKeyTypeWorker`), following the rule of `Copy`.
     /// `None`: it has none.
     Mapped(TypeId, bool, Option<std::sync::Arc<[Prop]>>),
-    /// A symbol made from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`): its
-    /// own type, and the symbols whose `Declarations` it has, one after the other. None of those is made up, a copy or
-    /// `Intersected`. The flag: it has the `ValueDeclaration` and the `Parent` of the first as well. `Checker::copy_of` makes it.
+    /// A symbol derived from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`):
+    /// its own type, and the symbols whose `Declarations` it has, concatenated in order. None of
+    /// those is synthesized, a copy or `Intersected`. The flag: it also has the `ValueDeclaration`
+    /// and the `Parent` of the first. `Checker::copy_of` creates it.
     Copy(TypeId, Box<[Prop]>, bool),
-    /// A property of the reverse mapped type given (`CheckFlagsReverseMapped`). `type_of_reverse_mapped_prop` infers its type on demand
-    /// (`getTypeOfReverseMappedSymbol`). Then the symbols whose `Declarations` it has, those of the property of the source, by the
-    /// rule of `Copy`. It has no `ValueDeclaration`.
+    /// A property of the given reverse mapped type (`CheckFlagsReverseMapped`).
+    /// `type_of_reverse_mapped_prop` infers its type on demand (`getTypeOfReverseMappedSymbol`).
+    /// The second field holds the symbols whose `Declarations` it has, those of the property of the
+    /// source, following the rule of `Copy`. It has no `ValueDeclaration`.
     ReverseMapped(TypeId, Box<[Prop]>),
 }
 
@@ -465,7 +497,7 @@ pub struct Prop {
     pub name: Atom,
     pub flags: PropFlags,
     pub source: PropSource,
-    /// What to instantiate the type `source` gives with.
+    /// The mapper to instantiate the type from `source` with.
     pub mapper: MapperId,
 }
 
@@ -506,7 +538,8 @@ pub struct IndexInfo {
     pub readonly: bool,
     /// The index signature that declares it (`getIndexInfosOfIndexSymbol`).
     pub declaration: Option<(FileId, crate::hir::MemberId)>,
-    /// The declarations with computed names that it is made from (`getObjectLiteralIndexInfo`): `TypeStore::components`.
+    /// The declarations with computed names that it is built from (`getObjectLiteralIndexInfo`):
+    /// `TypeStore::components`.
     pub components: ComponentsId,
 }
 
@@ -531,11 +564,12 @@ pub enum InstantiationExpression {
     TypeNode(FileId, TypeNodeId),
 }
 
-/// What is in an object type.
+/// The members of an object type.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Shape {
-    /// `symbol.Declarations[0]` of a made-up type that keeps the symbol of an object literal (`getWidenedTypeOfObjectLiteral`), or has
-    /// that of a binding element (`getRestType`, where there is an index signature): the file and the position. `CompareTypes`
+    /// `symbol.Declarations[0]` of a synthesized type that preserves the symbol of an object
+    /// literal (`getWidenedTypeOfObjectLiteral`), or has the symbol of a binding element
+    /// (`getRestType`, when there is an index signature): the file and the position. `CompareTypes`
     /// orders by it.
     pub symbol_declared_at: Option<(FileId, u32)>,
     /// In declaration order, own before inherited.
@@ -544,61 +578,74 @@ pub struct Shape {
     pub construct: Vec<SigId>,
     pub index: Vec<IndexInfo>,
     pub literal: Literalness,
-    /// Of what `literal` says is of an expression: `ObjectFlagsFreshLiteral` is gone (`getRegularTypeOfObjectLiteral`).
+    /// For a type that `literal` marks as the type of an expression: `ObjectFlagsFreshLiteral` has
+    /// been removed (`getRegularTypeOfObjectLiteral`).
     pub is_regular: bool,
-    /// `ObjectFlagsContainsWideningType`, of what `checkObjectLiteral` makes by value: a member that is written has it, be it one that
-    /// what is spread after it replaces.
+    /// `ObjectFlagsContainsWideningType` for a type `checkObjectLiteral` creates by value: a member
+    /// in the source has it, even one that a later spread overrides.
     pub contains_widening_type: bool,
     /// `ObjectFlagsJSLiteral`
     pub is_js_literal: bool,
-    /// Of what `getInstantiationExpressionType` makes.
+    /// For a type created by `getInstantiationExpressionType`.
     pub instantiation_expression: Option<InstantiationExpression>,
-    /// Of what `createDefaultPropertyWrapperForModule` makes: `originalSymbol`, the module, which is the `Parent` of its `default`.
+    /// For a type created by `createDefaultPropertyWrapperForModule`: `originalSymbol`, the module,
+    /// which is the `Parent` of its `default`.
     pub default_of: Option<Sym>,
-    /// Of what `getSpreadType` makes, which is a new type each time: the left and the right it was made of.
+    /// For a type created by `getSpreadType`, which creates a new type on every call: its left and
+    /// right operands.
     pub spread_of: Option<(TypeId, TypeId)>,
-    /// How many types the outermost `getSpreadType` had made before this one. `mapType` goes through a union of named unions by its
-    /// origin, which is not the order of `CompareTypes`.
+    /// The number of types the outermost `getSpreadType` had created before this one. `mapType`
+    /// iterates over a union of named unions by its origin, which is not the order of
+    /// `CompareTypes`.
     pub spread_rank: u32,
-    /// Of what `getSignatureInstantiation` makes with `inferredTypeParameters` (`ObjectFlagsSingleSignatureType`), which is a new type
-    /// each time: the outer type parameters of the declaration of the signature under `t.mapper`, as a tuple.
+    /// For a type created by `getSignatureInstantiation` with `inferredTypeParameters`
+    /// (`ObjectFlagsSingleSignatureType`), which creates a new type on every call: the outer type
+    /// parameters of the signature's declaration instantiated with `t.mapper`, as a tuple.
     pub single_signature_arguments: Option<TypeId>,
 }
 
-/// Whether a made-up object type is still the type of an object literal expression, or what else it was made as that tells.
+/// Whether a synthesized object type is still the type of an object literal expression, or which
+/// other distinguishing kind it was created as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Literalness {
     #[default]
     No,
     Literal,
-    /// With something spread into it: what else it has is not known.
+    /// An object literal with a spread: its other properties are not known.
     WithSpread,
-    /// The properties written between two spreads, on their way into a `WithSpread`.
+    /// The properties in the source between two spreads, before they are merged into a
+    /// `WithSpread`.
     Written,
-    /// The attributes of a JSX element. Names with a hyphen in them are nobody's business.
+    /// The attributes of a JSX element. Names that contain a hyphen are ignored.
     JsxAttributes,
-    /// An object literal looked at without the functions in it that wait for the types of their parameters
-    /// (`ObjectFlagsNonInferrableType`). With nothing in it, such a function (`anyFunctionType`); with one call signature and
-    /// nothing else, such a function that has no such parameters, kept for what it returns (`returnOnlyType`).
+    /// An object literal checked without its context-sensitive functions
+    /// (`ObjectFlagsNonInferrableType`). With no members, it is such a function
+    /// (`anyFunctionType`). With one call signature and nothing else, it is such a function without
+    /// context-sensitive parameters, retained for its return type (`returnOnlyType`).
     Partial,
-    /// What a binding pattern implies, as what its initializer is expected to be (`patternForType`). No expression has it.
+    /// The type implied by a binding pattern, used as the contextual type of its initializer
+    /// (`patternForType`). No expression has it.
     Pattern,
-    /// The same with computed names that are only known when it runs: what else it takes is not known.
+    /// The same with computed names that are only known at run time: its other properties are not
+    /// known.
     /// `ObjectFlagsObjectLiteralPatternWithComputedProperties`
     PatternWithComputedNames,
-    /// What `import()` gives for a module that gets a `default` made up (`getTypeWithSyntheticDefaultImportType`). Its symbol
-    /// is a type literal without members, so it counts as `{}` wherever `IsEmptyAnonymousObjectType` is asked, widened or not.
+    /// The type `import()` yields for a module that gets a synthesized `default`
+    /// (`getTypeWithSyntheticDefaultImportType`). Its symbol is a type literal without members, so
+    /// `IsEmptyAnonymousObjectType` treats it as `{}`, widened or not.
     SyntheticDefault,
-    /// `unknownEmptyObjectType`: the `{}` that `unknown` is where it is neither `null` nor `undefined`. It has no symbol.
+    /// `unknownEmptyObjectType`: the `{}` that `unknown` narrows to when it is neither `null` nor
+    /// `undefined`. It has no symbol.
     OfUnknown,
     /// `autoArrayType` where there is no global `Array`. It has no symbol.
     AutoArray,
-    /// What `createEmptyObjectTypeFromStringLiteral` makes for an inference from a string literal to `keyof T`. It has no symbol.
+    /// The type `createEmptyObjectTypeFromStringLiteral` creates for an inference from a string
+    /// literal to `keyof T`. It has no symbol.
     OfLiteralKeyof,
 }
 
 impl Literalness {
-    /// Whether it is the type of an object literal expression as it stands, which nothing has been made of yet.
+    /// Whether it is the type of an object literal expression itself, not a type derived from it.
     #[inline]
     pub fn is_of_expression(self) -> bool {
         matches!(
@@ -624,14 +671,14 @@ pub struct SigParam {
     pub ty: TypeId,
     pub optional: bool,
     pub rest: bool,
-    /// `symbol.ValueDeclaration != nil`. A parameter that the checker makes up (`combineUnionOrIntersectionParameters`,
-    /// `newParameter`) has a name and no declaration.
+    /// `symbol.ValueDeclaration != nil`. A parameter that the checker synthesizes
+    /// (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no declaration.
     pub has_declaration: bool,
 }
 
 impl SigParam {
-    /// `getNameableDeclarationAtPosition`: what a tuple element made of this parameter is labelled with. `name` is `NONE` for a
-    /// pattern (`isValidDeclarationForTupleLabel`).
+    /// `getNameableDeclarationAtPosition`: the label of a tuple element created from this
+    /// parameter. `name` is `NONE` for a pattern (`isValidDeclarationForTupleLabel`).
     #[inline]
     pub fn label(&self) -> Atom {
         if self.has_declaration {
@@ -650,24 +697,27 @@ pub enum SigData {
         func: FnId,
         mapper: MapperId,
     },
-    /// The constructor a class without one has: `new (...) => instance`.
-    /// `base`: the construct signature of the base constructor type that `getDefaultConstructSignatures` cloned, with the type
-    /// arguments of the `extends` clause. `None`: the base constructor type has none.
+    /// The implicit constructor of a class that declares none: `new (...) => instance`.
+    /// `base`: the construct signature of the base constructor type that
+    /// `getDefaultConstructSignatures` cloned, with the type arguments of the `extends` clause.
+    /// `None`: the base constructor type has none.
     DefaultConstruct {
         class: Sym,
         base: Option<SigId>,
         mapper: MapperId,
     },
-    /// The construct signature of a class made from its constructor `func`.
+    /// The construct signature of a class, built from its constructor `func`.
     Construct {
         class: Sym,
         file: FileId,
         func: FnId,
         mapper: MapperId,
     },
-    /// Made up. `this`: what it is to be called on. `of`: first the signature it is a clone of: it is declared where that one is.
-    /// With more than one it is `Signature.composite` (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`), with
-    /// `is_union` for `composite.isUnion`: `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from what they return.
+    /// Synthesized. `this`: its `this` type. `of`: the first entry is the signature it is a clone
+    /// of, whose declaration it shares. With more than one entry it is `Signature.composite`
+    /// (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`), with `is_union` for
+    /// `composite.isUnion`: `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from their
+    /// return types.
     Synth {
         type_params: Box<[TypeId]>,
         params: Box<[SigParam]>,
@@ -676,12 +726,13 @@ pub enum SigData {
         of: Box<[SigId]>,
         is_union: bool,
     },
-    /// `sig`, but returning `ret`: a construct signature of an intersection with mixin constructors in it (`cloneSignature`
-    /// with `resolvedReturnType` set). `sig` is never one of these itself.
+    /// `sig` with the return type `ret`: a construct signature of an intersection that contains
+    /// mixin constructors (`cloneSignature` with `resolvedReturnType` set). `sig` is never one of
+    /// these itself.
     WithReturn { sig: SigId, ret: TypeId },
 }
 
-/// `ObjectFlags`, with the values of types.go: between types of different kinds they are the order of `CompareTypes`.
+/// `TypeFlags`, with the values of types.go: `CompareTypes` orders types of different kinds by them.
 pub mod tf {
     pub const ANY: u32 = 1 << 0;
     pub const UNKNOWN: u32 = 1 << 1;
@@ -770,7 +821,8 @@ pub mod tf {
         | TEMPLATE_LITERAL
         | STRING_MAPPING;
 
-    // What is gathered of the members while an intersection is made. The last three use bits the mask leaves out.
+    // The flags accumulated from the constituents while an intersection is built. The last three
+    // use bits that the mask omits.
     pub const INCLUDES_MASK: u32 = ANY
         | UNKNOWN
         | PRIMITIVE
@@ -790,17 +842,18 @@ pub mod tf {
 }
 
 bitflags::bitflags! {
-    /// `ObjectFlags`, those that follow from what the type is made of, and three of ours.
+    /// The `ObjectFlags` that are derived from a type's constituents, plus three that are specific
+    /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u8 {
-        /// Exact: it mentions a type parameter, so instantiating it may change it.
+        /// Exact: it references a type parameter, so instantiation may change it.
         const COULD_CONTAIN_TYPE_VARIABLES = 1;
         /// Is or contains `Unresolved`.
         const HAS_UNRESOLVED = 2;
         /// An intersection, or `ObjectFlagsContainsIntersections`.
         const MAY_BE_REDUCED = 128;
         const HAS_MARKER = 4;
-        /// What a binding pattern implies counts too.
+        /// The type implied by a binding pattern counts too.
         const CONTAINS_OBJECT_OR_ARRAY_LITERAL = 8;
         /// Only meaningful without strictNullChecks. The flags of an interned object literal type do not include it:
         /// `Origin::ObjectLiteral` stores it, and `Checker::contains_widening_type` reads it there.
@@ -808,16 +861,19 @@ bitflags::bitflags! {
         /// `ObjectFlagsNonInferrableType`. Only stored in `Origin::ObjectLiteral`. `Checker::is_non_inferrable` computes it for
         /// every other type.
         const NON_INFERRABLE_TYPE = 32;
-        /// Is or contains a reverse mapped type. `couldContainTypeVariables` holds of every one, and `instantiateReverseMappedType`
-        /// instantiates the mapped type it was inferred through, which mentions the type parameter that was inferred. The result is
-        /// the same type or a twin, so `COULD_CONTAIN_TYPE_VARIABLES` is not set for it. But under `InferenceContext.mapper`, mapping
-        /// that type parameter FIXES it: `fixing_mapper` asks for this flag.
+        /// Is or contains a reverse mapped type. `couldContainTypeVariables` is true for every one,
+        /// and `instantiateReverseMappedType` instantiates the mapped type it was inferred through,
+        /// which references the inferred type parameter. The result is the same type or an
+        /// equivalent copy, so `COULD_CONTAIN_TYPE_VARIABLES` is not set for it. But under
+        /// `InferenceContext.mapper`, mapping that type parameter fixes it: `fixing_mapper` checks
+        /// this flag.
         const HAS_REVERSE_MAPPED = 64;
     }
 }
 
-/// What tells apart two types that are made of the same: it is part of what a type is interned by, as in `getUnionKey` and
-/// `getAliasKey`. `data` says nothing of it, so a union that has a name is a `TypeData::Union` of its members like any other.
+/// Distinguishes two types with the same constituents: it is part of a type's interning key, as in
+/// `getUnionKey` and `getAliasKey`. `data` does not include it, so a named union is a
+/// `TypeData::Union` of its members like any other.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Provenance {
     /// `Type.alias`
@@ -832,7 +888,8 @@ pub struct Provenance {
 pub enum UnionOrigin {
     #[default]
     None,
-    /// The named unions it was made of, and the rest of its members, in the order of `CompareTypes`.
+    /// The named unions it was built from, and its remaining members, in the order of
+    /// `CompareTypes`.
     Union(Box<[TypeId]>),
     /// The intersection it is the normal form of.
     Intersection(Box<[TypeId]>),
@@ -840,11 +897,11 @@ pub enum UnionOrigin {
     Keyof(TypeId),
 }
 
-/// What a type is interned by.
+/// The interning key of a type.
 type Made = (TypeData, Option<Box<Provenance>>);
 
 pub struct TypeRecord {
-    made: Made,
+    created: Made,
     /// `Type.flags`: `tf`.
     flags: u32,
     object_flags: ObjectFlags,
@@ -857,7 +914,8 @@ pub struct TypeRecord {
 
 type MapperRecord = (Mapping, ObjectFlags);
 
-/// The published records of one kind. Frozen during a step: `find` takes no lock and writes nothing. `add` is for the link step.
+/// The published records of one kind. Read-only during a step: `find` is lock-free and writes
+/// nothing. `add` is for the merge step.
 struct Interned<V> {
     shards: Box<[GrowingPlaces]>,
     items: AppendVec<V>,
@@ -871,7 +929,7 @@ impl<V> Interned<V> {
         }
     }
 
-    /// `spread`: the hash of what is looked for.
+    /// `spread`: the hash of the key being looked up.
     #[inline]
     fn find(&self, spread: u64, is_it: impl Fn(&V) -> bool) -> Option<u32> {
         self.shards[shard_of(spread)].find_frozen(spread, |i| is_it(self.items.get(i)))
@@ -882,7 +940,7 @@ impl<V> Interned<V> {
         (&self.shards, &self.items)
     }
 
-    /// `item`, which is not there yet, gets the next id. `spread`: the hash it is found by.
+    /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
     fn add(&self, spread: u64, item: V) -> u32 {
         self.shards[shard_of(spread)].find_or_add(spread, |_| false, || self.items.push(item))
     }
@@ -897,7 +955,7 @@ impl MaybeLocal for Atom {
     }
 }
 
-// ───────────────────────────── what a task creates ─────────────────────────────
+// ───────────────────────────── task-local records ─────────────────────────────
 
 /// The kinds of records.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -940,14 +998,16 @@ impl Bits {
     }
 }
 
-/// The records of one kind that one task has created. Their ids have `LOCAL` set, above the index.
+/// The task-local records of one kind. Their ids have `LOCAL` set, above the index bits.
 struct Own<V> {
     /// They never move.
     records: Chunked<V>,
-    /// Finds the task's own records, and the published ones that it has looked up before.
+    /// Lookup index for the task-local records, and for the published records the task has looked
+    /// up before.
     found: Found,
-    /// Which are BOUND: they mention a node or a symbol of a file that nothing imports, or a record that does. Never published, so the
-    /// tree of such a file can be freed with its task.
+    /// Which records are bound: they reference a node or a symbol of a file that nothing imports,
+    /// or a record that does. Never published, so the HIR of such a file can be freed with its
+    /// task.
     bound: Bits,
 }
 
@@ -968,17 +1028,19 @@ struct Stores {
     mappers: Own<MapperRecord>,
     sigs: Own<SigData>,
     types: Own<TypeRecord>,
-    /// Every record, in creation order: the kind above the index. What a record mentions comes before it.
+    /// Every record, in creation order: the kind in the bits above the index. The records a record
+    /// references come before it.
     log: Vec<u32>,
-    /// The files that the task has gone through and that nothing imports, by `FileId`. No other task can mention a node or a symbol of such
-    /// a file. Empty: nothing is bound.
+    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
+    /// task can reference a node or a symbol of such a file. Empty: nothing is bound.
     unimported_files: Bits,
 }
 
 const KIND_SHIFT: u32 = 29;
 
-/// EVERYTHING THAT ONE TASK HAS CREATED: atoms, lists of index components, mappers, signatures, types. A field of `Task`. No other task
-/// sees it. At the end of the task `finish` takes out what the task publishes, and the rest is dropped with the task.
+/// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
+/// `Task`. No other task sees it. At the end of the task `finish` extracts the records the task
+/// publishes, and the rest is dropped with the task.
 #[derive(Default)]
 pub struct OwnStore {
     stores: UnsafeCell<Stores>,
@@ -989,7 +1051,8 @@ pub struct OwnStore {
 }
 
 impl OwnStore {
-    /// The task is about to go through `file`, which nothing imports. From now on whatever mentions `file` is bound.
+    /// The task is about to visit `file`, which nothing imports. From now on every record that
+    /// references `file` is bound.
     pub fn add_unimported_file(&self, file: FileId) {
         // SAFETY: no reference to the stores is in use.
         let stores = unsafe { self.stores_mut() };
@@ -1003,8 +1066,9 @@ impl OwnStore {
 
     #[inline(always)]
     fn stores(&self) -> &Stores {
-        // SAFETY: the task is on one thread. The stores are only changed through `stores_mut`, by functions of this file that hold no
-        // reference to the stores themselves meanwhile, only to records, which stay where they are.
+        // SAFETY: the task runs on one thread. The stores are only mutated through `stores_mut`, by
+        // functions of this file that hold no reference to the stores themselves in the meantime,
+        // only to records, which never move.
         unsafe { &*self.stores.get() }
     }
 
@@ -1017,13 +1081,13 @@ impl OwnStore {
         unsafe { &mut *self.stores.get() }
     }
 
-    /// The text of an atom of the task.
+    /// The text of a task-local atom.
     #[inline]
     pub(crate) fn atom_bytes(&self, atom: Atom) -> &[u8] {
         self.stores().atoms.records.get((atom.0 & !LOCAL) as usize)
     }
 
-    /// The atom of the task for `text`, if it has one. `spread`: the hash of `text`.
+    /// The task-local atom for `text`, if there is one. `spread`: the hash of `text`.
     #[inline]
     pub(crate) fn find_atom(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let atoms = &self.stores().atoms;
@@ -1045,12 +1109,14 @@ impl OwnStore {
     }
 }
 
-/// Where `Stores` has the records of one kind.
+/// Accessor for the records of one kind in `Stores`.
 type Of<V> = fn(&Stores) -> &Own<V>;
 type OfMut<V> = fn(&mut Stores) -> &mut Own<V>;
 
-/// `key` among the task's own records and the published ones, or else as a new record of the task.
-/// `is_it`: whether a record is what `key` stands for. `make`: the record for `key`, and whether it is bound.
+/// Looks up `key` among the task-local records and the published ones, or else creates a new
+/// task-local record.
+/// `is_it`: whether a record matches `key`. `make`: builds the record for `key`, and returns
+/// whether it is bound.
 #[inline]
 fn intern_record<V, K>(
     (published, own, kind): (&Interned<V>, &OwnStore, Kind),
@@ -1093,7 +1159,7 @@ fn intern_record<V, K>(
 
 pub type Mapping = Box<[(TypeId, TypeId)]>;
 
-/// What a mapper is found by.
+/// The interning key of a mapper.
 struct Pairs<'a>(&'a [(TypeId, TypeId)]);
 
 impl std::hash::Hash for Pairs<'_> {
@@ -1106,35 +1172,42 @@ impl std::hash::Hash for Pairs<'_> {
     }
 }
 
-/// Whether the type parameters are in the order of their ids, each of them once. That order makes equal sets of pairs intern as one
-/// mapper and lets `map` search. The link step sorts the pairs again: `follow` does not keep the order of ids.
+/// Whether the type parameters are sorted by id without duplicates. That order makes equal sets of
+/// pairs intern as one mapper and lets `map` search. The merge step re-sorts the pairs: `follow`
+/// does not preserve the order of ids.
 #[inline]
 fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
     pairs.is_sorted_by(|a, b| a.0.arrival_order() < b.0.arrival_order())
 }
 
-/// THE PUBLISHED types, signatures, type mappers and lists of index components. FROZEN DURING A STEP: a lookup takes no lock and writes
-/// nothing. What a task creates is in its `OwnStore`. `link`, at the barrier, is the only writer.
+/// The shared store: the published types, signatures, type mappers and lists of index components.
+/// Read-only during a step: a lookup is lock-free and writes nothing. Task-local records are in the
+/// task's `OwnStore`. `link`, at the barrier, is the only writer.
 ///
-/// - A record is its interning key and flags computed from the key, so it says nothing about who created it.
-/// - PUBLISHED IDS ARE A FUNCTION OF THE PROGRAM: `link` numbers the new records by (task, index in the task's creation order). An own id
-///   comes after every published one (`LOCAL`), in the task's creation order. So the order of ids is creation order, as in tsgo.
-/// - A NEW RECORD NEVER EQUALS A PUBLISHED ONE. If everything it mentions were published, the lookup would have found it, and something
-///   new that it mentions is in no published record. So duplicates exist only between the tasks of one step, and `link` joins them.
-/// - Whatever changes the behaviour of a type is in its interning key, or is computed from the key.
+/// - A record consists of its interning key and flags computed from the key, so it does not depend
+///   on which task created it.
+/// - Published ids are deterministic for a given program: `link` numbers the new records by (task,
+///   index in the task's creation order). A task-local id sorts after every published one
+///   (`LOCAL`), in the task's creation order. So the order of ids is creation order, as in tsgo.
+/// - A new record never equals a published one. If everything it references were published, the
+///   lookup would have found it, and a new record that it references is in no published record. So
+///   duplicates exist only between the tasks of one step, and `link` merges them.
+/// - Anything that changes the behaviour of a type is in its interning key, or is computed from the
+///   key.
 pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
     mappers: Interned<MapperRecord>,
     components: Interned<Box<[IndexComponent]>>,
-    /// The types of string literals, regular and fresh, by what they say. There is one for nearly every string in a program. They are
-    /// not in the hash index of `types`.
+    /// The string literal types, regular and fresh, indexed by their value. There is one for nearly
+    /// every string in a program. They are not in the hash index of `types`.
     string_literals: [ById<Atom, TypeId>; 2],
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: AtomicBool,
 }
 
-/// THE PUBLISHED STORE AND THE TASK'S OWN, which is all that a task sees. `Checker::types` makes one.
+/// The shared store together with the task-local store, which is all that a task sees.
+/// `Checker::types` creates one.
 #[derive(Copy, Clone)]
 pub struct Types<'p> {
     published: &'p TypeStore,
@@ -1191,9 +1264,10 @@ well_known! {
 }
 
 impl TypeId {
-    /// The id as a number, for set operations: sort to deduplicate, binary search for membership. The id types have no `Ord`, so that a
-    /// list that is STORED in the order of ids cannot come about unnoticed: `follow` does not keep that order, so the link step has to
-    /// sort such a list again. For creation order: `Types::creation_order`.
+    /// The id as a number, for set operations: sort to deduplicate, binary search for membership.
+    /// The id types do not implement `Ord`, so that a list stored in id order cannot be created by
+    /// accident: `follow` does not preserve that order, so the merge step has to re-sort such a
+    /// list. For creation order: `Types::creation_order`.
     #[inline]
     pub fn arrival_order(self) -> u32 {
         self.0
@@ -1206,7 +1280,8 @@ impl TypeId {
     /// `unknownEmptyObjectType`, see `Literalness::OfUnknown`
     pub const UNKNOWN_EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 2);
 
-    /// `undefined` and `null` come in kinds that flags, facts and relations do not tell apart: the ordinary one of the kind.
+    /// `undefined` and `null` have variants that flags, facts and relations do not distinguish:
+    /// returns the ordinary variant.
     #[inline]
     pub fn plain(self) -> TypeId {
         match self {
@@ -1311,15 +1386,16 @@ impl TypeStore {
         store
     }
 
-    /// A type that every task of the program knows by its id. BEFORE THE FIRST STEP, on one thread. What it mentions is published.
+    /// Publishes a type whose id is known to every task of the program. Called before the first
+    /// step, on one thread. Everything it references is published.
     pub fn publish_constant(&self, data: TypeData) -> TypeId {
-        let made = (data, None);
-        let spread = spread_hash(&made);
-        if let Some(id) = self.types.find(spread, |record| record.made == made) {
+        let created = (data, None);
+        let spread = spread_hash(&created);
+        if let Some(id) = self.types.find(spread, |record| record.created == created) {
             return TypeId(id);
         }
         let own = OwnStore::default();
-        let record = Types::new(self, &own).new_record(made, self.types.items.len());
+        let record = Types::new(self, &own).new_record(created, self.types.items.len());
         TypeId(self.types.add(spread, record))
     }
 }
@@ -1327,18 +1403,20 @@ impl TypeStore {
 impl<'p> Types<'p> {
     #[inline(always)]
     pub fn new(published: &'p TypeStore, own: &OwnStore) -> Types<'p> {
-        // SAFETY: the records of a task never move and live as long as the task, and nothing that a task hands out outlives it: `finish`
-        // takes `&mut OwnStore`. So a reference to an own record is handed out like one to a published record.
+        // SAFETY: task-local records never move and live as long as the task, and no reference that
+        // a task returns outlives it: `finish` takes `&mut OwnStore`. So a reference to a
+        // task-local record is returned like one to a published record.
         let own = unsafe { &*std::ptr::from_ref(own) };
         Types { published, own }
     }
 
     #[inline]
     pub fn get(&self, id: TypeId) -> &'p TypeData {
-        &self.record(id).made.0
+        &self.record(id).created.0
     }
 
-    /// `t.AsTypeReference().node != nil`: what the deferred type reference `id` is made of, resolved or not.
+    /// `t.AsTypeReference().node != nil`: the components of the deferred type reference `id`,
+    /// resolved or not.
     #[inline]
     pub fn deferred(&self, id: TypeId) -> Option<&'p DeferredTypeArguments> {
         match self.get(id) {
@@ -1347,11 +1425,11 @@ impl<'p> Types<'p> {
         }
     }
 
-    /// The members of a union, nothing for `never`, and any other type on its own.
+    /// The members of a union, an empty list for `never`, and any other type as a single element.
     #[inline]
     pub fn parts(&self, id: TypeId) -> &'p [TypeId] {
         let record = self.record(id);
-        match &record.made.0 {
+        match &record.created.0 {
             TypeData::Union(members) => members,
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1363,7 +1441,8 @@ impl<'p> Types<'p> {
         }
     }
 
-    /// Most programs have no `TypeData::UnresolvedName`, which is known without a look at the type.
+    /// Most programs have no `TypeData::UnresolvedName`, which is known without inspecting the
+    /// type.
     #[inline]
     pub fn is_unresolved_name(&self, id: TypeId) -> bool {
         let published = &self.published.has_unresolved_names;
@@ -1384,12 +1463,12 @@ impl<'p> Types<'p> {
     #[inline]
     pub fn get_with_flags(&self, id: TypeId) -> (&'p TypeData, ObjectFlags) {
         let record = self.record(id);
-        (&record.made.0, record.object_flags)
+        (&record.created.0, record.object_flags)
     }
 
     /// `Type.flags`
-    fn flags_of(made: &Made) -> u32 {
-        match &made.0 {
+    fn flags_of(created: &Made) -> u32 {
+        match &created.0 {
             TypeData::UnresolvedName { .. } => tf::ANY,
             TypeData::Intrinsic(intrinsic) => match intrinsic {
                 Intrinsic::Unresolved
@@ -1440,7 +1519,7 @@ impl<'p> Types<'p> {
             TypeData::Union(members) if members[..] == [TypeId::FALSE, TypeId::TRUE] => {
                 tf::UNION | tf::BOOLEAN
             }
-            TypeData::Union(_) if made.1.as_ref().is_some_and(|p| p.is_enum) => {
+            TypeData::Union(_) if created.1.as_ref().is_some_and(|p| p.is_enum) => {
                 tf::UNION | tf::ENUM_LITERAL
             }
             TypeData::Union(_) => tf::UNION,
@@ -1460,8 +1539,9 @@ impl<'p> Types<'p> {
             TypeData::Intrinsic(Intrinsic::Null | Intrinsic::Undefined) => {
                 ObjectFlags::CONTAINS_WIDENING_TYPE
             }
-            // One whose constraint rests on something unknown says so. A marker in there does not show:
-            // `reportUnreliableMapper` is asked about the parameter, not about what is in its mapper.
+            // A type parameter whose constraint depends on an unresolved type is flagged as such. A
+            // marker in its mapper is not propagated: `reportUnreliableMapper` is applied to the
+            // parameter, not to the contents of its mapper.
             TypeData::TypeParam(_, _, around) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
                     | (self.mapper_record(*around).1 & ObjectFlags::HAS_UNRESOLVED)
@@ -1473,11 +1553,12 @@ impl<'p> Types<'p> {
             TypeData::Marker(_) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_MARKER
             }
-            // `instantiateType` leaves what has `TypeFlagsAny` as it is, whatever its alias type arguments are.
+            // `instantiateType` returns a type with `TypeFlagsAny` unchanged, regardless of its
+            // alias type arguments.
             TypeData::UnresolvedName { .. } => ObjectFlags::empty(),
             TypeData::Union(t) | TypeData::Intersection(t) => all(t),
             TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
-                TypeArguments::Given(given) => all(given),
+                TypeArguments::Given(actual) => all(actual),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating
                 // flags.
                 TypeArguments::Deferred(deferred) => {
@@ -1491,7 +1572,7 @@ impl<'p> Types<'p> {
                 origin: Origin::ObjectLiteral(..),
                 mapper,
             } => self.mapper_record(*mapper).1 | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL,
-            // Whoever makes one leaves the mapper out unless there are type parameters around the origin.
+            // The mapper is omitted at creation unless the origin has enclosing type parameters.
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
@@ -1527,14 +1608,15 @@ impl<'p> Types<'p> {
                 }
                 flags
             }
-            // `mapped` and `of` always mention the parameter that was inferred, which does not make what was inferred generic.
-            // Instantiating one whose source stays the same gives itself, or a twin with the same members
-            // (`instantiateReverseMappedType`). What is unknown in them makes its members unknown, and a marker in them is met on
-            // the way.
+            // `mapped` and `of` always reference the inferred type parameter, which does not make
+            // the inferred type generic. Instantiating one whose source is unchanged yields the
+            // same type, or a copy with the same members (`instantiateReverseMappedType`). An
+            // unresolved type in them makes its members unresolved, and a marker in them is still
+            // encountered.
             TypeData::ReverseMapped { source, mapped, of } => {
-                let made_with = self.object_flags(*mapped) | self.object_flags(*of);
+                let created_with = self.object_flags(*mapped) | self.object_flags(*of);
                 self.object_flags(*source)
-                    | (made_with & (ObjectFlags::HAS_UNRESOLVED | ObjectFlags::HAS_MARKER))
+                    | (created_with & (ObjectFlags::HAS_UNRESOLVED | ObjectFlags::HAS_MARKER))
                     | ObjectFlags::HAS_REVERSE_MAPPED
             }
             TypeData::IndexedAccess { obj, index, .. } => {
@@ -1594,8 +1676,8 @@ impl<'p> Types<'p> {
         }
     }
 
-    fn new_record(&self, made: Made, id: u32) -> TypeRecord {
-        let data = &made.0;
+    fn new_record(&self, created: Made, id: u32) -> TypeRecord {
+        let data = &created.0;
         let may_be_reduced = match data {
             TypeData::Intersection(_) => true,
             TypeData::Union(members) => members
@@ -1604,9 +1686,10 @@ impl<'p> Types<'p> {
             _ => false,
         };
         let mut flags = self.object_flags_of(data);
-        // `getObjectTypeInstantiation`: of a target with alias type arguments no outer type parameter is left out.
+        // `getObjectTypeInstantiation`: for a target with alias type arguments no outer type
+        // parameter is omitted.
         if !matches!(data, TypeData::Union(_) | TypeData::Intersection(_))
-            && let Some((_, type_arguments)) = made.1.as_ref().and_then(|p| p.alias.as_ref())
+            && let Some((_, type_arguments)) = created.1.as_ref().and_then(|p| p.alias.as_ref())
             && type_arguments.iter().any(|&t| {
                 self.object_flags(t)
                     .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
@@ -1614,7 +1697,7 @@ impl<'p> Types<'p> {
         {
             flags |= ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES;
         }
-        // Unlike the others, it is not handed on by what the type is made of.
+        // Unlike the others, it is not propagated from the type's constituents.
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
         // See `mark_ordered_by_id`.
         let has_ordered_by_id = |list: &[TypeId]| {
@@ -1624,24 +1707,26 @@ impl<'p> Types<'p> {
         };
         let is_ordered_by_id = matches!(data, TypeData::Union(members) if has_ordered_by_id(members))
             || matches!(
-                made.1.as_deref(),
+                created.1.as_deref(),
                 Some(Provenance { origin: UnionOrigin::Union(types), .. }) if has_ordered_by_id(types)
             );
         TypeRecord {
-            flags: Self::flags_of(&made),
+            flags: Self::flags_of(&created),
             object_flags: flags,
             is_from_type_node: AtomicBool::new(false),
             is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
-            made,
+            created,
             id: TypeId(id),
         }
     }
 
-    /// The order in which `a` and `b` were created, which is the order of their ids, as in tsgo. For what tsgo reads off its ids: the last
-    /// resort of `CompareTypes`, `t.id >= lastTypeId` in `isDeeplyNestedType`, the swap of an identity comparison in `getRelationKey`.
+    /// The creation order of `a` and `b`, which is the order of their ids, as in tsgo. For the
+    /// places where tsgo compares ids: the final tie-break of `CompareTypes`, `t.id >= lastTypeId`
+    /// in `isDeeplyNestedType`, the swap of an identity comparison in `getRelationKey`.
     ///
-    /// Between two published types it is final. With an own type in it, it is this task's order: the link step may give the two ids in
-    /// the other order, because one of them may be joined with the record of a lower task. See `mark_ordered_by_id`.
+    /// Between two published types it is final. If either is task-local, it is this task's order:
+    /// the merge step may assign the two ids in the opposite order, because one of them may be
+    /// merged with the record of a lower task. See `mark_ordered_by_id`.
     #[inline]
     pub fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         if (a.0 | b.0) & LOCAL != 0 {
@@ -1650,15 +1735,17 @@ impl<'p> Types<'p> {
         a.0.cmp(&b.0)
     }
 
-    /// Whether `creation_order` has been asked about an own type since this was last called.
+    /// Whether `creation_order` has been called with a task-local type since the last call to this
+    /// function.
     #[inline]
     pub fn take_has_ordered_by_own_id(&self) -> bool {
         self.own.has_ordered_by_own_id.replace(false)
     }
 
-    /// Where `id` stands among the members of a union has been decided with the help of `creation_order` of own types. Every union that is
-    /// created with such a member, however it is created, gets the mark too (`new_record`), and the link step sorts its members and
-    /// its origin again, by the published ids.
+    /// The position of `id` among the members of a union was decided using `creation_order` of
+    /// task-local types. Every union created with such a member, however it is created, is marked
+    /// too (`new_record`), and the merge step re-sorts its members and its origin by the published
+    /// ids.
     pub fn mark_ordered_by_id(&self, id: TypeId) {
         if id.0 & LOCAL != 0 {
             let record = self.record(id);
@@ -1673,7 +1760,8 @@ impl<'p> Types<'p> {
         {
             return id;
         }
-        // `getFreshTypeOfLiteralType` makes the fresh type from the regular one, and bigint literal types are ordered by creation.
+        // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, and bigint
+        // literal types are ordered by creation.
         if let TypeData::BigIntLit {
             text,
             negative,
@@ -1690,7 +1778,7 @@ impl<'p> Types<'p> {
         self.intern_new((data, None))
     }
 
-    /// `intern` of a type that has an alias or an origin.
+    /// `intern` for a type that has an alias or an origin.
     pub fn intern_with(&self, data: TypeData, provenance: Provenance) -> TypeId {
         if provenance == Provenance::default() {
             return self.intern(data);
@@ -1700,39 +1788,42 @@ impl<'p> Types<'p> {
 
     #[inline]
     pub fn provenance(&self, id: TypeId) -> Option<&'p Provenance> {
-        self.record(id).made.1.as_deref()
+        self.record(id).created.1.as_deref()
     }
 
-    fn intern_new(&self, made: Made) -> TypeId {
+    fn intern_new(&self, created: Made) -> TypeId {
         TypeId(intern_record(
             (&self.published.types, self.own, Kind::Type),
             (|stores| &stores.types, |stores| &mut stores.types),
-            (spread_hash(&made), made),
-            |record, made| record.made == *made,
-            |made, id| {
-                if matches!(made.0, TypeData::UnresolvedName { .. }) {
+            (spread_hash(&created), created),
+            |record, created| record.created == *created,
+            |created, id| {
+                if matches!(created.0, TypeData::UnresolvedName { .. }) {
                     self.own.has_unresolved_names.set(true);
                 }
-                let is_bound = made.is_bound(self.own);
-                (self.new_record(made, id), is_bound)
+                let is_bound = created.is_bound(self.own);
+                (self.new_record(created, id), is_bound)
             },
         ))
     }
 
-    /// For `mark_from_type_node`: every type that the task creates from now on has an id that is not below this.
+    /// For `mark_from_type_node`: a lower bound for the id of every type that the task creates from
+    /// now on.
     #[inline]
     pub fn first_new_type_id(&self) -> TypeId {
         TypeId(self.own.stores().types.records.len() as u32 | LOCAL)
     }
 
-    /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` is the type of a type node or an array literal. `first_new_type_id` is from
-    /// before it was resolved. `createTypeReferenceEx` sets the flags only on a type that it creates: one that an instantiation created
-    /// earlier stays as it is. Where two tasks of a step create the type, the record of the lower task is published, with its flag.
+    /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` is the type of a type node or an
+    /// array literal. `first_new_type_id` was taken before it was resolved. `createTypeReferenceEx`
+    /// sets the flags only on a type that it creates: one that an instantiation created earlier is
+    /// unchanged. If two tasks of a step create the type, the record of the lower task is
+    /// published, with its flag.
     pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: TypeId) {
         if id.0 & LOCAL == 0 {
             return;
         }
-        // NOT tsgo's rule: a type that is bound gets the flag even if an instantiation created it earlier.
+        // Not tsgo's rule: a bound type gets the flag even if an instantiation created it earlier.
         let index = (id.0 & !LOCAL) as usize;
         if id.0 >= first_new_type_id.0 || self.own.stores().types.bound.has(index) {
             let record = self.record(id);
@@ -1754,7 +1845,8 @@ impl<'p> Types<'p> {
         }
     }
 
-    /// The signature `sig` is a clone of, all the way down: the one to ask for the declaration (`Signature.declaration`).
+    /// The signature that `sig` is transitively a clone of: the one that has the declaration
+    /// (`Signature.declaration`).
     pub fn sig_origin(&self, mut sig: SigId) -> SigId {
         loop {
             match self.sig(sig) {
@@ -1766,7 +1858,7 @@ impl<'p> Types<'p> {
     }
 
     pub fn intern_sig(&self, mut data: SigData) -> SigId {
-        // A clone of a clone has everything but what it returns from the first.
+        // A clone of a clone takes everything except its return type from the original.
         if let SigData::WithReturn { sig, .. } = &mut data
             && let SigData::WithReturn { sig: inner, .. } = self.sig(*sig)
         {
@@ -1811,7 +1903,8 @@ impl<'p> Types<'p> {
         ))
     }
 
-    /// `pairs` need not be sorted. A parameter mapped to itself stays: it says that the origin depends on it.
+    /// `pairs` need not be sorted. A parameter mapped to itself is preserved: it records that the
+    /// origin depends on it.
     pub fn mapper(&self, mut pairs: Vec<(TypeId, TypeId)>) -> MapperId {
         if pairs.is_empty() {
             return MapperId::IDENTITY;
@@ -1824,7 +1917,8 @@ impl<'p> Types<'p> {
         self.mapper_in_order(&pairs)
     }
 
-    /// The same of pairs that are somebody else's. Nothing is allocated for pairs in order whose mapper is there already.
+    /// The same for borrowed pairs. Nothing is allocated for sorted pairs whose mapper already
+    /// exists.
     pub fn mapper_of(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
         if pairs.is_empty() {
             MapperId::IDENTITY
@@ -1869,29 +1963,34 @@ impl<'p> Types<'p> {
     }
 }
 
-// ───────────────────────────── what mentions what: `visit` and `follow` ─────────────────────────────
+// ───────────────────────────── references between records: `visit` and `follow`
+// ─────────────────────────────
 
-/// What `Follow::visit` shows of a value: every id, every file, and everything else as something to hash.
+/// Receives what `Follow::visit` reports for a value: every id, every file, and everything else as
+/// data to hash.
 pub trait Visitor {
     fn atom(&mut self, atom: Atom);
     fn components(&mut self, id: ComponentsId);
     fn mapper(&mut self, id: MapperId);
     fn sig(&mut self, id: SigId);
     fn ty(&mut self, id: TypeId);
-    /// A node or a symbol of `file` is mentioned.
+    /// A node or a symbol of `file` is referenced.
     fn file(&mut self, file: FileId);
     fn plain<T: Hash + ?Sized>(&mut self, value: &T);
 }
 
-/// What can mention an atom, a list of index components, a mapper, a signature or a type: the data of a record, a key or a value of a
-/// table. Each type is described ONCE, by `follow_struct!` or `follow_enum!`, with every field named: a new field is a compile error.
+/// A value that can reference an atom, a list of index components, a mapper, a signature or a type:
+/// the data of a record, a key or a value of a table. Each type is described once, by
+/// `follow_struct!` or `follow_enum!`, with every field named: a new field is a compile error.
 pub trait Follow {
     fn visit<V: Visitor>(&self, visitor: &mut V);
 
-    /// Replaces every own id (`LOCAL`) by the published id that the link step has given its record. At the barrier, on any thread.
+    /// Replaces every task-local id (`LOCAL`) with the published id that the merge step assigned to
+    /// its record. Runs at the barrier, on any thread.
     fn follow(&mut self, link: &Link);
 
-    /// Whether it mentions a node or a symbol of a file that nothing imports, or an own record that does. Such a thing is never published.
+    /// Whether it references a node or a symbol of a file that nothing imports, or a task-local
+    /// record that does. Such a value is never published.
     fn is_bound(&self, own: &OwnStore) -> bool {
         let stores = own.stores();
         if stores.unimported_files.0.is_empty() {
@@ -1905,14 +2004,15 @@ pub trait Follow {
         visitor.is_bound
     }
 
-    /// Marks the own records that it mentions. `OwnStore::finish` adds what those mention.
+    /// Marks the task-local records that it references. `OwnStore::finish` adds the records those
+    /// reference.
     #[inline]
     fn mark(&self, marks: &mut Marks) {
         self.visit(marks);
     }
 }
 
-/// For types that mention nothing: `visit` shows the whole value as something to hash.
+/// For types that reference nothing: `visit` reports the whole value as data to hash.
 macro_rules! has_no_references {
     ($($name:ty),* $(,)?) => {$(
         impl $crate::types::Follow for $name {
@@ -2072,7 +2172,7 @@ impl<T: Follow + Clone> Follow for std::sync::Arc<[T]> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
     }
-    /// It may be shared, so it is made anew if anything in it changes.
+    /// It may be shared, so it is recreated if anything in it changes.
     fn follow(&mut self, link: &Link) {
         let mut mentions_own = MentionsOwn(false);
         self.visit(&mut mentions_own);
@@ -2144,7 +2244,8 @@ has_no_references!(
     Literalness,
 );
 
-/// The label is a declared name, so it is published and follows nothing (`ElemFlags::with_label`). It is shown as an atom.
+/// The label is a declared name, so it is published and needs no remapping
+/// (`ElemFlags::with_label`). It is reported as an atom.
 impl Follow for ElemFlags {
     #[inline]
     fn visit<V: Visitor>(&self, visitor: &mut V) {
@@ -2299,7 +2400,7 @@ struct IsBound<'a> {
 }
 
 impl Visitor for IsBound<'_> {
-    /// An atom is a text. It mentions nothing.
+    /// An atom is a text. It references nothing.
     #[inline]
     fn atom(&mut self, _: Atom) {}
     #[inline]
@@ -2327,7 +2428,7 @@ impl Visitor for IsBound<'_> {
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
-/// Whether an own id is mentioned.
+/// Whether a task-local id is referenced.
 struct MentionsOwn(bool);
 
 impl Visitor for MentionsOwn {
@@ -2352,7 +2453,8 @@ impl Visitor for MentionsOwn {
 
 // ───────────────────────────── the end of a task ─────────────────────────────
 
-/// Which own records of ONE task are published. The entries that the task publishes are the roots: `Follow::mark`.
+/// Which task-local records of one task are published. The entries that the task publishes are the
+/// roots: `Follow::mark`.
 pub struct Marks([Bits; 5]);
 
 impl Marks {
@@ -2404,7 +2506,7 @@ impl Visitor for Marks {
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
-/// 128 bits that stand for what a record is made of, whichever task made it.
+/// A 128-bit hash of the content of a record, independent of the task that created it.
 type ContentHash = [u64; 2];
 
 /// Two lanes of multiply and fold, with different constants.
@@ -2458,10 +2560,12 @@ impl Hasher for Lanes {
     }
 }
 
-/// Computes the content hash of one record. A published id counts as its number, an own id as the content hash of its record.
+/// Computes the content hash of one record. A published id is hashed as its number, a task-local id
+/// as the content hash of its record.
 struct Content<'a> {
     lanes: Lanes,
-    /// By kind and index. What a record mentions is older, so it has its hash.
+    /// Indexed by kind and index. The records a record references are older, so their hashes are
+    /// already computed.
     of: &'a [Vec<ContentHash>; 5],
 }
 
@@ -2484,7 +2588,8 @@ impl<'a> Content<'a> {
         }
     }
 
-    /// `items` as a set: in whatever order they are, the result is the same. `kind`: that of the record.
+    /// Hashes `items` as a set: the result does not depend on their order. `kind`: that of the
+    /// record.
     fn unordered<T: Follow>(&mut self, items: &[T]) {
         let mut sum = [0u64; 2];
         for item in items {
@@ -2537,19 +2642,20 @@ impl Visitor for Content<'_> {
     }
 }
 
-/// The content hash of a type. A union is a set, and so is an origin that is a union: two tasks may have sorted members that tie in
-/// `compare_types` differently. See `Types::mark_ordered_by_id`.
-fn content_of_type(made: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
+/// The content hash of a type. A union is hashed as a set, and so is an origin that is a union: two
+/// tasks may have sorted members that tie in `compare_types` differently. See
+/// `Types::mark_ordered_by_id`.
+fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
     let mut content = Content::new(of, Kind::Type);
-    match &made.0 {
+    match &created.0 {
         data @ TypeData::Union(members) => {
             content.plain(&std::mem::discriminant(data));
             content.unordered(members);
         }
         data => data.visit(&mut content),
     }
-    content.plain(&made.1.is_some());
-    if let Some(provenance) = &made.1 {
+    content.plain(&created.1.is_some());
+    if let Some(provenance) = &created.1 {
         let Provenance {
             alias,
             origin,
@@ -2568,23 +2674,25 @@ fn content_of_type(made: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
     content.lanes.0
 }
 
-/// Into how many parts the link step divides the records by their content hash. One thread groups the records of one part.
+/// The number of parts into which the merge step partitions the records by content hash. One thread
+/// groups the records of one part.
 const HASH_PARTS: usize = 64;
 
-/// A step that publishes fewer records than this is linked on one thread.
+/// A step that publishes fewer records than this is merged on one thread.
 const FEW_RECORDS: usize = 4096;
 
 /// The published records of one kind and one task.
 struct Taken<V> {
-    /// How many records of the kind the task had: the length of its link.
+    /// The number of records of the kind the task had, which is the length of its `Link` array.
     len: usize,
     /// The index in the task's store, the content hash, the record. In creation order.
     records: Vec<(u32, ContentHash, V)>,
-    /// The positions in `records`, by the part of the hash, in order within a part.
+    /// The positions in `records`, grouped by hash part, in order within a part.
     positions: Vec<u32>,
-    /// Where in `positions` each part begins, and where the last ends.
+    /// The start of each part in `positions`, and the end of the last.
     parts: [u32; HASH_PARTS + 1],
-    /// IN A DEBUG BUILD, after `number`: the records that were joined with another, with the id of that one. See `check_joined`.
+    /// In a debug build, after `number`: the records that were merged with another record, each
+    /// with the id of that record. See `check_joined`.
     joined: Vec<(u32, V)>,
 }
 
@@ -2600,7 +2708,7 @@ impl<V> Default for Taken<V> {
     }
 }
 
-/// WHAT ONE TASK PUBLISHES of what it has created. A field of `Finished`.
+/// The task-local records that one task publishes. A field of `Finished`.
 #[derive(Default)]
 pub struct OwnRecords {
     atoms: Taken<Box<[u8]>>,
@@ -2640,15 +2748,16 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
 }
 
 impl OwnStore {
-    /// AT THE END OF THE TASK. `marks`: what the entries that the task publishes mention. Three passes over the creation log, and a
-    /// record that is not published costs nothing but a test.
+    /// Runs at the end of the task. `marks`: the records referenced by the entries that the task
+    /// publishes. Three passes over the creation log. A record that is not published costs only a
+    /// test.
     pub fn finish(&mut self, mut marks: Marks) -> OwnRecords {
         let stores = self.stores.get_mut();
         let entry = |entry: u32| {
             let index = (entry & ((1 << KIND_SHIFT) - 1)) as usize;
             (KINDS[(entry >> KIND_SHIFT) as usize], index)
         };
-        // Backwards: what a record mentions is older than the record.
+        // Backwards: the records a record references are older than it.
         for &it in stores.log.iter().rev() {
             let (kind, index) = entry(it);
             if !marks.0[kind as usize].has(index) {
@@ -2659,10 +2768,10 @@ impl OwnStore {
                 Kind::Components => stores.components.records.get(index).visit(&mut marks),
                 Kind::Mapper => stores.mappers.records.get(index).0.visit(&mut marks),
                 Kind::Sig => stores.sigs.records.get(index).visit(&mut marks),
-                Kind::Type => stores.types.records.get(index).made.visit(&mut marks),
+                Kind::Type => stores.types.records.get(index).created.visit(&mut marks),
             }
         }
-        // Forwards: what a record mentions has its hash.
+        // Forwards: the records a record references already have their hashes.
         let mut hashes: [Vec<ContentHash>; 5] = [
             vec![[0; 2]; stores.atoms.records.len()],
             vec![[0; 2]; stores.components.records.len()],
@@ -2694,7 +2803,7 @@ impl OwnStore {
                     stores.sigs.records.get(index).visit(&mut content);
                     content.lanes.0
                 }
-                Kind::Type => content_of_type(&stores.types.records.get(index).made, &hashes),
+                Kind::Type => content_of_type(&stores.types.records.get(index).created, &hashes),
             };
             hashes[kind as usize][index] = hash;
         }
@@ -2711,9 +2820,10 @@ impl OwnStore {
     }
 }
 
-// ───────────────────────────── the link step ─────────────────────────────
+// ───────────────────────────── the merge step ─────────────────────────────
 
-/// For ONE task: the published id of each of its own records, by index. `u32::MAX`: the record is not published.
+/// For one task: the published id of each of its task-local records, by index. `u32::MAX`: the
+/// record is not published.
 #[derive(Default)]
 pub struct Link {
     atoms: Box<[u32]>,
@@ -2723,12 +2833,12 @@ pub struct Link {
     types: Box<[u32]>,
 }
 
-/// What one link step has done, by kind.
+/// Statistics of one merge step, by kind.
 #[derive(Copy, Clone, Default)]
 pub struct LinkCounts {
-    /// How many records the tasks of the step publish, before any are joined.
+    /// The number of records the tasks of the step publish, before any are merged.
     pub linked: [usize; KINDS.len()],
-    /// How many of them were joined with the record of a lower task.
+    /// The number of them that were merged with the record of a lower task.
     pub joined: [usize; KINDS.len()],
 }
 
@@ -2737,21 +2847,22 @@ impl LinkCounts {
         ["atoms", "components", "mappers", "signatures", "types"];
 }
 
-/// GROUP, NUMBER, LINK, for one kind. `tasks` in task order. Of the records that have one content hash the one with the lowest
-/// (task, index) stays, and those that stay are numbered from `first_free` on, in that order. Returns the link of each task for the
-/// kind. Afterwards `records` holds the records that stay, with the new id in place of the index.
-/// No stage depends on timing: a part of the hashes, or a task, is one thread's alone.
+/// GROUP, NUMBER, LINK, for one kind. `tasks` is in task order. Among the records with the same
+/// content hash the one with the lowest (task, index) survives, and the survivors are numbered from
+/// `first_free` on, in that order. Returns the `Link` array of each task for the kind. Afterwards
+/// `records` holds the survivors, with the new id in place of the index.
+/// No stage depends on timing: each hash part, or each task, is processed by exactly one thread.
 fn number<V: Send + Sync>(
     tasks: &mut [&mut Taken<V>],
     first_free: u32,
     in_parallel: InParallel<'_>,
 ) -> Vec<Box<[u32]>> {
-    // Nothing that is published mentions an own record of the kind.
+    // Nothing that is published references a task-local record of the kind.
     if tasks.iter().all(|task| task.records.is_empty()) {
         return tasks.iter().map(|_| Box::default()).collect();
     }
     let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
-    // GROUP: for each record, the place of the first record with its hash.
+    // GROUP: for each record, the `place` of the first record with the same hash.
     let firsts: Vec<Vec<AtomicU64>> = (tasks.iter())
         .map(|task| (0..task.records.len()).map(|_| AtomicU64::new(0)).collect())
         .collect();
@@ -2770,7 +2881,8 @@ fn number<V: Send + Sync>(
             }
         });
     }
-    // NUMBER: the rank of each record that stays among those of its task, then where the ids of each task begin.
+    // NUMBER: the rank of each surviving record among those of its task, then the first id of each
+    // task.
     struct Ranks {
         task: usize,
         ranks: Vec<u32>,
@@ -2827,18 +2939,19 @@ fn number<V: Send + Sync>(
     links.into_iter().map(|it| it.2).collect()
 }
 
-/// What `put` is to do with a record, which has been followed.
+/// What `put` must do with a record, after `follow` has been applied to it.
 enum Placed<V> {
-    /// It is found by this hash.
+    /// It is indexed under this hash.
     Indexed(V, u64),
-    /// It is found in some other way.
+    /// It is not in the hash index: it is looked up some other way.
     NotIndexed(V),
-    /// It cannot be finished before the others are in place.
+    /// It cannot be completed until the other records are stored.
     Later(V),
 }
 
-/// FOLLOW, for one kind: puts the records that stay into the published store, at their ids. Returns those that are `Later`, in the order
-/// of their ids: the caller writes them. With them, for `check_joined`, the records that were joined, followed.
+/// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
+/// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
+/// the merged records, remapped.
 fn put<V: Send + Sync>(
     (shards, items): (&[GrowingPlaces], &AppendVec<V>),
     tasks: Vec<(Taken<V>, &Link)>,
@@ -2848,7 +2961,7 @@ fn put<V: Send + Sync>(
     struct Work<'a, V> {
         task: Taken<V>,
         link: &'a Link,
-        /// What goes into the index, by shard.
+        /// The entries to add to the index, by shard.
         added: Vec<Vec<(u64, u32)>>,
         later: Vec<(u32, V)>,
     }
@@ -2856,7 +2969,7 @@ fn put<V: Send + Sync>(
     if count == 0 {
         return (Vec::new(), Vec::new());
     }
-    // SAFETY: every id that `number` has given out is written below, or by the caller if it is `Later`.
+    // SAFETY: every id that `number` assigned is written below, or by the caller if it is `Later`.
     unsafe { items.reserve(count as u32) };
     let mut work: Vec<Work<'_, V>> = (tasks.into_iter())
         .map(|(task, link)| Work {
@@ -2904,7 +3017,8 @@ fn put<V: Send + Sync>(
     (work.into_iter().flat_map(|it| it.later).collect(), joined)
 }
 
-/// IN A DEBUG BUILD: a record that was joined with another is the same as that one. Otherwise two contents have one content hash.
+/// In a debug build: a record that was merged with another must equal it. Otherwise two different
+/// contents have the same content hash.
 fn check_joined<V>(items: &AppendVec<V>, joined: Vec<(u32, V)>, is_same: impl Fn(&V, &V) -> bool) {
     for (id, record) in joined {
         assert!(
@@ -2915,9 +3029,10 @@ fn check_joined<V>(items: &AppendVec<V>, joined: Vec<(u32, V)>, is_same: impl Fn
 }
 
 impl TypeStore {
-    /// AT THE BARRIER, before the tables are published. `tasks`: what the tasks of the step publish, in task order. Gives every record
-    /// its published id, puts the records into the published stores, and returns the link of each task, for `Follow::follow`, and counts.
-    /// `sort`: `Checker::sort_types`, for a union whose order rested on own ids.
+    /// Runs at the barrier, before the tables are published. `tasks`: the records the tasks of the
+    /// step publish, in task order. Assigns every record its published id, writes the records into
+    /// the shared stores, and returns the `Link` of each task, for `Follow::follow`, and counts.
+    /// `sort`: `Checker::sort_types`, for a union whose order depended on task-local ids.
     pub fn link(
         &self,
         atoms: &Interner,
@@ -2947,7 +3062,8 @@ impl TypeStore {
             let links = tasks.iter().map(|_| Link::default()).collect();
             return (links, LinkCounts::default());
         }
-        // Handing a stage to the pool costs more than the stage. The ids are the same: no stage depends on who runs it.
+        // Dispatching a stage to the pool costs more than the stage itself. The ids are the same:
+        // no stage depends on which thread runs it.
         let on_this_thread: InParallel<'_> = &|count, work| (0..count).for_each(work);
         let in_parallel = if all < FEW_RECORDS {
             on_this_thread
@@ -2982,7 +3098,7 @@ impl TypeStore {
             ),
         ]
         .map(Vec::into_iter);
-        // `number` has left the records that stay.
+        // `number` has left only the surviving records.
         let stay = count(&tasks);
         let counts = LinkCounts {
             linked,
@@ -3053,43 +3169,44 @@ impl TypeStore {
             types,
             in_parallel,
             &|mut record, link, id| {
-                record.made.follow(link);
+                record.created.follow(link);
                 record.id = TypeId(id);
-                if matches!(record.made.0, TypeData::UnresolvedName { .. }) {
+                if matches!(record.created.0, TypeData::UnresolvedName { .. }) {
                     self.has_unresolved_names.store(true, Ordering::Relaxed);
                 }
                 if *record.is_ordered_by_id.get_mut() {
                     return Placed::Later(record);
                 }
-                match record.made {
+                match record.created {
                     (TypeData::StringLit { value, fresh }, None) => {
                         self.string_literals[usize::from(fresh)].insert(value, TypeId(id));
                         Placed::NotIndexed(record)
                     }
                     _ => {
-                        let spread = spread_hash(&record.made);
+                        let spread = spread_hash(&record.created);
                         Placed::Indexed(record, spread)
                     }
                 }
             },
         );
-        // On one thread, by ascending id: what such a union is made of is in place, and `sort` looks at it.
+        // On one thread, in ascending id order: the constituents of such a union are already
+        // stored, and `sort` reads them.
         for (id, mut record) in later {
             *record.is_ordered_by_id.get_mut() = false;
-            if let TypeData::Union(members) = &mut record.made.0 {
+            if let TypeData::Union(members) = &mut record.created.0 {
                 sort(members);
             }
-            if let Some(provenance) = &mut record.made.1
+            if let Some(provenance) = &mut record.created.1
                 && let UnionOrigin::Union(types) = &mut provenance.origin
             {
                 sort(types);
             }
-            let spread = spread_hash(&record.made);
+            let spread = spread_hash(&record.created);
             // SAFETY: `put` has reserved the id and left it to be written here.
             unsafe { self.types.items.write(id, record) };
             self.types.shards[shard_of(spread)].extend(1, std::iter::once((spread, id)));
         }
-        check_joined(&self.types.items, joined, |a, b| a.made == b.made);
+        check_joined(&self.types.items, joined, |a, b| a.created == b.created);
         (links, counts)
     }
 }

@@ -70,15 +70,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Done)
     }
 
-    /// `parseBinaryExpressionRest`, after `a ## b as T`: an operator that binds tighter than `##` is not taken, because `as T` could
-    /// not be erased before it. `left` is `a ## b`, `level` is that of the suffix loop.
+    /// `parseBinaryExpressionRest`, after `a ## b as T`: an operator that binds tighter than `##`
+    /// is not consumed, because `as T` could not be erased before it. `left` is `a ## b`, `level`
+    /// is the level of the suffix loop.
     #[cold]
     #[inline(never)]
     fn sfx_operator_cannot_follow_cast(p: &mut Self, level: Level, left: &Expr) -> bool {
         let ExprData::EBinary(binary) = &left.data else {
             return false;
         };
-        // `GetBinaryOperatorPrecedence`. `##` binds at least as tight as `as` does.
+        // `GetBinaryOperatorPrecedence`. `##` binds at least as tightly as `as`.
         let next = match p.lexer.token {
             T::TLessThanLessThan
             | T::TGreaterThanGreaterThan
@@ -91,12 +92,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if next.lte(bun_ast::op::TABLE.get_ptr_const(binary.op).level) {
             return false;
         }
-        // `(a ## b)` is no binary expression.
+        // `(a ## b)` is not a binary expression.
         if p.noted(left.loc, Mark::Paren).is_some() {
             return false;
         }
-        // The operand of an operator is handed back to `parseBinaryExpressionRest`, which goes on. Nothing above an assignment
-        // expression takes an operator, as after the body of an arrow function.
+        // The operand of an operator is returned to `parseBinaryExpressionRest`, which continues.
+        // Nothing above an assignment expression consumes an operator, as after the body of an
+        // arrow function.
         if level.lt(Level::NullishCoalescing) {
             p.after_arrow_body_loc = p.lexer.loc();
         }
@@ -129,7 +131,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
             );
         } else if p.lexer.token == T::TPrivateIdentifier
-            // `parseRightSideOfDot` takes a private name anywhere. The checker reports 18013, 18016 or 2339.
+            // `parseRightSideOfDot` accepts a private name anywhere. The checker reports 18013,
+            // 18016 or 2339.
             && (p.allow_private_identifiers || p.lexer.tolerant)
         {
             // "a.#b"
@@ -142,7 +145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name_range = p.lexer.range();
             let name_loc = name_range.loc;
             p.lexer.next()?;
-            // `parsePropertyAccessExpressionRest`: an optional chain has no private names in it.
+            // `parsePropertyAccessExpressionRest`: a private name is not allowed in an optional
+            // chain.
             if old_optional_chain.is_some() && p.lexer.tolerant {
                 p.lexer.ts_error(name_range, 18030);
             }
@@ -187,8 +191,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// `parseRightSideOfDot`, at the token after a `.` or `?.` that ends at `after_dot`. Whether the name is missing, which
-    /// is reported (1003). Nothing is consumed.
+    /// `parseRightSideOfDot`, at the token after a `.` or `?.` that ends at `after_dot`. Returns
+    /// whether the name is missing, which is reported (1003). Nothing is consumed.
     #[cold]
     #[inline(never)]
     fn sfx_name_after_dot_is_missing(
@@ -198,7 +202,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<bool, Error> {
         // `tokenIsIdentifierOrKeyword`
         let is_name = p.lexer.is_identifier_or_keyword() || p.lexer.token == T::TPrivateIdentifier;
-        // A word on a new line that another word follows on the same line starts something else.
+        // A word on a new line that is followed by another word on the same line starts a different
+        // construct.
         if is_name
             && !(p.lexer.has_newline_before
                 && p.next_token_matches(|p| {
@@ -212,8 +217,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.is_log_disabled {
             return Err(Error::Backtrack);
         }
-        // `createIdentifierWithDiagnostic`: at the end of the file, where the last token ended. `parseCallExpressionRest`
-        // reports a `?.` that nothing follows at the current token.
+        // `createIdentifierWithDiagnostic`: at the end of the file, the error is at the end of the
+        // last token. `parseCallExpressionRest` reports a `?.` with nothing after it at the current
+        // token.
         let range = if is_name || (p.lexer.token == T::TEndOfFile && !is_optional) {
             bun_ast::Range {
                 loc: after_dot,
@@ -232,15 +238,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         optional_chain: &mut Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        // `parseNewExpressionOrNewDotTarget`: what `new` is given has no `?.` in it. The `new` ends here, without arguments, and the
-        // chain hangs from what it makes. Only `new` asks for this level.
+        // `parseNewExpressionOrNewDotTarget`: the callee of `new` cannot contain `?.`. The `new`
+        // expression ends here, without arguments, and the chain continues from its result. Only
+        // `new` parses at this level.
         if level.eql(Level::Member) && p.lexer.tolerant {
             let range = p.lexer.range();
-            let made = p.source.contents();
-            let made = made
+            let created = p.source.contents();
+            let created = created
                 .get(p.real_loc(left.loc).to_usize()..p.lexer.full_start().to_usize())
                 .unwrap_or_default();
-            p.lexer.ts_error_about(range, 1209, made);
+            p.lexer.ts_error_about(range, 1209, created);
             return Ok(Continuation::Done);
         }
         let after_dot = bun_ast::usize2loc(p.lexer.end);
@@ -345,7 +352,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
             }
-            // "a?.`b`": `parseTaggedTemplateRest` takes it. The suffix that parses the template reports it.
+            // "a?.`b`": `parseTaggedTemplateRest` accepts it. The suffix that parses the template
+            // reports it.
             T::TNoSubstitutionTemplateLiteral | T::TTemplateHead if p.lexer.tolerant => {}
             _ => {
                 if (p.lexer.has_newline_before || !p.lexer.is_identifier_or_keyword())
@@ -372,7 +380,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let name_range = p.lexer.range();
                     let name_loc = name_range.loc;
                     p.lexer.next()?;
-                    // `parsePropertyAccessExpressionRest`: an optional chain has no private names in it.
+                    // `parsePropertyAccessExpressionRest`: a private name is not allowed in an
+                    // optional chain.
                     if p.lexer.tolerant {
                         p.lexer.ts_error(name_range, 18030);
                     }
@@ -549,7 +558,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// `parseElementAccessExpressionRest`, at the `]` of `a[]`: 1011 and a missing argument, both where the `[` ends.
+    /// `parseElementAccessExpressionRest`, at the `]` of `a[]`: 1011 and a missing argument, both
+    /// at the end of the `[`.
     #[cold]
     #[inline(never)]
     fn sfx_missing_index(p: &mut Self, after_bracket: bun_ast::Loc) -> Expr {
@@ -625,7 +635,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.note_loc(&mut left.loc, Mark::Optional, question);
                 return Ok(Continuation::Done);
             }
-            // `parseConditionalExpressionRest`: a conditional expression like any other, with nothing after its `?`.
+            // `parseConditionalExpressionRest`: an ordinary conditional expression, with nothing
+            // after its `?`.
             if !p.lexer.tolerant {
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
@@ -665,7 +676,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // condition ? yes : no
         //                 ^
         if p.lexer.token != T::TColon && p.lexer.tolerant {
-            // `parseConditionalExpressionRest`: without the colon, what would come after it is missing as well.
+            // `parseConditionalExpressionRest`: without the colon, the expression after it is
+            // missing as well.
             p.lexer.expect(T::TColon)?;
             e_if.no = p.new_expr(E::Missing {}, p.lexer.loc());
             p.finish_expr(&mut ternary);
@@ -762,8 +774,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// `parseUpdateExpression`: `a++` and `++a` are no LeftHandSideExpression. Whether the current token is one that only
-    /// continues a LeftHandSideExpression. Assignment operators are refused by `sfx_takes_no_assignment`.
+    /// `parseUpdateExpression`: `a++` and `++a` are not a LeftHandSideExpression. Whether the
+    /// current token is one that only continues a LeftHandSideExpression. Assignment operators are
+    /// rejected by `sfx_takes_no_assignment`.
     #[cold]
     #[inline(never)]
     pub(crate) fn cannot_follow_update(p: &Self) -> bool {
@@ -821,8 +834,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// The right side of an assignment. `parseAssignmentExpressionOrHigherWorker`: it is between the same `?` and `:` as the
-    /// assignment is, so that the `(c) : d => e` of `a ? b = (c) : d => e` is no arrow function.
+    /// The right side of an assignment. `parseAssignmentExpressionOrHigherWorker`: it is between
+    /// the same `?` and `:` as the assignment is, so that the `(c) : d => e` of `a ? b = (c) : d =>
+    /// e` is not an arrow function.
     #[inline]
     fn sfx_right_of_assignment(p: &mut Self, flags: EFlags) -> Result<Expr, Error> {
         let flags = if flags == EFlags::AfterQuestionAndBeforeColon && p.lexer.tolerant {
@@ -1130,8 +1144,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// Whether `token`, which follows type arguments, starts what they are the type arguments of: `parseCallExpressionRest` and
-    /// `parseMemberExpressionRest` give those of an ExpressionWithTypeArguments to the call or the tagged template that follows.
+    /// Whether `token`, which follows type arguments, starts the call or tagged template they
+    /// belong to: `parseCallExpressionRest` and `parseMemberExpressionRest` move the type arguments
+    /// of an ExpressionWithTypeArguments to the call or the tagged template that follows.
     #[inline]
     fn sfx_takes_type_arguments(token: T) -> bool {
         matches!(
@@ -1140,8 +1155,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// The optional chain that goes on after `e<T>`, where `e` was in `chain`. `tryReparseOptionalChain`: an instantiation
-    /// expression is no part of a chain. The call or the tagged template that takes the type arguments is.
+    /// The optional chain that continues after `e<T>`, where `e` was in `chain`.
+    /// `tryReparseOptionalChain`: an instantiation expression is not part of a chain. The call or
+    /// the tagged template that receives the type arguments is.
     #[inline]
     fn sfx_chain_after_type_arguments(
         p: &Self,
@@ -1160,7 +1176,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        // `Scan`: in a file with JSX "</" is one token (LessThanSlashToken), which is no operator.
+        // `Scan`: in a file with JSX "</" is one token (LessThanSlashToken), which is not an
+        // operator.
         if p.lexer.tolerant && p.is_jsx_enabled() && p.lexer.is_less_than_slash() {
             return Ok(Continuation::Done);
         }
@@ -1174,8 +1191,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
-            // `parseSuperExpression`: type arguments after `super` are objected to from where the keyword ends. Not after what `new`
-            // is given, which is a primary expression. A template drops them.
+            // `parseSuperExpression`: type arguments after `super` are reported starting at the end
+            // of the keyword. Not after the callee of `new`, which is a primary expression. A
+            // template drops them.
             if matches!(left.data, ExprData::ESuper(_))
                 && level.lt(Level::Member)
                 && p.lexer.tolerant
@@ -1727,7 +1745,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// `parseAssignmentExpressionOrHigherWorker`: an assignment operator is only taken after a LeftHandSideExpression.
+    /// `parseAssignmentExpressionOrHigherWorker`: an assignment operator is only consumed after a
+    /// LeftHandSideExpression.
     /// After anything else the expression ends.
     #[inline]
     fn sfx_takes_no_assignment(p: &Self, left: &Expr) -> bool {
@@ -1741,7 +1760,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.is_log_disabled {
             return false;
         }
-        // Parentheses, `!`, type arguments and type assertions make a node of their own kind.
+        // Parentheses, `!`, type arguments and type assertions each have their own node kind.
         if let Some(kind) = p.last_cast(left) {
             return matches!(kind, Mark::As | Mark::AsTypeParameter | Mark::Satisfies);
         }
@@ -1826,8 +1845,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
             if p.lexer.loc().start == p.after_arrow_body_loc.start
-                // Once this very token has been objected to, the arrow function has ended what it had to end. Whoever comes next
-                // (`parseParenthesizedExpression`, the next statement) takes the operator, as `parseBinaryExpressionRest` does.
+                // Once an error has been reported at this token, the arrow function has already
+                // ended the expression. The next parser (`parseParenthesizedExpression`, the next
+                // statement) consumes the operator, as `parseBinaryExpressionRest` does.
                 && !(p.lexer.tolerant && p.lexer.prev_error_loc.eql(p.lexer.loc()))
             {
                 // Plain loop re-reading `p.lexer.token` each iteration.

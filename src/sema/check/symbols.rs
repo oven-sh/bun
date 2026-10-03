@@ -1,4 +1,5 @@
-//! The types of values that have names: variables, parameters, functions, classes, imports; and what functions return.
+//! The types of named values: variables, parameters, functions, classes, imports; and the return
+//! types of functions.
 
 use super::decl::declarations_of;
 use super::mapped::AccessNode;
@@ -22,7 +23,7 @@ pub(super) struct WideningContext<'p> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AliasTarget {
     Symbol(Sym),
-    /// A property has no `Sym`: the type that has it (`never`: none), its name, its type.
+    /// A property has no `Sym`: its owner type (`never`: none), its name, its type.
     Property(TypeId, Atom, TypeId),
     /// `unknownSymbol`
     Unknown,
@@ -66,8 +67,8 @@ pub struct IterationTypes {
     pub next: TypeId,
 }
 
-/// `IterationTypes`: what is yielded, what is returned in the end, what `next` is to be sent. Any of them may be missing. All
-/// missing: there is nothing to go through.
+/// `IterationTypes`: the yield type, the return type and the next type. Any of them may be missing.
+/// All missing: the type is not iterable.
 #[derive(Copy, Clone, Default)]
 pub(super) struct Iter3 {
     pub y: Option<TypeId>,
@@ -109,12 +110,12 @@ impl IterationUse {
         )
     }
 
-    /// `IterationUseForOfFlag`, with which `IterationUseAllowsStringInputFlag` goes.
+    /// `IterationUseForOfFlag`, which always comes with `IterationUseAllowsStringInputFlag`.
     fn is_for_of(self) -> bool {
         matches!(self, IterationUse::ForOf | IterationUse::ForAwaitOf)
     }
 
-    /// What is said when `next` does not take what it will be sent.
+    /// The error code reported when `next` does not accept the sent type.
     fn code_for_sent_type(self) -> u32 {
         match self {
             IterationUse::ForOf | IterationUse::ForAwaitOf => 2763,
@@ -133,7 +134,7 @@ enum IteratorMethod {
 }
 
 impl<'p> Checker<'p> {
-    /// What `sym` is where a value is expected.
+    /// The type of `sym` as a value.
     #[inline]
     pub fn type_of_symbol(&mut self, sym: Sym) -> TypeId {
         if let Some(known) = self.p.symbol_types.get(&mut self.task, &sym) {
@@ -145,7 +146,7 @@ impl<'p> Checker<'p> {
     #[inline(never)]
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         let value_declaration = self.files().value_declaration(sym);
-        // A parameter property is what its parameter is, which is a question of its own.
+        // A parameter property has the type of its parameter, which is a separate query.
         if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
             let scope = self.begin_scope();
             let ty = self.type_of_param(file, p);
@@ -160,7 +161,8 @@ impl<'p> Checker<'p> {
             }
             return ty;
         }
-        // Before the question is entered: `lateBindMember` asks what the names of the other members are, which may lead back here.
+        // Before the query is entered: `lateBindMember` resolves the names of the other members,
+        // which may re-enter this query.
         let mut members = SmallVec::new();
         if self.files().flags(sym).intersects(SymFlags::CLASS_MEMBER) {
             members = self.members_of_symbol(sym);
@@ -168,8 +170,9 @@ impl<'p> Checker<'p> {
                 return known;
             }
         }
-        // `checkCallExpression` checks the descriptor of `Object.defineProperty(f, "name", descriptor)` before anything asks for the
-        // type of `name`: what `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
+        // `checkCallExpression` checks the descriptor of `Object.defineProperty(f, "name",
+        // descriptor)` before anything requests the type of `name`: the text
+        // `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
         let in_report = !self.reporting_nonexistent.is_empty()
             && matches!(value_declaration, Some((file, Decl::Expando(e)))
                 if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
@@ -184,7 +187,8 @@ impl<'p> Checker<'p> {
                 return TypeId::UNRESOLVED;
             }
             let ty = self.type_of_circular_symbol(sym, None);
-            // `getTypeOfVariableOrParameterOrProperty` keeps what `reportCircularityError` returns: whoever asks next has the answer.
+            // `getTypeOfVariableOrParameterOrProperty` caches what `reportCircularityError`
+            // returns: the next caller gets that result.
             return match value_declaration {
                 Some((_, Decl::Expando(_) | Decl::ThisProperty(_))) => {
                     let stored = self.cycle_result();
@@ -204,7 +208,7 @@ impl<'p> Checker<'p> {
         };
         self.resolution_start = resolution_start;
         let left = self.leave(Query::Symbol(sym));
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let ty = self.type_of_circular_symbol(sym, Some(ty));
             let stored = self.cycle_result();
             let kept = self.p.symbol_types.insert(&mut self.task, sym, ty, stored);
@@ -232,7 +236,8 @@ impl<'p> Checker<'p> {
                         c.end_inside_parentheses(file, e),
                     )
                 };
-                // `GetNonAssignedNameOfDeclaration`: of `f["a"] = e` and `Object.defineProperty(f, "a", d)` the `"a"`, as it is written.
+                // `GetNonAssignedNameOfDeclaration`: for `f["a"] = e` and `Object.defineProperty(f,
+                // "a", d)` the `"a"`, as source text.
                 let named = match hir[declaration].kind {
                     ExprKind::Assign { target, .. } => match hir[target].kind {
                         ExprKind::Index { index, .. } => Some(index),
@@ -247,7 +252,8 @@ impl<'p> Checker<'p> {
                 };
                 let at = range(self, declaration);
                 self.report_circularity_error(Query::Symbol(sym), at, name, ty, false);
-            // `getTypeOfAlias` reports a circle through a symbol that is only an alias at the target of the alias.
+            // `getTypeOfAlias` reports a cycle through a symbol that is only an alias at the target
+            // of the alias.
             } else if flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
                 && let Some(at) = self.place_of_export_value_declaration(sym)
             {
@@ -264,8 +270,9 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `reportCircularityError`, where `popTypeResolution` finds the circle. `at`: `symbol.ValueDeclaration`. `ty`: what
-    /// `circularity_error_type` says of it. `is_bare_parameter`: it is a parameter without an initializer.
+    /// `reportCircularityError`, where `popTypeResolution` finds the cycle. `at`:
+    /// `symbol.ValueDeclaration`. `ty`: the result of `circularity_error_type` for it.
+    /// `is_bare_parameter`: it is a parameter without an initializer.
     pub(super) fn report_circularity_error(
         &mut self,
         owner: Query,
@@ -285,7 +292,8 @@ impl<'p> Checker<'p> {
         self.add_diagnostic_of(Some(owner), err);
     }
 
-    /// `report_circularity_error`, of the variable, parameter or binding element whose name is `pat`.
+    /// `report_circularity_error` for the variable, parameter or binding element whose name is
+    /// `pat`.
     pub(super) fn report_circularity_error_of_pat(
         &mut self,
         owner: Query,
@@ -296,7 +304,8 @@ impl<'p> Checker<'p> {
         let PatKind::Ident(name) = hir[pat].kind else {
             return;
         };
-        // `GetErrorRangeForNode`: a parameter is not pointed at by its name, but from where it starts, modifiers and `...` included.
+        // `GetErrorRangeForNode`: the range of a parameter is not its name but begins at its start,
+        // modifiers and `...` included.
         let (is_bare_parameter, start, end) = match self.bound(file).pat_parent[pat.idx()] {
             PatParent::Param(p) => (
                 hir[p].default.is_none(),
@@ -329,15 +338,17 @@ impl<'p> Checker<'p> {
         is_export.then_some((file, start, end))
     }
 
-    /// The type of `sym` when the resolution of its type depends on itself. `resolved`: what it came to, if `popTypeResolution` found
-    /// the circle. `None`: `pushTypeResolution` did.
+    /// The type of `sym` when the resolution of its type depends on itself. `resolved`: the
+    /// resolved type, if `popTypeResolution` found the cycle. `None`: `pushTypeResolution` found
+    /// it.
     fn type_of_circular_symbol(&self, sym: Sym, resolved: Option<TypeId>) -> TypeId {
         let flags = self.files().flags(sym);
         // `getTypeOfAlias`
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
             return resolved.unwrap_or(TypeId::ERROR);
         }
-        // `getTypeOfAccessors`: `errorType` where `pushTypeResolution` finds the circle, `anyType` where `popTypeResolution` does.
+        // `getTypeOfAccessors`: `errorType` where `pushTypeResolution` finds the cycle, `anyType`
+        // where `popTypeResolution` does.
         if flags.intersects(SymFlags::ACCESSOR) {
             return resolved.map_or(TypeId::ERROR, |_| TypeId::ANY);
         }
@@ -378,7 +389,8 @@ impl<'p> Checker<'p> {
         if sym == self.files().undefined_symbol {
             return TypeId::UNDEFINED;
         }
-        // `cloneTypeAsModuleType` gives the symbol it makes its type. What `combineValueAndTypeSymbols` makes has that of the value.
+        // `cloneTypeAsModuleType` assigns the type of the symbol it creates. A symbol created by
+        // `combineValueAndTypeSymbols` has the type of the value.
         if let Some((alias, is_combined)) = self.files().alias_of_transient_symbol(sym)
             && let Some(ty) = if is_combined {
                 self.symbol_from_variable(alias).map(|found| found.2)
@@ -389,11 +401,13 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let flags = self.files().flags(sym);
-        // `getTypeOfSymbol`: what a name stands for is asked last, so what it is declared as where it stands goes first.
+        // `getTypeOfSymbol`: the alias case comes last, so a local value declaration of the name
+        // takes precedence.
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
             return self.type_of_alias(sym);
         }
-        // `getTypeOfVariableOrParameterOrPropertyWorker`: `exports` is what the module is to those who require it, `module` has it.
+        // `getTypeOfVariableOrParameterOrPropertyWorker`: `exports` has the type of the module as
+        // `require` returns it, and `module` contains it.
         if flags.contains(SymFlags::MODULE_EXPORTS) {
             if self.files().symbol(sym).name == known::exports {
                 let module = self.files().file_symbol(sym.file);
@@ -485,7 +499,8 @@ impl<'p> Checker<'p> {
                     if annotation.is_some() {
                         return self.type_from_node(file, annotation);
                     }
-                    // A literal stays the literal it is, but for what a JSON file holds (`getTypeOfVariableOrParameterOrPropertyWorker`).
+                    // A literal type is preserved, except in a JSON file
+                    // (`getTypeOfVariableOrParameterOrPropertyWorker`).
                     let ty = self.type_of_expr(file, e);
                     return if self.hir(file).kind == FileKind::Json {
                         self.widened(ty)
@@ -517,7 +532,8 @@ impl<'p> Checker<'p> {
     /// `getTypeOfVariableOrParameterOrPropertyWorker`, `case KindBinaryExpression, KindCallExpression`. `None`: no assignment declares `sym`.
     fn type_of_assignment_declarations(&mut self, sym: Sym) -> Option<TypeId> {
         let (mut expandos, mut exports) = (Vec::new(), Vec::new());
-        // Every class, function and enum comes here: late binding adds only to what assignments declare.
+        // Every class, function and enum reaches this point: late binding only adds to symbols that
+        // assignments declare.
         let declarations = match self.files().flags(sym).contains(SymFlags::ASSIGNMENT) {
             true => self.declarations_of_property(sym),
             false => self.files().decls_of(sym),
@@ -532,7 +548,7 @@ impl<'p> Checker<'p> {
             }
         }
         let name = self.files().symbol(sym).name;
-        // `SetValueDeclaration`: an assignment gives way to any other declaration of a value.
+        // `SetValueDeclaration`: an assignment yields to any other value declaration.
         let others = SymFlags::VALUE.difference(SymFlags::PROPERTY);
         if !expandos.is_empty() && !self.files().flags(sym).intersects(others) {
             let first = expandos[0];
@@ -560,7 +576,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `resolveAlias`. `Files::alias_links` has `getTargetOfAliasDeclaration` as far as names tell. What types tell is added here.
+    /// `resolveAlias`. `Files::alias_links` has `getTargetOfAliasDeclaration` as far as it can be
+    /// resolved by name. The part that needs types is added here.
     pub(super) fn resolve_alias(&mut self, alias: Sym) -> AliasTarget {
         let files = self.files();
         let mut at = alias;
@@ -568,7 +585,8 @@ impl<'p> Checker<'p> {
             if !files.flags(at).contains(SymFlags::ALIAS) {
                 return AliasTarget::Symbol(at);
             }
-            // `resolveESModuleSymbol`. No symbol is made for the copy of what has none itself: `export = a`, where `a` ends at a property.
+            // `resolveESModuleSymbol`. No symbol is created for the copy of a target that has none
+            // itself: `export = a`, where `a` resolves to a property.
             if let Some(ty) = self.type_of_namespace_import(at) {
                 return match files.module_clone(at) {
                     Some(clone) => AliasTarget::Symbol(clone),
@@ -616,8 +634,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The end of `getTargetOfAliasLikeExpression`: in `export = e`, `export default e`, `module.exports = e` and `exports.x = e`, an
-    /// entity name `e` that `resolveEntityName` does not resolve stands for the `resolvedSymbol` that checking `e` records.
+    /// The end of `getTargetOfAliasLikeExpression`: in `export = e`, `export default e`,
+    /// `module.exports = e` and `exports.x = e`, an entity name `e` that `resolveEntityName` does
+    /// not resolve aliases the `resolvedSymbol` that checking `e` records.
     fn resolved_symbol_of_alias_like_expression(&mut self, sym: Sym) -> AliasTarget {
         let Some((file, decl)) = self.files().declaration_of_alias_symbol(sym) else {
             return AliasTarget::Unknown;
@@ -637,14 +656,15 @@ impl<'p> Checker<'p> {
             _ => return AliasTarget::Unknown,
         };
         match hir[e].kind {
-            // `argumentsSymbol` is a property of nothing.
+            // `argumentsSymbol` is not a property of any type.
             ExprKind::Ident(name)
                 if name == known::arguments
                     && self.symbol_of_identifier(file, e, name).is_none() =>
             {
                 AliasTarget::Property(TypeId::NEVER, name, self.type_of_expr(file, e))
             }
-            // `checkPropertyAccessExpressionOrQualifiedName` records a property, never an index signature, and none of `any`.
+            // `checkPropertyAccessExpressionOrQualifiedName` records a property, never an index
+            // signature, and nothing for `any`.
             ExprKind::Dot { obj, name, .. } => {
                 let object = self.type_of_expr(file, obj);
                 // `checkNonNullExpression`
@@ -671,13 +691,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getExternalModuleMember`: `combineValueAndTypeSymbols(symbolFromVariable, symbolFromModule)`, where it makes a symbol.
+    /// `getExternalModuleMember`: `combineValueAndTypeSymbols(symbolFromVariable,
+    /// symbolFromModule)`, where it creates a symbol.
     pub(super) fn combined_symbol_of_alias(&mut self, alias: Sym) -> Option<Sym> {
         let combined = self.files().combined_symbol(alias)?;
         self.symbol_from_variable(alias).map(|_| combined)
     }
 
-    /// `getSymbolFlags`. The tables have it, and keep it, unless only types tell: where they end nowhere, or there is a symbol to combine.
+    /// `getSymbolFlags`. The symbol tables compute and cache it, unless types are needed: where the
+    /// alias chain does not resolve to a symbol, or there is a symbol to combine.
     pub(super) fn get_symbol_flags(&mut self, sym: Sym) -> SymFlags {
         let files = self.files();
         let kept = files.symbol_flags(sym);
@@ -695,7 +717,8 @@ impl<'p> Checker<'p> {
             AliasTarget::Symbol(target) => {
                 Some(files.symbol_flags(files.export_symbol_of_value_symbol_if_exported(target)))
             }
-            // What a namespace or a module exports is a property of its type, and means what it means there.
+            // An export of a namespace or a module is a property of its type, and has the meaning
+            // it has there.
             AliasTarget::Property(..) => Some(match self.property_of_alias(alias) {
                 Some(&Prop {
                     source: PropSource::Symbol(member),
@@ -752,7 +775,7 @@ impl<'p> Checker<'p> {
         found
     }
 
-    /// `resolveAlias` of `sym`, where it ends at a property.
+    /// `resolveAlias` of `sym`, where it resolves to a property.
     pub(super) fn property_of_alias(&mut self, sym: Sym) -> Option<&'p Prop> {
         let AliasTarget::Property(object, name, _) = self.resolve_alias(sym) else {
             return None;
@@ -762,9 +785,10 @@ impl<'p> Checker<'p> {
         Some(self.prop_ref(apparent, name)?.0)
     }
 
-    /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` makes for the `import * as ns` that declares `sym`. It
-    /// has no signatures, and a `default` where one is made up. `None`: `sym` is declared otherwise, or stands for the module, or
-    /// what it `export =`s, itself.
+    /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` creates for the
+    /// `import * as ns` that declares `sym`. It has no signatures, and a `default` where one is
+    /// synthesized. `None`: `sym` is declared differently, or aliases the module, or its `export =`
+    /// target, itself.
     fn type_of_namespace_import(&mut self, sym: Sym) -> Option<TypeId> {
         let import = self
             .files()
@@ -792,7 +816,8 @@ impl<'p> Checker<'p> {
             .any(|d| matches!(d, Decl::File))
             && files.options.module.is_node()
             && files.module(file).is_esm;
-        // `getTypeWithSyntheticDefaultOnly`, `isOnlyImportableAsDefault`: a JSON file has a default and nothing else then.
+        // `getTypeWithSyntheticDefaultOnly`, `isOnlyImportableAsDefault`: in that case a JSON file
+        // has only a default export.
         if is_file_to_node
             && (files.hir(module.file).kind == FileKind::Json
                 || files.module(module.file).path.ends_with(b".d.json.ts"))
@@ -834,7 +859,8 @@ impl<'p> Checker<'p> {
         }))
     }
 
-    /// `canHaveSyntheticDefault`. `resolveExportByName` of a module that is `export =` asks the type of the value for a property.
+    /// `canHaveSyntheticDefault`. `resolveExportByName` of a module with `export =` looks up a
+    /// property of the type of the value.
     pub(super) fn can_have_synthetic_default(
         &mut self,
         usage: impl crate::program::Usage,
@@ -858,9 +884,9 @@ impl<'p> Checker<'p> {
             .is_some()
     }
 
-    /// `getTypeOfFuncClassEnumModuleWorker`, of a class: its static side, in terms of the type parameters around the class
-    /// (`getObjectTypeInstantiation`). The constructor of a class that extends a value whose type is a type variable is one of
-    /// those as well.
+    /// `getTypeOfFuncClassEnumModuleWorker` for a class: its static side, in terms of the outer
+    /// type parameters of the class (`getObjectTypeInstantiation`). The constructor type of a class
+    /// that extends a value whose type is a type variable also includes that type variable.
     pub(super) fn type_of_class_value(&mut self, sym: Sym) -> TypeId {
         let class = declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
             Decl::Class(c) => Some((file, c)),
@@ -895,16 +921,17 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `symbolFromVariable` of `getExternalModuleMember`: `import { a } from "m"`, `export { a } from "m"` and
-    /// `const { a } = require("m")` name a property of the value when `m` has `export = value`. The type of the value, `a`, and the
-    /// type of the property.
+    /// `symbolFromVariable` of `getExternalModuleMember`: `import { a } from "m"`, `export { a }
+    /// from "m"` and `const { a } = require("m")` name a property of the value when `m` has `export
+    /// = value`. Returns the type of the value, `a`, and the type of the property.
     pub(super) fn symbol_from_variable(&mut self, sym: Sym) -> Option<(TypeId, Atom, TypeId)> {
         let (ty, name) = self.imported_from_export_equals(sym)?;
         Some((ty, name, self.type_of_own_property(ty, name)?))
     }
 
-    /// `getPropertyOfTypeEx(ty, name, skipObjectFunctionPropertyAugment)`, and its type: what every object and every function has does
-    /// not count, nor does an index signature. `any` has none.
+    /// `getPropertyOfTypeEx(ty, name, skipObjectFunctionPropertyAugment)`, and its type: the
+    /// properties of every object and every function do not count, nor does an index signature.
+    /// `any` has none.
     pub(super) fn type_of_own_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         if self.is_any(ty) {
             return None;
@@ -937,14 +964,15 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// What a mutable location initialized with a value of type `ty` is declared as.
+    /// The declared type of a mutable location initialized with a value of type `ty`.
     pub fn widened(&mut self, ty: TypeId) -> TypeId {
         let ty = self.widen_literal(ty);
         self.regular_object(ty)
     }
 
-    /// `widenTypeForVariableLikeDeclaration`: what something that has a name is, given what it gets its type from. A `unique symbol`
-    /// belongs to the declaration it was made for, which does not come here: to any other it is a `symbol`. `name`: what it is the
+    /// `widenTypeForVariableLikeDeclaration`: the type of a named declaration, given the type it is
+    /// inferred from. A `unique symbol` belongs to the declaration it was created for, which does
+    /// not reach this function: for any other it is a `symbol`. `name`: the declaration it is the
     /// type of. `None`: `reportErrors` is false.
     fn widened_for_declaration(&mut self, ty: TypeId, name: Option<(FileId, PatId)>) -> TypeId {
         let ty = if matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
@@ -964,7 +992,7 @@ impl<'p> Checker<'p> {
         widened
     }
 
-    /// `t.objectFlags&ObjectFlagsContainsWideningType != 0`. Nothing has it under strictNullChecks.
+    /// `t.objectFlags&ObjectFlagsContainsWideningType != 0`. No type has it under strictNullChecks.
     pub(super) fn contains_widening_type(&self, ty: TypeId, depth: u32) -> bool {
         if self.p.files.options.strict_null_checks || depth > 8 {
             return false;
@@ -994,7 +1022,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `reportErrorsFromWidening`. Whether `reportImplicitAny` is left to do, which is for whoever knows the declaration.
+    /// `reportErrorsFromWidening`. Returns whether `reportImplicitAny` remains to be called, which
+    /// is left to the caller that knows the declaration.
     pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
         self.p.files.options.no_implicit_any
             && self.contains_widening_type(ty, 0)
@@ -1065,7 +1094,7 @@ impl<'p> Checker<'p> {
         error_reported
     }
 
-    /// `reportErrorsFromWidening`, of what the function `func` yields, returns or is sent.
+    /// `reportErrorsFromWidening` for the yield, return or next type of the function `func`.
     fn report_errors_from_widening_of_function(
         &mut self,
         file: FileId,
@@ -1118,8 +1147,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `reportImplicitAny`, of the variable, the parameter or the binding element whose name is `pat` and that comes to be `ty`: 7005,
-    /// 7006 7019 7051, 7031. Not where `declarationBelongsToPrivateAmbientMember`.
+    /// `reportImplicitAny` for the variable, the parameter or the binding element whose name is
+    /// `pat` and whose type resolves to `ty`: 7005, 7006 7019 7051, 7031. Not where
+    /// `declarationBelongsToPrivateAmbientMember`.
     pub(super) fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
@@ -1153,7 +1183,7 @@ impl<'p> Checker<'p> {
             self.error_at((file, start, name_end), code, &[name, Arg::Type(ty)]);
             return;
         };
-        // A parameter of which nothing is written takes no room.
+        // A missing parameter has an empty span.
         let node = (file, hir[p].pos, self.end_of_param(file, p).max(hir[p].pos));
         let (func, is_rest) = (bound.param_fn[p.idx()], hir[p].flags.contains(Flags::REST));
         let is_signature = matches!(hir[func].kind, FnKind::CallSignature | FnKind::FunctionType)
@@ -1180,8 +1210,9 @@ impl<'p> Checker<'p> {
         self.error_at(node, code, &[name, Arg::Type(ty)]);
     }
 
-    /// `isObjectLiteralType`: whether `ty` is the type of an object literal expression, fresh or not, as opposed to that of something
-    /// initialized with one. What a binding pattern implies is marked too, but no expression has that type
+    /// `isObjectLiteralType`: whether `ty` is the type of an object literal expression, fresh or
+    /// not, as opposed to the type of a declaration initialized with one. The type implied by a
+    /// binding pattern is marked too, but no expression has that type
     /// (`getTypeFromObjectBindingPattern`).
     #[inline]
     pub fn is_object_literal_type(&self, ty: TypeId) -> bool {
@@ -1208,7 +1239,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// An object literal without spreads: it has what is written, and that is all.
+    /// An object literal without spreads: it has exactly the declared properties.
     pub fn is_closed_object_literal_type(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Anon {
@@ -1241,8 +1272,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `false`: `t.objectFlags&ObjectFlagsRequiresWidening == 0`. Our flags come from more places than
-    /// `getPropagatingFlagsOfTypes` takes them from.
+    /// `false`: `t.objectFlags&ObjectFlagsRequiresWidening == 0`. The flags here come from more
+    /// sources than `getPropagatingFlagsOfTypes` uses.
     #[inline]
     fn may_require_widening(&self, ty: TypeId) -> bool {
         let flags = self.types().object_flags(ty);
@@ -1251,19 +1282,21 @@ impl<'p> Checker<'p> {
                 && !self.p.files.options.strict_null_checks
     }
 
-    /// `getWidenedTypeWithContext`. What stays the same all through is left as it is, for what our flags say too much.
+    /// `getWidenedTypeWithContext`. A type that widening leaves entirely unchanged is returned as
+    /// is, because the flags here are conservative.
     fn get_widened_type_with_context(&mut self, ty: TypeId, context: Option<usize>) -> TypeId {
         if !self.may_require_widening(ty) {
             return ty;
         }
         match self.data(ty) {
             TypeData::Intrinsic(_) => return TypeId::ANY,
-            // Without a context it is interned, which is a cache.
+            // Without a context it is interned, which acts as a cache.
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..),
                 ..
             } => return self.get_widened_type_of_object_literal(ty, context),
-            // What a pattern implies is widened like a literal, into a type that `patternForType` does not know.
+            // The type implied by a pattern is widened like a literal, into a type that
+            // `patternForType` does not know.
             TypeData::Synth(shape)
                 if shape.literal.is_of_expression()
                     || matches!(
@@ -1361,7 +1394,8 @@ impl<'p> Checker<'p> {
         self.widening_contexts.len() - 1
     }
 
-    /// `undefinedType`: the `undefined` that is not widened. Without strictNullChecks that is not the one expressions give.
+    /// `undefinedType`: the non-widening `undefined`. Without strictNullChecks that is not the one
+    /// expressions have.
     #[inline]
     pub(super) fn undefined_as_declared(&self) -> TypeId {
         if self.p.files.options.strict_null_checks {
@@ -1381,7 +1415,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getUndefinedProperty`. It is made once for a name, after the first property it is asked for, whose declarations it keeps.
+    /// `getUndefinedProperty`. It is created once per name, from the first property it is requested
+    /// for, whose declarations it keeps.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop {
         if let Some(cached) = self.undefined_properties.get(&prop.name) {
             return cached.clone();
@@ -1410,7 +1445,7 @@ impl<'p> Checker<'p> {
         {
             return cached;
         }
-        // With no other literal beside it, no context down from here has anything to add.
+        // Without a sibling literal, no nested widening context has anything to add.
         let context = context.filter(|&context| {
             let siblings = self.get_siblings_of_context(context);
             siblings
@@ -1418,7 +1453,7 @@ impl<'p> Checker<'p> {
                 .any(|&t| t != ty && self.is_object_literal_type(t))
         });
         let Some(context) = context else {
-            // Each property is widened when it is asked for.
+            // Each property is widened lazily.
             return match self.data(ty) {
                 TypeData::Anon {
                     origin:
@@ -1587,7 +1622,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── bindings ─────────────────────────────
 
-    /// The type of what `pat` binds or destructures.
+    /// The type of the value `pat` binds or destructures.
     #[inline]
     pub fn type_of_pat(&mut self, file: FileId, pat: PatId) -> TypeId {
         if pat.is_none() {
@@ -1601,7 +1636,7 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn resolve_type_of_pat(&mut self, file: FileId, pat: PatId) -> TypeId {
-        if self.prepare_question_about_pat(file, pat)
+        if self.prepare_query_for_pat(file, pat)
             && let Some((known, _)) = self.p.pat_types.get(&mut self.task, &(file, pat))
         {
             return known;
@@ -1618,10 +1653,11 @@ impl<'p> Checker<'p> {
         }
         let ty = self.type_of_pat_uncached(file, pat);
         let left = self.leave(Query::Pat(file, pat));
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let stored = self.cycle_result();
             let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
-            // Over the value of an inner evaluation above a `resolution_start` barrier, if one was stored.
+            // Overwrites the value of an inner evaluation above a `resolution_start` barrier, if
+            // one was stored.
             self.p
                 .pat_types
                 .rewrite(&mut self.task, (file, pat), (ty, true), stored);
@@ -1640,10 +1676,12 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// What is reported on the way round a circle is dropped with the answers that rest on it, and `pat` has been given its answer
-    /// (`reportCircularityError`) without being asked again. tsgo goes round with `any` and says what it finds: so the walk asks once more.
+    /// Diagnostics reported inside a cycle are dropped with the results that depend on it, and
+    /// `pat` has received its result (`reportCircularityError`) without being evaluated again. tsgo
+    /// continues through the cycle with `any` and reports what it finds, so the walk evaluates it
+    /// once more.
     pub(super) fn report_on_circular_pat(&mut self, file: FileId, pat: PatId) {
-        // The caller has just asked for the type, so the first read is a hit.
+        // The caller has just requested the type, so the first read is a hit.
         let key = (file, pat);
         let is_circular = (self.p.pat_types.get(&mut self.task, &key))
             .is_some_and(|(_, flag)| flag)
@@ -1660,9 +1698,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkDeclarationInitializer`, `getTypeOfExpression`: `getQuickTypeOfExpression` comes first. A call or a `new` of the only
-    /// signature there is, if that is not generic, is what the signature returns. Its arguments are not looked at, so nothing in them
-    /// can lead back here.
+    /// `checkDeclarationInitializer`, `getTypeOfExpression`: `getQuickTypeOfExpression` comes
+    /// first. A call or a `new` with a single, non-generic signature has that signature's return
+    /// type. Its arguments are not checked, so nothing in them can re-enter this query.
     pub(super) fn type_of_declaration_initializer(&mut self, file: FileId, e: ExprId) -> TypeId {
         if e.is_some()
             && matches!(
@@ -1683,14 +1721,14 @@ impl<'p> Checker<'p> {
         self.type_of_expr(file, e)
     }
 
-    /// The tail of `getBindingElementTypeFromParentType`: what `pat`, an element of a pattern, is bound to when `ty` is what is found for
-    /// it and `default` what it gets if there is nothing.
+    /// The tail of `getBindingElementTypeFromParentType`: the type bound to `pat`, an element of a
+    /// pattern, when `ty` is the type found for it and `default` is its initializer.
     fn with_default(&mut self, file: FileId, pat: PatId, ty: TypeId, default: ExprId) -> TypeId {
         if default.is_none() {
             return ty;
         }
-        // What is declared stands: the default only sees to it that it is not missing. Where that is not told apart the default
-        // is not looked at.
+        // The annotated type is used: the default only removes `undefined` from it. Without
+        // strictNullChecks the default is not checked.
         let hir = self.hir(file);
         let root = root_declaration(self.bound(file), pat);
         let is_annotated = match root {
@@ -1702,14 +1740,15 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let default_ty = self.type_of_declaration_initializer(file, default);
-        // `checkDeclarationInitializer`: below a parameter a default may as well have what its own pattern has defaults for.
+        // `checkDeclarationInitializer`: under a parameter a default is padded with the members its
+        // own pattern has defaults for.
         let default_ty = if matches!(root, PatParent::Param(_)) {
             self.padded_for_pattern(file, pat, default_ty)
         } else {
             default_ty
         };
         if is_annotated {
-            // What is not known might be.
+            // An `UNRESOLVED` type might be.
             let may_be_missing =
                 default_ty == TypeId::UNRESOLVED || self.is_possibly_undefined(default_ty);
             return if may_be_missing {
@@ -1721,7 +1760,8 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return ty;
         }
-        // `widenTypeInferredFromInitializer`, of both together: a default that is one of the literals there are is not widened.
+        // `widenTypeInferredFromInitializer` of the union of both: a default that is one of the
+        // existing literals is not widened.
         let present = self.non_undefined_type(ty);
         let whole = self.union_reduced(&[present, default_ty]);
         if let Some(any) = self.implicit_any_of_empty_literal(file, whole) {
@@ -1751,8 +1791,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The end of `widenTypeInferredFromInitializer`, less the report: what a declaration in `file` is whose initializer is `widened`,
-    /// if the file is JavaScript and that is the type of nothing at all, or of an array of nothing.
+    /// The end of `widenTypeInferredFromInitializer`, without the report: the type of a declaration
+    /// in `file` whose initializer type is `widened`, if the file is JavaScript and `widened` is an
+    /// empty literal type or an empty array literal type.
     pub(super) fn implicit_any_of_empty_literal(
         &mut self,
         file: FileId,
@@ -1769,8 +1810,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getNonUndefinedType`: `ty` without `undefined`. If what some member that waits for a type parameter extends can be
-    /// `undefined`, every such member gives way to what it extends first.
+    /// `getNonUndefinedType`: `ty` without `undefined`. If the constraint of some generic member
+    /// can be `undefined`, every such member is first replaced by its constraint.
     pub(super) fn non_undefined_type(&mut self, ty: TypeId) -> TypeId {
         // `isGenericTypeWithUndefinedConstraint`
         let mut gives_way = false;
@@ -1806,11 +1847,13 @@ impl<'p> Checker<'p> {
             PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => {
                 let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
                 let ty = self.type_of_binding_element(file, pat, parent_ty, false);
-                // What is taken apart is not widened; what comes out of it, once it has a name, is.
+                // A destructured value is not widened; the elements extracted from it are, once
+                // bound to a name.
                 if !matches!(hir[pat].kind, PatKind::Ident(_)) {
                     return ty;
                 }
-                // `getTupleElementTypeOutOfStartCount`: past the end of a tuple is an `undefined` that does not widen.
+                // `getTupleElementTypeOutOfStartCount`: an element past the end of a tuple is a
+                // non-widening `undefined`.
                 if ty == TypeId::UNDEFINED
                     && let PatParent::Elem(_, elem) = self.bound(file).pat_parent[pat.idx()]
                     && hir[elem].default.is_none()
@@ -1829,7 +1872,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeForBindingElementParent`: what the pattern `parent` takes apart, for its element `pat`.
+    /// `getTypeForBindingElementParent`: the type the pattern `parent` destructures, for its
+    /// element `pat`.
     pub(super) fn type_for_binding_element_parent(
         &mut self,
         file: FileId,
@@ -1843,14 +1887,15 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         match bound.pat_parent[parent.idx()] {
-            // Without the `undefined` that `?` adds. One that is written stays.
+            // Without the `undefined` that `?` adds. An annotated `undefined` stays.
             PatParent::Param(p)
                 if hir[p].ty.is_some() && hir[p].flags.contains(Flags::OPTIONAL) =>
             {
                 self.type_from_node(file, hir[p].ty)
             }
-            // The default as it is, not widened. Only the parameters of function expressions and of what is written in object literals
-            // are typed (`assignParameterType`, widened) before their patterns are looked at. Of a setter the getter says.
+            // The default as it is, not widened. Only the parameters of function expressions and of
+            // object literal methods are typed (`assignParameterType`, widened) before their
+            // patterns are checked. For a setter the getter determines the type.
             PatParent::Param(p)
                 if hir[p].ty.is_none()
                     && hir[p].default.is_some()
@@ -1862,8 +1907,8 @@ impl<'p> Checker<'p> {
             {
                 self.type_from_param_default(file, p)
             }
-            // `CheckModeRestBindingElement`: for `...rest` the initializer is looked at again, the pattern being no reason to give up
-            // on a type parameter.
+            // `CheckModeRestBindingElement`: for `...rest` the initializer is checked again,
+            // without the pattern causing a type parameter to be abandoned.
             PatParent::Var(d) if is_rest && hir[d].ty.is_none() && hir[d].init.is_some() => {
                 match self.type_of_reference_for_rest(file, hir[d].init) {
                     Some(ty) => ty,
@@ -1874,9 +1919,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The head of `getBindingElementTypeFromParentType`: what `pattern` takes apart, given that what it stands for is a `ty`. Where
-    /// `null` and `undefined` are told apart, a parameter of something that is only declared is taken to be there, and what has an
-    /// initializer that cannot be `undefined` is not `undefined`.
+    /// The head of `getBindingElementTypeFromParentType`: the type `pattern` destructures, given
+    /// that its declaration has type `ty`. Under strictNullChecks, a parameter of an ambient
+    /// declaration is assumed to be present, and a declaration whose initializer cannot be
+    /// `undefined` is not `undefined`.
     pub(super) fn type_pattern_takes_apart(
         &mut self,
         file: FileId,
@@ -1916,20 +1962,21 @@ impl<'p> Checker<'p> {
         if initializer.is_none() {
             return ty;
         }
-        // `getTypeOfInitializer` is asked whatever `ty` is: an initializer that reads a name of the pattern is a circle.
-        let given = self.type_of_declaration_initializer(file, initializer);
+        // `getTypeOfInitializer` is called whatever `ty` is: an initializer that reads a name of
+        // the pattern is a cycle.
+        let actual = self.type_of_declaration_initializer(file, initializer);
         let there = self.type_with_ne_undefined(ty);
         if there == ty {
             return ty;
         }
-        if self.can_equal_undefined(given) {
+        if self.can_equal_undefined(actual) {
             return ty;
         }
         there
     }
 
-    /// `getBindingElementTypeFromParentType`: what `pat`, an element of a pattern, is bound to when what the pattern destructures is a
-    /// `parent_ty`.
+    /// `getBindingElementTypeFromParentType`: the type bound to `pat`, an element of a pattern,
+    /// when the pattern destructures a value of type `parent_ty`.
     pub(super) fn type_of_binding_element(
         &mut self,
         file: FileId,
@@ -1937,7 +1984,7 @@ impl<'p> Checker<'p> {
         parent_ty: TypeId,
         no_tuple_bounds_check: bool,
     ) -> TypeId {
-        // Out of anything comes anything, and nothing else is looked at: no default either.
+        // Destructuring `any` yields `any`, and nothing else is checked, not even a default.
         if self.is_any(parent_ty) {
             return parent_ty;
         }
@@ -1961,9 +2008,10 @@ impl<'p> Checker<'p> {
                         self.error_at(self.place_of_token(file, hir[pat].pos), 2700, &[]);
                         return TypeId::ERROR;
                     }
-                    // `getLiteralTypeFromPropertyName`: a name that is worked out and is not the name of one property stands for
-                    // whatever its type allows. One that reads as a number is the number or the string, whichever is written, and
-                    // leaves out a property named by the same.
+                    // `getLiteralTypeFromPropertyName`: a computed name that is not the name of a
+                    // single property represents every key its type allows. A numeric name is the
+                    // number or the string literal type, whichever is in the source, and omits a
+                    // property named the same way.
                     let (mut omitted, mut keys) = (Vec::new(), Vec::new());
                     for p in props.iter() {
                         if hir[p].is_rest {
@@ -2008,8 +2056,9 @@ impl<'p> Checker<'p> {
                     }
                     PropKey::Private(_) | PropKey::None => return TypeId::UNRESOLVED,
                 };
-                // An identifier directly in the pattern of `const { a } = require("m")` is an alias (`getTypeOfAlias`): tsgo never looks
-                // it up in the initializer, so nothing is said.
+                // An identifier directly in the pattern of `const { a } = require("m")` is an alias
+                // (`getTypeOfAlias`): tsgo never looks it up in the initializer, so nothing is
+                // reported.
                 let is_alias = hir.is_js
                     && matches!(hir[pat].kind, PatKind::Ident(_))
                     && matches!(self.bound(file).pat_parent[parent.idx()], PatParent::Var(d) if self.external_module_require_argument(file, d).is_some());
@@ -2051,8 +2100,10 @@ impl<'p> Checker<'p> {
         self.is_assignable(ty, any_list)
     }
 
-    /// `getBindingElementTypeFromParentType`, for an array pattern: element `index` of what is destructured; from `index` on if `rest`.
-    /// `nodes`: the pattern, the name of the element and `AccessFlagsAllowMissing`, for whoever reports.
+    /// `getBindingElementTypeFromParentType`, for an array pattern: element `index` of the
+    /// destructured type; the elements from `index` on if `rest`.
+    /// `nodes`: the pattern, the name of the element and `AccessFlagsAllowMissing`, for error
+    /// reporting.
     pub(super) fn element_of_destructured(
         &mut self,
         ty: TypeId,
@@ -2063,7 +2114,8 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return ty;
         }
-        // "This call also checks that the parentType is in fact an iterable or array". An array or a tuple is: not asked.
+        // "This call also checks that the parentType is in fact an iterable or array". An array or
+        // a tuple is, so the call is skipped.
         if let Some((pattern, AccessNode::BindingName(file, _), _)) = nodes
             && !self.is_array_or_tuple(ty)
         {
@@ -2075,16 +2127,18 @@ impl<'p> Checker<'p> {
             let usage = IterationUse::Destructuring;
             self.iterated_type_or_element_type(usage, ty, TypeId::UNDEFINED, Some(pattern));
         }
-        // `getReducedType`: an intersection nothing can be is `never`, and drops out of a union.
+        // `getReducedType`: an intersection that reduces to `never` is `never`, and drops out of a
+        // union.
         let ty = self.reduced(ty);
-        // `getReducedApparentType`: a type parameter is looked into as what it extends.
+        // `getReducedApparentType`: a type parameter is replaced by its constraint.
         let apparent = if self.is_deferred(ty) {
             let apparent = self.apparent_type(ty);
             self.reduced(apparent)
         } else {
             ty
         };
-        // `never` cannot be gone through, which is an error: anything. Yet it passes for a list, and `never[0]` is `never`.
+        // `never` is not iterable, which is an error and yields `any`. Yet it counts as array-like,
+        // and `never[0]` is `never`.
         if apparent.is_never() {
             return if rest {
                 self.array_of(TypeId::ANY)
@@ -2093,7 +2147,8 @@ impl<'p> Checker<'p> {
             };
         }
         if rest {
-            // What is a tuple, or extends one, is cut (`sliceTupleType`). Of anything else it is an array of what the whole yields.
+            // A tuple, or a type constrained to one, is sliced (`sliceTupleType`). Anything else
+            // gives an array of the iterated type of the whole.
             let constraint = self.map_type(ty, |c, m| {
                 if c.is_deferred(m) {
                     c.base_constraint_of(m).unwrap_or(m)
@@ -2113,7 +2168,8 @@ impl<'p> Checker<'p> {
             let element = self.iterated_type(ty, false);
             return self.array_of(element);
         }
-        // Only of a list are elements looked up by number: `interface RegExpExecArray extends Array<string> { 0: string }`.
+        // Elements are looked up by index only in an array-like type: `interface RegExpExecArray
+        // extends Array<string> { 0: string }`.
         if self.is_array_like(ty) {
             let key = self.number_literal(index as f64, false);
             let (_, name, allow_missing) = nodes.unwrap_or((PatId::NONE, AccessNode::Other, false));
@@ -2123,7 +2179,8 @@ impl<'p> Checker<'p> {
                 .indexed_access_of_binding_element(ty, key, access_flags, name)
                 .unwrap_or(TypeId::ERROR);
         }
-        // Of anything else it is what the whole yields, if it gets that far (`includeUndefinedInIndexSignature`).
+        // For anything else it is the iterated type of the whole, if the iteration gets that far
+        // (`includeUndefinedInIndexSignature`).
         let element = self.iterated_type(ty, false);
         if self.p.files.options.no_unchecked_indexed_access {
             self.optional(element)
@@ -2132,14 +2189,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getBindingElementTypeFromParentType`: whether no `...rest` can be taken out of a `parent_ty`, which is 2700: it is `unknown`,
-    /// or not `isValidSpreadType`.
+    /// `getBindingElementTypeFromParentType`: whether `...rest` cannot be applied to a `parent_ty`,
+    /// which is 2700: it is `unknown`, or not `isValidSpreadType`.
     pub(super) fn is_rest_of_invalid_type(&mut self, parent_ty: TypeId) -> bool {
         let reduced = self.reduced(parent_ty);
         reduced == TypeId::UNKNOWN || !self.is_valid_spread_type(reduced)
     }
 
-    /// Whether the name of a property, which starts at `pos` of `file`, is written as a number: `0`, `.5`, `[0]`.
+    /// Whether the property name that starts at `pos` of `file` is a numeric literal in the source:
+    /// `0`, `.5`, `[0]`.
     pub(super) fn is_numeric_literal_name_in_source(&self, file: FileId, pos: u32) -> bool {
         let text = &self.hir(file).text;
         let at = pos as usize;
@@ -2153,9 +2211,11 @@ impl<'p> Checker<'p> {
         matches!(first, Some(b'0'..=b'9' | b'.'))
     }
 
-    /// `getRestType`, what `...rest` gets: `ty` without the properties `omitted` and without those whose name is an `omitted_keys`,
-    /// the types of the names that are left out by type: the computed ones that are not the name of one property, and those that
-    /// read as numbers (`never`: there are none). `symbol`: where the first declaration of the symbol the type gets is.
+    /// `getRestType`, the type of `...rest`: `ty` without the properties `omitted` and without
+    /// those whose name is in `omitted_keys`, the types of the names that are omitted by type: the
+    /// computed ones that are not the name of a single property, and the numeric ones (`never`:
+    /// there are none). `symbol`: the position of the first declaration of the symbol the type
+    /// gets.
     pub fn rest_of_object(
         &mut self,
         ty: TypeId,
@@ -2175,14 +2235,15 @@ impl<'p> Checker<'p> {
                 c.rest_of_object(m, omitted, omitted_keys, symbol)
             });
         }
-        // `getPropertiesOfType`: a type parameter has what it extends has.
+        // `getPropertiesOfType`: a type parameter has the properties of its constraint.
         let apparent = self.reduced_apparent_type(ty);
         let members = self.members(apparent);
         // Which properties go into the rest, and the names of the others.
         let (mut kept, mut excluded_keys): (Vec<usize>, Vec<TypeId>) = (Vec::new(), Vec::new());
         if let Some(members) = &members {
             for (i, prop) in members.shape().props.iter().enumerate() {
-                // `getLiteralTypeFromProperty`: what is not public, or goes by a `#name`, has no name to be left out by.
+                // `getLiteralTypeFromProperty`: a property that is not public, or is named `#name`,
+                // has no key type to be omitted by.
                 if prop
                     .flags
                     .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
@@ -2207,7 +2268,8 @@ impl<'p> Checker<'p> {
             is_generic |= !self.is_pattern_literal(key) && self.is_generic(key);
         }
         if is_generic {
-            // `Omit<T, "a" | K>`, and what could not go into the rest is left out by name as well.
+            // `Omit<T, "a" | K>`, and the properties that cannot go into the rest are omitted by
+            // name as well.
             let mut keys: Vec<TypeId> = Vec::with_capacity(omitted.len() + 1 + excluded_keys.len());
             for &name in omitted {
                 keys.extend(self.key_type_of_name(name));
@@ -2229,7 +2291,7 @@ impl<'p> Checker<'p> {
         let mut shape = Shape::default();
         for i in kept {
             let prop = &members.shape().props[i];
-            // `getSpreadSymbol`: reading what can only be set gives nothing.
+            // `getSpreadSymbol`: a write-only property reads as `undefined`.
             let ty = if prop.flags.contains(PropFlags::WRITE_ONLY) {
                 self.undefined_as_declared()
             } else {
@@ -2240,7 +2302,7 @@ impl<'p> Checker<'p> {
                 .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
             shape.props.push(Prop {
                 name: prop.name,
-                // A copy: what could not be written to in the original can be in it.
+                // A copy: a readonly property of the original is writable in it.
                 flags: prop.flags
                     & if anew {
                         PropFlags::OPTIONAL | PropFlags::STRING_NAME
@@ -2255,14 +2317,15 @@ impl<'p> Checker<'p> {
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);
             shape.index.push(IndexInfo { value, ..*info });
-            // `getApplicableIndexSymbol` is who asks: `symbol.Parent = t.symbol`.
+            // Read by `getApplicableIndexSymbol`: `symbol.Parent = t.symbol`.
             shape.symbol_declared_at = symbol;
         }
         self.synth(shape)
     }
 
-    /// `getTypeForVariableLikeDeclaration`, and `widenTypeForVariableLikeDeclaration` of that if the variable has a name: what a
-    /// pattern takes apart is not widened (`getTypeForBindingElementParent`).
+    /// `getTypeForVariableLikeDeclaration`, followed by `widenTypeForVariableLikeDeclaration` if
+    /// the variable has a name: a destructured value is not widened
+    /// (`getTypeForBindingElementParent`).
     fn type_of_var_decl(&mut self, file: FileId, d: VarDeclId) -> TypeId {
         let hir = self.hir(file);
         let decl = &hir[d];
@@ -2278,11 +2341,11 @@ impl<'p> Checker<'p> {
         } else {
             Parent::None
         };
-        // What the loop goes through decides, whatever is written after the name.
+        // The iterated expression decides, regardless of any annotation after the name.
         if let Parent::Stmt(parent) = around {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
-                    // The keys of something generic are its own, those that are strings.
+                    // The keys of a generic type are its own keys, restricted to strings.
                     let object = self.type_of_expr(file, expr);
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
@@ -2313,7 +2376,7 @@ impl<'p> Checker<'p> {
                 _ => {}
             }
         }
-        // What is caught can only be said to be `any` or `unknown`.
+        // A catch variable can only be annotated `any` or `unknown`.
         if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
             if decl.ty.is_none() {
                 return if self.p.files.options.use_unknown_in_catch_variables {
@@ -2329,7 +2392,8 @@ impl<'p> Checker<'p> {
                 TypeId::ERROR
             };
         }
-        // `isValidESSymbolDeclaration`: a `const` with a name, in a statement of its own. To anything else a `unique symbol` is a `symbol`.
+        // `isValidESSymbolDeclaration`: a `const` with a name, in a statement of its own. For
+        // anything else a `unique symbol` is a `symbol`.
         let unique_symbol_name = match hir[decl.pat].kind {
             PatKind::Ident(name)
                 if decl.kind == VarKind::Const
@@ -2349,8 +2413,9 @@ impl<'p> Checker<'p> {
             }
             return self.type_from_node(file, decl.ty);
         }
-        // Where an implicit `any` is an error, control flow says what the variable holds at a place. It goes by how the initializer
-        // is written, not by its type.
+        // Where an implicit `any` is an error, control flow analysis determines the type of the
+        // variable at each position. This depends on the syntax of the initializer, not on its
+        // type.
         if self.p.files.options.no_implicit_any
             && is_name
             && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
@@ -2364,7 +2429,7 @@ impl<'p> Checker<'p> {
                 {
                     return TypeId::AUTO;
                 }
-                // `isEmptyArrayLiteral`, which does not look into parentheses.
+                // `isEmptyArrayLiteral`, which does not skip parentheses.
                 Some(ExprKind::Array(items))
                     if items.is_empty() && !is_parenthesized(hir, decl.init) =>
                 {
@@ -2374,14 +2439,14 @@ impl<'p> Checker<'p> {
             }
         }
         if decl.init.is_none() {
-            // `getTypeFromBindingPattern`: what the pattern itself implies.
+            // `getTypeFromBindingPattern`: the type implied by the pattern itself.
             if !is_name {
                 return self
                     .implied_by_pattern(file, decl.pat, false, true)
                     .unwrap_or(TypeId::ANY);
             }
-            // `widenTypeForVariableLikeDeclaration`, of nothing. `getTypeOfVariableOrParameterOrPropertyWorker` goes by
-            // `symbol.ValueDeclaration`.
+            // `widenTypeForVariableLikeDeclaration` with no type.
+            // `getTypeOfVariableOrParameterOrPropertyWorker` uses `symbol.ValueDeclaration`.
             if self.bound(file).pat_symbol[decl.pat.idx()].is_some()
                 && self.value_declaration_of_variable_name(file, decl.pat) == (file, decl.pat)
             {
@@ -2397,7 +2462,8 @@ impl<'p> Checker<'p> {
                 ExprKind::Dot { obj, name, .. } if self.atoms().bytes(name) == b"for" => obj,
                 _ => hir[c].callee,
             };
-            // `isSymbolOrSymbolForCall`: it has to be the global value of that name, and there has to be one.
+            // `isSymbolOrSymbolForCall`: it must resolve to the global value of that name, which
+            // must exist.
             if matches!(hir[callee].kind, ExprKind::Ident(known::Symbol))
                 && self.bound(file).expr_symbol[callee.idx()].is_none()
                 && self
@@ -2437,7 +2503,7 @@ impl<'p> Checker<'p> {
         let param = &hir[p];
         if param.ty.is_some() {
             let ty = self.type_from_node(file, param.ty);
-            // `isOptionalDeclaration`: the `?` decides, default or no default.
+            // `isOptionalDeclaration`: the `?` decides, with or without a default.
             if param.flags.contains(Flags::OPTIONAL) {
                 return self.optional(ty);
             }
@@ -2445,7 +2511,7 @@ impl<'p> Checker<'p> {
         }
         let func = self.bound(file).param_fn[p.idx()];
         let index = (p.0 - hir[func].params.start) as usize;
-        // The getter says.
+        // The getter determines the type.
         if hir[func].kind == FnKind::Setter
             && let Some(getter) = self.sibling_accessor(file, func, FnKind::Getter)
         {
@@ -2455,11 +2521,13 @@ impl<'p> Checker<'p> {
         if let Some(ty) = self.param_type_of_full_signature(file, func, index) {
             return ty;
         }
-        // `getContextuallyTypedParameterType`, `isContextSensitiveFunctionOrObjectLiteralMethod`: of a setter nothing is expected.
+        // `getContextuallyTypedParameterType`, `isContextSensitiveFunctionOrObjectLiteralMethod`: a
+        // setter has no contextual type.
         if hir[func].kind != FnKind::Setter
             && let Some(mut ty) = self.contextual_param_type(file, func, index)
         {
-            // `assignParameterType`: if `unknown` is all that is expected, the pattern says what it is.
+            // `assignParameterType`: if the contextual type is just `unknown`, the pattern
+            // determines the type.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
                 return self
                     .implied_by_pattern(file, param.pat, false, false)
@@ -2472,32 +2540,36 @@ impl<'p> Checker<'p> {
                     ty
                 };
             }
-            // `assignContextualParameterTypes`: a default that does not fit what is expected decides, if what is expected fits what
-            // the default widens to. Of a function called where it is written no signature is expected.
+            // `assignContextualParameterTypes`: a default that is not assignable to the contextual
+            // type decides, if the contextual type is assignable to the widened type of the
+            // default. An immediately invoked function has no contextual signature.
             if !param.flags.contains(Flags::REST) && !self.is_immediately_invoked(file, func) {
-                // TypeScript does this when it gets to the function, not while it resolves the parameter: a default that leads back to
-                // the parameter is no circle there.
+                // TypeScript does this when it checks the function, not while it resolves the
+                // parameter: a default that refers back to the parameter is not a cycle there.
                 self.eager.push(self.stack.len());
-                let given = self.type_of_declaration_initializer(file, param.default);
-                let given = self.padded_for_pattern(file, param.pat, given);
-                if !self.is_assignable(given, ty) {
-                    let widened = self.widen_literal(given);
+                let actual = self.type_of_declaration_initializer(file, param.default);
+                let actual = self.padded_for_pattern(file, param.pat, actual);
+                if !self.is_assignable(actual, ty) {
+                    let widened = self.widen_literal(actual);
                     if self.is_assignable(ty, widened) {
                         ty = widened;
                     }
                 }
                 self.eager.pop();
             }
-            // What the default rules out is ruled out where the parameter is read or taken apart.
+            // The types excluded by the default are removed where the parameter is read or
+            // destructured.
             return ty;
         }
         if param.default.is_some() {
             let ty = self.type_from_param_default(file, p);
-            // `checkVariableLikeDeclaration` asks for the type of a name, `assignParameterType` for that of any parameter of a function
-            // expression. That of a pattern in a declaration is asked for only by who compares the signature.
-            let is_asked_for = matches!(hir[param.pat].kind, PatKind::Ident(_))
+            // `checkVariableLikeDeclaration` requests the type of a name, `assignParameterType`
+            // that of any parameter of a function expression. The type of a pattern in a
+            // declaration is requested only by callers that compare the signature.
+            let is_requested_for = matches!(hir[param.pat].kind, PatKind::Ident(_))
                 || matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(_));
-            let ty = self.widened_for_declaration(ty, is_asked_for.then_some((file, param.pat)));
+            let ty =
+                self.widened_for_declaration(ty, is_requested_for.then_some((file, param.pat)));
             // `addOptionalityEx`
             return if param.flags.contains(Flags::OPTIONAL) {
                 self.optional(ty)
@@ -2505,12 +2577,14 @@ impl<'p> Checker<'p> {
                 ty
             };
         }
-        // `getTypeFromBindingPattern`, of a rest parameter too: `any[]` is for one of which nothing at all is known.
+        // `getTypeFromBindingPattern`, for a rest parameter too: `any[]` is only for one with no
+        // type information at all.
         let report_errors = !self.is_parameter_type_never_requested(file, func, p);
         if let Some(implied) = self.implied_by_pattern(file, param.pat, false, report_errors) {
             return implied;
         }
-        // `widenTypeForVariableLikeDeclaration`, of nothing. `hasBindableName`: which property a setter is may not be known.
+        // `widenTypeForVariableLikeDeclaration` with no type. `hasBindableName`: the property a
+        // setter belongs to may not be known.
         let reports = !matches!(hir[param.pat].kind, PatKind::Missing)
             && (hir[func].kind != FnKind::Setter
                 || self.start_of_accessor_name(file, func).is_some());
@@ -2537,8 +2611,8 @@ impl<'p> Checker<'p> {
         TypeId::ANY
     }
 
-    /// `widenTypeInferredFromInitializer` of `checkDeclarationInitializer`: what its default makes of the parameter `p`, which says
-    /// nothing itself and of which nothing is expected.
+    /// `widenTypeInferredFromInitializer` of `checkDeclarationInitializer`: the type the parameter
+    /// `p` gets from its default, when it has no annotation and no contextual type.
     fn type_from_param_default(&mut self, file: FileId, p: ParamId) -> TypeId {
         let param = &self.hir(file)[p];
         let ty = self.type_of_declaration_initializer(file, param.default);
@@ -2553,8 +2627,9 @@ impl<'p> Checker<'p> {
         self.widen_literal(ty)
     }
 
-    /// `padObjectLiteralType`, `padTupleType`: `ty`, the default of a parameter or of a part of one that `pat` takes apart, may as
-    /// well have what the pattern has defaults of its own for.
+    /// `padObjectLiteralType`, `padTupleType`: `ty`, the type of the default of a parameter or of a
+    /// part of one that `pat` destructures, is padded with the members the pattern has its own
+    /// defaults for.
     pub(super) fn padded_for_pattern(&mut self, file: FileId, pat: PatId, ty: TypeId) -> TypeId {
         let hir = self.hir(file);
         match hir[pat].kind {
@@ -2576,7 +2651,8 @@ impl<'p> Checker<'p> {
                 if missing.is_empty() {
                     return ty;
                 }
-                // It is the kind of literal it was: with something spread into it, what else it has is still not known.
+                // It keeps its kind of literal: with a spread in it, its other properties are still
+                // unknown.
                 let literal = match self.data(ty) {
                     TypeData::Synth(shape) => shape.literal,
                     _ => Literalness::Literal,
@@ -2636,7 +2712,7 @@ impl<'p> Checker<'p> {
                     types.push(if elem.default.is_some() {
                         self.type_from_defaulted_element(file, elem.pat, elem.default)
                     } else {
-                        // A hole is an element without a name, and is told off like the rest.
+                        // A hole is an element without a name, and is reported like the others.
                         self.report_implicit_any_of_name(file, elem.pat, TypeId::ANY);
                         TypeId::ANY
                     });
@@ -2648,8 +2724,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeFromBindingElement`, of an element below a parameter that has a default: what the default is, padded in its turn for
-    /// `pat`, which the element is bound to. Only its literals are widened, and it may be left out.
+    /// `getTypeFromBindingElement` for an element under a parameter that has a default: the type of
+    /// the default, padded in turn for `pat`, which the element binds. Only its literals are
+    /// widened, and it is optional.
     fn type_from_defaulted_element(&mut self, file: FileId, pat: PatId, default: ExprId) -> TypeId {
         // `checkDeclarationInitializer`
         let contextual_type = self
@@ -2668,13 +2745,14 @@ impl<'p> Checker<'p> {
         self.optional(ty)
     }
 
-    /// `GetDeclarationOfKind(getSymbolOfDeclaration(accessor), kind)`: the getter, or the setter if that is what is `wanted`, that is
-    /// one symbol with the accessor `func`, in a class, an interface, a type literal or an object literal.
+    /// `GetDeclarationOfKind(getSymbolOfDeclaration(accessor), kind)`: the getter, or the setter if
+    /// that is `expected`, that shares one symbol with the accessor `func`, in a class, an interface,
+    /// a type literal or an object literal.
     pub(super) fn sibling_accessor(
         &mut self,
         file: FileId,
         func: FnId,
-        wanted: FnKind,
+        expected: FnKind,
     ) -> Option<FnId> {
         let bound = self.bound(file);
         let accessor = match bound.fns[func.idx()].owner {
@@ -2698,13 +2776,14 @@ impl<'p> Checker<'p> {
                     },
                     _ => FnId::NONE,
                 };
-                (other.is_some() && hir[other].kind == wanted).then_some(other)
+                (other.is_some() && hir[other].kind == expected).then_some(other)
             })
     }
 
-    // ───────────────────────────── what functions return ─────────────────────────────
+    // ───────────────────────────── return types of functions ─────────────────────────────
 
-    /// The return type of `func` as declared or as its body implies, in terms of the type parameters in scope.
+    /// The return type of `func` as declared or as inferred from its body, in terms of the type
+    /// parameters in scope.
     #[inline]
     pub fn return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
@@ -2715,7 +2794,7 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
-        if self.prepare_question_about_fn(file, func)
+        if self.prepare_query_for_fn(file, func)
             && let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func))
         {
             return known;
@@ -2747,9 +2826,10 @@ impl<'p> Checker<'p> {
         }
         let ty = self.return_type_of_fn_uncached(file, func, CheckMode::empty());
         let left = self.leave(Query::Return(file, func));
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let stored = self.cycle_result();
-            // Over the value of an inner evaluation above a `resolution_start` barrier, if one was stored.
+            // Overwrites the value of an inner evaluation above a `resolution_start` barrier, if
+            // one was stored.
             let any = (TypeId::ANY, true);
             self.p
                 .fn_return_types
@@ -2757,7 +2837,8 @@ impl<'p> Checker<'p> {
             self.report_circular_return_type(Some(Query::Return(file, func)), file, func);
             return TypeId::ANY;
         }
-        // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it is nil, and it is what the caller gets.
+        // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it is nil, and
+        // the caller gets that value.
         if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
             return known;
         }
@@ -2785,7 +2866,8 @@ impl<'p> Checker<'p> {
         if f.ret.is_some() {
             return self.type_from_node(file, f.ret);
         }
-        // `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter says it takes.
+        // `getReturnTypeFromAnnotation`: a getter without an annotation uses the annotated
+        // parameter type of its setter.
         if f.kind == FnKind::Getter
             && let Some(ty) = self.annotated_setter_type(file, func)
         {
@@ -2801,7 +2883,7 @@ impl<'p> Checker<'p> {
             }
             _ => {}
         }
-        // `getReturnTypeOfSignature`: `NodeIsMissing(body)`, a block whose `{` is not there.
+        // `getReturnTypeOfSignature`: `NodeIsMissing(body)`, a block whose `{` is missing.
         if f.flags.contains(Flags::MISSING_BODY) {
             return TypeId::ANY;
         }
@@ -2866,7 +2948,8 @@ impl<'p> Checker<'p> {
                 if types.is_empty() && !without_expression && (returns_never || may_return_never) {
                     TypeId::NEVER
                 } else if types.is_empty() {
-                    // `undefinedType` if `undefined` is among what is expected. A generator that returns nothing returns `void`, whatever is expected.
+                    // `undefinedType` if the contextual return type includes `undefined`. A
+                    // generator that returns nothing returns `void`, whatever the contextual type.
                     let expected = if is_generator {
                         None
                     } else {
@@ -2941,7 +3024,7 @@ impl<'p> Checker<'p> {
             if !yields.contains(&ty) {
                 yields.push(ty);
             }
-            // What `next` is to be given: whatever the results of the `yield`s are expected to be.
+            // The next type: the contextual types of the `yield` expressions.
             let next = if star {
                 self.iterable_types(operand, true, is_async, false, None).n
             } else {
@@ -2968,8 +3051,8 @@ impl<'p> Checker<'p> {
                 self.report_errors_from_widening_of_function(file, func, ty, kind);
             }
         }
-        // `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded`: only a type with one value is widened, and only where no
-        // literal is expected. A union of literals stays.
+        // `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded`: only a unit type is
+        // widened, and only where no literal type is expected. A union of literals is preserved.
         if self.is_unit(ret) || self.is_unit(yielded) || next.is_some_and(|t| self.is_unit(t)) {
             // `getIterationTypeOfGeneratorFunctionReturnType`: `any` says nothing.
             let expected = self
@@ -2993,7 +3076,7 @@ impl<'p> Checker<'p> {
         let ret = self.regular_object(ret);
         let next = match next {
             Some(next) => self.regular_object(next),
-            // `getContextualIterationType`, to which `any` says nothing either.
+            // `getContextualIterationType`, for which `any` provides no contextual type either.
             None => {
                 let expected = self
                     .declared_or_contextual_return_type(file, func, ContextFlags::empty())
@@ -3010,7 +3093,8 @@ impl<'p> Checker<'p> {
             [known::Generator, known::IterableIterator]
         };
         for name in names {
-            // `getGlobalType`: a class or an interface with as many type parameters, or it does not count.
+            // `getGlobalType`: a class or an interface with the same number of type parameters, or
+            // it is ignored.
             if let Some(sym) = self.global_type_symbol(name)
                 && self
                     .files()
@@ -3024,14 +3108,15 @@ impl<'p> Checker<'p> {
         TypeId::EMPTY_OBJECT
     }
 
-    /// `forEachYieldExpression` goes through the body alone: whether the `yield` `e` is in a parameter of its function instead.
+    /// `forEachYieldExpression` visits only the body: whether the `yield` `e` is in a parameter of
+    /// its function instead.
     fn is_yield_in_parameter(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = bound.expr_parent[e.idx()];
         loop {
             at = match at {
                 Parent::ParamDefault(_) => return true,
-                // What a static block yields is for the function around.
+                // A `yield` in a static block belongs to the enclosing function.
                 Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return false,
                 Parent::None | Parent::File | Parent::Module(_) => return false,
                 Parent::Expr(x) if x.is_none() => return false,
@@ -3053,8 +3138,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What the signature `func` is expected to have returns, which is what says whether a literal it returns stays one
-    /// (`getReturnTypeFromBody`). A function that is called where it is written is expected to have none.
+    /// The return type of the contextual signature of `func`, which determines whether a literal it
+    /// returns is preserved (`getReturnTypeFromBody`). An immediately invoked function has no
+    /// contextual signature.
     fn return_type_of_contextual_signature(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let owner = self.takes_context(file, func)?;
         let sig = self.contextual_signature(file, func)?;
@@ -3062,7 +3148,8 @@ impl<'p> Checker<'p> {
         Some(self.instantiate_contextual_type(returned, file, owner, ContextFlags::empty()))
     }
 
-    /// `return f(..)` in `f`, or `return await f(..)`: it gives what the other returns give.
+    /// `return f(..)` in `f`, or `return await f(..)`: its type is that of the other return
+    /// statements.
     fn is_call_of_the_function_itself(
         &mut self,
         file: FileId,
@@ -3093,7 +3180,7 @@ impl<'p> Checker<'p> {
                 if !self.is_constant_name(file, symbol) {
                     return false;
                 }
-                // The name it gives itself.
+                // The function expression's own name.
                 if self.bound(file).symbols[symbol.idx()]
                     .decls
                     .contains(&Decl::Fn(func))
@@ -3107,10 +3194,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getWidenedLiteralLikeTypeForContextualType`: a literal stays one where a literal is expected.
+    /// `getWidenedLiteralLikeTypeForContextualType`: a literal type is preserved where a literal
+    /// type is expected.
     pub fn widen_literal_for_context(&mut self, ty: TypeId, contextual: Option<TypeId>) -> TypeId {
         match contextual {
-            // Meant as itself, from here on: it is not widened later.
+            // The regular literal type from here on: it is not widened later.
             Some(contextual) if self.is_literal_context(ty, contextual) => self.regular(ty),
             _ => {
                 let ty = self.widen_literal(ty);
@@ -3131,9 +3219,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isLiteralOfContextualType`: whether `contextual` has room for the literal type `candidate`, as opposed to its base type only.
+    /// `isLiteralOfContextualType`: whether `contextual` accepts the literal type `candidate`, as
+    /// opposed to its base type only.
     pub fn is_literal_context(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
-        // `TypeFlagsStringLiteral`, `TypeFlagsNumberLiteral`: a member of an enum has that of its value, one that is worked out neither.
+        // `TypeFlagsStringLiteral`, `TypeFlagsNumberLiteral`: an enum member has the flag of its
+        // value, a computed member neither.
         let is_string_literal = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
@@ -3163,7 +3253,8 @@ impl<'p> Checker<'p> {
         }
         // `TypeFlagsInstantiableNonPrimitive`, which `keyof T` is not.
         if self.is_deferred(contextual) && !matches!(self.data(contextual), TypeData::Keyof(_)) {
-            // A type parameter that extends a primitive wants the literal, be it `string & {}` that it extends.
+            // A type parameter constrained to a primitive requests the literal type, even if the
+            // constraint is `string & {}`.
             let constraint = self.base_constraint(contextual);
             let extends =
                 |c: &Self, kind: fn(&Self, TypeId) -> bool| c.maybe_type_of_kind(constraint, kind);
@@ -3201,7 +3292,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── promises and iterables ─────────────────────────────
 
-    /// `X`, if `ty` is `Awaited<X>` waiting for `X` to be known.
+    /// `X`, if `ty` is an `Awaited<X>` that is deferred because `X` is generic.
     pub(super) fn awaited_argument(&mut self, ty: TypeId) -> Option<TypeId> {
         let TypeData::Cond {
             file, node, mapper, ..
@@ -3224,8 +3315,8 @@ impl<'p> Checker<'p> {
         Some(self.instantiate(param, mapper))
     }
 
-    /// `checkAwaitedType`: what `await` gives for a value of type `ty`. `message`: what is said at `error_node` of what has a `then`
-    /// to call and is no promise.
+    /// `checkAwaitedType`: the type of `await` applied to a value of type `ty`. `message`: the
+    /// error reported at `error_node` for a type that has a callable `then` and is not a promise.
     pub(super) fn check_awaited_type(
         &mut self,
         ty: TypeId,
@@ -3242,12 +3333,12 @@ impl<'p> Checker<'p> {
         awaited.unwrap_or(TypeId::ERROR)
     }
 
-    /// The same, and nothing is said.
+    /// The same, without reporting.
     pub fn awaited(&mut self, ty: TypeId) -> TypeId {
         self.awaited_or_none(ty).unwrap_or(TypeId::ERROR)
     }
 
-    /// `getAwaitedType`. `None`: to await a `ty` is an error.
+    /// `getAwaitedType`. `None`: awaiting a `ty` is an error.
     pub(super) fn awaited_or_none(&mut self, ty: TypeId) -> Option<TypeId> {
         self.awaited_type_ex(ty, None)
     }
@@ -3255,7 +3346,8 @@ impl<'p> Checker<'p> {
     /// `getAwaitedTypeEx`. `error`: `errorNode` and `diagnosticMessage`.
     fn awaited_type_ex(&mut self, ty: TypeId, error: Option<(Place, u32)>) -> Option<TypeId> {
         let awaited = self.awaited_no_alias_ex(ty, error)?;
-        // `createAwaitedTypeIfNeeded`, of the whole: `T | U` is `Awaited<T | U>` if either may turn out to be a promise.
+        // `createAwaitedTypeIfNeeded`, applied to the whole: `T | U` is `Awaited<T | U>` if either
+        // may turn out to be a promise.
         if self.is_awaited_type_needed(awaited) {
             // `getGlobalAwaitedSymbol`
             let Some(alias) = self.files().global(known::Awaited, SymFlags::TYPE_ALIAS) else {
@@ -3269,7 +3361,8 @@ impl<'p> Checker<'p> {
         Some(awaited)
     }
 
-    /// `getAwaitedTypeNoAlias`: the same, but what may turn out to be a promise stands for itself, not wrapped in `Awaited`.
+    /// `getAwaitedTypeNoAlias`: the same, but a type that may turn out to be a promise is left as
+    /// is, not wrapped in `Awaited`.
     pub(super) fn awaited_no_alias(&mut self, ty: TypeId) -> Option<TypeId> {
         self.awaited_no_alias_ex(ty, None)
     }
@@ -3279,8 +3372,9 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) || self.is_primitive(ty) || self.awaited_argument(ty).is_some() {
             return Some(ty);
         }
-        // `awaitedTypeOfType`. With a node to report on nothing kept is gone by: what is found wrong on the way to an answer is not
-        // kept with it. tsgo keeps the answer in each checker and says it the first time only, which is a matter of who asks first.
+        // `awaitedTypeOfType`. With a node to report on the cache is bypassed: errors found while
+        // computing a result are not cached with it. tsgo caches the result in each checker and
+        // reports only the first time, which depends on which caller is first.
         if error.is_some()
             || self.has_type_variables(ty)
             || !self.is_no_type_resolution_in_progress()
@@ -3296,7 +3390,7 @@ impl<'p> Checker<'p> {
             // A result that depends on one of these is not cacheable, and `non_cacheable_mark` does not always show it.
             && self.inference_contexts.is_empty()
             && self.provisional.is_empty()
-            // These are raised for whoever asked, each time.
+            // These are set for the current caller, every time.
             && !(self.relation_too_complex
                 || !self.relations_too_deep.is_empty())
             && self.reliability == 0
@@ -3308,8 +3402,9 @@ impl<'p> Checker<'p> {
         awaited
     }
 
-    /// What is being worked out about a type is passed over in silence by whoever comes upon it meanwhile. Whether there is nothing of
-    /// the kind: what is made of a type now is made of it at any time.
+    /// A resolution in progress for a type is silently skipped by any caller that re-enters it.
+    /// Returns whether there is none: in that case a result computed from a type now is valid at
+    /// any time.
     fn is_no_type_resolution_in_progress(&self) -> bool {
         self.awaiting.is_empty()
             && self.instantiation_depth == 0
@@ -3332,14 +3427,14 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// Of a `ty` that is not `any`, no primitive, and no `Awaited<T>` that waits.
+    /// For a `ty` that is not `any`, not a primitive, and not a deferred `Awaited<T>`.
     fn awaited_no_alias_uncached(
         &mut self,
         ty: TypeId,
         error: Option<(Place, u32)>,
     ) -> Option<TypeId> {
         if self.is_union(ty) {
-            // `type S = string | Promise<S>` never comes to an end.
+            // `type S = string | Promise<S>` never terminates.
             if self.awaiting.contains(&ty) {
                 if let Some((error_node, _)) = error {
                     self.error_at(error_node, 1062, &[]);
@@ -3353,7 +3448,8 @@ impl<'p> Checker<'p> {
                 mapped.extend(self.awaited_no_alias_ex(part, error));
             }
             self.awaiting.pop();
-            // `mapType`: a member for which there is nothing is left out, and nothing left is nothing.
+            // `mapType`: a member with no result is omitted, and if none is left there is no
+            // result.
             if mapped[..] == parts[..] {
                 return Some(ty);
             }
@@ -3385,7 +3481,7 @@ impl<'p> Checker<'p> {
             self.depth -= 1;
             return awaited;
         }
-        // What has a `then` to call and is no promise would never be settled either.
+        // A type that has a callable `then` and is not a promise would never be settled either.
         if !self.is_thenable(ty) {
             return Some(ty);
         }
@@ -3399,7 +3495,7 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// `isAwaitedTypeNeeded`: whether `ty` waits for a type parameter that may turn out to be a promise.
+    /// `isAwaitedTypeNeeded`: whether `ty` is a generic type that may turn out to be a promise.
     fn is_awaited_type_needed(&mut self, ty: TypeId) -> bool {
         if self.is_any(ty)
             || self.awaited_argument(ty).is_some()
@@ -3429,7 +3525,8 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// `getPropertyOfType`, and `getTypeOfSymbol` of that: the type of the property `name` of `ty`, and whether it may be left out.
+    /// `getPropertyOfType`, and `getTypeOfSymbol` of that: the type of the property `name` of `ty`,
+    /// and whether it is optional.
     fn declared_property(&mut self, ty: TypeId, name: Atom) -> Option<(TypeId, bool)> {
         let (prop, mapper) = self.get_property_of_type(ty, name)?;
         let found = self.type_of_prop(prop, mapper);
@@ -3454,7 +3551,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isThenableType`: whether a `ty` has a `then` that can be called.
+    /// `isThenableType`: whether a `ty` has a callable `then`.
     pub(super) fn is_thenable(&mut self, ty: TypeId) -> bool {
         if self.is_all_primitive_or_never(ty) {
             return false;
@@ -3467,13 +3564,15 @@ impl<'p> Checker<'p> {
         !self.signatures(then, false).is_empty()
     }
 
-    /// `getPromisedTypeOfPromise`: what the callback given to `ty.then` is called with. `None`: a `ty` is no promise.
+    /// `getPromisedTypeOfPromise`: the parameter type of the callback passed to `ty.then`. `None`:
+    /// a `ty` is not a promise.
     pub(super) fn thenable_value(&mut self, ty: TypeId) -> Option<TypeId> {
         self.thenable_value_ex(ty, &mut None)
     }
 
-    /// `getPromisedTypeOfPromiseEx`. `this_type_for_error_out`: the `this` that a `then` asks for, if no `then` takes a `ty` for `this`.
-    /// (Nobody gives it an `errorNode`.)
+    /// `getPromisedTypeOfPromiseEx`. `this_type_for_error_out`: the `this` type that a `then`
+    /// requires, if no `then` accepts a `ty` as `this`.
+    /// (No caller passes an `errorNode`.)
     fn thenable_value_ex(
         &mut self,
         ty: TypeId,
@@ -3482,26 +3581,27 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return None;
         }
-        // The `then` of a `PromiseLike` comes to the same.
+        // The `then` of a `PromiseLike` gives the same result.
         if let Some(args) = self
             .is_global_ref(ty, known::Promise)
             .or_else(|| self.is_global_ref(ty, known::PromiseLike))
         {
             return args.first().copied();
         }
-        // What is no object is not taken for a promise, whatever `then` it has.
+        // A type that is not an object is never treated as a promise, regardless of its `then`
+        // member.
         if self.is_all_primitive_or_never(ty) {
             return None;
         }
         let (then, _) = self.declared_property(ty, known::then)?;
-        // Not found out, and so neither is what is promised.
+        // `then` is unresolved, so the promised type is unresolved too.
         if then == TypeId::UNRESOLVED {
             return Some(then);
         }
         if self.is_any(then) {
             return None;
         }
-        // The ways to call `then` on a `ty`.
+        // The call signatures of `then` on a `ty`.
         let mut callbacks: SmallVec<[TypeId; 4]> = SmallVec::new();
         let mut this_type_for_error = None;
         for sig in self.signatures(then, false) {
@@ -3537,8 +3637,9 @@ impl<'p> Checker<'p> {
         Some(self.union_reduced(&values))
     }
 
-    /// `checkIteratedTypeOrElementType`: what `for (const x of ty)` binds `x` to, `for await` if `is_async`, and what `...ty` and
-    /// `yield* ty` give one at a time. What cannot be gone through, `never` for one, is an error, and what is in error can be anything.
+    /// `checkIteratedTypeOrElementType`: the type that `for (const x of ty)` binds `x` to (`for
+    /// await` if `is_async`), and the element type that `...ty` and `yield* ty` produce. A type
+    /// that is not iterable, such as `never`, is an error, and the result of an error is any.
     pub fn iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {
         match self.iterated_type_if_any(ty, is_async) {
             Some(element) => element,
@@ -3551,8 +3652,9 @@ impl<'p> Checker<'p> {
         self.iterated_type(ty, is_async)
     }
 
-    /// `getIteratedTypeOrElementType`, and nothing is said. `None`: a `ty` cannot be gone through. Strings are for `for..of` alone
-    /// (`IterationUseAllowsStringInputFlag`), but who asks is not told apart here.
+    /// `getIteratedTypeOrElementType` without reporting. `None`: `ty` is not iterable. Only
+    /// `for..of` allows strings (`IterationUseAllowsStringInputFlag`), but callers are not
+    /// distinguished here.
     pub(super) fn iterated_type_if_any(&mut self, ty: TypeId, is_async: bool) -> Option<TypeId> {
         let usage = if is_async {
             IterationUse::ForAwaitOf
@@ -3562,7 +3664,8 @@ impl<'p> Checker<'p> {
         self.iterated_type_or_element_type(usage, ty, TypeId::UNDEFINED, None)
     }
 
-    /// `getIteratedTypeOrElementType`. `sent`: what `next` will be sent. With an `error_node` it is `checkAssignability` too.
+    /// `getIteratedTypeOrElementType`. `sent`: the type that will be passed to `next`. An
+    /// `error_node` also implies `checkAssignability`.
     pub(super) fn iterated_type_or_element_type(
         &mut self,
         usage: IterationUse,
@@ -3602,7 +3705,7 @@ impl<'p> Checker<'p> {
                 return types.y;
             }
         }
-        // Without `Iterable` there are strings, where they will do, and what is like an array.
+        // Without `Iterable`, only strings (where allowed) and array-like types are iterable.
         let mut arrays = ty;
         if usage.is_for_of() {
             arrays = self.filter(ty, |c, m| !c.is_string_like(m));
@@ -3638,7 +3741,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `reportTypeNotIterableError`, not added yet. `is_of_for_of`: `error_node` is what a `for..of` goes through.
+    /// `reportTypeNotIterableError`. The diagnostic is not added yet. `is_of_for_of`: `error_node`
+    /// is the iterated expression of a `for..of`.
     fn type_not_iterable_error(
         &mut self,
         error_node: Place,
@@ -3757,7 +3861,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The generator that `e`, a `yield`, is written in. Where there is none `checkYieldExpression` returns `any` at once.
+    /// The generator function that contains the `yield` expression `e`. Without one,
+    /// `checkYieldExpression` returns `any` immediately.
     pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.get_containing_function(file, e)
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
@@ -3786,9 +3891,10 @@ impl<'p> Checker<'p> {
         self.check_type_assignable_to(generator, return_type, error_node, None)
     }
 
-    /// `getIterationTypesOfGeneratorFunctionReturnType`: what a generator function that says it returns a `ty` is to yield, to return
-    /// in the end, and is sent. `None`: a `ty` is neither something to go through nor an iterator. Where there are some but
-    /// not all three, whoever asks makes do with anything, and with `unknown` for what it is sent.
+    /// `getIterationTypesOfGeneratorFunctionReturnType`: the yield, return and next types of a
+    /// generator function whose declared return type is `ty`. `None`: `ty` is neither an iterable
+    /// nor an iterator. If only some of the three exist, callers get any for a missing one, and
+    /// `unknown` for a missing next type.
     pub fn iteration_types(&mut self, ty: TypeId, is_async: bool) -> Option<IterationTypes> {
         let types = self.generator_return_types(ty, is_async);
         types.has_types().then(|| IterationTypes {
@@ -3798,7 +3904,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The same, with what is missing left missing.
+    /// The same, but missing types stay missing.
     fn generator_return_types(&mut self, ty: TypeId, is_async: bool) -> Iter3 {
         let types = self.iterable_types(ty, !is_async, is_async, false, None);
         if types.has_types() {
@@ -3808,10 +3914,12 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getIterationTypesOfIterable`: what comes of going through a `ty`, by its `[Symbol.asyncIterator]` if `asynchronous`, failing
-    /// that by its `[Symbol.iterator]` if `sync`. `for_of`: with `for..of`, awaited or not (`IterationUseForOfFlag`). tsgo keeps the
-    /// answer in each checker, and what is found wrong on the way to one is said the first time only, which is a matter of who asks
-    /// first: here it is said of every `error_node`.
+    /// `getIterationTypesOfIterable`: the iteration types of `ty`, through its
+    /// `[Symbol.asyncIterator]` if `asynchronous`, otherwise through its `[Symbol.iterator]` if
+    /// `sync`. `for_of`: the use is a `for..of`, with or without `await` (`IterationUseForOfFlag`).
+    /// tsgo caches the result per checker, so errors found while computing it are reported only on
+    /// the first request, which depends on which caller is first. Here they are reported for every
+    /// `error_node`.
     pub(super) fn iterable_types(
         &mut self,
         ty: TypeId,
@@ -3824,7 +3932,7 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return Iter3::all(ty);
         }
-        // Each member has to be something to go through. Of the members nothing is said.
+        // Every member must be iterable. No error is reported for an individual member.
         if self.is_union(ty) {
             let parts = self.parts(ty);
             let mut all = Vec::with_capacity(parts.len());
@@ -3838,7 +3946,8 @@ impl<'p> Checker<'p> {
             }
             return self.combine_iteration_types(&all);
         }
-        // A type parameter has what it extends has, and goes by its own name.
+        // A type parameter has the iteration types of its constraint, and the error names the type
+        // parameter itself.
         if self.is_deferred(ty) {
             let apparent = self.apparent_type(ty);
             let types = if apparent == ty || self.is_any(apparent) {
@@ -3851,7 +3960,8 @@ impl<'p> Checker<'p> {
             }
             return types;
         }
-        // What the library that has `Iterable` says of arrays, tuples and strings comes to this.
+        // For arrays, tuples and strings this equals the result from the declarations of a library
+        // that has `Iterable`.
         if sync && self.global_type_of_arity(known::Iterable, 3).is_some() {
             let element = match self.data(ty) {
                 TypeData::Tuple { flags, .. } => {
@@ -3922,8 +4032,9 @@ impl<'p> Checker<'p> {
         Iter3::default()
     }
 
-    /// The end of `getIterationTypesOfIterableWorker`: a `ty` cannot be gone through, and `diags` goes to explain that. tsgo puts it
-    /// off (`addDeferredDiagnostic`) so that printing closes no circle.
+    /// The end of `getIterationTypesOfIterableWorker`: `ty` is not iterable, and `diags` becomes
+    /// the related information of that error. tsgo defers it (`addDeferredDiagnostic`) so that
+    /// printing the type cannot cause a cycle.
     fn report_type_not_iterable(
         &mut self,
         error_node: Option<Place>,
@@ -3948,8 +4059,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getIterationTypesOfIterableFast`, `getIterationTypesOfIteratorFast`: of an instantiation of one of the global types `names`, or
-    /// of one of the iterators the library has for its own collections, the type arguments say.
+    /// `getIterationTypesOfIterableFast`, `getIterationTypesOfIteratorFast`: for an instantiation
+    /// of one of the global types `names`, or of one of the library's iterators for its built-in
+    /// collections, the iteration types are read from the type arguments.
     fn iteration_types_of_global_reference(
         &mut self,
         ty: TypeId,
@@ -3983,7 +4095,8 @@ impl<'p> Checker<'p> {
         Iter3::default()
     }
 
-    /// `getResolvedIterationTypes`: an asynchronous iterator awaits what it yields and what it returns. What cannot be awaited stays.
+    /// `getResolvedIterationTypes`: an async iterator awaits its yield type and its return type. A
+    /// type that cannot be awaited is left unchanged.
     fn resolved_iteration_types(
         &mut self,
         y: TypeId,
@@ -4007,7 +4120,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `combineIterationTypes`: of each kind the union of those there are.
+    /// `combineIterationTypes`: for each kind, the union of the types that are present.
     fn combine_iteration_types(&mut self, all: &[Iter3]) -> Iter3 {
         let (mut y, mut r, mut n) = (Vec::new(), Vec::new(), Vec::new());
         for types in all {
@@ -4064,7 +4177,7 @@ impl<'p> Checker<'p> {
         if self.is_any(method) {
             return Iter3::all(method);
         }
-        // What the ways to call it without an argument give, all at once.
+        // The intersection of the return types of its call signatures that accept zero arguments.
         let mut iterators = Vec::new();
         let all_signatures = self.signatures(method, false);
         for &sig in &all_signatures {
@@ -4137,7 +4250,8 @@ impl<'p> Checker<'p> {
         self.combine_iteration_types(&all)
     }
 
-    /// `getIterationTypesOfMethod`: what `next`, `return` or `throw` of the iterator `ty` says.
+    /// `getIterationTypesOfMethod`: the iteration types implied by the `next`, `return` or `throw`
+    /// method of the iterator `ty`.
     fn iteration_types_of_method(
         &mut self,
         ty: TypeId,
@@ -4185,8 +4299,8 @@ impl<'p> Checker<'p> {
             }
             return Iter3::default();
         }
-        // The method of that name of the global `Generator` or `Iterator` itself goes by their type arguments, in which what may be
-        // left out is not `undefined`.
+        // The method of that name declared by the global `Generator` or `Iterator` itself uses
+        // their type arguments, which do not include the `undefined` of an optional parameter.
         if let TypeData::Fns { decls, mapper } = self.data(method)
             && let [(of, func)] = decls[..]
             && let FnOwner::Member(member) = self.bound(of).fns[func.idx()].owner
@@ -4203,7 +4317,7 @@ impl<'p> Checker<'p> {
             } else {
                 (known::Generator, known::Iterator)
             };
-            // The mapper of a method is about the type parameters of the declaration it is written in.
+            // A method's mapper maps the type parameters of its enclosing declaration.
             let own = self.hir(of)[interface].type_params;
             if own.len() == 3
                 && (self.global_type_of_arity(generator, 3) == Some(owner)
@@ -4245,7 +4359,7 @@ impl<'p> Checker<'p> {
                 self.union(&parameters)
             };
             if is_next {
-                // What `next` is given is not awaited, what `return` is given is.
+                // The parameter type of `next` is not awaited. That of `return` is.
                 next = Some(parameter);
             } else {
                 returned.push(if is_async {
@@ -4287,7 +4401,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getIterationTypesOfIteratorResult`: what `ty`, which `next` gives, says is yielded and returned.
+    /// `getIterationTypesOfIteratorResult`: the yield and return types implied by `ty`, the return
+    /// type of `next`.
     fn iteration_types_of_iterator_result(&mut self, ty: TypeId) -> Iter3 {
         if self.is_any(ty) {
             return Iter3::all(ty);
@@ -4313,7 +4428,7 @@ impl<'p> Checker<'p> {
         if yielded.is_none() && returned.is_none() {
             return Iter3::default();
         }
-        // An iterator that returns nothing may leave `value` out at the end.
+        // An iterator that returns no value may omit `value` in its final result.
         Iter3 {
             y: yielded,
             r: Some(returned.unwrap_or(TypeId::VOID)),
@@ -4321,8 +4436,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The `value` of the members of `ty` whose `done` can be `done`, which is `false` while it goes on and `true` at the end
-    /// (`isIteratorResult`). Left out, it is `false`.
+    /// The `value` type of the members of `ty` whose `done` can be `done`, which is `false` while
+    /// iteration continues and `true` at the end (`isIteratorResult`). An omitted `done` counts as
+    /// `false`.
     fn value_of_iterator_results(&mut self, ty: TypeId, done: TypeId) -> Option<TypeId> {
         let results = self.filter(ty, |c, m| {
             let declared = c

@@ -37,17 +37,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expected_string(b"\"meta\"")?;
             }
         } else if TYPESCRIPT && p.lexer.token == T::TLessThan && p.lexer.tolerant {
-            // `parseLeftHandSideExpressionOrHigher`: `import` before `<` is the keyword by itself, an expression of the error type.
-            // Type arguments are tried after it as after any expression (`tryParseTypeArgumentsInExpression`). None of this is a
-            // syntax error, so it is no reason for an attempt at parsing to fail either.
+            // `parseLeftHandSideExpressionOrHigher`: `import` before `<` is the keyword by itself,
+            // an expression of the error type. Type arguments are tried after it as after any
+            // expression (`tryParseTypeArgumentsInExpression`). None of this is a syntax error, so
+            // a speculative parse does not fail on it either.
             let less_than = p.lexer.loc();
             let (logged, errors) = (p.log().msgs.len(), p.log().errors);
             if !p.try_skip_type_script_type_arguments_with_backtracking()? {
-                // `import < a`: nothing is said, and the caller goes on with the comparison.
+                // `import < a`: nothing is reported, and the caller continues with the comparison.
                 return Ok(p.new_expr(E::Missing {}, loc));
             }
             if p.lexer.token != T::TOpenParen {
-                // `parseMemberExpressionRest`: a tagged template takes the type arguments for itself, and nothing objects to them there.
+                // `parseMemberExpressionRest`: a tagged template consumes the type arguments
+                // itself, and no check reports them there.
                 if !matches!(
                     p.lexer.token,
                     T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
@@ -60,8 +62,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.note_type_arguments(&mut keyword, less_than);
                 return Ok(keyword);
             }
-            // `import<T>(x)` is the call. `checkImportCallExpression` never looks at its type arguments, so what the list logged about
-            // itself (1099, 1009) goes.
+            // `import<T>(x)` is the call. `checkImportCallExpression` never checks its type
+            // arguments, so the errors the list logged about itself (1099, 1009) are removed.
             let log = p.log();
             log.msgs.truncate(logged);
             log.errors = errors;
@@ -156,9 +158,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `import.name` where the name is not `meta`, after the dot (`parseLeftHandSideExpressionOrHigher`). It is a meta property
-    /// of the error type whatever the name is, and `checkGrammarMetaProperty` objects. It is kept as an access to the name on a missing
-    /// expression where the keyword is, which has that type. `None`: `import.defer` before its arguments.
+    /// `import.name` where the name is not `meta`, after the dot
+    /// (`parseLeftHandSideExpressionOrHigher`). It is a meta property of the error type whatever
+    /// the name is, and `checkGrammarMetaProperty` reports it. It is represented as a property
+    /// access of the name on a missing expression at the keyword's position, which has that type.
+    /// `None`: `import.defer` before its arguments.
     #[cold]
     #[inline(never)]
     fn parse_other_import_meta_property(
@@ -181,7 +185,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(None);
         }
         if is_defer {
-            // "(" expected, where the meta property ends.
+            // "(" expected, at the end of the meta property.
             let end = bun_ast::Loc {
                 start: name.loc.start + name.len,
             };
@@ -205,8 +209,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )))
     }
 
-    /// `parseArgumentList` after `import` or `import.defer`: any number of arguments, spreads included.
-    /// `checkGrammarImportCallExpression` objects to them. `E::Import` has room for two.
+    /// `parseArgumentList` after `import` or `import.defer`: any number of arguments, including
+    /// spreads. `checkGrammarImportCallExpression` reports them. `E::Import` has slots for two.
     #[cold]
     #[inline(never)]
     fn parse_import_call_tolerant(
@@ -439,8 +443,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parseNamedImports`, `parseNamedExports`. Returns the specifiers that are not type-only, and whether any is type-only.
-    /// All of them are kept for the checker.
+    /// `parseNamedImports`, `parseNamedExports`. Returns the specifiers that are not type-only, and
+    /// whether any is type-only. All of them are saved for the checker.
     #[cold]
     #[inline(never)]
     fn parse_specifiers_tolerant(
@@ -476,7 +480,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 end: p.lexer.full_start(),
             });
             let other = specifier.property_name.unwrap_or(specifier.name);
-            // The name in this file, and the name in the other module or for other modules.
+            // The local name, and the name imported from or exported to other modules.
             let (local, alias) = if is_import {
                 (specifier.name, other)
             } else {
@@ -572,7 +576,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || matches!(self.lexer.token, T::TStringLiteral | T::TPrivateIdentifier)
     }
 
-    /// `parseModuleExportName`: a string or any word is consumed. Anything else stays: 1003, and the name is missing.
+    /// `parseModuleExportName`: a string, identifier or keyword is consumed. Any other token is not
+    /// consumed: 1003, and the name is missing.
     #[cold]
     #[inline(never)]
     fn parse_module_export_name_tolerant(
@@ -582,7 +587,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let range = p.lexer.range();
         if !p.can_parse_module_export_name() {
-            // `createMissingNode`: where the token before it ends.
+            // `createMissingNode`: at the end of the previous token.
             let range = bun_ast::Range {
                 loc: p.lexer.full_start(),
                 len: 0,

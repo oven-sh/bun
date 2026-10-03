@@ -1,14 +1,15 @@
-//! Small things, each with a rule of its own: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432, 1344.
+//! Small independent checks: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432, 1344.
 //!
-//! Follows `isValidSpreadType`, `checkInstanceOfExpression` with `resolveInstanceofExpression`, `checkForInStatement`,
-//! `checkTypeNameIsReserved` and `checkEnumDeclaration` of TypeScript 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of
-//! its binder.go.
+//! Follows `isValidSpreadType`, `checkInstanceOfExpression` with `resolveInstanceofExpression`,
+//! `checkForInStatement`, `checkTypeNameIsReserved` and `checkEnumDeclaration` of TypeScript
+//! 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of its binder.go.
 
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeKind};
 
 impl Checker<'_> {
-    /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
+    /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot be hoisted past a `let` or a
+    /// `const` of the same name.
     fn check_vars_not_shadowed(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &(pat, written_in) in &bound.hoisted_vars {
@@ -30,7 +31,7 @@ impl Checker<'_> {
                                     PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
                                         root = outer
                                     }
-                                    // What `catch` binds does not count.
+                                    // A `catch` binding does not count.
                                     PatParent::Var(d) => {
                                         let stmt = bound.var_stmt[d.idx()];
                                         return hir[d].kind != VarKind::Var
@@ -52,7 +53,7 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn check_small_things(&mut self, file: FileId) {
+    pub(super) fn check_misc(&mut self, file: FileId) {
         self.check_vars_not_shadowed(file);
     }
 
@@ -68,7 +69,8 @@ impl Checker<'_> {
         }
     }
 
-    /// From `checkBinaryLikeExpression`, of `e`, which is `left && ..`, `left || ..` or `left ?? ..`.
+    /// From `checkBinaryLikeExpression`, for `e`, which is `left && ..`, `left || ..` or `left ??
+    /// ..`.
     pub(super) fn check_testing_known_truthy_left_operand(
         &mut self,
         file: FileId,
@@ -80,7 +82,7 @@ impl Checker<'_> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Out of the chain it is part of.
+        // Walks up out of the chain it is part of.
         let mut parent = bound.expr_parent[e.idx()];
         while let Parent::Expr(p) = parent
             && matches!(
@@ -105,7 +107,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkTestingKnownTruthyTypes`. `whole`: the condition that was first asked about, whose type is `condType`.
+    /// `checkTestingKnownTruthyTypes`. `whole`: the condition the check was first called with,
+    /// whose type is `condType`.
     fn check_known_truthy_types(
         &mut self,
         file: FileId,
@@ -150,11 +153,12 @@ impl Checker<'_> {
         if is_logical(location) {
             return self.check_known_truthy_types(file, location, whole, body);
         }
-        // Only a right operand is judged by its own type: anything else by that of the whole condition.
+        // Only a right operand is tested by its own type. Anything else uses the type of the whole
+        // condition.
         let judged_by = if location == test { whole } else { location };
         let ty = self.type_of_expr(file, judged_by);
         let start = self.start_inside_parentheses(file, location);
-        // A member of an enum is what it is.
+        // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
             (self.data(ty), hir[location].kind)
             && self.is_resolved_to_an_enum(file, obj)
@@ -196,10 +200,10 @@ impl Checker<'_> {
         if !is_named && !is_promise {
             return;
         }
-        // An optional method or property that is narrowed here is tested for good reason.
+        // Testing an optional method or property that is narrowed here is legitimate.
         let is_used = is_named && {
             let mut used = false;
-            // To the right of it in a chain of `&&`, which parentheses end.
+            // The operands to its right in a chain of `&&`. Parentheses end the chain.
             let mut chain = if is_parenthesized(self.hir(file), test) {
                 Parent::None
             } else {
@@ -225,7 +229,8 @@ impl Checker<'_> {
         if !is_used {
             let at = (file, start, self.end_inside_parentheses(file, location));
             if is_promise {
-                // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
+                // `getTypeNameForErrorDisplay`: two types that print identically are both printed
+                // with qualified names.
                 let name = self.type_names_for_error_display(ty, ty).0;
                 // `errorAndMaybeSuggestAwait`
                 self.error_at(at, 2801, &[Arg::Bytes(&name)])
@@ -236,8 +241,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getResolvedSymbolOrNil(e).Flags&SymbolFlagsEnum`: whether the name `e`, or the name after the dot in it, was found to mean an
-    /// enum. What is imported was found to mean the import.
+    /// `getResolvedSymbolOrNil(e).Flags&SymbolFlagsEnum`: whether the name `e`, or the name after
+    /// its dot, resolved to an enum. An imported name resolved to the import alias.
     fn is_resolved_to_an_enum(&mut self, file: FileId, e: ExprId) -> bool {
         if is_parenthesized(self.hir(file), e) {
             return false;
@@ -255,8 +260,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `isSymbolUsedInConditionBody`, `isSymbolUsedInBinaryExpressionChain`: whether what `tested` names is named again inside
-    /// `container`. `by_name_alone`: on whatever it may be.
+    /// `isSymbolUsedInConditionBody`, `isSymbolUsedInBinaryExpressionChain`: whether the symbol
+    /// `tested` names is referenced again inside `container`. `by_name_alone`: on any receiver.
     fn is_mentioned_within(
         &mut self,
         file: FileId,
@@ -266,15 +271,15 @@ impl Checker<'_> {
         by_name_alone: bool,
     ) -> bool {
         let hir = self.hir(file);
-        // `IsIdentifier`: only those are looked at, and a private name is not one.
-        let is_looked_at = match hir[tested].kind {
+        // `IsIdentifier`: only identifiers are considered, and a private name is not one.
+        let is_visited = match hir[tested].kind {
             ExprKind::Dot { name, .. } => !self.is_private_name(name),
             ExprKind::Ident(_) => true,
             _ => false,
         };
         // The name of an `a.b` is a child of it.
         let is_access = |e: ExprId| matches!(hir[e].kind, ExprKind::Dot { .. });
-        is_looked_at
+        is_visited
             && (matches!(container, Parent::Expr(e) if is_access(e) && self.is_mention_of(file, tested, test, e, by_name_alone))
                 || self.is_mentioned_below(file, tested, test, hir.node(container), by_name_alone))
     }
@@ -296,7 +301,7 @@ impl Checker<'_> {
             })
     }
 
-    /// `visit`, of the name `child`, or of the `a.b` whose name it is.
+    /// `visit` for the name `child`, or for the `a.b` whose name it is.
     fn is_mention_of(
         &mut self,
         file: FileId,
@@ -311,7 +316,7 @@ impl Checker<'_> {
             || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
         if child == tested
             || !may_be_the_same
-            // `getSymbolAtLocation`: the name in `{ name }` is that of the property.
+            // `getSymbolAtLocation`: the name in `{ name }` resolves to the property.
             || matches!(bound.expr_parent[child.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
             || !self.same_property(file, tested, child)
         {
@@ -323,11 +328,11 @@ impl Checker<'_> {
         let (ExprKind::Dot { obj: mut a, .. }, ExprKind::Dot { obj: mut b, .. }) =
             (hir[tested].kind, hir[child].kind)
         else {
-            // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. In parentheses it is not one, and
-            // nothing is like it.
+            // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. A
+            // parenthesized name is not one, and nothing matches it.
             return !is_parenthesized(hir, tested);
         };
-        // On the same thing, written the same way.
+        // On the same receiver, with the same syntax.
         while !is_parenthesized(hir, a) && !is_parenthesized(hir, b) {
             match (hir[a].kind, hir[b].kind) {
                 (ExprKind::Ident(_), ExprKind::Ident(_)) => return same_variable(a, b),
@@ -347,7 +352,8 @@ impl Checker<'_> {
         false
     }
 
-    /// `getSymbolAtLocation` of the name in `a.name`: what declares the property that is found. `None`: it cannot be told.
+    /// `getSymbolAtLocation` of the name in `a.name`: the declaration source of the property it
+    /// resolves to. `None`: unknown.
     fn property_found(&mut self, file: FileId, e: ExprId) -> Option<PropSource> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
             return None;
@@ -358,7 +364,7 @@ impl Checker<'_> {
         self.prop_of(ty, name).map(|(prop, _)| prop.source)
     }
 
-    /// Whether `a.name` and `b.name` find one property. What cannot be told counts as one.
+    /// Whether `a.name` and `b.name` resolve to the same property. Unknown counts as the same.
     fn same_property(&mut self, file: FileId, a: ExprId, b: ExprId) -> bool {
         match (self.property_found(file, a), self.property_found(file, b)) {
             (Some(x), Some(y)) => x == y,
@@ -370,7 +376,7 @@ impl Checker<'_> {
     pub(super) fn is_valid_spread_type(&mut self, ty: TypeId) -> bool {
         // `getBaseConstraintOrType`
         let ty = self.map_type(ty, |c, m| c.base_constraint_if_any(m, 0).unwrap_or(m));
-        // `removeDefinitelyFalsyTypes`: what is sure to be falsy spreads nothing.
+        // `removeDefinitelyFalsyTypes`: a definitely falsy value spreads no properties.
         let ty = self.remove_definitely_falsy(ty);
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
@@ -387,19 +393,20 @@ impl Checker<'_> {
         }
     }
 
-    /// `getBaseConstraintOfType`. `None`: there is none, which is not `unknown`. What extends nothing may turn out to be an object,
-    /// what extends `unknown` can be anything at all.
+    /// `getBaseConstraintOfType`. `None`: no constraint, which differs from `unknown`. A type
+    /// without a constraint may turn out to be an object. A type constrained to `unknown` can be
+    /// anything.
     fn base_constraint_if_any(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
         match self.data(ty) {
             TypeData::TypeParam(..) => {
-                // Round in circles.
+                // A cycle.
                 if depth > 16 {
                     return None;
                 }
                 let constraint = self.constraint_of_type_param(ty)?;
                 self.base_constraint_if_any(constraint, depth + 1)
             }
-            // `computeBaseConstraint`: of the members that have one.
+            // `computeBaseConstraint`: built from the members that have a constraint.
             TypeData::Intersection(parts) => {
                 let mut constraints = Vec::with_capacity(parts.len());
                 for &part in parts.iter() {
@@ -411,7 +418,7 @@ impl Checker<'_> {
                     Some(self.intersection(&constraints))
                 }
             }
-            // All of them have to have one.
+            // Every member must have a constraint.
             TypeData::Union(parts) => {
                 let mut constraints = Vec::with_capacity(parts.len());
                 for &part in parts.iter() {
@@ -424,8 +431,9 @@ impl Checker<'_> {
                 if constraint != TypeId::UNKNOWN {
                     return Some(constraint);
                 }
-                // Only of `T[K]` is it told apart whether there is none or it is `unknown`. `computeBaseConstraint`: both parts have
-                // one, and the one has something under the other.
+                // Only for `T[K]` is a missing constraint distinguished from `unknown`.
+                // `computeBaseConstraint`: the object type and the index type both have a
+                // constraint, and indexing the first by the second yields a type.
                 let TypeData::IndexedAccess {
                     obj,
                     index,
@@ -447,7 +455,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698, of the spread `p` in `owner`.
+    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698 for the spread
+    /// `p` in `owner`.
     pub(super) fn check_spread(&mut self, file: FileId, owner: ExprId, p: PropId) {
         let hir = self.hir(file);
         let prop = &hir[p];

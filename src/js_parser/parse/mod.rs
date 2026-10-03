@@ -36,14 +36,16 @@ use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
-/// What `parse_paren_expr_as` is to make of the parentheses. Anything but `Undecided` in tolerant mode only.
+/// How `parse_paren_expr_as` should interpret the parentheses. Values other than `Undecided` are
+/// used in tolerant mode only.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrowAttempt {
-    /// What follows the ")" decides.
+    /// Decided by what follows the ")".
     Undecided,
     /// `parseParenthesizedArrowFunctionExpression` without `allowAmbiguity`: an arrow function, or `Err(Error::Backtrack)`.
     ArrowOrBacktrack,
-    /// `isParenthesizedArrowFunctionExpression` said no, or the attempt failed: no arrow function, whatever follows the ")".
+    /// `isParenthesizedArrowFunctionExpression` returned false, or the speculative parse failed:
+    /// not an arrow function, whatever follows the ")".
     NeverArrow,
 }
 
@@ -217,7 +219,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let body_loc = p.lexer.loc();
-        // `parseClassDeclarationOrExpression`: without the "{" there are no members, and no "}" is looked for.
+        // `parseClassDeclarationOrExpression`: without the "{" there are no members, and no "}" is
+        // expected.
         let has_body = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
         p.lexer.expect(T::TOpenBrace)?;
         let mut properties = BumpVec::<G::Property>::new_in(p.arena);
@@ -460,7 +463,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             | T::TNoSubstitutionTemplateLiteral
                             | T::TTemplateHead
                     ) {
-                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented. It is said of the expression.
+                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented. The error
+                        // is reported on the expression.
                         let expression = if p.parse_optional_chain_of_implemented(implemented)? {
                             p.lexer.range_from(start.loc)
                         } else {
@@ -469,7 +473,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         p.ts_checker_error(expression, 2500);
                     } else if !p.is_saved_entity_name(implemented) {
-                        // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
+                        // Syntax that parses as a type but is not an `isEntityNameExpression`:
+                        // `(I)`, `string[]`.
                         p.ts_checker_error(p.lexer.range_from(start.loc), 2500);
                         implemented = crate::sema::ts_syntax::TypeId::NONE;
                     }
@@ -518,8 +523,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(extends)
     }
 
-    /// `parseExpressionWithTypeArguments` after `implements`, from where the expression no longer reads as a type (2500). From where
-    /// to where the expression goes.
+    /// `parseExpressionWithTypeArguments` after `implements`, starting where the expression no
+    /// longer parses as a type (2500). Returns the span of the expression.
     #[cold]
     #[inline(never)]
     fn parse_rest_of_implemented(&mut self, start: bun_ast::Loc) -> Result<bun_ast::Range, Error> {
@@ -655,7 +660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.list_contexts = saved_contexts;
         let mut close_paren_loc = p.lexer.loc();
         if p.lexer.token != T::TCloseParen && p.lexer.tolerant && !p.lexer.is_log_disabled {
-            // `finishNode`: without the ")" the call ends where the last token it consumed ends.
+            // `finishNode`: without the ")" the call ends at the end of the last token it consumed.
             close_paren_loc.start = p.lexer.full_start().start - 1;
         }
         p.lexer.expect(T::TCloseParen)?;
@@ -691,7 +696,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let open_brace = p.lexer.loc();
             p.lexer.expect(T::TOpenBrace)?;
             if p.lexer.token == T::TCloseBrace && p.lexer.tolerant {
-                // `parseJsxExpression`: there may be nothing between the braces. What is missing is put where they open.
+                // `parseJsxExpression`: the braces may be empty. The missing expression is placed
+                // at the opening brace.
                 p.lexer.next_inside_jsx_element()?;
                 let mut missing = p.new_expr(E::Missing {}, open_brace);
                 p.note_loc(
@@ -705,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.note_loc(&mut value.loc, crate::sema::Mark::JsxExpression, open_brace);
 
             if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
-                // `parseExpected`: it is missed, and nothing is consumed.
+                // `parseExpected`: the missing token is reported, and nothing is consumed.
                 p.lexer.expect(T::TCloseBrace)?;
                 return Ok(Some(value));
             }
@@ -714,7 +720,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseJsxAttributeValue`, when what follows the "=" is neither a string nor a "{": an element, or nothing at all.
+    /// `parseJsxAttributeValue`, when the "=" is followed by neither a string nor a "{": the value
+    /// is an element, or is missing.
     #[cold]
     #[inline(never)]
     fn parse_jsx_attribute_value_without_braces(&mut self) -> Result<Option<Expr>, Error> {
@@ -726,14 +733,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.is_log_disabled {
             return Err(Error::Backtrack);
         }
-        // Nothing is consumed, and the attribute is one without a value.
+        // Nothing is consumed, and the attribute has no value.
         let range = p.lexer.range();
         p.lexer.ts_error(range, 1145);
         Ok(None)
     }
 
-    /// Whether the "<" the lexer gave inside a JSX tag is one for TypeScript's scanner too, which makes tokens of their own of
-    /// "<<", "<=" and "</", unless the "/" starts a comment (`Scan`).
+    /// Whether the "<" the lexer produced inside a JSX tag is also a "<" token for TypeScript's
+    /// scanner, which scans "<<", "<=" and "</" each as a single token, unless the "/" starts a
+    /// comment (`Scan`).
     fn is_at_less_than_token(&self) -> bool {
         let lexer = &self.lexer;
         lexer.token == T::TLessThan
@@ -744,8 +752,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
     }
 
-    /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression context, at its "<". Another element that follows
-    /// at once is objected to where the first of them starts, `first`, and joined to this one by a comma.
+    /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression context, at its "<".
+    /// Another element that follows immediately is reported at `first`, the start of the first of
+    /// them, and joined to this one by a comma operator.
     fn parse_jsx_elements_in_attribute_value(
         &mut self,
         first: bun_ast::Loc,
@@ -755,7 +764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let full_start = p.lexer.full_start();
         p.lexer.next_inside_jsx_element()?;
         let element = p.parse_jsx_element(less_than, full_start)?;
-        // The last ">" is left to the caller. Nothing is consumed for one that is missed.
+        // The last ">" is left for the caller to consume. Nothing is consumed if it is missing.
         if p.lexer.token == T::TGreaterThan {
             p.lexer.next_inside_jsx_element()?;
         }
@@ -788,8 +797,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.parse_paren_expr_as(loc, level, opts, ArrowAttempt::Undecided)
     }
 
-    /// `tryParseParenthesizedArrowFunctionExpression`, after the "(" at `loc`, or after "<T>(" if the "<" is at `loc`.
-    /// Asks `isParenthesizedArrowFunctionExpression` before parsing.
+    /// `tryParseParenthesizedArrowFunctionExpression`, after the "(" at `loc`, or after "<T>(" if
+    /// the "<" is at `loc`.
+    /// Runs the lookahead of `isParenthesizedArrowFunctionExpression` before parsing.
     #[cold]
     #[inline(never)]
     fn parse_paren_expr_after_lookahead(
@@ -800,10 +810,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, Error> {
         let p = self;
         let verdict = if level.gt(Level::Assign) {
-            // Only `parseAssignmentExpressionOrHigher` tries for an arrow function.
+            // Only `parseAssignmentExpressionOrHigher` attempts to parse an arrow function.
             Some(false)
         } else if !opts.open_paren.is_empty() {
-            // After type parameters the lookahead cannot tell.
+            // After type parameters the lookahead is inconclusive.
             None
         } else {
             p.is_arrow_function_after_open_paren()
@@ -825,7 +835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parse_paren_expr`, told what it may come to.
+    /// `parse_paren_expr`, given how the parentheses may be interpreted.
     fn parse_paren_expr_as(
         &mut self,
         loc: bun_ast::Loc,
@@ -840,14 +850,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             (opts.open_paren, bun_ast::Loc::EMPTY)
         };
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
-        // Where each item ends, its type and its initializer included. Only filled in when parsing for the type checker.
+        // End of each item, including its type annotation and its initializer. Only filled in when
+        // parsing for the type checker.
         let mut item_ends: Vec<bun_ast::Loc> = Vec::new();
-        // Where the first token of each item is, if it is a parameter (a modifier, the dots, the name), and its `TokenFullStart`.
-        // Likewise.
+        // Position of the first token of each item, if it is a parameter (a modifier, the dots, the
+        // name), and its `TokenFullStart`. Likewise only for the type checker.
         let mut item_starts: Vec<(bun_ast::Loc, bun_ast::Loc)> = Vec::new();
-        // Whether each item has a "?" after it, and its type. Likewise.
+        // Whether each item is followed by a "?", and its type annotation. Likewise only for the
+        // type checker.
         let mut item_types: Vec<crate::sema::ts_syntax::TypeId> = Vec::new();
-        // Where the dots before each item are. Likewise.
+        // Position of the dots before each item. Likewise only for the type checker.
         let mut item_dots: Vec<bun_ast::Loc> = Vec::new();
         let mut first_modifier: Option<(bun_ast::Loc, bun_ast::Loc)> = None;
         let mut errors = DeferredErrors::default();
@@ -857,7 +869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
         // One bit for each item that had a modifier before it: "(public x) => 0". Only set when parsing for the type checker.
         let mut with_modifiers: u32 = 0;
-        // Those words: which item each is a modifier of.
+        // Those modifiers, each with the index of the item it modifies.
         let mut parameter_modifiers: Vec<(usize, crate::sema::ts_syntax::Modifier)> = Vec::new();
         // "(a, )". Only set in tolerant mode.
         let mut has_trailing_comma = false;
@@ -880,8 +892,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
 
-        // `parseParametersWorker`: the parameters of an async arrow function are read in its [Await] context and in no
-        // [Yield] context.
+        // `parseParametersWorker`: the parameters of an async arrow function are parsed in its
+        // [Await] context and outside any [Yield] context.
         let are_async_parameters = opts.is_async
             && (opts.force_arrow_fn || attempt == ArrowAttempt::ArrowOrBacktrack)
             && p.lexer.tolerant
@@ -914,7 +926,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
 
-            // `parseParameterEx` without `allowAmbiguity`: what starts no parameter name ends the attempt.
+            // `parseParameterEx` without `allowAmbiguity`: a token that cannot start a parameter
+            // name fails the speculative parse.
             if p.lexer.tolerant
                 && !opts.force_arrow_fn
                 && attempt != ArrowAttempt::NeverArrow
@@ -938,8 +951,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_type = false;
             let mut item_type = crate::sema::ts_syntax::TypeId::NONE;
             let question_before = errors.invalid_expr_after_question;
-            // "(...": for TypeScript an arrow function whatever follows (`nextIsParenthesizedArrowFunctionExpression`). Not
-            // where one is only tried for: type parameters came first then, and after them nothing is sure.
+            // "(...": for TypeScript an arrow function whatever follows
+            // (`nextIsParenthesizedArrowFunctionExpression`). Not in a speculative parse of an
+            // arrow function: type parameters precede it then, and after them nothing is certain.
             let is_surely_rest_parameter = is_spread
                 && p.lexer.tolerant
                 && !p.lexer.is_log_disabled
@@ -952,7 +966,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_surely_rest_parameter
                 && matches!(p.lexer.token, T::TCloseParen | T::TComma | T::TColon)
             {
-                // `parseNameOfParameter`: the name is missing. It is put where the dots end (`createMissingIdentifier`).
+                // `parseNameOfParameter`: the name is missing. The missing identifier is placed at
+                // the end of the dots (`createMissingIdentifier`).
                 p.lexer.expect(T::TIdentifier)?;
                 p.latest_arrow_arg_loc = spread_range.end();
                 let ref_ = p.store_name_in_ref(b"");
@@ -974,8 +989,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let has_modifiers = with_modifiers & (1u32 << items_list.len().min(31)) != 0;
                 item = p.parse_missing_parameter_name(has_modifiers)?;
             } else if are_async_parameters && p.lexer.is_contextual_keyword(b"await") {
-                // `isParameterNameStart`, `parseBindingIdentifier`: a parameter may be called "await" even there. It is
-                // `checkContextualIdentifier` that objects, in the words `parse_binding` has for it.
+                // `isParameterNameStart`, `parseBindingIdentifier`: a parameter may be named
+                // "await" even there. `checkContextualIdentifier` reports the error, with the
+                // message that `parse_binding` uses for it.
                 let range = p.lexer.range();
                 p.log().add_range_error(
                     Some(p.source),
@@ -992,13 +1008,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.tolerant
                     && p.lexer.loc() == p.real_loc(item.loc)
                 {
-                    // `createMissingNode` puts it where the previous token ends. 2695 is reported there.
+                    // `createMissingNode` places it at the end of the previous token. 2695 is
+                    // reported there.
                     item.loc = p.lexer.full_start();
                 }
             }
 
             if is_spread {
-                // The type checker goes by where an argument of a call of "async" starts (`parseSpreadElement`).
+                // The type checker uses the start position of an argument of a call of "async"
+                // (`parseSpreadElement`).
                 let dots = if p.lexer.tolerant {
                     spread_range.loc
                 } else {
@@ -1013,7 +1031,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && attempt != ArrowAttempt::NeverArrow
             {
                 has_type = true;
-                // Tolerant mode reports the first ":" if this turns out to be no arrow function.
+                // Tolerant mode reports the first ":" if this turns out not to be an arrow
+                // function.
                 if type_colon_range.len == 0 || !p.lexer.tolerant {
                     type_colon_range = p.lexer.range();
                 }
@@ -1026,7 +1045,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TEquals
                 && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
-                // `parseParenthesizedExpression`: only a parameter goes on with "=", after its "?" or its type.
+                // `parseParenthesizedExpression`: only a parameter can continue with "=" after its
+                // "?" or its type annotation.
                 && (has_type
                     || !p.lexer.tolerant
                     || errors.invalid_expr_after_question.map(|r| r.loc.start)
@@ -1088,7 +1108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     opts.force_arrow_fn = true;
                     continue;
                 }
-                // `parseDelimitedList(PCParameters)`: the list goes on after a missing comma.
+                // `parseDelimitedList(PCParameters)`: the list continues after a missing comma.
                 if opts.force_arrow_fn
                     && p.recover_missing_comma(ListKind::Parameters, item_start)?
                 {
@@ -1112,7 +1132,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.list_contexts = saved_contexts;
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
 
-        // `parseParenthesizedArrowFunctionExpression`: an attempt is given up if the list does not come to its ")".
+        // `parseParenthesizedArrowFunctionExpression`: a speculative parse fails if the list does
+        // not end at its ")".
         if p.lexer.token != T::TCloseParen && attempt == ArrowAttempt::ArrowOrBacktrack {
             return Err(Error::Backtrack);
         }
@@ -1121,7 +1142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let close_paren_loc = p.lexer.loc();
         let before_close_paren = p.lexer.full_start();
         if items.is_empty() && attempt == ArrowAttempt::NeverArrow && !opts.is_async {
-            // `parseParenthesizedExpression`: an expression is expected where the ")" is.
+            // `parseParenthesizedExpression`: an expression is expected at the ")".
             let close_paren = p.lexer.range();
             p.lexer.ts_error(close_paren, 1109);
         }
@@ -1133,8 +1154,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Also restore "await" and "yield" expression errors
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // Are these arguments to an arrow function? (`parseParenthesizedArrowFunctionExpression`: an attempt is kept
-        // before a "{" as well, where the "=>" is then missed.)
+        // Are these arguments to an arrow function? (`parseParenthesizedArrowFunctionExpression`: a
+        // speculative parse also succeeds before a "{", where the missing "=>" is then reported.)
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan
             || (p.lexer.token == T::TOpenBrace
                 && (attempt == ArrowAttempt::ArrowOrBacktrack
@@ -1144,8 +1165,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if (is_arrow_fn
             || opts.force_arrow_fn
             || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon))
-            // TypeScript tries for an arrow function in `parseAssignmentExpressionOrHigher` only: an operand is what is in the
-            // parentheses, and what follows them is left to whoever asked for it.
+            // TypeScript attempts an arrow function in `parseAssignmentExpressionOrHigher` only: as
+            // an operand the parentheses are a parenthesized expression, and what follows them is
+            // left to the caller.
             && !(level.gt(Level::Assign)
                 && !opts.force_arrow_fn
                 && p.lexer.tolerant
@@ -1226,11 +1248,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
-            // `parseParameterEx`: an attempt is given up at what can be no parameter.
+            // `parseParameterEx`: a speculative parse fails at an item that cannot be a parameter.
             if !invalid_log.is_empty() && attempt == ArrowAttempt::ArrowOrBacktrack {
                 return Err(Error::Backtrack);
             }
-            // The parentheses hold an expression then, and the "=>" or "{" is left to the caller.
+            // The parentheses then contain an expression, and the "=>" or "{" is left to the
+            // caller.
             if !invalid_log.is_empty()
                 && !opts.force_arrow_fn
                 && p.lexer.tolerant
@@ -1316,8 +1339,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.tolerant
                     && p.lexer.token != T::TComma
                 {
-                    // `parseAssignmentExpressionOrHigher` returns the arrow function as it is. After a body that is missing, the
-                    // next token must not be taken for a suffix of it.
+                    // `parseAssignmentExpressionOrHigher` returns the arrow function as is. After a
+                    // missing body, the next token must not be parsed as a suffix of it.
                     p.forbid_suffix_after_as_loc = p.lexer.loc();
                 }
                 let mut arrow = p.new_expr(arrow, loc);
@@ -1367,7 +1390,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::Call {
                     target: async_expr,
                     args: ExprNodeList::from_arena_slice(items),
-                    // The type checker tells calls apart by it. The printer would add a mapping for it.
+                    // The type checker distinguishes calls by it. The printer would add a mapping
+                    // for it.
                     close_paren_loc: if p.preserves_type_syntax() {
                         close_paren_loc
                     } else {
@@ -1425,7 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.lexer.tolerant && !p.lexer.is_log_disabled {
-            // "()", or "<T>()" that turned out to be a cast: 1109 at the ")". Not said twice.
+            // "()", or "<T>()" that turned out to be a cast: 1109 at the ")". Not reported twice.
             p.lexer.ts_error(
                 bun_ast::Range {
                     loc: close_paren_loc,
@@ -1443,8 +1467,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Err(crate::Error::SyntaxError)
     }
 
-    /// `parseParameterEx`: the items of a parenthesized list are the parameters `args`. Of each item: where its first token is and fully
-    /// starts, where it ends, whether a "?" follows it, its type, and where the dots before it are.
+    /// `parseParameterEx`: the items of a parenthesized list are the parameters `args`. For each
+    /// item: the position and the full start of its first token, its end, whether a "?" follows it,
+    /// its type annotation, and the position of the dots before it.
     #[cold]
     #[inline(never)]
     fn note_arrow_parameters(
@@ -1471,8 +1496,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `Expr::join_all_with_comma` drops missing operands. TypeScript keeps them (`makeBinaryExpression`), and reports 2695 for
-    /// the operand to their left. The ")" has been taken by now. `ends`: where each of `items` ends.
+    /// `Expr::join_all_with_comma` drops missing operands. TypeScript keeps them
+    /// (`makeBinaryExpression`), and reports 2695 for the operand to their left. The ")" has
+    /// already been consumed. `ends`: the end of each of `items`.
     #[cold]
     #[inline(never)]
     fn join_with_commas_keeping_missing(&mut self, items: &[Expr], ends: &[bun_ast::Loc]) -> Expr {
@@ -1491,7 +1517,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         joined
     }
 
-    /// `parseNameOfParameter` where no name starts: reports it and returns a name that is missing.
+    /// `parseNameOfParameter` at a token that cannot start a name: reports the error and returns a
+    /// missing name.
     #[cold]
     #[inline(never)]
     fn parse_missing_parameter_name(&mut self, has_modifiers: bool) -> Result<Expr, Error> {
@@ -1509,7 +1536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.latest_arrow_arg_loc = p.lexer.full_start();
         let ref_ = p.store_name_in_ref(b"");
         let name = Expr::init_identifier(ref_, p.latest_arrow_arg_loc);
-        // A modifier keyword that can be no name is skipped, so that the list makes progress.
+        // A modifier keyword that cannot be a name is skipped, so that the list makes progress.
         if !has_modifiers && p.is_modifier_kind() {
             p.lexer.next()?;
         }
@@ -1551,7 +1578,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `createIdentifierWithDiagnostic`
             let range = p.lexer.range();
             if p.lexer.token != T::TPrivateIdentifier {
-                // Nothing is consumed: the ";" that is missed next is missed at the same place, which is not said again.
+                // Nothing is consumed: the missing ";" reported next is at the same position, so
+                // that error is dropped.
                 let is_reserved_word =
                     p.lexer.token.is_reserved_word() || p.lexer.token == T::TEscapedKeyword;
                 p.lexer
@@ -1561,7 +1589,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ref_: p.store_name_in_ref(b""),
                 }));
             }
-            // A private name is objected to, and taken for the name all the same.
+            // A private name is reported, and used as the name anyway.
             p.lexer.ts_error(range, 18016);
         }
         let name = LocRef {
@@ -1572,13 +1600,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Some(name))
     }
 
-    /// `isIdentifier`: "await" is no name in an [Await] context, nor "yield" in a [Yield] context.
+    /// `isIdentifier`: "await" is not an identifier in an [Await] context, nor "yield" in a [Yield]
+    /// context.
     pub(crate) fn is_identifier_in_context(&self) -> bool {
         let data = &self.fn_or_arrow_data_parse;
         self.lexer.token == T::TIdentifier
             && !(self.lexer.identifier == b"await"
                 && data.allow_await != AwaitOrYield::AllowIdent
-                // TypeScript reads the statements of a file in no [Await] context, whatever can be awaited there.
+                // TypeScript parses the statements of a file outside any [Await] context, whether
+                // or not await is allowed there.
                 && !(data.is_top_level && data.allow_await == AwaitOrYield::AllowExpr))
             && !(self.lexer.identifier == b"yield" && data.allow_yield != AwaitOrYield::AllowIdent)
     }
@@ -1605,7 +1635,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || (is_identifier
                 && (!Self::IS_TYPESCRIPT_ENABLED
                     || p.lexer.identifier != b"implements"
-                    // `isImplementsClause`: for TypeScript it is the name unless a name or a keyword follows it.
+                    // `isImplementsClause`: for TypeScript it is the name unless an identifier or a
+                    // keyword follows it.
                     || (p.lexer.tolerant
                         && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword()))))
         {
@@ -1750,7 +1781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if opts.lexical_decl == LexicalDecl::AllowAll
                         || !p.lexer.has_newline_before
                         || p.lexer.token == T::TOpenBracket
-                        // `isLetDeclaration` does not ask about line breaks.
+                        // `isLetDeclaration` does not check for line breaks.
                         || p.lexer.tolerant
                     {
                         if opts.lexical_decl != LexicalDecl::AllowAll {
@@ -1787,11 +1818,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            // `isUsingDeclaration`: TypeScript's parser also takes an object pattern. Its checker reports 1492.
+            // `isUsingDeclaration`: TypeScript's parser also accepts an object pattern. Its checker
+            // reports 1492.
             if (p.lexer.token == T::TIdentifier
                 || (p.lexer.token == T::TOpenBrace && p.lexer.tolerant))
                 && !p.lexer.has_newline_before
-                // `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLineDisallowOf`: in `for (using of x)`, "using" is a name.
+                // `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLineDisallowOf`: in `for
+                // (using of x)`, "using" is an identifier.
                 && !(p.lexer.tolerant
                     && opts.is_for_loop_init
                     && p.lexer.is_contextual_keyword(b"of")
@@ -1994,7 +2027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(binding);
             }
             T::TOpenBracket => {
-                // `parseVariableDeclarationWorker` takes a pattern after "using" too.
+                // `parseVariableDeclarationWorker` also accepts a pattern after "using".
                 if !opts.is_using_statement || p.lexer.tolerant {
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
@@ -2035,15 +2068,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
 
-                            // `parseArrayBindingElement`: what is said of a private name that is an element does not depend on what
-                            // the pattern is for.
+                            // `parseArrayBindingElement`: the error reported for a private name
+                            // that is an element does not depend on what the pattern is used for.
                             let mut binding = p.parse_binding(ParseBindingOptions::default())?;
                             if is_rest {
                                 p.note_loc(&mut binding.loc, Mark::DotDotDot, element_start);
                             }
 
                             let mut default_value: Option<Expr> = None;
-                            // `parseArrayBindingElement`: TypeScript's parser takes an initializer after any element.
+                            // `parseArrayBindingElement`: TypeScript's parser accepts an
+                            // initializer after any element.
                             if p.lexer.token == T::TEquals && (!has_spread || p.lexer.tolerant) {
                                 p.lexer.next()?;
                                 default_value = Some(p.parse_expr(Level::Comma)?);
@@ -2190,7 +2224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant && !p.lexer.is_log_disabled {
-            // `createIdentifierWithDiagnostic`: objected to, and taken for the name all the same.
+            // `createIdentifierWithDiagnostic`: reported, and used as the name anyway.
             let range = p.lexer.range();
             let code = match opts.private_name_code {
                 0 => 18016,
@@ -2212,14 +2246,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `createIdentifierWithDiagnostic`, `createMissingIdentifier`: reports the missing name and consumes nothing. The name is where the
-    /// previous token ends.
+    /// `createIdentifierWithDiagnostic`, `createMissingIdentifier`: reports the missing name and
+    /// consumes nothing. The missing name is placed at the end of the previous token.
     #[cold]
     #[inline(never)]
     fn parse_missing_binding_name(&mut self) -> Result<Binding, Error> {
         let loc = self.lexer.full_start();
         if self.lexer.token == T::TEndOfFile {
-            // At the end of the file the error is there too.
+            // At the end of the file the error is reported there too.
             self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1003);
         } else {
             self.lexer.expect(T::TIdentifier)?;
@@ -2292,7 +2326,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 let mut expr = p.parse_expr(Level::Comma)?;
                 if p.lexer.token == T::TComma && p.lexer.tolerant {
-                    // `parseComputedPropertyName` takes any expression: `checkGrammarComputedPropertyName` objects to the comma.
+                    // `parseComputedPropertyName` accepts any expression:
+                    // `checkGrammarComputedPropertyName` reports the comma.
                     p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
                 }
                 p.note_loc(&mut expr.loc, Mark::ComputedName, open_bracket);
@@ -2328,8 +2363,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
 
-                // `parseObjectBindingElement`: for TypeScript a name that no ":" follows stands for itself whatever follows, and a
-                // reserved word is no name (`isBindingIdentifier`).
+                // `parseObjectBindingElement`: for TypeScript a name not followed by ":" is a
+                // shorthand binding whatever follows, and a reserved word is not a name
+                // (`isBindingIdentifier`).
                 if p.lexer.token != T::TColon
                     && (p.lexer.token != T::TOpenParen || p.lexer.tolerant)
                     && (is_binding_identifier || !p.lexer.tolerant)
@@ -2390,8 +2426,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parseObjectBindingElement` after the `...`: TypeScript's parser reads what follows like any other element. Its checker reports
-    /// a property name (2566) or an initializer (1186).
+    /// `parseObjectBindingElement` after the `...`: TypeScript's parser parses what follows like
+    /// any other element. Its checker reports a property name (2566) or an initializer (1186).
     #[cold]
     #[inline(never)]
     fn parse_rest_property_binding(&mut self) -> Result<B::Property, Error> {
@@ -2408,7 +2444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.parse_property_binding()?
         };
         property.flags.insert(Flags::Property::IsSpread);
-        // `...a`: the name is what is bound, and there is no property name.
+        // `...a`: the identifier is the binding, and there is no property name.
         if p.real_loc(property.key.loc) == p.real_loc(property.value.loc)
             && matches!(property.value.data, B::B::BIdentifier(_))
             && matches!(&property.key.data, js_ast::expr::Data::EString(name) if name.is_present())
@@ -2706,7 +2742,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parseImportAttributes`, at `with` or `assert`, in tolerant mode. Keeps the attributes as an object literal for the checker.
+    /// `parseImportAttributes`, at `with` or `assert`, in tolerant mode. Saves the attributes as an
+    /// object literal for the checker.
     #[cold]
     #[inline(never)]
     fn parse_import_attributes(&mut self) -> Result<(), Error> {
@@ -2721,8 +2758,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseImportAttributes`, after its keyword. Returns the attributes as an object literal, if there is a "{" and `keeps`, and the
-    /// resolution mode (`getResolutionModeOverride`): what the attribute says if it is the only one.
+    /// `parseImportAttributes`, after its keyword. Returns the attributes as an object literal, if
+    /// there is a "{" and `keeps` is set, and the resolution mode (`getResolutionModeOverride`):
+    /// the attribute's value if it is the only attribute.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_import_attribute_list(
@@ -2733,7 +2771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let open_brace_loc = p.lexer.loc();
         let mut mode = crate::sema::ts_syntax::ResolutionMode::None;
         if p.lexer.token != T::TOpenBrace {
-            // Reported, and there are no attributes.
+            // The missing "{" is reported, and there are no attributes.
             p.lexer.expect(T::TOpenBrace)?;
             return Ok((None, mode));
         }
@@ -2824,7 +2862,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ListKind::BlockStatements
         };
         let saved_contexts = p.enter_list(list);
-        // Those kept before this list was entered are for the list around it.
+        // Decorators saved before this list was entered belong to the enclosing list.
         let stray_decorators_base = p.stray_decorators.len();
 
         loop {
@@ -2838,11 +2876,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
             if p.lexer.tolerant && !p.lexer.is_log_disabled {
-                // The block is never closed. Whoever called says so, and moves on from the end of the file to the end of the file.
+                // The block is never closed. The caller reports that, and advancing from the end of
+                // the file stays at the end of the file.
                 if p.lexer.token == T::TEndOfFile {
                     break;
                 }
-                // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is.
+                // The loop of `reparseTopLevelAwait` calls `parseStatement` regardless of the
+                // token.
                 let is_reparsing = eend == T::TEndOfFile && p.reparses_rest_of_file;
                 // `parseToplevelStatement`
                 if eend == T::TEndOfFile && !is_reparsing {
@@ -2880,7 +2920,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
             }
-            // `parseEmptyStatement`: a node like any other to the type checker.
+            // `parseEmptyStatement`: the type checker treats it as an ordinary node.
             let mut skip =
                 matches!(stmt.data, js_ast::stmt::Data::SEmpty(_)) && !p.preserves_type_syntax();
             // Parse one or more directives at the beginning
@@ -2888,7 +2928,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        // `isPrologueDirective`: not `("use strict")`, of which the parentheses are not kept here.
+                        // `isPrologueDirective`: not `("use strict")`, whose parentheses are not
+                        // preserved here.
                         if !str_.prefer_template
                             && (!p.preserves_type_syntax()
                                 || p.real_loc(expr.value.loc) == p.real_loc(stmt.loc))
@@ -2896,7 +2937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                // To the type checker a directive is a statement like any other.
+                                // The type checker treats a directive as an ordinary statement.
                                 skip = !p.preserves_type_syntax();
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
@@ -2960,8 +3001,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
-    /// Call where `closer` is expected to close the array or object literal that opens at `open`. If it is not there, the literal ends
-    /// where the token before does (`finishNode`).
+    /// Call where `closer` is expected to close the array or object literal that opens at `open`.
+    /// If it is missing, the literal ends at the end of the previous token (`finishNode`).
     #[inline]
     pub(crate) fn note_literal_if_unclosed(&mut self, closer: T, open: bun_ast::Loc) {
         if self.lexer.token != closer && self.lexer.tolerant && !self.lexer.is_log_disabled {
@@ -2972,7 +3013,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Makes statements of what `note_stray_decorators` kept, from `base` on, while the last statement was parsed.
+    /// Builds statements from the decorators that `note_stray_decorators` saved, from index `base`
+    /// on, while the last statement was parsed.
     #[cold]
     #[inline(never)]
     fn push_stray_decorators(&mut self, base: usize, stmts: &mut StmtList<'a>) {
@@ -2987,19 +3029,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The "}" of the block of statements whose "{" is at `open`, or was missed there, where `parse_stmts_up_to` stopped. `parseBlock`
-    /// Returns where the block ends.
+    /// Expects the "}" of the statement block whose "{" is at `open`, or was reported as missing
+    /// there, at the token where `parse_stmts_up_to` stopped. `parseBlock`
+    /// Returns the end of the block.
     #[inline]
     pub(crate) fn end_of_block(&mut self, open: bun_ast::Loc) -> Result<bun_ast::Loc, Error> {
         if self.lexer.token != T::TCloseBrace && self.lexer.tolerant {
-            // `parseExpectedMatchingBrackets`: it is missed, and nothing is consumed.
+            // `parseExpectedMatchingBrackets`: it is reported as missing, and nothing is consumed.
             self.lexer.expected_closing(T::TCloseBrace, open)?;
         } else {
             self.lexer.next()?;
         }
         let end = self.lexer.full_start();
         if self.lexer.token == T::TEquals && self.lexer.tolerant && !self.lexer.is_log_disabled {
-            // A "=" right after the block is objected to and skipped.
+            // A "=" right after the block is reported and skipped.
             let range = self.lexer.range();
             self.lexer.ts_error(range, 2809);
             self.lexer.next()?;
@@ -3020,16 +3063,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     fn check_for_arrow_after_the_current_token(&mut self) -> bool {
-        // `nextIsUnParenthesizedAsyncArrowFunction`: for TypeScript not after a line break, nor after a word that is no name
-        // where it stands.
+        // `nextIsUnParenthesizedAsyncArrowFunction`: for TypeScript not after a line break, nor
+        // after an identifier or keyword that is not a valid identifier in its context.
         self.next_token_matches(|p| {
             p.lexer.token == T::TEqualsGreaterThan
                 && !(p.lexer.has_newline_before && p.lexer.tolerant)
         }) && (!self.lexer.tolerant || self.is_identifier_in_context())
     }
 
-    /// `isParenthesizedArrowFunctionExpression`, at the "(": `Some(true)` an arrow function starts here, `Some(false)` none
-    /// does, `None` one may. Only looks.
+    /// `isParenthesizedArrowFunctionExpression`, at the "(": `Some(true)` if an arrow function
+    /// starts here, `Some(false)` if none does, `None` if one may. Lookahead only.
     #[cold]
     #[inline(never)]
     fn is_parenthesized_arrow_function(&mut self) -> Option<bool> {
@@ -3057,7 +3100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         verdict.unwrap_or(Some(false))
     }
 
-    /// `nextIsParenthesizedArrowFunctionExpression`, from the token after the "(" on.
+    /// `nextIsParenthesizedArrowFunctionExpression`, starting at the token after the "(".
     fn is_arrow_function_from_second_token(&mut self) -> Result<Option<bool>, Error> {
         let p = self;
         match p.lexer.token {
@@ -3096,9 +3139,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// At the "(" after "async", or after "async<T>" if `has_type_parameters`: an arrow function if TypeScript reads one
-    /// there (`tryParseParenthesizedArrowFunctionExpression`), its parameters in the [Await] context; otherwise a call of
-    /// "async", its arguments in the context of the surroundings.
+    /// At the "(" after "async", or after "async<T>" if `has_type_parameters`: an arrow function if
+    /// TypeScript parses one there (`tryParseParenthesizedArrowFunctionExpression`), with its
+    /// parameters in the [Await] context; otherwise a call of "async", with its arguments in the
+    /// enclosing context.
     #[cold]
     #[inline(never)]
     fn parse_async_paren_expr(
@@ -3115,7 +3159,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if !has_type_parameters {
             p.is_parenthesized_arrow_function()
         } else if p.is_jsx_enabled() {
-            // `nextIsParenthesizedArrowFunctionExpression`, at a "<": with JSX, what `is_ts_arrow_fn_jsx` lets through is one.
+            // `nextIsParenthesizedArrowFunctionExpression`, at a "<": with JSX, whatever
+            // `is_ts_arrow_fn_jsx` accepts is an arrow function.
             Some(true)
         } else {
             None
@@ -3133,8 +3178,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
             );
         }
-        // `parsePossibleParenthesizedArrowFunctionExpression`. What it keeps in `notParenthesizedArrow` is kept with the outcomes
-        // of the other attempts, which are told by where a ":" is: no "async" is there.
+        // `parsePossibleParenthesizedArrowFunctionExpression`. Its `notParenthesizedArrow` entries
+        // are cached together with the outcomes of the other speculative parses, which are keyed by
+        // the position of a ":": no "async" is at such a position.
         let key = loc.start as u32;
         if verdict.is_none()
             && p.ts_conditional_arrow_attempts
@@ -3144,11 +3190,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let snapshot = p.parser_snapshot();
             p.lexer.next()?;
             match p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::ArrowOrBacktrack) {
-                // Stack and memory exhaustion are not properties of the attempt
+                // Stack and memory exhaustion are not outcomes of the speculative parse
                 Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
                 Err(_) => {
                     p.restore_parser_snapshot(snapshot);
-                    // Attempts nested in this one may have added entries of their own.
+                    // Speculative parses nested in this one may have added entries of their own.
                     if let Err(insert_at) = p
                         .ts_conditional_arrow_attempts
                         .binary_search_by_key(&key, |&packed| packed >> 1)
@@ -3163,9 +3209,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::NeverArrow)
     }
 
-    /// Whether `item`, just parsed as an expression in parentheses, was a modifier of the parameter that starts at the current
-    /// token (`parseModifiersEx` in `parseParameterEx`). `is_arrow_fn`: this is known to be the head of an arrow function, or
-    /// `item` is the first word after the "(", which makes it one (`nextIsParenthesizedArrowFunctionExpression`).
+    /// Whether `item`, just parsed as an expression inside parentheses, was a modifier of the
+    /// parameter that starts at the current token (`parseModifiersEx` in `parseParameterEx`).
+    /// `is_arrow_fn`: this is known to be the head of an arrow function, or `item` is the first
+    /// identifier or keyword after the "(", which makes it one
+    /// (`nextIsParenthesizedArrowFunctionExpression`).
     #[cold]
     #[inline(never)]
     fn is_parameter_modifier(&mut self, item: Expr, is_arrow_fn: bool) -> bool {
@@ -3180,15 +3228,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let word = self.load_name_from_ref(id.ref_);
         crate::lexer::is_type_script_accessibility_modifier(word)
-            // Nothing but blanks between the word and the name.
+            // Only whitespace separates the modifier keyword from the name.
             && self.lexer.contents[..self.lexer.start].trim_ascii_end().len()
                 == self.real_loc(item.loc).start as usize + word.len()
             && (is_arrow_fn || self.is_in_the_head_of_an_arrow_function())
     }
 
-    /// Whether the list the current token is in comes to its ")" and what follows that is the "=>" of an arrow function, with
-    /// a return type before it or not, or the "{" of its body. Stands for the attempt TypeScript makes at the whole head
-    /// (`parsePossibleParenthesizedArrowFunctionExpression`). Only looks.
+    /// Whether the list that contains the current token reaches its ")" and the next token is the
+    /// "=>" of an arrow function, optionally preceded by a return type, or the "{" of its body.
+    /// Replaces TypeScript's speculative parse of the whole head
+    /// (`parsePossibleParenthesizedArrowFunctionExpression`). Lookahead only.
     #[cold]
     #[inline(never)]
     fn is_in_the_head_of_an_arrow_function(&mut self) -> bool {
@@ -3209,7 +3258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => false,
                         };
                 }
-                // The tokens of a template cannot be told without parsing what is in it.
+                // The tokens of a template cannot be determined without parsing its contents.
                 T::TCloseBracket | T::TCloseBrace | T::TTemplateHead | T::TEndOfFile => {
                     break false;
                 }

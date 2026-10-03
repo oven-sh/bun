@@ -23,8 +23,8 @@ use bun_sema::hir::TypeNodeKind;
 // canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
-/// Whether nothing has been skipped yet of the type that `option` was given for. By itself `opts` does not tell: it goes down to the
-/// operands of "|" and "&".
+/// Whether no token of the type that `option` was passed for has been skipped yet. `opts` alone
+/// does not determine this: it propagates to the operands of "|" and "&".
 #[inline(always)]
 fn is_at_start_of(
     option: SkipTypeOptions,
@@ -148,7 +148,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // "[a, b]"
                 while self.lexer.token != T::TCloseBracket {
-                    // "[a, , b]": `parseArrayBindingElement` leaves an element out wherever a comma stands.
+                    // "[a, , b]": `parseArrayBindingElement` produces an omitted element wherever a
+                    // comma appears.
                     if self.lexer.token == T::TComma && self.lexer.tolerant {
                         if keeps {
                             elements.push(self.emit_array_hole());
@@ -324,7 +325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_private = self.lexer.token == T::TPrivateIdentifier;
         let name = self.parse_missing_parameter_name(has_modifiers)?;
         let keeps = self.should_save_types();
-        // `createIdentifierWithDiagnostic`: a private name is reported and taken as the name.
+        // `createIdentifierWithDiagnostic`: a private name is reported and used as the name.
         if is_private {
             if keeps {
                 self.emit_identifier_binding();
@@ -358,7 +359,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let parameter_start = self.lexer.loc();
             let mut parameter = Param::at(parameter_start);
             parameter.full_start = self.lexer.full_start();
-            // "(public a)": `parseParameterEx` takes modifiers on every parameter, and the checker reports them (2369).
+            // "(public a)": `parseParameterEx` accepts modifiers on every parameter, and the
+            // checker reports them (2369).
             if self.lexer.tolerant && self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
             }
@@ -396,7 +398,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_complete = parameter.ty.is_some();
                 }
             }
-            // "(a = 1)": `parseParameterEx` takes an initializer on every parameter, and the checker reports it (2371).
+            // "(a = 1)": `parseParameterEx` accepts an initializer on every parameter, and the
+            // checker reports it (2371).
             if self.lexer.token == T::TEquals && self.lexer.tolerant {
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
@@ -428,7 +431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `isIndexSignature`, at the "[" of a member of a type or a class. Only looks.
+    /// `isIndexSignature`, at the "[" of a member of a type or a class. Lookahead only.
     #[cold]
     #[inline(never)]
     pub(crate) fn is_unambiguously_index_signature(&mut self) -> bool {
@@ -471,8 +474,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// Keep mode stores the parameters in `TypeSyntax::last_params`, and returns what is wrong with them. `member`: where the
-    /// signature starts.
+    /// Keep mode stores the parameters in `TypeSyntax::last_params`, and returns the error to
+    /// report for them. `member`: the start of the signature.
     #[cold]
     #[inline(never)]
     fn skip_index_signature_parameter_list(
@@ -514,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     parameter.pattern = self.type_syntax_mut().last_binding;
                 }
             } else {
-                // `parseNameOfParameter`: the name is missing, and the token stays.
+                // `parseNameOfParameter`: the name is missing, and the token is not consumed.
                 if keeps {
                     parameter.pattern = self.emit_array_hole().pattern;
                 }
@@ -607,10 +610,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Runs `parse` on an expression or a function body that is written inside a type, and returns the result. It is not part of the
-    /// AST. Keep mode stores it for the lowering.
-    /// Speculative parsing only restores the lexer when it backtracks. So during a speculative parse, everything `parse` did to the
-    /// parser's state is undone right away, except for the lexer's position.
+    /// Runs `parse` on an expression or a function body that appears inside a type, and returns the
+    /// result. It is not part of the AST. Keep mode stores it for the lowering pass.
+    /// Speculative parsing only restores the lexer when it backtracks. So during a speculative
+    /// parse, everything `parse` did to the parser's state is undone immediately, except for the
+    /// lexer's position.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_detached<R>(
@@ -625,7 +629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut after = self.lexer.snapshot();
         self.restore_parser_snapshot_but_for_notes(snapshot);
         let result = result?;
-        // The comments met on the way are forgotten with the rest.
+        // The comments scanned along the way are discarded with the rest.
         after.all_comments_len = self.lexer.all_comments.len();
         after.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
         self.lexer.restore(&after);
@@ -647,7 +651,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseComputedPropertyName`: any expression, the comma operator and `in` included.
+    /// `parseComputedPropertyName`: any expression, including the comma operator and `in`.
     #[cold]
     #[inline(never)]
     fn skip_computed_property_name(&mut self) -> Result<bun_ast::Expr, Error> {
@@ -662,8 +666,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(name)
     }
 
-    /// `parseInitializer`, at the `=`. TypeScript's parser takes an initializer where a signature or a type has no use for one, and
-    /// its checker objects.
+    /// `parseInitializer`, at the `=`. TypeScript's parser accepts an initializer where a signature
+    /// or a type cannot use one, and its checker reports it.
     #[cold]
     #[inline(never)]
     fn skip_initializer_in_signature(&mut self) -> Result<bun_ast::Expr, Error> {
@@ -743,9 +747,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseFunctionOrConstructorType`, where the attempt at "(..) =>" failed. Whether a "(" starts a function type is decided by
-    /// looking ahead, not by the "=>" (`isStartOfFunctionTypeOrConstructorType`). After "new" or "<T>" (`has_head`) it always does.
-    /// If it does, the parameters are skipped, a missing "=>" is reported (`shouldParseReturnType`), and the return type comes next.
+    /// `parseFunctionOrConstructorType`, where the speculative parse of "(..) =>" failed. Whether a
+    /// "(" starts a function type is decided by lookahead, not by the "=>"
+    /// (`isStartOfFunctionTypeOrConstructorType`). After "new" or "<T>" (`has_head`) it always
+    /// does. If it does, the parameters are skipped, a missing "=>" is reported
+    /// (`shouldParseReturnType`), and the return type comes next.
     #[cold]
     #[inline(never)]
     fn skip_fn_type_args_without_arrow(&mut self, has_head: bool) -> Result<bool, Error> {
@@ -753,7 +759,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !has_head {
                 return Ok(false);
             }
-            // `parseParameters`: without a "(" the list is missing, and the token stays.
+            // `parseParameters`: without a "(" the list is missing, and the token is not consumed.
             self.lexer.expect(T::TOpenParen)?;
             if self.should_save_types() {
                 self.finish_params(Some(&[]));
@@ -772,7 +778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn is_unambiguously_start_of_function_type(&mut self) -> bool {
         let (here, swallowed) = (self.lexer.snapshot(), self.lexer.swallowed);
-        // `skipParameterStart` reads a whole binding pattern.
+        // `skipParameterStart` parses a whole binding pattern.
         let noted = self.type_syntax_checkpoint();
         self.lexer.is_log_disabled = true;
         let found = self
@@ -826,8 +832,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(false)
     }
 
-    /// `parseFunctionOrConstructorTypeToError`, at the token after a "|" (`in_union`) or a "&". If a function or constructor type
-    /// starts here, returns what to report after it has been skipped: where (its full start) and the code.
+    /// `parseFunctionOrConstructorTypeToError`, at the token after a "|" (`in_union`) or a "&". If
+    /// a function or constructor type starts here, returns the error to report after it has been
+    /// skipped: its position (the type's full start) and its code.
     #[cold]
     #[inline(never)]
     fn fn_type_after_operator_error(&mut self, in_union: bool) -> Option<(bun_ast::Loc, u32)> {
@@ -866,8 +873,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.skip_type_script_type_impl::<GET_METADATA, false>(level, opts, result)
     }
 
-    /// `parseTypeOperator` leaves DisallowConditionalTypesContext as it finds it, so that an "infer" right after "keyof" or "readonly"
-    /// in an "extends" type keeps its constraint.
+    /// `parseTypeOperator` leaves DisallowConditionalTypesContext unchanged, so that an "infer"
+    /// right after "keyof" or "readonly" in an "extends" type keeps its constraint.
     #[inline]
     fn type_operand_opts(&self, opts: SkipTypeOptionsBitset) -> SkipTypeOptionsBitset {
         if opts.contains(SkipTypeOptions::DisallowConditionalTypes) && self.lexer.tolerant {
@@ -877,8 +884,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A reserved word that is not among those `isStartOfType` lists. It names a type where there must be one (`parseTypeReference`),
-    /// but is no element of a list of types (`isListElement`).
+    /// A reserved word that `isStartOfType` does not list. It names a type where one is required
+    /// (`parseTypeReference`), but is not an element of a list of types (`isListElement`).
     #[inline]
     fn is_reserved_word_that_starts_no_type(&self) -> bool {
         self.lexer.token.is_reserved_word()
@@ -896,8 +903,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
     }
 
-    /// `createIdentifierWithDiagnostic(Type_expected)`: where a type must be and none starts, it is a reference to a type whose name is
-    /// missing. The token stays.
+    /// `createIdentifierWithDiagnostic(Type_expected)`: where a type is required and none starts,
+    /// the result is a type reference whose name is missing. The token is not consumed.
     #[cold]
     #[inline(never)]
     fn missing_type(&mut self) -> Result<(), Error> {
@@ -905,12 +912,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let pos = self.token_start();
             self.emit_type_ref(StoreStr::EMPTY, pos);
         }
-        // While only trying, nothing is said. If the trial succeeds, it is run again for its errors.
+        // During a speculative parse nothing is reported. If it succeeds, it is run again to report
+        // its errors.
         if self.lexer.is_log_disabled {
             self.lexer.swallowed += 1;
             return Ok(());
         }
-        // At the end of the file the error is where the token before ends.
+        // At the end of the file the error is at the end of the previous token.
         if self.lexer.token == T::TEndOfFile {
             let loc = self.lexer.full_start();
             self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1110);
@@ -922,8 +930,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseTypeReference`, the default case of `parseNonArrayType`. `parseEntityNameOfTypeReference` accepts a reserved word as the
-    /// name, also during speculative parsing. Any other token gives a reference with a missing name.
+    /// `parseTypeReference`, the default case of `parseNonArrayType`.
+    /// `parseEntityNameOfTypeReference` accepts a reserved word as the name, also during
+    /// speculative parsing. Any other token yields a reference with a missing name.
     #[cold]
     #[inline(never)]
     fn skip_type_reference_to_any_word(&mut self) -> Result<(), Error> {
@@ -948,14 +957,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseEntityName`, `parseRightSideOfDot`: after a dot that no word follows.
+    /// `parseEntityName`, `parseRightSideOfDot`: after a dot that is not followed by an identifier
+    /// or keyword.
     #[cold]
     #[inline(never)]
     fn skip_missing_name_after_dot<const KEEP: bool>(&mut self) -> Result<(), Error> {
         let mut reference = None;
         let mut jsdoc_dot = None;
         match self.lexer.token {
-            // "A.<T>": the name ends before the dot, and the type arguments are its own.
+            // "A.<T>": the name ends before the dot, and the type arguments belong to it.
             T::TLessThan => {
                 if KEEP {
                     reference = self.take_reference();
@@ -964,7 +974,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     start: self.lexer.full_start().start - 1,
                 });
             }
-            // A private name is taken, and the name is said to be missing after it.
+            // A private name is consumed, and the name is reported as missing after it.
             T::TPrivateIdentifier => {
                 let after = bun_ast::Range {
                     loc: bun_ast::usize2loc(self.lexer.end),
@@ -973,7 +983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.next()?;
                 self.lexer.ts_error(after, 1003);
             }
-            // The token stays.
+            // The token is not consumed.
             _ => self.lexer.expect(T::TIdentifier)?,
         }
         // `parseTypeArgumentsOfTypeReference`
@@ -993,8 +1003,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseRightSideOfDot`, at the first token of the line after a dot: two words on one line start something else, so the name
-    /// is reported as missing (1003) right after the dot, and the token stays.
+    /// `parseRightSideOfDot`, at the first token of the line after a dot: two identifiers or
+    /// keywords on one line start a different construct, so the name is reported as missing (1003)
+    /// right after the dot, and the token is not consumed.
     #[cold]
     #[inline(never)]
     fn is_name_after_dot_missing(&mut self) -> bool {
@@ -1012,9 +1023,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// `parseImportType`, after the comma that follows the specifier: "{ with: { name: value } }". What is missing is reported and
-    /// the token stays, so the ")" and the qualifier are not found either. Returns the resolution mode
-    /// (`getResolutionModeOverride`), where "assert" is written instead of "with", and the attributes.
+    /// `parseImportType`, after the comma that follows the specifier: "{ with: { name: value } }".
+    /// A missing token is reported and the current token is not consumed, so the ")" and the
+    /// qualifier are not found either. Returns the resolution mode (`getResolutionModeOverride`),
+    /// the position of "assert" if it is used instead of "with", and the attributes.
     #[cold]
     #[inline(never)]
     fn skip_import_type_attributes(
@@ -1065,8 +1077,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    /// `parseJSDocNullableType`, `parseJSDocNonNullableType`, `parseJSDocAllType`, at a "?", "??", "!", "*" or "*=" where a type
-    /// starts. TypeScript's parser takes them, and its checker objects (17020, 8020).
+    /// `parseJSDocNullableType`, `parseJSDocNonNullableType`, `parseJSDocAllType`, at a "?", "??",
+    /// "!", "*" or "*=" where a type starts. TypeScript's parser accepts them, and its checker
+    /// reports them (17020, 8020).
     #[cold]
     #[inline(never)]
     fn skip_jsdoc_prefix_type<const KEEP: bool>(
@@ -1075,7 +1088,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         let (token, pos) = (self.lexer.token, self.token_start());
         match token {
-            // `ReScanQuestionToken`, `ReScanAsteriskEqualsToken`: only the first character is taken.
+            // `ReScanQuestionToken`, `ReScanAsteriskEqualsToken`: only the first character is
+            // consumed.
             T::TQuestionQuestion => {
                 self.lexer.token = T::TQuestion;
                 self.lexer.start += 1;
@@ -1119,7 +1133,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    /// `parseTupleType` in tolerant mode: the elements, up to where the "]" must be.
+    /// `parseTupleType` in tolerant mode: the elements, up to the position where the "]" is
+    /// expected.
     #[cold]
     #[inline(never)]
     fn skip_tuple_elements<const KEEP: bool>(
@@ -1129,7 +1144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let saved_contexts = self.enter_list(ListKind::TupleElementTypes);
         while self.lexer.token != T::TCloseBracket {
             if self.lexer.is_log_disabled {
-                // A speculative parse fails at the "]" that is not there.
+                // A speculative parse fails at the missing "]".
                 if !self.is_list_element(ListKind::TupleElementTypes, false) {
                     break;
                 }
@@ -1191,14 +1206,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if KEEP {
             let pos = type_loc.start.max(0) as u32;
             if has_dots {
-                // "label: ...T" is for the checker to object to (5087).
+                // "label: ...T" is reported by the checker (5087).
                 if is_named {
                     self.emit_rest_type(pos);
                 } else {
                     element.is_rest = true;
                 }
             } else if let Some(ty) = self.optional_tuple_element_type() {
-                // "label: T?" is for the checker to object to (5086).
+                // "label: T?" is reported by the checker (5086).
                 if is_named {
                     self.emit_optional_type(ty, pos);
                 } else {
@@ -1227,8 +1242,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         skipped
     }
 
-    /// In keep mode a type is emitted when it is known what it is, which may be before its last token is taken. It is finished
-    /// (`finish_last_type`) where no token after its last has been taken yet: before each postfix or operator, and on return.
+    /// In keep mode a type is emitted as soon as its kind is known, which may be before its last
+    /// token is consumed. It is finished (`finish_last_type`) at a point where no token after its
+    /// last has been consumed yet: before each postfix or operator, and on return.
     fn skip_unfinished_type<const GET_METADATA: bool, const KEEP: bool>(
         &mut self,
         level: Level,
@@ -1246,9 +1262,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // `parseTypeOperatorOrHigher`: the operand of a type operator cannot be a function or constructor type.
         let allow_fn_type = !self.lexer.tolerant || level != Level::Prefix;
-        // The "|" or "&" skipped ahead of the type; of "| &", the "&".
+        // The leading "|" or "&" skipped before the type. For "| &", the "&".
         let mut leading_operator: Option<T> = None;
-        // What to report once the function type that starts right after a "|" or "&" has been skipped. Tolerant mode only.
+        // The error to report once the function type that starts right after a "|" or "&" has been
+        // skipped. Tolerant mode only.
         let mut fn_type_error: Option<(bun_ast::Loc, u32)> = None;
 
         // Start offsets of the whole type, of its first intersection, and of the current operand.
@@ -1258,7 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Index into `TypeSyntax::type_stack` where the pending union and intersection start. `usize::MAX` if there is none.
         let mut union_base = usize::MAX;
         let mut intersection_base = usize::MAX;
-        // A "|" led the type, an "&" its first intersection.
+        // Whether the type has a leading "|", and its first intersection a leading "&".
         let mut has_leading_bar = false;
         let mut has_leading_ampersand = false;
         // Saw "abstract" directly before "new".
@@ -1389,7 +1406,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TMinus => {
-                    // `parseNonArrayType`: a type only if a number comes next.
+                    // `parseNonArrayType`: a type only if the next token is a number.
                     if self.lexer.tolerant
                         && !opts.contains(SkipTypeOptions::IsIndexSignature)
                         && !self.next_token_matches(|p| {
@@ -1426,8 +1443,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TAmpersand | T::TBar => {
-                    // `parseUnionOrIntersectionType`: one "|" may lead a union, and one "&" each of the intersections in it.
-                    // Any other stands where a type is missing, and is the operator after it.
+                    // `parseUnionOrIntersectionType`: a union may have one leading "|", and each
+                    // intersection in it one leading "&".
+                    // Any other "|" or "&" is at the position of a missing type and is the operator
+                    // that follows it.
                     let is_operator_after_nothing = if self.lexer.token == T::TBar {
                         leading_operator.is_some() || level.gte(Level::BitwiseOr)
                     } else {
@@ -1473,7 +1492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     let mut argument = TypeId::NONE;
                     if self.lexer.token != T::TStringLiteral && self.lexer.tolerant {
-                        // `parseImportType`: any type. The checker objects to it (1141).
+                        // `parseImportType`: any type is accepted. The checker reports it (1141).
                         self.skip_nested_type::<KEEP>(
                             Level::Lowest,
                             SkipTypeOptionsBitset::empty(),
@@ -1507,7 +1526,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.lexer.expect(T::TCloseParen)?;
                     if KEEP {
-                        // What follows, such as "[K]", applies to all of "typeof import(..)".
+                        // The syntax that follows, such as "[K]", applies to the whole of "typeof
+                        // import(..)".
                         let is_typeof = typeof_pos.is_some();
                         pos = typeof_pos.take().unwrap_or(pos);
                         self.emit_import_type(specifier, argument, attributes, is_typeof, pos);
@@ -1594,7 +1614,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut check_type_parameters = true;
                     // "asserts x": the "x" was skipped as well.
                     let mut asserts_name = false;
-                    // The subject of a type predicate: this identifier, or the one after "asserts".
+                    // The parameter name of a type predicate: this identifier, or the one after
+                    // "asserts".
                     let mut predicate_subject = if KEEP {
                         StoreStr::new(self.lexer.identifier)
                     } else {
@@ -1602,7 +1623,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
 
                     match kind {
-                        // `parseTypeOrTypePredicate` goes before `parseType`: in "(keyof): keyof is T" the word is the parameter.
+                        // `parseTypeOrTypePredicate` runs before `parseType`: in "(keyof): keyof is
+                        // T" the word is the parameter name.
                         TsIdentKind::PrefixKeyof
                         | TsIdentKind::PrefixReadonly
                         | TsIdentKind::Infer
@@ -1736,7 +1758,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                                 break;
                             }
-                            // `parseTypeOperator`: "unique" is an operator whatever follows, like "keyof".
+                            // `parseTypeOperator`: "unique" is an operator regardless of the next
+                            // token, like "keyof".
                             if self.lexer.tolerant
                                 && ((self.lexer.token != T::TColon
                                     && self.lexer.token != T::TQuestion
@@ -1749,7 +1772,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
                                 // `checkGrammarTypeOperatorNode`: 'symbol' expected.
                                 self.lexer.ts_grammar_expected(operand, "symbol");
-                                // `getTypeFromTypeOperatorNode`: the error type. The operand is not kept.
+                                // `getTypeFromTypeOperatorNode`: the error type. The operand is not
+                                // saved.
                                 if KEEP {
                                     let ty = self.last_type();
                                     let any = TypeNodeKind::Keyword(Keyword::Any);
@@ -1922,8 +1946,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "function assert(x: any): x is boolean"
                     if self.lexer.is_contextual_keyword(b"is")
                         && (if self.lexer.tolerant {
-                            // `parseAssertsTypePredicate` takes the "is" after "asserts x" from whichever line.
-                            // `parseTypeOrTypePredicate`: any other only follows, on its line, the first word of a return type.
+                            // `parseAssertsTypePredicate` accepts the "is" after "asserts x" on any
+                            // line.
+                            // `parseTypeOrTypePredicate`: any other "is" is only accepted directly
+                            // after the first word of a return type, on the same line.
                             asserts_name
                                 || (!self.lexer.has_newline_before
                                     && is_at_start_of(
@@ -1988,7 +2014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "typeof x"
                         if !self.lexer.is_identifier_or_keyword() {
                             if self.lexer.tolerant {
-                                // `parseEntityName`: the name is missing (1003), and the token stays.
+                                // `parseEntityName`: the name is missing (1003), and the token is
+                                // not consumed.
                                 self.lexer.expect(T::TIdentifier)?;
                                 if KEEP {
                                     let name = Name {
@@ -2035,7 +2062,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && self.lexer.token != T::TPrivateIdentifier
                             {
                                 if self.lexer.tolerant {
-                                    // `parseRightSideOfDot`: the name is missing (1003), and the token stays.
+                                    // `parseRightSideOfDot`: the name is missing (1003), and the
+                                    // token is not consumed.
                                     self.lexer.expect(T::TIdentifier)?;
                                     if KEEP {
                                         self.push_typeof_name();
@@ -2152,7 +2180,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if KEEP {
                             types.push(self.last_type());
                         }
-                        // `parseLiteralOfTemplateSpan`: without the "}" the template ends here, and the token stays.
+                        // `parseLiteralOfTemplateSpan`: without the "}" the template ends here, and
+                        // the token is not consumed.
                         if self.lexer.token != T::TCloseBrace && self.lexer.tolerant {
                             self.lexer.expect(T::TCloseBrace)?;
                             if KEEP {
@@ -2181,9 +2210,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 _ => {
-                    // What is in the brackets of a type member is no type to TypeScript.
+                    // TypeScript does not parse the contents of a type member's brackets as a type.
                     if self.lexer.tolerant && !opts.contains(SkipTypeOptions::IsIndexSignature) {
-                        // `isListElement(PCTupleElementTypes)`: no element of a tuple starts with such a word, label or not.
+                        // `isListElement(PCTupleElementTypes)`: no tuple element starts with such a
+                        // word, whether or not it is a label.
                         if is_at_start_of(
                             SkipTypeOptions::AllowTupleLabels,
                             opts,
@@ -2375,8 +2405,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TQuestion => {
-                    // `parsePostfixTypeOrHigher`: JSDoc's "T?", unless a type comes next, which makes it the "?" of a conditional
-                    // type. The checker objects to it (17019).
+                    // `parsePostfixTypeOrHigher`: JSDoc's "T?", unless a type follows, which makes
+                    // it the "?" of a conditional type. The checker reports it (17019).
                     if !self.lexer.tolerant
                         || self.lexer.has_newline_before
                         || opts.contains(SkipTypeOptions::IsIndexSignature)
@@ -2391,7 +2421,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TDot => {
-                    // `parseEntityName`: a dot only goes on from a name. After any other type it is somebody else's token.
+                    // `parseEntityName`: a dot only continues a name. After any other type it is
+                    // not consumed.
                     if KEEP
                         && self.lexer.tolerant
                         && (is_parenthesized || !self.last_type_takes_qualifier())
@@ -2468,7 +2499,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let object = if KEEP { self.last_type() } else { TypeId::NONE };
                     self.lexer.next()?;
                     let mut skipped = false;
-                    // `parsePostfixTypeOrHigher`: before what starts no type it is an array type whose "]" is missing.
+                    // `parsePostfixTypeOrHigher`: before a token that cannot start a type, it is an
+                    // array type whose "]" is missing.
                     if self.lexer.token != T::TCloseBracket
                         && !(self.lexer.tolerant && !self.is_start_of_type(false))
                     {
@@ -2636,7 +2668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if keeps {
                 self.end_type_member(&mut kept, self.lexer.full_start());
             }
-            // `parseMappedType` reads "[K in T]: X" itself, before the list of members.
+            // `parseMappedType` parses "[K in T]: X" itself, before the member list.
             let is_mapped_type = core::mem::take(&mut starts_mapped_type);
             if !is_mapped_type {
                 match self.classify_list_token(ListKind::TypeMembers)? {
@@ -2645,7 +2677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ListStep::Over => break,
                 }
             }
-            // `parseTypeMember`: the one member that may have a body.
+            // `parseTypeMember`: the only member that may have a body.
             let is_accessor = tolerant && self.is_at_accessor_in_type();
             // Filled in as the member is parsed. Only used in keep mode.
             let mut member = TypeMemberParts {
@@ -2669,13 +2701,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parsePropertyOrMethodSignature`: "= value" may come after "name: T", "name?" and "[computed]", not after a bare
             // name or a method.
             let mut takes_initializer = false;
-            // "[key: T]", "[K in T]": `parseIndexSignatureDeclaration` and `parseMappedType` take no initializer.
+            // "[key: T]", "[K in T]": `parseIndexSignatureDeclaration` and `parseMappedType` do not
+            // parse an initializer.
             let mut is_indexer = false;
             let mut is_optional = false;
             while self.lexer.is_identifier_or_keyword()
                 || self.lexer.token == T::TStringLiteral
                 || self.lexer.token == T::TNumericLiteral
-                // `isLiteralPropertyName`. The checker objects (1539).
+                // `isLiteralPropertyName`. The checker reports it (1539).
                 || (self.lexer.token == T::TBigIntegerLiteral && tolerant)
             {
                 if keeps {
@@ -2714,7 +2747,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let can_be_mapped_type =
                     !is_interface_body && kept.is_empty() && member.has_only_readonly();
-                // `parseTypeMember`: what is no index signature has a computed name.
+                // `parseTypeMember`: a member that is not an index signature has a computed name.
                 if keeps
                     && (if tolerant {
                         !is_mapped_type
@@ -2754,7 +2787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_indexer = true;
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
-                        // `parseMappedTypeParameter`: it ends with its constraint.
+                        // `parseMappedTypeParameter`: it ends at the end of its constraint.
                         let (constraint, parameter_end) = if keeps {
                             (self.last_type(), self.lexer.full_start())
                         } else {
@@ -2863,7 +2896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && tolerant
                         && !(is_optional || takes_initializer || is_indexer)
                     {
-                        // Nothing but words came before it, which were modifiers.
+                        // Only words precede it, and they were modifiers.
                         takes_initializer = self.skip_private_type_member(&mut member)?;
                     } else if !found_key {
                         self.lexer.unexpected()?;
@@ -2872,7 +2905,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             if self.lexer.token == T::TEquals && takes_initializer && tolerant {
-                // The checker says that it does not belong here (1246, 1247).
+                // The checker reports that it is not allowed here (1246, 1247).
                 member.initializer = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
@@ -2885,7 +2918,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => {
                     if is_accessor && self.lexer.token == T::TOpenBrace {
-                        // `parseFunctionBlockOrSemicolon`: nothing separates a body from the next member.
+                        // `parseFunctionBlockOrSemicolon`: no separator is required between a body
+                        // and the next member.
                         let body = self.skip_accessor_body_in_type()?;
                         if keeps {
                             self.add_accessor_body(&kept, &body);
@@ -2914,7 +2948,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseObjectTypeMembers` without the "{": it is reported, there are no members, and no "}" is looked for.
+    /// `parseObjectTypeMembers` without the "{": the missing "{" is reported, the member list is
+    /// empty, and no "}" is expected.
     #[cold]
     #[inline(never)]
     fn skip_missing_object_type(&mut self) -> Result<(), Error> {
@@ -2926,7 +2961,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `nextIsStartOfMappedType`, at the token after the "{". Only looks.
+    /// `nextIsStartOfMappedType`, at the token after the "{". Lookahead only.
     #[cold]
     #[inline(never)]
     fn is_start_of_mapped_type(&mut self) -> bool {
@@ -2962,7 +2997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.lexer.token == T::TIn)
     }
 
-    /// `parseTypeMemberSemicolon`. A missing separator is reported, and the token stays.
+    /// `parseTypeMemberSemicolon`. A missing separator is reported, and the token is not consumed.
     #[cold]
     #[inline(never)]
     fn skip_type_member_separator(&mut self) -> Result<(), Error> {
@@ -3002,7 +3037,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseParameters` after type parameters that no "(" follows: it is reported, there are no parameters, and no ")" is looked for.
+    /// `parseParameters` after type parameters that no "(" follows: the missing "(" is reported,
+    /// the parameter list is empty, and no ")" is expected.
     /// Then the return type.
     #[cold]
     #[inline(never)]
@@ -3028,7 +3064,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `shouldParseReturnType(":", isType)`: "=>" after the parameters of a signature in a type is reported and taken for the ":".
+    /// `shouldParseReturnType(":", isType)`: "=>" after the parameters of a signature in a type is
+    /// reported and treated as the ":".
     #[cold]
     #[inline(never)]
     fn skip_return_type_after_arrow(&mut self, member: &mut TypeMemberParts) -> Result<(), Error> {
@@ -3041,8 +3078,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseContextualModifier(get | set)`, at the first token of a type member: the word makes an accessor when the name of a
-    /// property follows, on whichever line. After modifiers it makes none: `scanTypeMemberStart` lets no such member start.
+    /// `parseContextualModifier(get | set)`, at the first token of a type member: the word starts
+    /// an accessor when a property name follows, on any line. After modifiers it does not:
+    /// `scanTypeMemberStart` rejects such a member start.
     #[cold]
     #[inline(never)]
     fn is_at_accessor_in_type(&mut self) -> bool {
@@ -3060,12 +3098,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
     }
 
-    /// `parseFunctionBlock`: the body of an accessor in a type is read like any other, and the checker objects to it (1183).
+    /// `parseFunctionBlock`: the body of an accessor in a type is parsed like any other, and the
+    /// checker reports it (1183).
     #[cold]
     #[inline(never)]
     fn skip_accessor_body_in_type(&mut self) -> Result<bun_ast::G::FnBody, Error> {
         self.parse_detached(|p| {
-            // `parse_fn_body` wants the scope of the parameters around that of the body, and from before it.
+            // `parse_fn_body` requires the parameter scope to enclose the body scope and to start
+            // before it.
             let before_body = bun_ast::Loc {
                 start: p.lexer.loc().start - 1,
             };
@@ -3077,8 +3117,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parsePropertyOrMethodSignature` from a private name on, which `parsePropertyName` takes for the name and the checker objects
-    /// to (18016), up to where an initializer would be. Whether there may be one: as after any other name.
+    /// `parsePropertyOrMethodSignature` starting at a private name, which `parsePropertyName`
+    /// accepts as the name and the checker reports (18016), up to the position of a possible
+    /// initializer. Returns whether an initializer is allowed, by the same rule as after any other
+    /// name.
     #[cold]
     #[inline(never)]
     fn skip_private_type_member(&mut self, member: &mut TypeMemberParts) -> Result<bool, Error> {
@@ -3348,7 +3390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: TypeParameterFlag,
         less_than: bun_ast::Loc,
     ) -> Result<SkipTypeParameterResult, Error> {
-        // TypeScript's scanner makes a token of its own of every ">".
+        // TypeScript's scanner scans every ">" as a separate token.
         let is_at_greater_than = |p: &Self| {
             matches!(
                 p.lexer.token,
@@ -3366,13 +3408,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
 
         if is_at_greater_than(self) {
-            // "<>" is no error to the parser. It never starts an arrow function (`isParenthesizedArrowFunctionExpression`).
+            // "<>" is not a parse error. It never starts an arrow function
+            // (`isParenthesizedArrowFunctionExpression`).
             if self.lexer.is_log_disabled
                 && !flags.contains(TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS)
             {
                 self.lexer.expected(T::TIdentifier)?;
             }
-            // `checkGrammarClassLikeDeclaration`. The checker finds the empty list of a function in the text.
+            // `checkGrammarClassLikeDeclaration`. The checker finds the empty list of a function in
+            // the source text.
             if flags.contains(
                 TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                     | TypeParameterFlag::ALLOW_CONST_MODIFIER,
@@ -3510,7 +3554,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parameter.loc = self.lexer.loc();
             self.lexer.next()?;
         } else {
-            // The name is missing where the token before ends, and the token stays. Without a modifier that is all there is.
+            // The missing name is at the end of the previous token, and the current token is not
+            // consumed. Without a modifier the type parameter is nothing but the missing name.
             parameter.loc = self.lexer.full_start();
             if parameter.start == self.lexer.loc() {
                 parameter.start = parameter.loc;
@@ -3528,7 +3573,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_complete &= parameter.constraint.is_some();
                 }
             } else {
-                // An expression is read as one, and `checkTypeParameter` wants a type.
+                // An expression is parsed as an expression, and `checkTypeParameter` expects a
+                // type.
                 let expression = self.lexer.range();
                 self.parse_detached(|p| p.parse_expr(Level::Prefix))?;
                 self.lexer.ts_grammar_error(expression, 1110);
@@ -3567,7 +3613,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && self.lexer.tolerant
                         && !self.lexer.has_newline_before
                     {
-                        // `parseExportDeclaration`: a string on the same line is the specifier after a forgotten "from" (1005).
+                        // `parseExportDeclaration`: a string on the same line is the specifier
+                        // after a missing "from" (1005).
                         self.lexer.expect_contextual_keyword(b"from")?;
                         let _ = self.parse_path()?;
                     }
@@ -3658,7 +3705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut extends: Vec<TypeId> = Vec::new();
         let mut other_heritage: Vec<TypeId> = Vec::new();
         let mut heritage_errors = [None; 2];
-        // It takes every clause, which leaves nothing for the two blocks below.
+        // It consumes every clause, so the two blocks below find nothing.
         let _ = self.lexer.tolerant
             && self.skip_interface_heritage_clauses(
                 &mut extends,
@@ -3717,10 +3764,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseHeritageClauses` of an interface in tolerant mode: any number of clauses, in any order. `extends` gets the types of the
-    /// first "extends" clause (`GetHeritageElements`). `errors` gets what `checkGrammarInterfaceDeclaration` reports, except 1176,
-    /// which the checker finds in the text. Returns whether there is an "implements" clause.
-    /// `others` gets the types of the other clauses.
+    /// `parseHeritageClauses` of an interface in tolerant mode: any number of clauses, in any
+    /// order. `extends` receives the types of the first "extends" clause (`GetHeritageElements`).
+    /// `errors` receives what `checkGrammarInterfaceDeclaration` reports, except 1176, which the
+    /// checker finds in the source text. Returns whether there is an "implements" clause.
+    /// `others` receives the types of the other clauses.
     #[cold]
     #[inline(never)]
     fn skip_interface_heritage_clauses(
@@ -3740,7 +3788,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let saved_clauses = self.enter_list(ListKind::HeritageClauses);
         loop {
             if self.lexer.token != T::TExtends && !self.lexer.is_contextual_keyword(b"implements") {
-                // A speculative parse fails at the "{" that is not there.
+                // A speculative parse fails at the missing "{".
                 if self.lexer.is_log_disabled
                     || self.classify_list_token(ListKind::HeritageClauses)? != ListStep::Skipped
                 {
@@ -3812,8 +3860,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(seen_implements)
     }
 
-    /// `parseExpressionWithTypeArguments` in a heritage clause of an interface. In keep mode the last type is the reference `A.B<C>`,
-    /// or `HeritageExpression` for any other expression, which the checker objects to (2499).
+    /// `parseExpressionWithTypeArguments` in a heritage clause of an interface. In keep mode the
+    /// last type is the reference `A.B<C>`, or `HeritageExpression` for any other expression, which
+    /// the checker reports (2499).
     fn skip_interface_heritage_element(&mut self) -> Result<(), Error> {
         let keeps = self.should_save_types();
         let (start, pos) = (self.lexer.loc().start, self.token_start());
@@ -3876,7 +3925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && self.lexer.is_identifier_or_keyword()
                 && self.lexer.next().is_ok();
         }
-        // `parseMemberExpressionRest` and `parseCallExpressionRest` go on with these.
+        // `parseMemberExpressionRest` and `parseCallExpressionRest` continue at these tokens.
         let continues = match self.lexer.token {
             T::TOpenParen
             | T::TOpenBracket
@@ -3920,8 +3969,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_first = true;
         let saved_contexts = self.enter_list(ListKind::TypeArguments);
         loop {
-            // `parseDelimitedList(PCTypeArguments)`: the list ends before whatever is neither a comma nor the start of a type, in
-            // TypeScript's own trials too. So it may be empty ("<>") and may end with a comma ("<T,>").
+            // `parseDelimitedList(PCTypeArguments)`: the list ends before any token that is neither
+            // a comma nor the start of a type, in TypeScript's own speculative parses too. So it
+            // may be empty ("<>") and may end with a comma ("<T,>").
             if self.lexer.tolerant && !self.is_list_element(ListKind::TypeArguments, false) {
                 self.check_end_of_type_arguments(is_first, less_than);
                 break;
@@ -3970,7 +4020,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn check_end_of_type_arguments(&mut self, is_empty: bool, less_than: i32) {
-        // 1099: to past the token after the empty list.
+        // 1099: the span ends after the token that follows the empty list.
         let (start, end, code) = if is_empty {
             (less_than, self.lexer.start as i32 + 1, 1099)
         } else {
@@ -4032,7 +4082,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
-            // It says everything again.
+            // The rerun produces everything again.
             self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
@@ -4077,7 +4127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
-            // It says everything again.
+            // The rerun produces everything again.
             self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
@@ -4085,8 +4135,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    /// `mark`, `rewind`: TypeScript keeps the errors of a speculative parse that succeeds. `trial` succeeded from `start` on with the
-    /// log disabled, so it is run again with the log enabled.
+    /// `mark`, `rewind`: TypeScript keeps the errors of a speculative parse that succeeds. `trial`
+    /// succeeded from `start` on with the log disabled, so it is rerun with the log enabled.
     #[cold]
     #[inline(never)]
     fn log_errors_of_successful_trial(
@@ -4100,7 +4150,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if trial(self) && self.lexer.start == end {
             return;
         }
-        // Error recovery, which is off while the log is disabled, led somewhere else. Keep the outcome of the first run, without errors.
+        // Error recovery, which is off while the log is disabled, took a different path. Keeps the
+        // result of the first run, without errors.
         self.restore_parser_snapshot(snapshot);
         self.lexer.is_log_disabled = true;
         let _ = trial(self);
@@ -4124,7 +4175,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: SkipTypeOptionsBitset,
     ) -> Result<bool, Error> {
         self.lexer.expect(T::TExtends)?;
-        // `tryParseConstraintOfInferType`: the constraint is a whole type, and the "?" is looked for after all of it.
+        // `tryParseConstraintOfInferType`: the constraint is a whole type, and the lookahead for
+        // the "?" comes after all of it.
         let level = if self.lexer.tolerant {
             Level::Lowest
         } else {
@@ -4194,7 +4246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.return_type_blocks_arrow_function(type_start) {
                 return Err(crate::Error::Backtrack);
             }
-            // "(x): T {" is an arrow function that lacks its arrow.
+            // "(x): T {" is an arrow function whose arrow is missing.
             if self.lexer.token == T::TOpenBrace {
                 return Ok(());
             }
@@ -4205,9 +4257,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `typeHasArrowFunctionBlockingParseError`, for the type that was just read from `type_start` on.
+    /// `typeHasArrowFunctionBlockingParseError`, for the type just parsed starting at `type_start`.
     fn return_type_blocks_arrow_function(&mut self, type_start: bun_ast::Loc) -> bool {
-        // A missing type has no width.
+        // A missing type has an empty span.
         if self.lexer.loc() == type_start {
             return true;
         }

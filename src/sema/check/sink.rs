@@ -1,26 +1,34 @@
 //! `ast.Diagnostic`, and `DiagnosticsCollection` for all the tasks of a program.
 //!
-//! EVERY DIAGNOSTIC BELONGS TO THE TASK OR TO A QUERY.
-//! - Reported with no query in flight, by a pass of `check_file`: it belongs to the task, and is reported.
-//! - Reported inside a query: it belongs to the query. A hit on its entry reports nothing, but several tasks of one step can each have
-//!   evaluated it. AT THE BARRIER, TASKS IN PLAN ORDER, IT IS REPORTED IFF NO EARLIER TASK HAS REPORTED UNDER THAT QUERY. No entry
-//!   is needed for that: a step whose entries no later step reads sends only its diagnostics to the barrier.
-//! - The texts of two tasks for one error can differ: union members are ordered by id, and the ids of a task's own types are in the order
-//!   in which that task created them (`'A | B'`, `'B | A'`). The first task's text is reported. tsc's can be the other one.
+//! Every diagnostic belongs to the task or to a query.
+//! - Reported with no query in progress, by a pass of `check_file`: it belongs to the task, and is
+//!   reported.
+//! - Reported inside a query: it belongs to the query. A hit on its entry reports nothing, but
+//!   several tasks of one step can each have evaluated it. At the barrier, with tasks in plan
+//!   order, it is reported iff no earlier task has reported under that query. No entry is needed
+//!   for that: a step whose entries no later step reads sends only its diagnostics to the barrier.
+//! - The texts of two tasks for one error can differ: union members are ordered by id, and the ids
+//!   of task-local types are in the order in which that task created them (`'A | B'`, `'B | A'`).
+//!   The first task's text is reported. tsc's can be the other one.
 //!
-//! `add_diagnostic` pushes onto `Checker::reported`. The diagnostics of a frame are the suffix from `QueryFrame::reported_from`.
+//! `add_diagnostic` pushes onto `Checker::reported`. The diagnostics of a frame are the suffix from
+//! `QueryFrame::reported_from`.
 //! `Checker::leave` calls `settle_reported` for them:
-//! - the result is finished: they move to `Task::diagnostics`, tagged with the query;
-//! - the result depends on a cycle, a trial or a refused query (`drops_reported`): dropped. The next evaluation reports again;
-//! - the result depends on an incomplete flow-loop type (`taint_from`): they stay, and belong to the frame around it.
+//! - the result is final: they move to `Task::diagnostics`, tagged with the query;
+//! - the result depends on a cycle, a trial or a refused query (`drops_reported`): dropped. The
+//!   next evaluation reports again;
+//! - the result depends on an incomplete flow-loop type (`taint_from`): they stay, and belong to
+//!   the enclosing frame.
 //!
-//! `Program::publish_diagnostics` moves the diagnostics of a task to the buffers of their files (`Sink`). `Program::finish_file` reads
-//! the buffer of a file after the last barrier.
+//! `Program::publish_diagnostics` moves the diagnostics of a task to the buffers of their files
+//! (`Sink`). `Program::finish_file` reads the buffer of a file after the last barrier.
 //!
-//! What belongs to the task and is located in the file of its `check_file` stays in `reported` until that ends, and goes to `finish_file`.
+//! Diagnostics that belong to the task and are located in the file of its `check_file` stay in
+//! `reported` until that ends, and go to `finish_file`.
 //!
-//! A DIAGNOSTIC THAT LEAVES ITS TASK IS SETTLED (`Checker::settle`): whatever only the tree of its file can tell has been filled in. The
-//! tree of a file that nothing imports is freed at the end of its task, and `finish_file` reads no tree.
+//! A diagnostic that leaves its task is settled (`Checker::settle`): every field that only the HIR
+//! of its file can provide has been filled in. The HIR of a file that nothing imports is freed at
+//! the end of its task, and `finish_file` reads no HIR.
 
 use super::explain::NOWHERE;
 use super::task::Finished;
@@ -34,7 +42,7 @@ pub(super) enum Arg<'a> {
     Type(TypeId),
     /// `symbolToString`
     Sym(Sym),
-    /// `symbolToString`, of a property.
+    /// `symbolToString` of a property.
     Prop(&'a Prop),
     /// `signatureToString`
     Sig(SigId),
@@ -47,12 +55,13 @@ pub(super) enum Arg<'a> {
 /// The arguments of a message, printed.
 pub(super) type Args = Box<[Box<[u8]>]>;
 
-/// For who still prints the arguments by itself. It goes with its last caller: a diagnostic takes `&[Arg]`.
+/// For callers that still print the arguments themselves. To be removed with its last caller: a
+/// diagnostic takes `&[Arg]`.
 pub(super) fn held(args: Vec<impl Into<Vec<u8>>>) -> Args {
     (args.into_iter().map(|arg| arg.into().into())).collect()
 }
 
-/// A number as it is written in a message.
+/// A number as printed in a message.
 pub(super) fn number_text(number: usize) -> Vec<u8> {
     bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), number).to_vec()
 }
@@ -65,7 +74,8 @@ pub(super) const MAX_SERIALIZATION_LEVEL: u32 = 2;
 pub(super) struct Reported {
     pub(super) file: FileId,
     pub(super) start: u32,
-    /// Until `finish_file`, 0: where the token at `start` ends. `NO_LENGTH`: at `start`.
+    /// Until `finish_file`, 0 means the end of the token at `start`. `NO_LENGTH`: an empty span at
+    /// `start`.
     pub(super) end: u32,
     pub(super) code: u32,
     pub(super) args: Args,
@@ -73,7 +83,8 @@ pub(super) struct Reported {
     pub(super) related_information: Vec<Reported>,
     /// `CategorySuggestion`
     pub(super) is_suggestion: bool,
-    /// Once settled: where the `@ts-ignore` or `@ts-expect-error` directive starts that suppresses it. `NO_DIRECTIVE`: none does.
+    /// Once settled: the start of the `@ts-ignore` or `@ts-expect-error` directive that suppresses
+    /// it. `NO_DIRECTIVE`: none does.
     pub(super) directive: u32,
     /// Once settled: `is_bare` before `end` was filled in.
     pub(super) was_bare: bool,
@@ -82,8 +93,8 @@ pub(super) struct Reported {
 pub(super) const NO_DIRECTIVE: u32 = u32::MAX;
 
 impl Reported {
-    /// `NewDiagnostic`, of arguments that are printed.
-    /// Of a message that takes no arguments.
+    /// `NewDiagnostic` with already printed arguments.
+    /// For a message without arguments.
     pub(super) fn bare(at: (FileId, u32, u32), code: u32) -> Reported {
         Reported::new(at, code, Args::default())
     }
@@ -136,7 +147,7 @@ fn compare_message_chain_size(a: &[Reported], b: &[Reported]) -> std::cmp::Order
         })
 }
 
-/// `compareMessageChainContent`, of two of one size.
+/// `compareMessageChainContent` for two chains of equal size.
 fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Ordering {
     a.iter()
         .zip(b)
@@ -148,9 +159,9 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
 }
 
 pub(super) struct Sink {
-    /// For each file what has been reported in it.
+    /// The diagnostics reported in each file.
     by_file: Box<[Guarded<Vec<Reported>>]>,
-    /// The queries under which a task has reported. Touched only at barriers.
+    /// The queries under which a task has reported. Accessed only at barriers.
     owners: Guarded<crate::util::FxHashSet<Query>>,
 }
 
@@ -163,8 +174,8 @@ impl Sink {
     }
 }
 
-/// Whether every task names `q` alike: it holds a file and a node, or a symbol. A type, signature or mapper id can be one of the
-/// task's own.
+/// Whether `q` is the same key in every task: it holds a file and a node, or a symbol. A type,
+/// signature or mapper id can be task-local.
 fn is_task_independent(q: Query) -> bool {
     match q {
         Query::Symbol(_)
@@ -192,7 +203,8 @@ fn is_task_independent(q: Query) -> bool {
 }
 
 impl super::Program {
-    /// At the barrier, tasks in plan order. What belongs to a query is reported iff no earlier task has reported under that query.
+    /// At the barrier, tasks in plan order. A diagnostic that belongs to a query is reported iff no
+    /// earlier task has reported under that query.
     pub(super) fn publish_diagnostics(&self, finished: &mut Finished) {
         let mut owners = self.sink.owners.lock();
         let mut own = Vec::new();
@@ -220,7 +232,7 @@ impl super::Program {
         (self.global_errors.lock()).insert((diagnostic.code, args.collect()));
     }
 
-    /// What the tasks have reported in `file`.
+    /// The diagnostics the tasks have reported in `file`.
     pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
         std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
     }
@@ -245,7 +257,8 @@ impl super::Program {
     /// `SortAndDeduplicateDiagnostics`
     pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
         reported.sort_by(|a, b| self.compare_diagnostics(a, b));
-        // `compactAndMergeRelatedInfos`: those that differ in nothing but what they are related to are one, related to all of it.
+        // `compactAndMergeRelatedInfos`: diagnostics that differ only in their related information
+        // are merged into one that has all of it.
         reported.dedup_by(|next, first| {
             let is_same = (next.file, next.start, next.end, next.code)
                 == (first.file, first.start, first.end, first.code)
@@ -263,7 +276,7 @@ impl super::Program {
 }
 
 impl Checker<'_> {
-    /// `StringifyArgs`. They are printed at once, as they are there: printing asks questions.
+    /// `StringifyArgs`. They are printed eagerly, as in tsgo: printing runs queries.
     pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Args {
         args.iter()
             .map(|arg| {
@@ -327,7 +340,7 @@ impl Checker<'_> {
         self.error_at((file, start, end), code, args)
     }
 
-    /// `c.error`, for who has no node to report it on.
+    /// `c.error`, for callers that have no node to report on.
     #[cold]
     pub(super) fn error_at(
         &mut self,
@@ -339,7 +352,8 @@ impl Checker<'_> {
         self.add_diagnostic(diagnostic)
     }
 
-    /// `grammarErrorAtPos`: whether it reported, which it does not in a file that does not parse.
+    /// `grammarErrorAtPos`: returns whether it reported, which it does not in a file with parse
+    /// errors.
     pub(super) fn grammar_error_at(
         &mut self,
         at: (FileId, u32, u32),
@@ -389,8 +403,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `settle_reported` for the innermost frame if it stores nothing under its query, before `leave`: an evaluation that is repeated
-    /// in order to report, a check by value. Every task that gets there evaluates it, so only `check_file` of the file reports. The diagnostics do not go to the frame around it, which may drop its own.
+    /// `settle_reported` for the innermost frame if it stores nothing under its query, before
+    /// `leave`: an evaluation that is repeated to report, an uncached check. Every task that gets
+    /// there evaluates it, so only `check_file` of the file reports. The diagnostics do not go to
+    /// the enclosing frame, which may drop its own.
     pub(super) fn settle_reported_without_entry(&mut self) {
         if let Some(frame) = self.frames.last()
             && !frame.tainted
@@ -404,15 +420,18 @@ impl Checker<'_> {
         }
     }
 
-    /// `add_diagnostic` with an owner other than the innermost frame. The frames in flight do not drop it.
-    /// - `Some(q)`: the result of a resolution cycle, after the `leave` that found it (`!popTypeResolution()`) or while `q` is still in
-    ///   flight below. It belongs to the entry that `q` stores. tsgo caches that result whatever becomes of the resolutions around it.
-    /// - `None`: it belongs to the task. A limit, after which no query in flight is cacheable. A cycle that has no query.
+    /// `add_diagnostic` with an owner other than the innermost frame. The frames in progress do not
+    /// drop it.
+    /// - `Some(q)`: the result of a resolution cycle, after the `leave` that found it
+    ///   (`!popTypeResolution()`) or while `q` is still in progress below. It belongs to the entry
+    ///   that `q` stores. tsgo caches that result regardless of the enclosing resolutions.
+    /// - `None`: it belongs to the task. A limit, after which no query in progress is cacheable. A
+    ///   cycle that has no query.
     pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, diagnostic: Reported) {
         self.log_diagnostic(owner, diagnostic);
     }
 
-    /// What has been reported from `from` on belongs to the task.
+    /// The diagnostics reported from index `from` on belong to the task.
     pub(super) fn log_reported_from(&mut self, from: usize) {
         for diagnostic in self.reported.split_off(from) {
             self.log_diagnostic(None, diagnostic);
@@ -437,7 +456,8 @@ impl Checker<'_> {
         if self.task.is_planned() {
             self.task.diagnostics.push((owner, diagnostic));
         } else if let Some(diagnostic) = self.settled(diagnostic, &mut Default::default()) {
-            // What a task outside the plan buffers is dropped with it, so nothing competes for its entries.
+            // The diagnostics buffered by a task outside the plan are dropped with it, so nothing
+            // competes for its entries.
             self.p.push_diagnostic(diagnostic);
         }
     }
@@ -447,8 +467,9 @@ impl Checker<'_> {
         self.task.checker_count = count;
     }
 
-    /// `getBindAndCheckDiagnosticsWithChecker`: the diagnostics of a file are those that its own checker has for it right after
-    /// `checkSourceFile`. Whether that is still to come for `file`.
+    /// `getBindAndCheckDiagnosticsWithChecker`: the diagnostics of a file are those that its own
+    /// checker has for it right after `checkSourceFile`. Returns whether that has not happened yet
+    /// for `file`.
     fn collects_later(&self, file: FileId) -> bool {
         let rank = self.files().rank_of_file(file);
         let is_own = Some(rank % self.task.checker_count) == self.task.index();
@@ -459,8 +480,8 @@ impl Checker<'_> {
         is_own && current.is_none_or(|current| rank >= current)
     }
 
-    /// At the end of the task, on its own thread, for `Task::finish`. A query that only this task can name does not go to the barrier:
-    /// what was reported under it belongs to the task.
+    /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key
+    /// does not go to the barrier: the diagnostics reported under it belong to the task.
     pub(super) fn take_diagnostics(&mut self) -> Vec<(Option<Query>, Reported)> {
         let diagnostics = std::mem::take(&mut self.task.diagnostics);
         let mut directives = Default::default();

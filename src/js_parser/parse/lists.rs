@@ -93,8 +93,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Call before parsing each element. Ports the loop condition of `parseList` and `parseDelimitedList`.
     #[inline]
     pub(crate) fn classify_list_token(&mut self, kind: ListKind) -> Result<ListStep, Error> {
-        // A speculative parse must still fail on errors. The parser of type members accepts any run of words as modifiers and a name,
-        // so for that list the test is made here: a token that starts no member ends the list, and `expect("}")` fails the attempt.
+        // A speculative parse must still fail on errors. The type member parser accepts any run of
+        // words as modifiers and a name, so for that list the check is done here: a token that
+        // cannot start a member ends the list, and `expect("}")` fails the speculative parse.
         if !self.lexer.tolerant || self.lexer.is_log_disabled && kind != ListKind::TypeMembers {
             return Ok(ListStep::Element);
         }
@@ -104,7 +105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn classify_list_token_slow(&mut self, kind: ListKind) -> Result<ListStep, Error> {
-        // The lists in which `is_list_element` takes a name whatever it is and whatever follows it.
+        // The lists in which `is_list_element` accepts any name, whatever follows it.
         const TAKE_ANY_NAME: u32 = 1 << ListKind::EnumMembers as u32
             | 1 << ListKind::VariableDeclarations as u32
             | 1 << ListKind::ObjectBindingElements as u32
@@ -401,7 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.is_start_of_declaration()
                     || self.look_ahead(|p| p.step() && matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot))
             }
-            // `is_start_of_declaration` looks no further than this token.
+            // `is_start_of_declaration` does not look ahead past this token.
             T::TConst => true,
             T::TExport => self.is_start_of_declaration(),
             T::TIdentifier => {
@@ -714,11 +715,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     pub(crate) fn is_in_some_parsing_context(&mut self) -> bool {
         let mut open = self.lexer.list_contexts;
-        // `reparseTopLevelAwait` parses a top-level statement that uses `await` as a name again, with no list of statements open.
+        // `reparseTopLevelAwait` reparses a top-level statement that uses `await` as an identifier,
+        // with no statement list open.
         if self.fn_or_arrow_data_parse.is_top_level && self.is_await_keyword() {
             self.lexer.await_name_seen = true;
             self.await_was_refused = true;
-            // `parse_for_sema` parses a script again, with `await` as a name, if it sees this.
+            // `parse_for_sema` reparses a script, with `await` as an identifier, if this is set.
             self.top_level_await_keyword = self.lexer.range();
         }
         if self.lexer.await_name_seen {
@@ -728,7 +730,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open & 1 << kind as u32 != 0
                 && (self.is_list_element(kind, true) || self.is_list_terminator(kind))
         });
-        // The first parse ended its statement at this token. This one goes past it, into the next statement.
+        // The first parse ended its statement at this token. The reparse continues past it, into
+        // the next statement.
         if !found
             && open != self.lexer.list_contexts
             && !self.await_was_refused
@@ -739,8 +742,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         found
     }
 
-    /// `await` where it is no name (`isIdentifier`): in an [Await] context, which the top level of a module is when TypeScript parses
-    /// the statement again.
+    /// `await` where it is not an identifier (`isIdentifier`): in an [Await] context, which the top
+    /// level of a module is when TypeScript reparses the statement.
     fn is_await_keyword(&self) -> bool {
         self.word() == b"await"
             && self.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
@@ -807,7 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let is_less_than_slash = self.is_at_less_than_slash_token();
         self.lexer.next()?;
-        // The `/` of `</`, unless this lexer took it for the start of a comment.
+        // The `/` of `</`, unless this lexer scanned it as the start of a comment.
         if is_less_than_slash
             && self.lexer.token == T::TSlash
             && self.lexer.loc().start == range.loc.start + 1

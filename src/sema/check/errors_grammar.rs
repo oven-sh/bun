@@ -1,7 +1,8 @@
-//! What is wrong with a file whatever the types in it are: uses of syntax that the options or strict mode do not allow.
+//! Type-independent errors of a file: uses of syntax that the options or strict mode do not allow.
 //!
-//! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions of its binder.go, and the checks of this kind that
-//! sit in checker.go. As there, nothing of this is said of a file that does not parse.
+//! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions of its binder.go, and
+//! the checks of this kind in checker.go. As there, none of this is reported for a file with parse
+//! errors.
 
 use super::sink::held;
 use super::*;
@@ -33,7 +34,8 @@ impl Checker<'_> {
 
     pub(super) fn check_grammar(&mut self, file: FileId) {
         let hir = self.hir(file);
-        // `grammarErrorOnNode` and its like say nothing of a file the parser objected to, nor does `checkContextualIdentifier`.
+        // `grammarErrorOnNode` and similar functions report nothing in a file with parse errors,
+        // nor does `checkContextualIdentifier`.
         let parses = !has_parse_diagnostics(hir);
         if parses {
             self.check_yield_in_property_initializers(file);
@@ -41,8 +43,9 @@ impl Checker<'_> {
         self.check_strict_mode(file, parses);
     }
 
-    /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: what is said of the `/// <reference>` whose value is written at
-    /// `start`: 2727 for 2726 where a library has nearly that name.
+    /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: the error for the `///
+    /// <reference>` whose value is at `start`: 2727 replaces 2726 where a library has a similar
+    /// name.
     fn report_missing_reference(&mut self, file: FileId, start: u32, mut code: u32) {
         let references = &self.hir(file).references;
         let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
@@ -89,7 +92,7 @@ impl Checker<'_> {
             return;
         };
         let (import, kind) = (&hir[id], self.p.files.options.module);
-        // In a namespace it is out of place to begin with.
+        // In a namespace it is already an error.
         if matches!(import.target, ImportEqualsTarget::Require(_))
             && matches!(bound.stmt_parent[s.idx()], Parent::File)
             && (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&kind)
@@ -105,7 +108,7 @@ impl Checker<'_> {
         }
     }
 
-    /// From `checkExportAssignment`, of an `export =` that is in its place: 1203 1218.
+    /// From `checkExportAssignment`, for an `export =` in a valid position: 1203 1218.
     pub(super) fn check_grammar_export_equals(&mut self, file: FileId, s: StmtId) {
         let (hir, kind) = (self.hir(file), self.p.files.options.module);
         let is_ambient = hir.is_ambient(hir.node(s));
@@ -194,7 +197,7 @@ impl Checker<'_> {
         }
     }
 
-    /// From `checkBinaryLikeExpression`, of `id`, which is `left, right`: 2695
+    /// From `checkBinaryLikeExpression`, for `id`, which is `left, right`: 2695
     pub(super) fn check_comma_operator(
         &mut self,
         file: FileId,
@@ -222,7 +225,7 @@ impl Checker<'_> {
         }
         let start = self.start_of(file, left);
         if !self.is_in_adjacent_jsx_elements(file, id, start) {
-            // An operand that is left out is a name that takes no room (`createMissingNode`).
+            // An omitted operand is a zero-length identifier (`createMissingNode`).
             let end = match hir[left].kind {
                 ExprKind::Missing | ExprKind::Ident(known::empty) => super::explain::NO_LENGTH,
                 _ => self.error_end_of(file, left),
@@ -297,8 +300,9 @@ impl Checker<'_> {
 
     // ───────────────────────────── strict mode ─────────────────────────────
 
-    /// What binder.go says of an `Identifier` for the word it is, and of what is deleted: everything is strict mode code.
-    /// `checkContextualIdentifier` says nothing of a file unless it `parses`.
+    /// The errors binder.go reports for an `Identifier` based on its text, and for the operand of
+    /// `delete`: all code is strict mode code.
+    /// `checkContextualIdentifier` reports nothing for a file unless it `parses`.
     fn check_strict_mode(&mut self, file: FileId, parses: bool) {
         let hir = self.hir(file);
         if hir.kind == FileKind::Declaration {
@@ -316,8 +320,8 @@ impl Checker<'_> {
         self.check_strict_mode_delete_expression(file);
     }
 
-    /// `getStrictModeIdentifierMessage`, `getStrictModeEvalOrArgumentsMessage`: what is said depends on why the code is strict:
-    /// `[in a class, in a module, otherwise]`.
+    /// `getStrictModeIdentifierMessage`, `getStrictModeEvalOrArgumentsMessage`: the message depends
+    /// on why the code is strict: `[in a class, in a module, otherwise]`.
     fn strict_mode_message(&self, file: FileId, node: Node, codes: [u32; 3]) -> u32 {
         let hir = self.hir(file);
         if hir.get_containing_class(node).is_some() {
@@ -345,13 +349,14 @@ impl Checker<'_> {
         } else {
             return;
         };
-        // `DeclarationNameToString`: as it is written, escapes and all.
+        // `DeclarationNameToString`: the source text, including escapes.
         let start = hir.start(node);
         let written = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
         self.error(file, node, code, &[Arg::Bytes(written)]);
     }
 
-    /// `checkStrictModeEvalOrArguments`, of `name`, which is `eval` or `arguments`, where binder.go calls it.
+    /// `checkStrictModeEvalOrArguments` for `name`, which is `eval` or `arguments`, where binder.go
+    /// calls it.
     fn check_strict_mode_eval_or_arguments(&mut self, file: FileId, name: Node) {
         let hir = self.hir(file);
         let context = hir.parent(name);
@@ -359,7 +364,7 @@ impl Checker<'_> {
             NodeData::Expr(e) => Some(hir[e].kind),
             _ => None,
         };
-        let is_looked_at = match hir.kind(context) {
+        let is_visited = match hir.kind(context) {
             // `bindVariableDeclarationOrBindingElement`
             Kind::VariableDeclaration | Kind::BindingElement => hir.name(context) == name,
             // `bindParameter`, `checkStrictModeFunctionName`
@@ -382,7 +387,7 @@ impl Checker<'_> {
             ),
             _ => false,
         };
-        if is_looked_at {
+        if is_visited {
             let code = self.strict_mode_message(file, context, [1210, 1215, 1100]);
             self.error(file, name, code, &[Arg::Atom(hir.text(name))]);
         }
@@ -403,11 +408,12 @@ impl Checker<'_> {
                 continue;
             }
             match hir[operand].kind {
-                // What is in parentheses is no identifier, whatever is in them.
+                // A parenthesized expression is not an identifier, whatever it contains.
                 ExprKind::Ident(_) if !is_parenthesized(hir, operand) => {
                     self.error_at((file, hir[operand].pos, 0), 1102, &[]);
                 }
-                // A missing operand is a missing identifier, which starts where the keyword ends (`createMissingNode`).
+                // A missing operand is a missing identifier, which starts at the end of the keyword
+                // (`createMissingNode`).
                 ExprKind::Missing => {
                     let start = hir[id].pos + b"delete".len() as u32;
                     self.error_at((file, start, start), 1102, &[]);
@@ -420,7 +426,7 @@ impl Checker<'_> {
 
 // ───────────────────────────── the text ─────────────────────────────
 
-/// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`, of the token that ends at `at`.
+/// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine` for the token that ends at `at`.
 fn operand_follows_on_the_line(text: &[u8], mut at: usize) -> bool {
     loop {
         match text.get(at..).unwrap_or_default() {

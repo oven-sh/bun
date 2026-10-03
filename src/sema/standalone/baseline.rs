@@ -1,7 +1,8 @@
-//! Runs TypeScript's compiler and conformance tests the way typescript-go's own runner does (`internal/testrunner`,
-//! `internal/testutil/harnessutil`, `internal/testutil/tsbaseline`): each test is split into its files, which are put in a file system
-//! that is only in memory, checked through the driver `bun check` goes through, and what comes out is written in the format of the
-//! `.errors.txt` baselines that are committed there, to be compared with them.
+//! Runs TypeScript's compiler and conformance tests the way typescript-go's own runner does
+//! (`internal/testrunner`, `internal/testutil/harnessutil`, `internal/testutil/tsbaseline`): each
+//! test is split into its files, which are placed in an in-memory file system and checked through
+//! the same driver as `bun check`. The output is written in the format of the `.errors.txt`
+//! baselines committed there, for comparison with them.
 
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
@@ -68,8 +69,10 @@ const SKIPPED: &[&str] = &[
     "requireOfJsonFileWithModuleNodeResolutionEmitNone.ts",
 ];
 
-/// `harnessCommandLineOptions`, in lower case, and what else is no compiler option.
-/// Among the lines about types: `Emit` adds an error to those of the check (`Checker::mark_linked_references_recursively`).
+/// `harnessCommandLineOptions`, in lower case, and the other directives that are not compiler
+/// options.
+/// Written among the type lines: `Emit` adds an error to those of the check
+/// (`Checker::mark_linked_references_recursively`).
 const EMIT_ADDS_ERRORS: &str = "#emit adds errors\n";
 
 const HARNESS_OPTIONS: &[&str] = &[
@@ -89,16 +92,18 @@ const HARNESS_OPTIONS: &[&str] = &[
     "typescriptversion",
 ];
 
-/// A file system that is only in memory, but for the default library and `tests/lib`, which are read from where they are.
+/// An in-memory file system, except for the default library and `tests/lib`, which are read from
+/// disk.
 pub struct Virtual {
-    /// By path. On a file system that does not tell `A` from `a`, by the path in lower case, with the path as it is written.
+    /// Keyed by path. On a case-insensitive file system, keyed by the lowercased path, with the
+    /// original path alongside.
     files: BTreeMap<Vec<u8>, (Vec<u8>, Cow<'static, [u8]>)>,
-    /// All that has something in it, likewise.
+    /// All non-empty directories, keyed the same way.
     directories: BTreeMap<Vec<u8>, Vec<u8>>,
-    /// What stands for something else, and what for.
+    /// Symlinks and their targets.
     links: BTreeMap<Vec<u8>, Vec<u8>>,
     is_case_sensitive: bool,
-    /// Prefixes that are somewhere on the disk, and where.
+    /// Path prefixes that are mapped to the disk, and their locations there.
     mounted: Vec<(Vec<u8>, Vec<u8>)>,
     disk: bun_sema_driver::host::Disk,
 }
@@ -150,7 +155,7 @@ impl Virtual {
         self.add_directories_above(path);
     }
 
-    /// Where `path` is on the disk, if it is.
+    /// The location of `path` on the disk, if it has one.
     fn on_disk(&self, path: &[u8]) -> Option<Vec<u8>> {
         self.mounted.iter().find_map(|(prefix, real)| {
             let rest = path.strip_prefix(prefix.as_slice())?;
@@ -158,7 +163,7 @@ impl Virtual {
         })
     }
 
-    /// `path` with the links in it followed.
+    /// `path` with its symlinks resolved.
     fn followed(&self, path: &[u8]) -> Vec<u8> {
         let mut path = path.to_vec();
         'again: for _ in 0..40 {
@@ -259,13 +264,14 @@ impl Host for Virtual {
     ) -> bun_sema::hir::File {
         self.disk.parse(path, text, atoms, options)
     }
-    // One thread of the pool, as in `bun check --threads 1`: it has the stack of the product, and knows where it ends.
+    // One thread of the pool, as in `bun check --threads 1`: it has the same stack as in
+    // production, and knows its stack limit.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.parallel(count, work);
     }
 }
 
-/// `decodeBytes`: what a file says, going by the mark at its start.
+/// `decodeBytes`: the text of a file, decoded according to its byte order mark.
 fn decode(bytes: &[u8]) -> Vec<u8> {
     let utf16 = |rest: &[u8], big: bool| {
         let units = rest.chunks_exact(2).map(|pair| {
@@ -288,7 +294,7 @@ fn decode(bytes: &[u8]) -> Vec<u8> {
     }
 }
 
-/// `GetNormalizedAbsolutePath`, in the terms of the checker, where `c:/a` is `/c:/a`.
+/// `GetNormalizedAbsolutePath`, in the checker's path representation, where `c:/a` is `/c:/a`.
 fn absolute(path: &str, cwd: &str) -> String {
     text(&match path.as_bytes() {
         [drive, b':', ..] if drive.is_ascii_alphabetic() => join(b"/", path.as_bytes()),
@@ -300,7 +306,7 @@ fn trim(bytes: &[u8]) -> &[u8] {
     bytes.trim_ascii()
 }
 
-/// `optionRegex`, of one line: the name and the value.
+/// `optionRegex` applied to one line: the name and the value.
 fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
     let rest = line.strip_prefix(b"//")?;
     let rest = rest.trim_ascii_start().strip_prefix(b"@")?;
@@ -335,7 +341,7 @@ struct Unit {
 
 struct Parsed {
     units: Vec<Unit>,
-    /// What stands for something else, and what for.
+    /// Symlinks and their targets.
     links: Vec<(String, String)>,
 }
 
@@ -408,7 +414,7 @@ fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
     settings
 }
 
-/// `splitOptionValues`, where only one is left: which.
+/// `splitOptionValues` when a single value remains: that value.
 fn the_one_value(option: &str, value: &str) -> String {
     let Some(all) = bun_sema::config_options::choices(option.as_bytes()) else {
         return value.to_owned();
@@ -510,7 +516,7 @@ fn write_code_snippet(out: &mut String, d: &Diagnostic, color: &str, indent: &st
     let utf16_len = |text: &str| text.encode_utf16().count();
     let (first_line, first_char) = (d.line as usize - 1, d.column as usize - 1);
     let (last_line, mut last_char) = (d.end_line as usize - 1, d.end_column as usize - 1);
-    // Without length, what comes right after is pointed at.
+    // For an empty span, the text right after it is marked.
     if d.end <= d.start {
         last_char += 1;
     }
@@ -603,7 +609,7 @@ fn error_summary(diagnostics: &[Diagnostic]) -> String {
     if errors.is_empty() {
         return String::new();
     }
-    // By file, in the order of their names: how many, and `prettyPathForFileError`.
+    // Keyed by file, sorted by name: the error count and `prettyPathForFileError`.
     let mut by_file: BTreeMap<&[u8], (usize, String)> = BTreeMap::new();
     for &d in &errors {
         if !d.path.is_empty() {
@@ -760,18 +766,18 @@ fn render(
     out
 }
 
-/// How far what comes out is what is expected.
+/// How closely the output matches the expected baseline.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Level {
     /// It crashed, or took too long.
     Broken,
-    /// The errors are others, or elsewhere.
+    /// The errors have different codes or positions.
     Differs,
-    /// The same codes at the same places.
+    /// The same codes at the same positions.
     Codes,
-    /// And the same words.
+    /// And the same message text.
     Words,
-    /// And they reach as far: all is the same but for the related information.
+    /// And the same spans: everything matches except the related information.
     Spans,
     /// Byte for byte.
     All,
@@ -784,7 +790,7 @@ pub struct Outcome {
     pub note: String,
 }
 
-/// The lines before the first empty one: an error each, with the reasons below it.
+/// The lines before the first empty line: one error each, with its elaboration below it.
 fn top_of(text: &str) -> &str {
     text.find("\n\n\n").map_or(text, |end| &text[..end])
 }
@@ -804,13 +810,14 @@ fn heads(top: &str) -> Vec<String> {
     heads
 }
 
-/// `compileFilesWithHost` compiles twice, and says so (TS-1) where writing the output has added errors: "such an error may not be reflected
-/// on the command line or in the editor". Without that, what is left is what there is before anything is written.
+/// `compileFilesWithHost` compiles twice, and reports TS-1 where emit has added errors: "such an
+/// error may not be reflected on the command line or in the editor". With that removed, the
+/// remainder is the pre-emit diagnostics.
 fn without_errors_added_by_emit(text: &str) -> String {
     if !text.contains("error TS-1: ") {
         return text.to_owned();
     }
-    // All there was before is listed: nothing is the same before and after.
+    // All pre-emit diagnostics are listed: none is common to both lists.
     if let Some((before, after)) = counts_around_emit(text)
         && before > after
         && listed_under_the_mismatch(text).len() >= before
@@ -818,7 +825,7 @@ fn without_errors_added_by_emit(text: &str) -> String {
         return String::new();
     }
     let mut lines: Vec<Cow<'_, str>> = Vec::new();
-    // With `pretty`, what is said of it on top goes on to the next line that is not indented.
+    // With `pretty`, its entry in the top section extends to the next line that is not indented.
     let (mut is_pretty, mut is_in_it_on_top, mut is_in_it) = (false, false, false);
     for line in text.split('\n') {
         if line.starts_with("error TS-1: ") {
@@ -875,7 +882,7 @@ fn counts_around_emit(text: &str) -> Option<(usize, usize)> {
     Some((before.parse().ok()?, after.parse().ok()?))
 }
 
-/// What is listed under TS-1, each as it is written after `!!! related TS`.
+/// The entries listed under TS-1, each as the text after `!!! related TS`.
 fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
     text.lines()
         .skip_while(|line| !line.starts_with("!!! error TS-1: "))
@@ -885,8 +892,8 @@ fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// `compileFilesWithHost` goes by the shorter of its two lists. Where writing the output has taken errors away, that is what there is
-/// afterwards, and what there was before besides is listed under TS-1.
+/// `compileFilesWithHost` uses the shorter of its two lists. Where emit has removed errors, that is
+/// the post-emit list, and the additional pre-emit errors are listed under TS-1.
 fn errors_removed_by_emit(text: &str) -> Vec<&str> {
     match counts_around_emit(text) {
         Some((before, after)) if before > after => listed_under_the_mismatch(text),
@@ -894,7 +901,7 @@ fn errors_removed_by_emit(text: &str) -> Vec<&str> {
     }
 }
 
-/// `d` as it would be listed there.
+/// `d` formatted as it would be listed there.
 fn as_listed(d: &Diagnostic, lib_dir: &str) -> String {
     let path = text(&d.path);
     let location = if path.is_empty() {
@@ -939,11 +946,11 @@ fn level_of(ours: &str, expected: &str) -> Level {
 pub struct Suite<'a> {
     /// `compiler`, `conformance`
     pub name: &'a str,
-    /// Where the tests are.
+    /// Location of the tests.
     pub cases: &'a str,
-    /// Where the `.errors.txt` are.
+    /// Location of the `.errors.txt` baselines.
     pub baselines: &'a str,
-    /// The names of all the baselines there are of the suite, of whatever kind.
+    /// The names of all baselines of the suite, of every kind.
     pub names: &'a [String],
 }
 
@@ -953,14 +960,15 @@ pub struct Setup<'a> {
     /// TypeScript's `tests/lib`.
     pub test_lib: &'a str,
     pub only: Option<&'a str>,
-    /// Where to write what comes out, if anywhere.
+    /// Where to write the output, if anywhere.
     pub out: Option<&'a str>,
     /// Where to write the type at every expression and name of every test, if anywhere: to compare with `.types` baselines.
     pub types_out: Option<&'a str>,
     /// The same for the symbol at every name: to compare with `.symbols` baselines. Needs `types_out`.
     pub symbols_out: Option<&'a str>,
-    /// Where to write the declaration files of every test that asks for them, if anywhere: to compare with the `.d.ts` sections of the
-    /// `.js` baselines. Not together with `types_out`.
+    /// Where to write the declaration files of every test that requests them, if anywhere: to
+    /// compare with the `.d.ts` sections of the `.js` baselines. Mutually exclusive with
+    /// `types_out`.
     pub dts_out: Option<&'a str>,
     pub threads: usize,
 }
@@ -1022,21 +1030,22 @@ fn run_one(
         settings.get("currentdirectory").map_or("", |s| s.as_str()),
         SRC,
     );
-    // What the directives say, as `compilerOptions` would.
-    let mut said: Vec<(Vec<u8>, Json)> = Vec::new();
+    // The options from the test directives, in the form of `compilerOptions`.
+    let mut reported: Vec<(Vec<u8>, Json)> = Vec::new();
     for (name, value) in settings {
         if HARNESS_OPTIONS.contains(&name.as_str()) {
             continue;
         }
         match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
-            // `getOptionValue`: what is declared `IsFilePath` is taken from the current directory.
+            // `getOptionValue`: an option declared `IsFilePath` is resolved against the current
+            // directory.
             Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
                 let path = absolute(&text(&path), &cwd).into_bytes();
-                said.push((name.to_owned(), Json::String(path)))
+                reported.push((name.to_owned(), Json::String(path)))
             }
-            Some((name, value)) => said.push((name.to_owned(), value)),
+            Some((name, value)) => reported.push((name.to_owned(), value)),
             None => match name.as_str() {
-                "suppressoutputpathcheck" => said.push((
+                "suppressoutputpathcheck" => reported.push((
                     b"suppressOutputPathCheck".to_vec(),
                     Json::Bool(value.eq_ignore_ascii_case("true")),
                 )),
@@ -1055,8 +1064,8 @@ fn run_one(
         (LIB.into(), setup.test_lib.into()),
     ];
 
-    // `makeUnitsFromTest`: the first `tsconfig.json` or `jsconfig.json` is the configuration, read where there are only the files of
-    // the test.
+    // `makeUnitsFromTest`: the first `tsconfig.json` or `jsconfig.json` is the configuration,
+    // parsed against a file system that contains only the files of the test.
     let config_at = units.iter().position(|unit| {
         let name = unit.name.replace('\\', "/");
         let name = name.rsplit('/').next().unwrap_or(&name).to_lowercase();
@@ -1129,7 +1138,7 @@ fn run_one(
         .map(|unit| absolute(&unit.name, &cwd))
         .filter(|name| !name.ends_with(".json") && !name.ends_with(".tsbuildinfo"))
         .collect();
-    let no_lib = said
+    let no_lib = reported
         .iter()
         .any(|o| o.0 == b"noLib" && matches!(o.1, Json::Bool(true)));
     if let Some(lib_files) = settings.get("libfiles") {
@@ -1147,7 +1156,7 @@ fn run_one(
 
     let files: Vec<Vec<u8>> = files.into_iter().map(String::into_bytes).collect();
 
-    // `CompileFiles`: what tests go by unless they say otherwise.
+    // `CompileFiles`: the default options of a test, unless it overrides them.
     let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
         if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
             compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
@@ -1157,16 +1166,16 @@ fn run_one(
     if let Some(unit) = &config_unit {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
     }
-    // `compileFilesWithHost` makes two programs of it.
+    // `compileFilesWithHost` creates two programs from it.
     let parsed_command_line = || -> Project {
         let mut project: Project = match &config_unit {
             Some(unit) => {
-                let mut over = said.clone();
+                let mut over = reported.clone();
                 defaults(&mut over);
                 config::load_as_typescript_does(&host, absolute(&unit.name, &cwd).as_bytes(), over)
             }
             None => {
-                let mut compiler = said.clone();
+                let mut compiler = reported.clone();
                 defaults(&mut compiler);
                 config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
             }
@@ -1192,7 +1201,7 @@ fn run_one(
     type Sections = Vec<(bun_sema::program::FileId, String, String)>;
     let sections: Mutex<Sections> = Mutex::new(Vec::new());
     // One line per location: unit, line, offset, source text without line breaks, type.
-    // `unit_text`: what the unit at `path` says, where that is not `file` itself.
+    // `unit_text`: the text of the unit at `path`, when the unit is not `file` itself.
     let write_unit = |checker: &mut bun_sema::check::Checker<'_>,
                       file: bun_sema::program::FileId,
                       path: &str,
@@ -1200,7 +1209,7 @@ fn run_one(
         if types.is_none() {
             return;
         }
-        // The harness goes through the units of the test, whatever they are called.
+        // The harness iterates over the units of the test, regardless of their names.
         let mut units = roots.iter().chain(&others);
         if is_default_library(path) && !units.any(|unit| absolute(&unit.name, &cwd) == path) {
             return;
@@ -1208,7 +1217,7 @@ fn run_one(
         let text = checker.hir(file).text.clone();
         let starts = compute_ecma_line_starts(&text);
         let unit = without_prefixes(path, setup.lib_dir);
-        // The source goes along, so that each entry of a baseline can be given its line.
+        // The source is included, so that each entry of a baseline can be mapped to its line.
         let mut lines = format!(
             "#source\t{unit}\t{}\n",
             String::from_utf8_lossy(unit_text.unwrap_or(&text))
@@ -1278,8 +1287,8 @@ fn run_one(
         }
         let files = &checker.p.files;
         let path = text(&files.modules[file.idx()].path);
-        // `GetSourceFile` of a path in `redirectFilesByPath` is the copy of the package that is kept: the harness walks it once more,
-        // next to the text of that unit.
+        // `GetSourceFile` of a path in `redirectFilesByPath` returns the retained copy of the
+        // package: the harness walks it once more, alongside the text of that unit.
         let mut copies: Vec<String> = Vec::new();
         if path.contains("/node_modules/") {
             let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
@@ -1290,8 +1299,8 @@ fn run_one(
             );
             copies.sort();
         }
-        // A later unit of the same name replaces the file. The harness walks what `GetSourceFile` gives it once for each of them, next
-        // to the text of that unit.
+        // A later unit with the same name replaces the file. The harness walks the result of
+        // `GetSourceFile` once for each of them, alongside the text of that unit.
         let units = roots.iter().chain(&others);
         let of_this_name: Vec<_> = units
             .filter(|unit| absolute(&unit.name, &cwd) == path)
@@ -1307,7 +1316,8 @@ fn run_one(
             write_unit(checker, file, &copy, host.read(copy.as_bytes()).as_deref());
         }
     };
-    // `DoJSEmitBaseline`: `//// [name]`, and what is written to the file. The harness asks for `\r\n`.
+    // `DoJSEmitBaseline`: `//// [name]`, followed by the emitted text of the file. The harness
+    // requests `\r\n`.
     let write_dts = |checker: &mut bun_sema::check::Checker<'_>,
                      file: bun_sema::program::FileId| {
         if !checker.p.files.options.emits_declarations {
@@ -1373,10 +1383,10 @@ fn run_one(
         written.retain(|it| it.0 != place as u32);
         written.push((place as u32, section));
     };
-    let closed_a_circle = AtomicBool::new(false);
-    let note_circle = |program: &bun_sema::check::Program| {
-        let closed = program.closed_a_circle.load(Ordering::Relaxed);
-        closed_a_circle.store(closed, Ordering::Relaxed);
+    let closed_a_cycle = AtomicBool::new(false);
+    let note_cycle = |program: &bun_sema::check::Program| {
+        let closed = program.closed_a_cycle.load(Ordering::Relaxed);
+        closed_a_cycle.store(closed, Ordering::Relaxed);
     };
     let request = Request {
         compiler_options: &[],
@@ -1397,7 +1407,7 @@ fn run_one(
         loaded: None,
         checked: types
             .is_some()
-            .then_some(&note_circle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
+            .then_some(&note_cycle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
         declaration_file_emitted: None,
         after_file: match (types, dts) {
             (Some(_), _) => Some(&write_types),
@@ -1412,9 +1422,11 @@ fn run_one(
         Report::default(),
         std::time::Instant::now(),
     );
-    // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked. The types and the symbols are read
-    // from another, which has emitted first. The order of asking shows only where a circle closes, so the other is made only there.
-    if closed_a_circle.load(Ordering::Relaxed) {
+    // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked.
+    // The types and the symbols are read from a second program, which has emitted first. The query
+    // order is observable only where a cycle is detected, so the second program is created only
+    // then.
+    if closed_a_cycle.load(Ordering::Relaxed) {
         sections.lock().unwrap().clear();
         let mut project = parsed_command_line();
         project.options.emits_first = true;
@@ -1447,10 +1459,10 @@ fn run_one(
 pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     let mut tests = Vec::new();
     files_under(suite.cases, &mut tests);
-    // By test: the configurations there are baselines of.
+    // Keyed by test: the configurations that have baselines.
     let mut configurations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for name in suite.names {
-        // The name of a test can have dots in it: what kind of baseline it is comes off the end.
+        // A test name can contain dots, so the baseline kind is stripped from the end.
         const KINDS: [&str; 7] = [
             ".errors.txt",
             ".sourcemap.txt",
@@ -1558,8 +1570,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             (setup.types_out, types, &ran)
                         {
                             let mut lines = types.into_inner().unwrap();
-                            // `typeWriterWalker.hadErrorBaseline`: the error type goes by its intrinsic name only in a test without errors.
-                            // `compileFilesWithHost` adds one, TS-1, where `Emit` has.
+                            // `typeWriterWalker.hadErrorBaseline`: the error type is printed with
+                            // its intrinsic name only in a test without errors.
+                            // `compileFilesWithHost` adds an error, TS-1, where `Emit` has added
+                            // one.
                             let had_error_baseline =
                                 !report.diagnostics.is_empty() || lines.contains(EMIT_ADDS_ERRORS);
                             lines = lines.replace(EMIT_ADDS_ERRORS, "");
@@ -1647,8 +1661,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     outcomes
 }
 
-/// A test that is under way. The checker has no time limit, so one that does not end would hold up the whole run without a word: after
-/// ten minutes the run ends, and says which it was.
+/// A test in progress. The checker has no time limit, so a test that does not terminate would
+/// silently hang the whole run: after ten minutes the run aborts and reports which test it was.
 struct Watched(usize);
 
 static IN_PROGRESS: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());

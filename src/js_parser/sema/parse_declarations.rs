@@ -1,12 +1,14 @@
 //! The part of the parser that only runs for type checking.
 //!
-//! An ordinary build drops what leaves nothing behind at run time: `declare`, overload signatures, namespaces that hold only types,
-//! members without a body, type-only imports. The type checker needs all of it. When [`TypeSyntax`](super::TypeSyntax) is present, the
-//! parser calls into this file at the places where it would drop something, and keeps it instead. It is the same pass over the same
-//! tokens: nothing here moves the lexer back, and nothing reads the source text.
+//! An ordinary build drops syntax that has no runtime effect: `declare`, overload signatures,
+//! namespaces that contain only types, members without a body, type-only imports. The type checker
+//! needs all of it. When [`TypeSyntax`](super::TypeSyntax) is present, the parser calls into this
+//! file at the points where it would drop something, and saves it instead. It is the same pass over
+//! the same tokens: nothing here rewinds the lexer, and nothing reads the source text.
 //!
-//! What `bun_ast` can say is kept as what it is (`S::Class`, `S::Function`, `S::Local`, `S::Enum`, `S::Namespace`), and
-//! [`lower`](super::lower) treats it like any other. What it cannot say is a [`Mark`] or a `crate::sema::ts_syntax` node.
+//! Syntax that `bun_ast` can represent is saved as the ordinary node (`S::Class`, `S::Function`,
+//! `S::Local`, `S::Enum`, `S::Namespace`), and [`lower`](super::lower) treats it like any other.
+//! Syntax it cannot represent becomes a [`Mark`] or a `crate::sema::ts_syntax` node.
 
 use super::Mark;
 use super::keep::{TypeMemberParts, modifier_flag};
@@ -29,7 +31,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseModuleDeclaration`. `name` is what the module is called: a word, the value of a string, or `global`.
+    /// `parseModuleDeclaration`. `name` is the name of the module: a word, the value of a string,
+    /// or `global`.
     #[cold]
     #[inline(never)]
     pub(crate) fn keep_module(
@@ -76,8 +79,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseClassElement`: `property`, whose first token is at `start` and fully starts at `full_start`, ends before the current
-    /// token. Those pushed since there were `modifiers_base` are its modifiers.
+    /// `parseClassElement`: `property`, whose first token is at `start` with full start
+    /// `full_start`, ends before the current token. Its modifiers are those pushed since the stack
+    /// had `modifiers_base` entries.
     #[inline]
     pub(crate) fn finish_class_member(
         &mut self,
@@ -89,7 +93,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.preserves_type_syntax() {
             return;
         }
-        // What is said of a static block is said of its `{`, of any other member of its name.
+        // Notes about a static block are attached to its `{`, those about any other member to its
+        // name.
         let named_at = if property.class_static_block.is_some() {
             property
                 .class_static_block_mut()
@@ -104,8 +109,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `implemented`, which starts at `start`, is an element of an `implements` clause of the class whose keyword is at
-    /// `class_keyword`. `NONE`: it is no `A.B<C>`, which the parser has objected to.
+    /// `implemented`, which starts at `start`, is an element of an `implements` clause of the class
+    /// whose keyword is at `class_keyword`. `NONE`: it is not of the form `A.B<C>`, which the
+    /// parser has already reported.
     pub(crate) fn note_implemented(
         &mut self,
         class_keyword: &mut Loc,
@@ -123,8 +129,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The `this` parameter of the function whose `(` is at `open_parens_loc`, which `bun_ast` has no place for. Its name is at `name`,
-    /// its type, if it has one, is the type that was parsed last, and it ends before the current token.
+    /// The `this` parameter of the function whose `(` is at `open_parens_loc`, which `bun_ast` has
+    /// no field for. Its name is at `name`, its type, if it has one, is the type that was parsed
+    /// last, and it ends before the current token.
     #[cold]
     #[inline(never)]
     pub(crate) fn keep_this_parameter(
@@ -149,7 +156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseModifiersEx`: the word at `loc` was taken for a modifier of the member being parsed.
+    /// `parseModifiersEx`: the word at `loc` was consumed as a modifier of the member being parsed.
     #[inline]
     pub(crate) fn push_member_modifier(
         &mut self,
@@ -164,7 +171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The same for a word that is a modifier of other things, and only objected to on a member.
+    /// The same for a word that is a modifier elsewhere and only an error on a member.
     #[cold]
     #[inline(never)]
     pub(crate) fn push_uncommon_member_modifier(&mut self, word: &[u8], loc: Loc) {
@@ -179,8 +186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.push_statement_modifier(flag, loc);
     }
 
-    /// `parseIndexSignatureDeclaration`, at the `[` of a class member. `bun_ast` has no place for it, so the caller drops the member,
-    /// and `finish_class_index_signature` takes what is kept here.
+    /// `parseIndexSignatureDeclaration`, at the `[` of a class member. `bun_ast` cannot represent
+    /// it, so the caller drops the member, and `finish_class_index_signature` takes the result
+    /// saved here.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_class_index_signature(&mut self) -> Result<(), Error> {
@@ -203,8 +211,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// The member of the class at `class_keyword` whose first token is at `start`, and fully starts at `full_start`, was dropped. If it is an index signature, those
-    /// pushed since there were `modifiers_base` are its modifiers, and it ends before the current token.
+    /// The member of the class at `class_keyword` whose first token is at `start`, with full start
+    /// `full_start`, was dropped. If it is an index signature, its modifiers are those pushed since
+    /// the stack had `modifiers_base` entries, and it ends before the current token.
     #[cold]
     #[inline(never)]
     pub(crate) fn finish_class_index_signature(
@@ -233,8 +242,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kept.loc = first;
             }
             (kept.start, kept.full_start, kept.end) = (start, full_start, end);
-            let made = syntax.b.member(&kept);
-            syntax.class_index_signatures.push(made);
+            let created = syntax.b.member(&kept);
+            syntax.class_index_signatures.push(created);
             let payload = syntax.class_index_signatures.len() as u32 - 1;
             syntax
                 .notes
@@ -243,9 +252,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.statement_modifiers.truncate(base);
     }
 
-    /// `parseExpressionWithTypeArguments` after `implements`, where the names read as the type `kept` go on with `?.`.
-    /// `isEntityNameExpression` takes `A?.B` for an entity name, so it is resolved as `A.B`. False, with nothing consumed, if that is
-    /// not all there is to it.
+    /// `parseExpressionWithTypeArguments` after `implements`, where the names parsed as the type
+    /// `kept` continue with `?.`.
+    /// `isEntityNameExpression` treats `A?.B` as an entity name, so it is resolved as `A.B`.
+    /// Returns false, with nothing consumed, if the expression is anything more than that.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_optional_chain_of_implemented(
@@ -301,12 +311,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// Whether the type `kept` is `A.B<C>`. True outside of type checking, and where no type could be made out.
+    /// Whether the type `kept` has the form `A.B<C>`. True outside of type checking, and where no
+    /// type could be parsed.
     #[cold]
     #[inline(never)]
     pub(crate) fn is_saved_entity_name(&self, kept: ts::TypeId) -> bool {
         match &self.type_syntax {
-            // `number` is a name like any other to `parseLeftHandSideExpressionOrHigher`.
+            // `number` is an ordinary name to `parseLeftHandSideExpressionOrHigher`.
             Some(syntax) if kept.is_some() => matches!(
                 syntax.b.file[kept].kind,
                 TypeNodeKind::Ref { .. } | TypeNodeKind::Keyword(_)
@@ -315,8 +326,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The text of the piece of a tagged template the lexer is at. An ordinary build prints it as it is written. The type checker
-    /// goes by what it says.
+    /// The text of the tagged template piece at the lexer's current token. An ordinary build prints
+    /// the raw text. The type checker uses the cooked value.
     #[inline]
     pub(crate) fn tagged_template_contents(&mut self) -> E::TemplateContents {
         let raw = self.lexer.raw_template_contents();
@@ -363,23 +374,24 @@ pub(crate) enum ModuleNameKind {
 
 // ───────────────────────────── import and export declarations ─────────────────────────────
 
-/// What has been read of the import or export declaration that is being parsed. The parser's own functions read it (`t_import`,
-/// `t_export`, `parse_specifiers_tolerant`, `parse_path_tolerant`) and say here what they stand on.
+/// The parts parsed so far of the import or export declaration being parsed. The parser's own
+/// functions parse it (`t_import`, `t_export`, `parse_specifiers_tolerant`, `parse_path_tolerant`)
+/// and record their current token here.
 pub(crate) struct ModuleSyntax {
     is_in_ambient_module: bool,
-    /// Of the token after `import`.
+    /// Position of the token after `import`.
     clause_loc: Loc,
-    /// Where the last token of the import clause that was read ends.
+    /// End of the last token parsed of the import clause.
     clause_end: Loc,
     is_type_only: bool,
     is_deferred: bool,
     /// Of `import name from`, `import name = ..`.
     default_name: Option<ts::Name>,
-    /// Of the `*` of `* as name`, or of `export *`.
+    /// Position of the `*` of `* as name`, or of `export *`.
     star_loc: Option<Loc>,
     /// The name after `* as`.
     star_name: Option<ts::ModuleExportName>,
-    /// Of the token after `*`, or after `as`.
+    /// Position of the token after `*`, or after `as`.
     star_name_loc: Loc,
     /// `None` without `{ }`.
     specifiers: Option<ts::Span<ts::Specifier>>,
@@ -387,7 +399,8 @@ pub(crate) struct ModuleSyntax {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Called before a statement that starts with `import` or `export` is parsed. `end_module_syntax` follows, whatever comes of it.
+    /// Called before a statement that starts with `import` or `export` is parsed.
+    /// `end_module_syntax` follows, whatever the outcome.
     #[inline]
     pub(crate) fn begin_module_syntax(&mut self, opts: &crate::parser::ParseStatementOptions) {
         if self.preserves_type_syntax() {
@@ -424,7 +437,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_syntax.as_mut()?.module_syntax.last_mut()
     }
 
-    /// `parseIdentifier`, before the token is consumed. A name that is missing is empty, and is where the token before it ends.
+    /// `parseIdentifier`, before the token is consumed. A missing name is empty and is positioned
+    /// at the end of the previous token.
     pub(crate) fn identifier_syntax(&self) -> ts::Name {
         if self.lexer.token == T::TIdentifier || !self.lexer.tolerant {
             ts::Name {
@@ -463,7 +477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The word that `note_default_import` took for a name is the modifier `type`.
+    /// The word that `note_default_import` treated as a name is the modifier `type`.
     #[inline]
     pub(crate) fn note_type_only_import(&mut self) {
         if let Some(kept) = self.module_syntax_mut() {
@@ -472,7 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The word that `note_default_import` took for a name is the modifier `defer`.
+    /// The word that `note_default_import` treated as a name is the modifier `defer`.
     #[inline]
     pub(crate) fn note_deferred_import(&mut self) {
         if let Some(kept) = self.module_syntax_mut() {
@@ -521,7 +535,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseExportDeclaration`, at the token after `export *`, or at the name after `export * as`, which reads `alias`.
+    /// `parseExportDeclaration`, at the token after `export *`, or at the name after `export * as`,
+    /// whose text is `alias`.
     #[inline]
     pub(crate) fn note_namespace_export(&mut self, alias: Option<&'a [u8]>) {
         let range = self.lexer.range();
@@ -537,7 +552,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseNamedImports`, `parseNamedExports`: what is between the braces. Without a `{` the list is missing and has nothing.
+    /// `parseNamedImports`, `parseNamedExports`: the specifiers between the braces. Without a `{`
+    /// the list is missing and empty.
     pub(crate) fn keep_specifiers(&mut self, specifiers: &[ts::Specifier]) {
         let end = self.lexer.full_start();
         let Some(syntax) = &mut self.type_syntax else {
@@ -553,7 +569,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseModuleSpecifier`: it is at `loc`. `text`: its value, if it is a string. `expression`: what is written, if not.
+    /// `parseModuleSpecifier`: it is at `loc`. `text`: its value, if it is a string. `expression`:
+    /// the expression in its place, if not.
     pub(crate) fn keep_module_specifier(
         &mut self,
         text: Option<&'a [u8]>,
@@ -571,8 +588,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseImportAttributes`, after the module specifier: `object` is what they are, as an object literal, and `keyword_loc` where
-    /// `with` is.
+    /// `parseImportAttributes`, after the module specifier: `object` is the attributes as an object
+    /// literal, and `keyword_loc` the position of `with`.
     pub(crate) fn keep_import_attributes(&mut self, keyword_loc: Loc, object: bun_ast::Expr) {
         if let Some(ModuleSyntax {
             module: Some(module),
@@ -586,13 +603,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `end_module_syntax`, of a declaration of which only the module specifier is asked for.
+    /// `end_module_syntax` for a declaration of which only the module specifier is needed.
     pub(crate) fn end_module_specifier(&mut self) -> Option<ts::ModuleSpecifier> {
         self.end_module_syntax()?.module
     }
 
-    /// `getResolutionModeOverride`, of the attribute `key: value` that was just parsed. `is_string_key`: `key` is written as a string.
-    /// `literal_end`: where the token that `value` starts with ends, if that is a string.
+    /// `getResolutionModeOverride` for the attribute `key: value` that was just parsed.
+    /// `is_string_key`: `key` is a string literal.
+    /// `literal_end`: the end of the first token of `value`, if that token is a string.
     pub(crate) fn resolution_mode_of_attribute(
         &self,
         key: &bun_ast::Expr,
@@ -601,7 +619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         literal_end: Option<Loc>,
     ) -> ts::ResolutionMode {
         use bun_ast::ExprData;
-        // `IsStringLiteralLike(value)`: the string is all there is to it.
+        // `IsStringLiteralLike(value)`: the string is the whole expression.
         if !is_string_key || literal_end != Some(self.lexer.full_start()) {
             return ts::ResolutionMode::None;
         }
@@ -621,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// What the import attributes after the module specifier say of the resolution mode.
+    /// The resolution mode specified by the import attributes after the module specifier.
     pub(crate) fn keep_resolution_mode(&mut self, mode: ts::ResolutionMode) {
         if let Some(ModuleSyntax {
             module: Some(module),
@@ -632,7 +650,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `stmt` is what came of the statement whose `import` is at `loc`.
+    /// `stmt` is the result of parsing the statement whose `import` is at `loc`.
     #[inline]
     pub(crate) fn keep_import(&mut self, kept: Option<ModuleSyntax>, stmt: Stmt, loc: Loc) -> Stmt {
         match kept {
@@ -644,7 +662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn emit_import(&mut self, kept: &ModuleSyntax, stmt: Stmt, loc: Loc) -> Stmt {
-        // `import(..)` and `import.meta` start an expression. `import a = b` is kept already.
+        // `import(..)` and `import.meta` start an expression. `import a = b` is already saved.
         let Some(module) = kept.module else {
             return stmt;
         };
@@ -661,7 +679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
             },
         });
-        // `tryParseImportClause`: without a clause there is nothing for a modifier to be on.
+        // `tryParseImportClause`: without a clause there is nothing for a modifier to apply to.
         let has_clause =
             kept.default_name.is_some() || namespace.is_some() || kept.specifiers.is_some();
         let import = self.type_syntax_mut().b.ts.add_import(ts::Import {
@@ -710,8 +728,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `parseImportEqualsDeclaration`, whose `import` is at `loc`. `external`: what `require( )` holds. Without it, the names pushed
-    /// since `names_base` are the entity name.
+    /// `parseImportEqualsDeclaration`, whose `import` is at `loc`. `external`: the argument of
+    /// `require( )`. Without it, the names pushed since `names_base` are the entity name.
     #[cold]
     #[inline(never)]
     pub(crate) fn keep_import_equals(
@@ -750,7 +768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_script_statement(loc)
     }
 
-    /// `stmt` is what came of the statement whose `export` is at `loc`.
+    /// `stmt` is the result of parsing the statement whose `export` is at `loc`.
     #[inline]
     pub(crate) fn keep_export(&mut self, kept: Option<ModuleSyntax>, stmt: Stmt, loc: Loc) -> Stmt {
         match kept {
@@ -772,7 +790,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `export` is a modifier, or the keyword of another kind of statement.
             (None, None) => return stmt,
         };
-        // `checkExportSpecifier`, `checkModuleExportName`: without a module, a string names nothing that could be exported.
+        // `checkExportSpecifier`, `checkModuleExportName`: without a module specifier, a string
+        // name refers to nothing that could be exported.
         if let (ts::ExportClause::Named(specifiers), None) = (clause, kept.module) {
             for specifier in specifiers.iter() {
                 if let Some(name) = self.type_syntax_mut().b.ts[specifier].property_name

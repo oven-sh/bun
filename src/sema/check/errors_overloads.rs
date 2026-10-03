@@ -19,8 +19,8 @@ const EXPORT_TYPE: u8 = 2;
 const EXPORT_NAMESPACE: u8 = 4;
 
 impl Checker<'_> {
-    /// What `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration` and the callers of `checkExportsOnMergedDeclarations` ask
-    /// of the declarations of `file`.
+    /// The checks that `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration` and the
+    /// callers of `checkExportsOnMergedDeclarations` run on the declarations of `file`.
     pub(super) fn check_overloads(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if hir.has_errors || hir.kind == FileKind::Json {
@@ -40,7 +40,7 @@ impl Checker<'_> {
             let Some((first, function)) = functions.into_iter().next() else {
                 continue;
             };
-            // Declared once, with a body: nothing can be wrong.
+            // A single declaration with a body: no error is possible.
             if symbol.decls.len() == 1
                 && !symbol.flags.contains(SymFlags::MERGED)
                 && symbol.name != known::computed
@@ -49,7 +49,7 @@ impl Checker<'_> {
                 continue;
             }
             let sym = files.sym(file, id);
-            // Once for each symbol, whichever of its parts leads here.
+            // Checked once per symbol, regardless of which of its parts is reached.
             if sym.file == file && sym.id != id {
                 continue;
             }
@@ -76,7 +76,7 @@ impl Checker<'_> {
     pub(super) fn check_function_or_constructor_symbol(&mut self, symbol: Sym) {
         let files = self.files();
         let flags = files.flags(symbol);
-        // `getSymbolOfDeclaration`: a name that is worked out leads on to the late bound symbol.
+        // `getSymbolOfDeclaration`: a computed name resolves to the late-bound symbol.
         let declarations = match files.decls_of(symbol).first() {
             Some(&(file, first)) if flags.intersects(SymFlags::CLASS_MEMBER) => {
                 self.declarations_of_member(file, first)
@@ -231,7 +231,7 @@ impl Checker<'_> {
         };
         let body_signature = self.sig_of_fn(body_declaration.0, implementation);
         for &(declaration, function) in &function_declarations {
-            // `getSignaturesOfSymbol`: what implements is no signature.
+            // `getSignaturesOfSymbol`: the implementation is not a signature.
             if has_body(&self.hir(declaration.0)[function]) {
                 continue;
             }
@@ -259,7 +259,7 @@ impl Checker<'_> {
         args: &[Arg<'_>],
     ) -> Option<&mut Reported> {
         let (start, end) = match decl {
-            // `GetErrorRangeForNode` points at all of a method signature.
+            // `GetErrorRangeForNode` spans the whole of a method signature.
             Decl::Member(m) if self.hir(file)[m].kind == MemberKind::Method => {
                 (self.hir(file)[m].name_pos, self.end_of_member_name(file, m))
             }
@@ -268,7 +268,7 @@ impl Checker<'_> {
         Some(self.error_at((file, start, end), code, args))
     }
 
-    /// The function that a function declaration, a method, a method signature or a constructor is.
+    /// The `FnId` of a function declaration, a method, a method signature or a constructor.
     fn function_of_declaration(&self, (file, decl): Declaration) -> Option<FnId> {
         let hir = self.hir(file);
         match decl {
@@ -282,7 +282,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `node.Parent`, as far as it takes to tell whether two declarations have one.
+    /// `node.Parent`, precise enough to tell whether two declarations have the same parent.
     fn parent_of_declaration(&self, (file, decl): Declaration) -> (FileId, Parent, MemberOwner) {
         let bound = self.bound(file);
         match (decl, self.files().statement_of_declaration(file, decl)) {
@@ -361,7 +361,7 @@ impl Checker<'_> {
                 },
                 _ => self.files().statement_of_declaration(file, decl),
             };
-            // `flags&ast.ModifierFlagsAmbient == 0`: it does not say `declare` itself.
+            // `flags&ast.ModifierFlagsAmbient == 0`: it has no `declare` modifier of its own.
             let has_declare_keyword = statement.is_some_and(|s| {
                 hir.find_modifier(hir[s].modifiers, Flags::AMBIENT)
                     .is_some()
@@ -371,7 +371,8 @@ impl Checker<'_> {
                 && statement.is_some_and(|s| {
                     matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if hir[m].name == ModuleName::Global)
                 });
-            // `getEnclosingContainer`, which starts at `n.Parent`: where the statement is written, not the scope a namespace makes.
+            // `getEnclosingContainer`, which starts at `n.Parent`: the container the statement is
+            // in, not the scope a namespace creates.
             let container = match statement {
                 Some(s) => bound.stmt_scope[s.idx()],
                 None => bound.scope_of_declaration(hir, decl),
@@ -389,7 +390,7 @@ impl Checker<'_> {
         flags & flags_to_check
     }
 
-    /// `subsequentNode`, if it starts where `node` ends and is of the kind of `node`.
+    /// `subsequentNode`, if it starts at the end of `node` and has the same kind as `node`.
     fn subsequent_declaration(&self, (file, decl): Declaration) -> Option<Decl> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if let Decl::Member(m) = decl {
@@ -485,13 +486,15 @@ impl Checker<'_> {
         self.error_at_declaration(node, code, &[]);
     }
 
-    /// `checkExportsOnMergedDeclarations`, of the local symbol `symbol` of `file`, which has an `ExportSymbol`.
+    /// `checkExportsOnMergedDeclarations` for the local symbol `symbol` of `file`, which has an
+    /// `ExportSymbol`.
     fn check_exports_on_merged_declarations(&mut self, file: FileId, symbol: SymbolId) {
         let (hir, declarations) = (
             self.hir(file),
             &self.bound(file).symbols[symbol.idx()].decls,
         );
-        // Who asks: a class, an interface, an enum, a namespace, a variable, a type alias. Not a function, and no import.
+        // The declaration kinds that run this check: a class, an interface, an enum, a namespace, a
+        // variable, a type alias. Not a function or an import.
         let asks = |decl: &Decl| {
             matches!(
                 decl,
@@ -540,7 +543,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `getDeclarationSpaces`, of a declaration of `symbol`.
+    /// `getDeclarationSpaces` for a declaration of `symbol`.
     fn get_declaration_spaces(&self, symbol: Sym, (file, decl): Declaration, depth: u32) -> u8 {
         let (hir, files) = (self.hir(file), self.files());
         match decl {

@@ -1,15 +1,19 @@
-//! `isolatedDeclarations`: 9007 to 9039, what the declaration file cannot be written for from the syntax of the file alone.
+//! `isolatedDeclarations`: 9007 to 9039, declarations whose declaration file output cannot be
+//! derived from the syntax of the file alone.
 //!
-//! These are declaration diagnostics. tsgo finds them by writing the declaration file: `DeclarationTransformer`
-//! (`transformers/declarations/transform.go`) goes over what can be seen from outside the file and asks the node builder for the types
-//! that are not written. The node builder reads a type off the syntax (`pseudochecker`), holds it against what the checker says
-//! (`pseudoTypeEquivalentToType`) and writes it (`pseudoTypeToNode`), or else writes what the checker says (`typeToTypeNode`). Whatever
-//! takes the checker it reports (`ReportInferenceFallback`), and `createGetIsolatedDeclarationErrors` (`diagnostics.go`) makes the error.
-//! The node builder is the printer (print.rs), which this listens to. What it writes is dropped: the way is gone for what is reported
-//! on it and for the declarations that turn out to be needed on it (`lateMarkedStatements`), which are gone over in their turn.
+//! These are declaration diagnostics. tsgo finds them by emitting the declaration file:
+//! `DeclarationTransformer` (`transformers/declarations/transform.go`) visits the externally
+//! visible declarations of the file and requests the unannotated types from the node builder. The
+//! node builder derives a type from the syntax (`pseudochecker`), compares it with the checker's
+//! type (`pseudoTypeEquivalentToType`) and serializes it (`pseudoTypeToNode`), or else serializes
+//! the checker's type (`typeToTypeNode`). It reports whatever needs the checker
+//! (`ReportInferenceFallback`), and `createGetIsolatedDeclarationErrors` (`diagnostics.go`) creates
+//! the error. The node builder is the printer (print.rs), whose reports this file receives. Its
+//! output is discarded: the traversal is done for the reports it produces and for the declarations
+//! found to be needed during it (`lateMarkedStatements`), which are then visited in turn.
 //!
-//! Left out: what CommonJS exports and `this.x = ..` declare in JavaScript, and the errors about names that cannot
-//! be reached (4xxx), which `TrackSymbol` reports.
+//! Omitted: the declarations of CommonJS exports and `this.x = ..` in JavaScript, and the errors
+//! about inaccessible names (4xxx), which `TrackSymbol` reports.
 
 use super::decl::Predicate;
 use super::enclosing_declaration::Enclosing;
@@ -52,7 +56,8 @@ pub(super) enum Pseudo {
     Literal(ExprId),
 }
 
-/// `PseudoParameter`. A leading `this` is none: its type is written, and is gone over where the others are written.
+/// `PseudoParameter`. A leading `this` is not one: its type is annotated, and is visited where the
+/// others are emitted.
 pub(super) struct PseudoParam {
     pub(super) param: ParamId,
     pub(super) is_optional: bool,
@@ -80,8 +85,8 @@ pub(super) enum PseudoElementKind {
     },
 }
 
-/// An error, with all that is said about it.
-struct Said {
+/// An error with its related information.
+struct IsoDiagnostic {
     start: u32,
     end: u32,
     code: u32,
@@ -91,11 +96,13 @@ struct Said {
     is_merged: bool,
 }
 
-/// What the pseudochecker and `createGetIsolatedDeclarationErrors` go by, and what they have made, for one file.
+/// The inputs and the results of the pseudochecker and `createGetIsolatedDeclarationErrors`, for
+/// one file.
 pub(super) struct Emit {
     file: FileId,
-    said: Vec<Said>,
-    /// What `pseudoTypeEquivalentToType` has for `ReportInferenceFallback`, in order. Whoever asked it passes them on.
+    reported: Vec<IsoDiagnostic>,
+    /// The nodes `pseudoTypeEquivalentToType` collects for `ReportInferenceFallback`, in order. Its
+    /// caller forwards them.
     pub(super) inference_fallbacks: Vec<Node>,
 }
 
@@ -103,13 +110,13 @@ impl Emit {
     pub(super) fn new(file: FileId) -> Emit {
         Emit {
             file,
-            said: Vec::new(),
+            reported: Vec::new(),
             inference_fallbacks: Vec::new(),
         }
     }
 
     pub(super) fn has_diagnostics(&self) -> bool {
-        !self.said.is_empty()
+        !self.reported.is_empty()
     }
 }
 
@@ -122,21 +129,21 @@ impl<'p> Checker<'p> {
         is_on.then(|| Emit::new(file))
     }
 
-    /// What the transformer has reported is said.
+    /// Reports the diagnostics the transformer has collected.
     pub(super) fn finish_isolated_declarations(&mut self, tx: Emit) {
-        self.iso_report_all(tx.file, tx.said);
+        self.iso_report_all(tx.file, tx.reported);
     }
 
-    /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: what is reported twice is one error, with the related
-    /// information of both in the order of the file.
-    fn iso_report_all(&mut self, file: FileId, mut said: Vec<Said>) {
-        said.sort_by(|a, b| {
+    /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: a diagnostic reported twice
+    /// becomes one error, with the related information of both in file order.
+    fn iso_report_all(&mut self, file: FileId, mut reported: Vec<IsoDiagnostic>) {
+        reported.sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
                 .then_with(|| a.args.cmp(&b.args))
         });
-        let mut all: Vec<Said> = Vec::new();
-        for next in said {
+        let mut all: Vec<IsoDiagnostic> = Vec::new();
+        for next in reported {
             match all.last_mut() {
                 Some(last)
                     if (last.start, last.end, last.code) == (next.start, next.end, next.code)
@@ -166,7 +173,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── the tree ─────────────────────────────
 
-    /// `IsPrimitiveLiteralValue`, of `e` itself, whatever parentheses it is in.
+    /// `IsPrimitiveLiteralValue` for `e` itself, ignoring enclosing parentheses.
     pub(super) fn iso_is_primitive_literal(
         &self,
         file: FileId,
@@ -193,7 +200,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `HasDynamicName`: the expression in the `[..]` of a name that the binder cannot tell.
+    /// `HasDynamicName`: the expression in the `[..]` of a name that the binder cannot bind.
     fn iso_dynamic_name(&self, file: FileId, key: PropKey) -> Option<ExprId> {
         match key {
             PropKey::Computed(e) if is_dynamic_name(self.hir(file), e) => Some(e),
@@ -228,7 +235,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `IsDeclaration`, of what an expression can be directly in.
+    /// `IsDeclaration` for the node kinds that can be the direct parent of an expression.
     pub(super) fn iso_is_declaration(hir: &hir::File, node: Node) -> bool {
         match hir.data(node) {
             NodeData::VarDecl(_)
@@ -255,9 +262,9 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── the errors ─────────────────────────────
 
-    fn iso_diagnostic(&self, file: FileId, node: Node, code: u32) -> Said {
+    fn iso_diagnostic(&self, file: FileId, node: Node, code: u32) -> IsoDiagnostic {
         let (start, end) = self.get_error_range_for_node(file, node);
-        Said {
+        IsoDiagnostic {
             start,
             end,
             code,
@@ -337,13 +344,20 @@ impl<'p> Checker<'p> {
     }
 
     /// `addParentDeclarationRelatedInfo`
-    fn iso_add_parent_declaration(&self, file: FileId, node: Node, said: &mut Said) {
+    fn iso_add_parent_declaration(&self, file: FileId, node: Node, reported: &mut IsoDiagnostic) {
         let declaration = self.iso_nearest_declaration(file, node);
-        said.related.extend(self.iso_suggestion(file, declaration));
+        reported
+            .related
+            .extend(self.iso_suggestion(file, declaration));
     }
 
     /// `createExpressionErrorEx`. `message` overrides TS9013.
-    fn iso_expression_error(&self, file: FileId, node: Node, message: Option<u32>) -> Said {
+    fn iso_expression_error(
+        &self,
+        file: FileId,
+        node: Node,
+        message: Option<u32>,
+    ) -> IsoDiagnostic {
         let hir = self.hir(file);
         let declaration = self.iso_nearest_declaration(file, node);
         if declaration.is_none() {
@@ -363,17 +377,20 @@ impl<'p> Checker<'p> {
             true => Self::iso_codes_of_declaration(hir.kind(declaration)).0,
             false => 9013,
         };
-        let mut said = self.iso_diagnostic(file, node, message.unwrap_or(code));
-        said.related.extend(self.iso_suggestion(file, declaration));
+        let mut reported = self.iso_diagnostic(file, node, message.unwrap_or(code));
+        reported
+            .related
+            .extend(self.iso_suggestion(file, declaration));
         if !is_direct {
-            said.related
+            reported
+                .related
                 .push(self.iso_related(file, node, 9035, Vec::new()));
         }
-        said
+        reported
     }
 
     /// `createAccessorTypeError`
-    fn iso_accessor_error(&mut self, file: FileId, node: Node) -> Said {
+    fn iso_accessor_error(&mut self, file: FileId, node: Node) -> IsoDiagnostic {
         let hir = self.hir(file);
         let func = hir.function_of(node);
         let (getter, setter) = self.iso_accessors(file, func);
@@ -381,42 +398,43 @@ impl<'p> Checker<'p> {
             Some(param) if hir[func].kind == FnKind::Setter => hir.node(param),
             _ => node,
         };
-        let mut said = self.iso_diagnostic(file, target, 9009);
+        let mut reported = self.iso_diagnostic(file, target, 9009);
         for (accessor, code) in [(setter, 9033), (getter, 9032)] {
             let related = accessor.map(|f| self.iso_related(file, hir.node(f), code, Vec::new()));
-            said.related.extend(related);
+            reported.related.extend(related);
         }
-        said
+        reported
     }
 
     /// `createReturnTypeError`
-    fn iso_return_type_error(&self, file: FileId, node: Node) -> Said {
+    fn iso_return_type_error(&self, file: FileId, node: Node) -> IsoDiagnostic {
         let (code, suggestion) = Self::iso_codes_of_declaration(self.hir(file).kind(node));
-        let mut said = self.iso_diagnostic(file, node, code);
-        self.iso_add_parent_declaration(file, node, &mut said);
-        said.related
+        let mut reported = self.iso_diagnostic(file, node, code);
+        self.iso_add_parent_declaration(file, node, &mut reported);
+        reported
+            .related
             .push(self.iso_related(file, node, suggestion, Vec::new()));
-        said
+        reported
     }
 
     /// `createObjectLiteralError`, `createArrayLiteralError`
-    fn iso_literal_error(&self, file: FileId, node: Node) -> Said {
+    fn iso_literal_error(&self, file: FileId, node: Node) -> IsoDiagnostic {
         let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
-        let mut said = self.iso_diagnostic(file, node, code);
-        self.iso_add_parent_declaration(file, node, &mut said);
-        said
+        let mut reported = self.iso_diagnostic(file, node, code);
+        self.iso_add_parent_declaration(file, node, &mut reported);
+        reported
     }
 
     /// `createVariableOrPropertyError`
-    fn iso_variable_or_property_error(&self, file: FileId, node: Node) -> Said {
+    fn iso_variable_or_property_error(&self, file: FileId, node: Node) -> IsoDiagnostic {
         let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
-        let mut said = self.iso_diagnostic(file, node, code);
-        said.related.extend(self.iso_suggestion(file, node));
-        said
+        let mut reported = self.iso_diagnostic(file, node, code);
+        reported.related.extend(self.iso_suggestion(file, node));
+        reported
     }
 
     /// `createParameterError`
-    fn iso_parameter_error(&mut self, file: FileId, node: Node, p: ParamId) -> Said {
+    fn iso_parameter_error(&mut self, file: FileId, node: Node, p: ParamId) -> IsoDiagnostic {
         let hir = self.hir(file);
         if hir.kind(hir.parent(node)) == Kind::SetAccessor {
             return self.iso_accessor_error(file, hir.parent(node));
@@ -425,13 +443,14 @@ impl<'p> Checker<'p> {
         if !adds_undefined && hir.initializer(node).is_some() {
             return self.iso_expression_error(file, hir.initializer(node), None);
         }
-        let mut said = self.iso_diagnostic(file, node, if adds_undefined { 9025 } else { 9011 });
-        said.related.extend(self.iso_suggestion(file, node));
-        said
+        let mut reported =
+            self.iso_diagnostic(file, node, if adds_undefined { 9025 } else { 9011 });
+        reported.related.extend(self.iso_suggestion(file, node));
+        reported
     }
 
     /// `createGetIsolatedDeclarationErrors`
-    fn iso_error_for(&mut self, file: FileId, node: Node) -> Said {
+    fn iso_error_for(&mut self, file: FileId, node: Node) -> IsoDiagnostic {
         let hir = self.hir(file);
         if hir.find_ancestor_kind(node, Kind::HeritageClause).is_some() {
             return self.iso_diagnostic(file, node, 9021);
@@ -442,10 +461,10 @@ impl<'p> Checker<'p> {
             || matches!(data, NodeData::Type(_))
             || matches!(data, NodeData::Expr(e) if is_property_access_entity_name_expression(hir, e))
         {
-            let mut said = self.iso_diagnostic(file, node, 9039);
-            said.args = vec![self.source_text(file, said.start, said.end)];
-            self.iso_add_parent_declaration(file, node, &mut said);
-            return said;
+            let mut reported = self.iso_diagnostic(file, node, 9039);
+            reported.args = vec![self.source_text(file, reported.start, reported.end)];
+            self.iso_add_parent_declaration(file, node, &mut reported);
+            return reported;
         }
         match (kind, data) {
             (Kind::GetAccessor | Kind::SetAccessor, _) => self.iso_accessor_error(file, node),
@@ -523,8 +542,9 @@ impl<'p> Checker<'p> {
         Some(self.type_of_pat(file, pat))
     }
 
-    /// `getTypeOfSymbol`, of what the member `m` of a class, an interface or a type literal declares: of the symbol itself, which is
-    /// not instantiated. A generic signature that is has type parameters of its own.
+    /// `getTypeOfSymbol` for the symbol the member `m` of a class, an interface or a type literal
+    /// declares: the symbol itself, uninstantiated. An instantiated generic signature has its own
+    /// type parameters.
     pub(super) fn iso_type_of_member(&mut self, file: FileId, m: MemberId) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let holder = match bound.member_owner[m.idx()] {
@@ -552,14 +572,15 @@ impl<'p> Checker<'p> {
         self.type_of_member_declaration(file, m)
     }
 
-    /// `reportExpandoFunctionErrors`: 9023 at what first assigns each property to the function `node` declares.
+    /// `reportExpandoFunctionErrors`: 9023 at the first assignment of each property to the function
+    /// `node` declares.
     pub(super) fn iso_report_expandos(&mut self, tx: &mut Emit, node: Node) {
         let Some(ty) = self.iso_type_of_declared(tx.file, node) else {
             return;
         };
         for target in self.iso_expando_targets(tx.file, ty) {
-            let said = self.iso_diagnostic(tx.file, self.hir(tx.file).node(target), 9023);
-            tx.said.push(said);
+            let reported = self.iso_diagnostic(tx.file, self.hir(tx.file).node(target), 9023);
+            tx.reported.push(reported);
         }
     }
 
@@ -649,21 +670,23 @@ impl<'p> Checker<'p> {
         expando.is_some()
     }
 
-    /// `SymbolTrackerImpl.ReportInferenceFallback`, of a node of the file.
+    /// `SymbolTrackerImpl.ReportInferenceFallback` for a node of the file.
     pub(super) fn iso_report(&mut self, tx: &mut Emit, node: Node) {
         if node.is_none() {
             return;
         }
         self.iso_report_expandos(tx, node);
         if !self.iso_is_child_of_bound_expando(tx.file, node) {
-            let said = self.iso_error_for(tx.file, node);
-            tx.said.push(said);
+            let reported = self.iso_error_for(tx.file, node);
+            tx.reported.push(reported);
         }
     }
 
-    // ───────────────────────────── types read off the syntax (`pseudochecker/lookup.go`) ─────────────────────────────
+    // ───────────────────────────── types derived from the syntax (`pseudochecker/lookup.go`)
+    // ─────────────────────────────
 
-    /// `GetAllAccessorDeclarationsForDeclaration`: the getter and the setter that are one symbol with the accessor `func`.
+    /// `GetAllAccessorDeclarationsForDeclaration`: the getter and the setter that share a symbol
+    /// with the accessor `func`.
     fn iso_accessors(&mut self, file: FileId, func: FnId) -> (Option<FnId>, Option<FnId>) {
         if self.hir(file)[func].kind == FnKind::Getter {
             let setter = self.sibling_accessor(file, func, FnKind::Setter);
@@ -677,9 +700,11 @@ impl<'p> Checker<'p> {
     /// `isContextuallyTyped`
     fn iso_is_contextually_typed(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
-        // By what the row is, not by `kind`, which asks for the parent of a member: this goes up to the file for every declaration without a type.
+        // Matches on the node data, not on `kind`, which looks up the parent of a member: this
+        // walks up to the file for every declaration without a type.
         let typed = hir.find_ancestor(hir.parent(node), |n| match hir.data(n) {
-            // `as const` is apart. An expression in JSX is in a `JsxExpression`, which is no node here.
+            // `as const` is handled separately. An expression in JSX is in a `JsxExpression`, which
+            // is not a node here.
             NodeData::Expr(e) => matches!(
                 hir[e].kind,
                 ExprKind::Call(_)
@@ -794,7 +819,8 @@ impl<'p> Checker<'p> {
             return Self::iso_inferred(hir.node(e));
         }
         match hir[e].kind {
-            // `OmittedExpression`. What the parser makes up where an expression is missing is an identifier without a text.
+            // `OmittedExpression`. The placeholder the parser creates for a missing expression is
+            // an identifier with empty text.
             ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
                     Pseudo::Undefined
@@ -955,7 +981,7 @@ impl<'p> Checker<'p> {
                 .next()
                 .is_some_and(|p| hir[p].ty.is_some())
         {
-            // Both say what they are, which need not be the same: both are kept.
+            // Both are annotated, possibly with different types: both are preserved.
             if is_getter {
                 let ty = self.iso_pseudo_of_accessor(file, func);
                 return Some(PseudoElementKind::Getter { ty });
@@ -1263,7 +1289,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `IsTemplateExpression`, of `e` as it is written.
+    /// `IsTemplateExpression` for `e` in its source form.
     fn iso_is_template_expression(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.hir(file)[e].kind, ExprKind::Template { exprs, .. } if !exprs.is_empty())
             && !is_parenthesized(self.hir(file), e)
@@ -1284,13 +1310,14 @@ impl<'p> Checker<'p> {
         }
         let params = hir[func].params;
         let index = (p.0 - params.start) as usize;
-        // `getImmediatelyInvokedFunctionExpression`: how many arguments it is called with where it is written.
-        let given = bound
+        // `getImmediatelyInvokedFunctionExpression`: the argument count of its immediate
+        // invocation.
+        let actual = bound
             .get_immediately_invoked_function_expression(hir, func)
             .map(|call| hir[call].args.len());
         if param.default.is_none() {
-            return given.is_some_and(|given| {
-                param.ty.is_none() && !param.flags.contains(Flags::REST) && index >= given
+            return actual.is_some_and(|actual| {
+                param.ty.is_none() && !param.flags.contains(Flags::REST) && index >= actual
             });
         }
         // `getMinArgumentCountEx`, with `StrongArityForUntypedJS` and `VoidIsNonOptional`
@@ -1315,13 +1342,13 @@ impl<'p> Checker<'p> {
             .find(|&(i, q)| {
                 !hir[q].flags.intersects(Flags::OPTIONAL | Flags::REST)
                     && hir[q].default.is_none()
-                    && !given.is_some_and(|given| i >= given && hir[q].ty.is_none())
+                    && !actual.is_some_and(|actual| i >= actual && hir[q].ty.is_none())
             })
             .map_or(0, |(i, _)| i + 1);
         index >= minimum
     }
 
-    /// `requiresAddingImplicitUndefined`, of a parameter
+    /// `requiresAddingImplicitUndefined` for a parameter
     pub(super) fn requires_adding_implicit_undefined(
         &mut self,
         file: FileId,
@@ -1356,9 +1383,10 @@ impl<'p> Checker<'p> {
         !self.is_error_type(declared) && !self.contains_undefined(declared)
     }
 
-    // ───────────────────────────── held against the checker (`pseudotypenodebuilder.go`) ─────────────────────────────
+    // ───────────────────────────── comparison with the checker's types
+    // (`pseudotypenodebuilder.go`) ─────────────────────────────
 
-    /// `pseudoTypeToType`. `None`: it is made of parts that are held against the type one by one.
+    /// `pseudoTypeToType`. `None`: it consists of parts that are compared with the type one by one.
     pub(super) fn iso_type_of_pseudo(&mut self, file: FileId, pt: &Pseudo) -> Option<TypeId> {
         Some(match pt {
             Pseudo::Direct(t) => self.type_from_node(file, *t),
@@ -1604,7 +1632,7 @@ impl<'p> Checker<'p> {
                         matches!(prop.source, PropSource::Literal(f, p) if f == file && p == element.prop)
                     })
                 });
-            // No element says that it may be left out.
+            // No element is marked optional.
             let Some(target) = target.filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL))
             else {
                 if reports {
@@ -1668,7 +1696,8 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `pseudoParametersEquivalentToParameters`. `elsewhere`: where it is reported that there are more or fewer.
+    /// `pseudoParametersEquivalentToParameters`. `elsewhere`: the node on which a count mismatch is
+    /// reported.
     fn iso_are_params_equivalent(
         &mut self,
         tx: &mut Emit,
@@ -1707,7 +1736,7 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `pseudoReturnTypeMatchesPredicate`. `sig`: what `predicate` is the predicate of.
+    /// `pseudoReturnTypeMatchesPredicate`. `sig`: the signature `predicate` belongs to.
     pub(super) fn iso_matches_predicate(
         &mut self,
         file: FileId,
@@ -1745,7 +1774,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── what `pseudoTypeToNode` asks ─────────────────────────────
 
-    /// What `pseudoTypeToNode` reports of a `PseudoTypeInferred`.
+    /// The nodes `pseudoTypeToNode` reports for a `PseudoTypeInferred`.
     pub(super) fn iso_error_nodes_of_inferred(
         &self,
         file: FileId,
@@ -1791,7 +1820,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    // ───────────────────────────── what `transform.go` reports by itself ─────────────────────────────
+    // ───────────────────────────── errors reported by `transform.go` itself
+    // ─────────────────────────────
 
     /// `transformImportDeclaration`: 9026
     pub(super) fn iso_transform_import(&mut self, tx: &mut Emit, s: StmtId, i: ImportId) {
@@ -1830,8 +1860,8 @@ impl<'p> Checker<'p> {
         let Some(target) = target.filter(|&target| target != file) else {
             return;
         };
-        // `file.Symbol` is the symbol the binder made. What an `export *` adds comes out of the table of a merged module, which has the
-        // merged symbols themselves.
+        // `file.Symbol` is the symbol the binder created. The exports an `export *` adds come from
+        // the table of a merged module, which holds the merged symbols themselves.
         let bound = self.bound(file);
         let is_required = bound
             .table(bound.symbols[bound.file_symbol.idx()].exports)
@@ -1842,8 +1872,8 @@ impl<'p> Checker<'p> {
                     && files.decls_of(merged).iter().any(|&(of, _)| of == target)
             });
         if is_required {
-            let said = self.iso_diagnostic(file, self.hir(file).node(s), 9026);
-            tx.said.push(said);
+            let reported = self.iso_diagnostic(file, self.hir(file).node(s), 9026);
+            tx.reported.push(reported);
         }
     }
 
@@ -1859,7 +1889,7 @@ impl<'p> Checker<'p> {
                 && self.get_enum_member_value(file, m).has_external_references
             {
                 let (start, end) = self.error_range_of_enum_member(file, m);
-                tx.said.push(Said {
+                tx.reported.push(IsoDiagnostic {
                     start,
                     end,
                     code: 9020,
@@ -1871,7 +1901,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `visitDeclarationSubtree`, of a member with a dynamic name under `isolatedDeclarations`: 9038, 9014. Whether it is left out.
+    /// `visitDeclarationSubtree` for a member with a dynamic name under `isolatedDeclarations`:
+    /// 9038, 9014. Returns whether it is omitted.
     pub(super) fn iso_report_dynamic_name(&mut self, tx: &mut Emit, m: MemberId) -> bool {
         let file = tx.file;
         let hir = self.hir(file);
@@ -1887,8 +1918,8 @@ impl<'p> Checker<'p> {
                 }
                 _ => return false,
             };
-            let said = self.iso_diagnostic(file, hir.node(m), code);
-            tx.said.push(said);
+            let reported = self.iso_diagnostic(file, hir.node(m), code);
+            tx.reported.push(reported);
             return true;
         }
         false

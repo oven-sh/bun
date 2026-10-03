@@ -1,8 +1,9 @@
-//! Where nodes end. The tree only says where they start, so the end of a node is worked out from its parts and the source text, and
-//! only for a node an error is reported on.
+//! End positions of nodes. The HIR only stores start positions, so the end of a node is computed
+//! from its children and the source text, and only for a node an error is reported on.
 //!
-//! The end of a node is the end of its last part, or of the token that closes it, which is looked for from the end of the last part
-//! on. Only what the tree keeps nothing of is skipped token by token.
+//! The end of a node is the end of its last child, or of its closing token, which is searched for
+//! from the end of the last child. Only syntax that the HIR does not store is skipped token by
+//! token.
 
 use super::Checker;
 use crate::atom::{Atom, known};
@@ -19,7 +20,7 @@ use bun_core::strings::{lexer_step, wtf8_byte_sequence_length};
 
 // ───────────────────────────── the text ─────────────────────────────
 
-/// `IsWhiteSpaceLike`, of a character that is not ASCII: how many bytes it takes, 0 if there is none at `at`.
+/// `IsWhiteSpaceLike` for a non-ASCII character: its length in bytes, 0 if there is none at `at`.
 fn white_space_len(text: &[u8], at: usize) -> usize {
     let byte = |i: usize| text.get(at + i).copied().unwrap_or(0);
     match (byte(0), byte(1), byte(2)) {
@@ -33,7 +34,8 @@ fn white_space_len(text: &[u8], at: usize) -> usize {
     }
 }
 
-/// `IsLineBreak`: how many bytes the line break at `at` takes, 0 if there is none. `\r\n` is two of them.
+/// `IsLineBreak`: the length in bytes of the line break at `at`, 0 if there is none. `\r\n` is two
+/// line breaks.
 pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
     match text.get(at) {
         Some(b'\n' | b'\r') => 1,
@@ -46,7 +48,7 @@ pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
     }
 }
 
-/// `ComputeECMALineStarts`: where each line of `text` starts.
+/// `ComputeECMALineStarts`: the start of each line of `text`.
 pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0u32];
     let mut i = 0;
@@ -70,7 +72,7 @@ pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     starts
 }
 
-/// Where the line `at` is on ends, before its line break.
+/// End of the line that contains `at`, before its line break.
 fn line_end(text: &[u8], mut at: usize) -> usize {
     while at < text.len() && line_break_len(text, at) == 0 {
         at += 1;
@@ -78,7 +80,7 @@ fn line_end(text: &[u8], mut at: usize) -> usize {
     at.min(text.len())
 }
 
-/// `SkipTrivia`: from `at`, past blanks and comments.
+/// `SkipTrivia`: from `at`, past whitespace and comments.
 pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
@@ -111,8 +113,9 @@ pub(super) fn get_trailing_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize
     iterate_comment_ranges(text, pos, true)
 }
 
-/// `iterateCommentRanges`: the comments that follow `pos`, from where to where. A `//` comment goes up to its line break. Those on
-/// the line of `pos` trail what is before it: they are left out unless `trailing`, which stops at the end of that line.
+/// `iterateCommentRanges`: the spans of the comments that follow `pos`. A `//` comment extends to
+/// its line break. Comments on the line of `pos` are trailing comments of the preceding token: they
+/// are omitted unless `trailing`, which stops at the end of that line.
 fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut collecting = trailing;
@@ -158,7 +161,7 @@ fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(u
     ranges
 }
 
-/// Where the `//` comment that ends `line` starts.
+/// Start of the `//` comment that ends `line`.
 fn line_comment_start(line: &[u8]) -> Option<usize> {
     let mut at = 0;
     while let Some(&c) = line.get(at) {
@@ -184,7 +187,8 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
     None
 }
 
-/// Where the token before `pos` ends: back over blanks and comments. A missing node is there (`createMissingNode`).
+/// End of the token before `pos`: scans back over whitespace and comments. A missing node is
+/// positioned there (`createMissingNode`).
 pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
@@ -221,12 +225,12 @@ pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     }
 }
 
-/// `text` up to where its last token ends.
+/// `text` up to the end of its last token.
 pub(super) fn trim_trivia_end(text: &[u8]) -> &[u8] {
     &text[..skip_trivia_back(text, text.len())]
 }
 
-/// `peekUnicodeEscape`: how long `\\uXXXX` or `\\u{X}` at `at` is, and what it stands for.
+/// `peekUnicodeEscape`: the length of `\\uXXXX` or `\\u{X}` at `at`, and the code point it denotes.
 fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
     if text.get(at) != Some(&b'\\') || text.get(at + 1) != Some(&b'u') {
         return None;
@@ -247,7 +251,8 @@ fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
     is_whole.then_some((start + len + usize::from(is_braced) - at, ch))
 }
 
-/// Where the token `written` starts that comes right before `at`, trivia aside. `None`: something else is written there.
+/// Start of the token `written` that immediately precedes `at`, ignoring trivia. `None`: a
+/// different token is there.
 pub(crate) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
     let before = trim_trivia_end(&text[..(at as usize).min(text.len())]);
     before
@@ -255,17 +260,18 @@ pub(crate) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Opt
         .then(|| (before.len() - written.len()) as u32)
 }
 
-/// The name or keyword that starts at `at`, which may be none.
+/// The name or keyword that starts at `at`, possibly empty.
 pub(super) fn word_at(text: &[u8], at: usize) -> &[u8] {
     text.get(at..ident_end(text, at)).unwrap_or_default()
 }
 
-/// Whether `word` is written at `at`, and ends there.
+/// Whether `word` occurs at `at` as a whole word.
 pub(super) fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
     word_at(text, at) == word
 }
 
-/// Where the word that ends at `end` starts. What is not ASCII is part of it if `ident_end` says so.
+/// Start of the word that ends at `end`. A non-ASCII character is part of it if `ident_end` accepts
+/// it.
 pub(super) fn word_start(text: &[u8], end: usize) -> usize {
     let end = end.min(text.len());
     let mut start = end;
@@ -279,7 +285,7 @@ pub(super) fn word_start(text: &[u8], end: usize) -> usize {
     start
 }
 
-/// The word that ends at `end`, which may be none.
+/// The word that ends at `end`, possibly empty.
 pub(super) fn word_before(text: &[u8], end: usize) -> &[u8] {
     &text[word_start(text, end)..end.min(text.len())]
 }
@@ -307,7 +313,7 @@ pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
     }
 }
 
-/// `scanIdentifier`: the same from where a name starts, which what is no `IsIdentifierStart` does not.
+/// `scanIdentifier`: the same from the start of a name, which must satisfy `IsIdentifierStart`.
 pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
     let first = match (text.get(at), unicode_escape(text, at)) {
         (_, Some((_, ch))) => ch,
@@ -355,7 +361,7 @@ fn string_end(text: &[u8], at: usize) -> usize {
     }
 }
 
-/// `scanString(jsxAttributeString)`: nothing is escaped, and it goes on over line breaks.
+/// `scanString(jsxAttributeString)`: no escapes are recognized, and it may span line breaks.
 fn jsx_string_end(text: &[u8], at: usize) -> usize {
     let quote = text.get(at).copied();
     let rest = text.get(at + 1..).unwrap_or_default();
@@ -364,8 +370,8 @@ fn jsx_string_end(text: &[u8], at: usize) -> usize {
         .map_or(text.len(), |end| at + end + 2)
 }
 
-/// `scanTemplateAndSetTokenValue`, from inside the text of a template: where the text ends, past the `` ` `` or the `${`, and whether
-/// it is the latter.
+/// `scanTemplateAndSetTokenValue`, from inside the text of a template: the end of the text, past
+/// the `` ` `` or the `${`, and whether it is the latter.
 fn template_text(text: &[u8], mut at: usize) -> (usize, bool) {
     loop {
         match text.get(at) {
@@ -438,7 +444,7 @@ fn number_end(text: &[u8], start: usize) -> usize {
     if has_leading_zero {
         return at;
     }
-    // After a fraction or an exponent the `n` is an error, and taken all the same.
+    // After a fraction or an exponent the `n` is an error, and is consumed anyway.
     if byte(at) == b'n' && (fixed_part_end == at || ident_end(text, at) == at + 1) {
         at += 1;
     }
@@ -461,7 +467,7 @@ fn regex_end(text: &[u8], start: usize) -> usize {
         }
         at += 1;
     }
-    // Not terminated: it ends at the nearest bracket that closes nothing.
+    // Unterminated: it ends at the nearest unmatched closing bracket.
     let body_end = at.min(text.len());
     let (mut class_depth, mut group_depth, mut in_quantifier) = (0u32, 0u32, false);
     (at, in_escape) = (body, false);
@@ -557,7 +563,8 @@ const LONG_OPERATORS: [&[u8]; 28] = [
     b"**", b"<<", b"?.",
 ];
 
-/// `Scan`: where the token that starts at `at` ends. A template ends at its first `${`, and a `/` is never a regular expression.
+/// `Scan`: the end of the token that starts at `at`. A template ends at its first `${`, and a `/`
+/// is never a regular expression.
 pub(super) fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     let Some(&first) = text.get(at) else {
         return at.min(text.len());
@@ -618,10 +625,11 @@ fn is_identifier_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || matches!(c, b'_' | b'$' | b'\\') || c >= 0x80
 }
 
-/// How deep JSX elements are looked into while skipping. In a file without JSX the depth is 0.
+/// Maximum nesting depth of JSX elements that are parsed while skipping. In a file without JSX the
+/// depth is 0.
 const MAX_JSX_DEPTH: u32 = 64;
 
-/// Past the type arguments whose `<` is at `open`, if that is what they are.
+/// The position past the type arguments whose `<` is at `open`, if they are type arguments.
 fn type_arguments_end(text: &[u8], open: usize, jsx_depth: u32) -> Option<usize> {
     let (mut at, mut depth) = (open, 0u32);
     loop {
@@ -649,8 +657,9 @@ fn type_arguments_end(text: &[u8], open: usize, jsx_depth: u32) -> Option<usize>
     }
 }
 
-/// Past the JSX element or fragment whose `<` is at `open`. `None` if it is none, or not a whole one: then the `<` is an operator, or
-/// opens the type parameters of an arrow function or of a function type.
+/// The position past the JSX element or fragment whose `<` is at `open`. `None` if it is not one,
+/// or is incomplete: then the `<` is an operator, or opens the type parameters of an arrow function
+/// or of a function type.
 fn jsx_element_end(text: &[u8], open: usize, jsx_depth: u32) -> Option<usize> {
     let inner_depth = jsx_depth.checked_sub(1)?;
     let mut at = skip_trivia(text, open + 1);
@@ -725,21 +734,23 @@ fn jsx_element_end(text: &[u8], open: usize, jsx_depth: u32) -> Option<usize> {
                 }
                 at = jsx_element_end(text, at, inner_depth)?;
             }
-            // Neither can be written in JSX text.
+            // Neither can occur in JSX text.
             b'}' | b'>' => return None,
             _ => at += 1,
         }
     }
 }
 
-/// From `start`, which is directly inside brackets, to after the `closer` that closes them. What is in between is skipped token
-/// by token: brackets are matched, and strings, templates, comments, regular expressions and JSX text are not looked into. The end
-/// of the text if they are never closed.
+/// From `start`, which is directly inside brackets, to the position after the matching `closer`.
+/// The content is skipped token by token: brackets are matched, and strings, templates, comments,
+/// regular expressions and JSX text are skipped as a whole. Returns the end of the text if the
+/// brackets are never closed.
 fn close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> usize {
     try_close_from(text, start, closer, jsx_depth).unwrap_or(text.len())
 }
 
-/// Past the bracket that closes the one at `open`, JSX aside. `None`: no bracket is at `open`, or it is never closed.
+/// The position past the bracket that matches the one at `open`, ignoring JSX. `None`: no bracket
+/// is at `open`, or it is never closed.
 pub(super) fn end_of_brackets(text: &[u8], open: usize) -> Option<usize> {
     let closer = match text.get(open)? {
         b'(' => b')',
@@ -756,7 +767,7 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
     if text.get(next) == Some(&closer) {
         return Some(next + 1);
     }
-    // What is open, outermost first. A `` ` `` stands for the `${` of a template.
+    // The open brackets, outermost first. A `` ` `` represents the `${` of a template.
     let mut open = vec![closer];
     let mut at = start;
     let mut expression_can_start = start
@@ -786,7 +797,8 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
             }
             b')' | b']' | b'}' => {
                 at += 1;
-                // One that closes nothing is skipped. One that closes an outer bracket closes what is open inside it.
+                // An unmatched closer is skipped. One that closes an outer bracket also closes the
+                // brackets open inside it.
                 if let Some(depth) = open.iter().rposition(|&o| o == c) {
                     open.truncate(depth);
                     if open.is_empty() {
@@ -856,7 +868,8 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
 
 // ───────────────────────────── the tree ─────────────────────────────
 
-/// The tree of a file and its text. Every function gives `node.End()` of what it is named after, unless it says otherwise.
+/// The HIR of a file and its text. Every function returns `node.End()` of the node it is named
+/// after, unless stated otherwise.
 #[derive(Copy, Clone)]
 pub(crate) struct Spans<'a> {
     pub(crate) hir: &'a File,
@@ -880,7 +893,7 @@ impl<'a> Spans<'a> {
         skip_trivia(self.text, at)
     }
 
-    /// Past `token` if it is the next thing after `at`. Otherwise `at`.
+    /// Past `token` if it is the next token after `at`. Otherwise `at`.
     fn eat(self, at: usize, token: &[u8]) -> usize {
         let start = self.skip_trivia(at);
         match self.text.get(start..) {
@@ -894,13 +907,13 @@ impl<'a> Spans<'a> {
         self.hir.kind == FileKind::Tsx || self.hir.is_js
     }
 
-    /// From `at`, which is directly inside brackets, to after the `closer` that closes them.
+    /// From `at`, which is directly inside brackets, to the position after the matching `closer`.
     fn close(self, at: usize, closer: u8) -> usize {
         let jsx_depth = if self.is_jsx() { MAX_JSX_DEPTH } else { 0 };
         close_from(self.text, at, closer, jsx_depth)
     }
 
-    /// Past what the bracket at `open` opens.
+    /// Past the bracketed group opened at `open`.
     fn bracket(self, open: usize) -> usize {
         match self.byte(open) {
             b'(' => self.close(open + 1, b')'),
@@ -930,12 +943,12 @@ impl<'a> Spans<'a> {
         self.hir.types.get(node.idx()).map_or(0, |t| t.pos as usize)
     }
 
-    /// `e` as it is written, with the parentheses around it.
+    /// `e` in the source, including enclosing parentheses.
     pub(crate) fn expr(self, e: ExprId) -> usize {
         self.expr_from(e, 0)
     }
 
-    /// `e` with those of the parentheses around it that open at `start` or later.
+    /// `e` including the enclosing parentheses that open at `start` or later.
     fn expr_from(self, e: ExprId, start: usize) -> usize {
         let around = crate::hir::parentheses_around(self.hir, e).iter();
         match around.take_while(|p| p.1 as usize >= start).last() {
@@ -944,7 +957,7 @@ impl<'a> Spans<'a> {
         }
     }
 
-    /// `e` itself, whatever parentheses it is in.
+    /// `e` itself, excluding enclosing parentheses.
     fn expr_inside(self, e: ExprId) -> usize {
         self.hir.exprs.get(e.idx()).map_or(0, |e| e.end as usize)
     }
@@ -965,7 +978,7 @@ impl<'a> Spans<'a> {
         self.key(prop.key, prop.pos as usize)
     }
 
-    /// The name `key`, which is written at `pos`.
+    /// The name `key`, located at `pos`.
     fn key(self, key: PropKey, pos: usize) -> usize {
         match key {
             PropKey::Computed(e) => {
@@ -983,7 +996,8 @@ impl<'a> Spans<'a> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// How many `(` are written right before `pos`, at `floor` or later. Parentheses around a type are not kept.
+    /// The number of `(` immediately before `pos`, at `floor` or later. Parentheses around a type
+    /// are not stored.
     fn parens_before(self, floor: usize, pos: usize) -> usize {
         let (mut at, mut count) = (pos, 0);
         loop {
@@ -993,7 +1007,8 @@ impl<'a> Spans<'a> {
             }
             match self.text[end - 1] {
                 b'(' => count += 1,
-                // A bar before the whole of a type leads it, and so does the `!` of JSDoc.
+                // A leading operator before a whole type belongs to it, and so does the `!` of
+                // JSDoc.
                 b'|' | b'&' | b'!' => {}
                 _ => return count,
             }
@@ -1001,8 +1016,9 @@ impl<'a> Spans<'a> {
         }
     }
 
-    /// `node` as it is written, with those of the parentheses around it that open at `floor` or later. `floor` is where the type
-    /// that `node` is the first part of starts, which the parentheses before that are around. 0 for a type that is part of no other.
+    /// `node` in the source, including the enclosing parentheses that open at `floor` or later.
+    /// `floor` is the start of the type whose first part is `node`; the parentheses before that
+    /// enclose that type. 0 for a type that is not part of another.
     fn ty_in(self, node: TypeNodeId, floor: usize) -> usize {
         let mut end = self.ty(node);
         for _ in 0..self.parens_before(floor, self.type_pos(node)) {
@@ -1011,7 +1027,7 @@ impl<'a> Spans<'a> {
         end
     }
 
-    /// `node` itself, whatever parentheses it is in.
+    /// `node` itself, excluding enclosing parentheses.
     fn ty(self, node: TypeNodeId) -> usize {
         self.hir
             .types
@@ -1019,7 +1035,7 @@ impl<'a> Spans<'a> {
             .map_or(0, |node| node.end as usize)
     }
 
-    /// Past the type arguments `args`, which are written after `at`. `at` if there are none.
+    /// Past the type arguments `args`, which follow `at`. `at` if there are none.
     fn type_args(self, args: IdList<TypeNodeId>, at: usize) -> usize {
         match self.hir.ids(args).next_back() {
             Some(last) => self.close_angle(self.ty_in(last, at)),
@@ -1085,8 +1101,9 @@ impl<'a> Spans<'a> {
             .map_or(0, |decl| decl.loc.end as usize)
     }
 
-    /// Where the tag of a JSDoc comment that starts at `at` ends: where the next one starts, or else before the `*/`.
-    /// `parseTagComments`: an `@` in braces or inside a word starts none.
+    /// End of the JSDoc tag that starts at `at`: the start of the next tag, or else the position
+    /// before the `*/`.
+    /// `parseTagComments`: an `@` in braces or inside a word does not start a tag.
     fn jsdoc_tag(self, at: usize) -> usize {
         let comments = &self.hir.jsdoc_comments;
         let Some(&(_, comment_end)) = comments
@@ -1120,7 +1137,8 @@ impl<'a> Spans<'a> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// `getErrorRangeForArrowFunction`: an arrow function whose block goes over several lines is pointed at by the first of them.
+    /// `getErrorRangeForArrowFunction`: for an arrow function whose block spans several lines the
+    /// range is the first line.
     fn arrow_error_end(self, e: ExprId, f: FnId) -> usize {
         let end = self.expr_inside(e);
         match self.hir.fns.get(f.idx()) {
@@ -1141,12 +1159,13 @@ impl Checker<'_> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// `node.End()` of the expression `e` as it is written: after the parentheses around it. Goes with `start_of`.
+    /// `node.End()` of the expression `e` including enclosing parentheses. Pairs with `start_of`.
     pub fn end_of_expr(&self, file: FileId, e: ExprId) -> u32 {
         self.spans(file).expr(e) as u32
     }
 
-    /// `node.End()` of `e` itself, before any `)` around the whole of it. Goes with `start_inside_parentheses`.
+    /// `node.End()` of `e` itself, before any `)` that encloses the whole of it. Pairs with
+    /// `start_inside_parentheses`.
     pub(super) fn end_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         self.spans(file).expr_inside(e) as u32
     }
@@ -1156,7 +1175,8 @@ impl Checker<'_> {
         self.spans(file).expr_from(e, start as usize) as u32
     }
 
-    /// The end of `GetErrorRangeForNode` of `e` as it is written. Goes with `error_start_of`.
+    /// The end of `GetErrorRangeForNode` of `e` including enclosing parentheses. Pairs with
+    /// `error_start_of`.
     pub(super) fn error_end_of(&self, file: FileId, e: ExprId) -> u32 {
         if is_parenthesized(self.hir(file), e) {
             self.end_of_expr(file, e)
@@ -1165,7 +1185,8 @@ impl Checker<'_> {
         }
     }
 
-    /// The same, of `e` itself, whatever parentheses it is in. Goes with `error_start_inside_parentheses`.
+    /// The same for `e` itself, excluding enclosing parentheses. Pairs with
+    /// `error_start_inside_parentheses`.
     pub(super) fn error_end_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         let (hir, spans) = (self.hir(file), self.spans(file));
         let Some(expr) = hir.exprs.get(e.idx()) else {
@@ -1187,7 +1208,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode` of `e` as it is written: `(error_start_of, error_end_of)`.
+    /// `GetErrorRangeForNode` of `e` including enclosing parentheses: `(error_start_of,
+    /// error_end_of)`.
     pub(super) fn error_range_of_expr(&self, file: FileId, e: ExprId) -> (u32, u32) {
         (self.error_start_of(file, e), self.error_end_of(file, e))
     }
@@ -1227,8 +1249,8 @@ impl Checker<'_> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// `node.End()` of the type node `node`. Parentheses around a type are not kept, and those around the whole of `node` are not
-    /// counted: goes with `hir[node].pos`.
+    /// `node.End()` of the type node `node`. Parentheses around a type are not stored, and those
+    /// around the whole of `node` are not counted: pairs with `hir[node].pos`.
     pub fn end_of_type_node(&self, file: FileId, node: TypeNodeId) -> u32 {
         self.spans(file).ty(node) as u32
     }
@@ -1238,7 +1260,8 @@ impl Checker<'_> {
         self.spans(file).ty_in(node, start as usize) as u32
     }
 
-    /// How many `ParenthesizedType` nodes are around `node`, of those that open at `floor` or later. 0 where the text is not kept.
+    /// The number of `ParenthesizedType` nodes around `node` that open at `floor` or later. 0 where
+    /// the text is not retained.
     pub(super) fn parenthesized_type_depth(
         &self,
         file: FileId,
@@ -1249,7 +1272,8 @@ impl Checker<'_> {
         spans.parens_before(floor as usize, spans.type_pos(node))
     }
 
-    /// Where the last of the types `args` ends, parentheses included: the end of the list, before its `>`. 0 for an empty list.
+    /// End of the last of the types `args`, parentheses included: the end of the list, before its
+    /// `>`. 0 for an empty list.
     pub(super) fn end_of_type_args(&self, file: FileId, args: IdList<TypeNodeId>) -> u32 {
         match self.hir(file).ids(args).next_back() {
             Some(last) => self.spans(file).ty_in(last, 0) as u32,
@@ -1307,8 +1331,8 @@ impl Checker<'_> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// `node.End()` of the statement `s`, its `;` included. The declarations in the head of a `for` are a statement here and have
-    /// none.
+    /// `node.End()` of the statement `s`, including its `;`. The declaration list in the head of a
+    /// `for` is a statement here and has no `;`.
     pub fn end_of_stmt(&self, file: FileId, s: StmtId) -> u32 {
         self.hir(file).stmts.get(s.idx()).map_or(0, |s| s.loc.end)
     }
@@ -1340,7 +1364,8 @@ impl Checker<'_> {
         (at, spans.token(at as usize) as u32)
     }
 
-    /// Where the first token after the modifiers of the statement `s` is: of a variable statement, its `VariableDeclarationList`.
+    /// Position of the first token after the modifiers of the statement `s`: for a variable
+    /// statement, its `VariableDeclarationList`.
     pub(super) fn start_after_modifiers(&self, file: FileId, s: StmtId) -> u32 {
         let hir = self.hir(file);
         let Some(last) = hir.modifier_list(hir[s].modifiers).last() else {
@@ -1395,7 +1420,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode`, of whatever `f` is.
+    /// `GetErrorRangeForNode` of whatever `f` is.
     pub(super) fn error_range_of_fn(&self, file: FileId, f: FnId) -> (u32, u32) {
         let spans = self.spans(file);
         let Some(func) = self.hir(file).fns.get(f.idx()) else {
@@ -1435,7 +1460,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `node.End()` of the tag of a JSDoc comment that starts at `pos`, and of what is made from it.
+    /// `node.End()` of the JSDoc tag that starts at `pos`, and of the nodes synthesized from it.
     pub(super) fn end_of_jsdoc_tag(&self, file: FileId, pos: u32) -> u32 {
         self.spans(file).jsdoc_tag(pos as usize) as u32
     }
@@ -1504,29 +1529,31 @@ impl Checker<'_> {
 
     // ───────────────────────────── text ─────────────────────────────
 
-    /// Where the name that starts at `pos` ends: an identifier, a private name, a string, a number, `[computed]`, a binding pattern.
+    /// End of the name that starts at `pos`: an identifier, a private name, a string, a number,
+    /// `[computed]`, a binding pattern.
     pub(super) fn end_of_name_at(&self, file: FileId, pos: u32) -> u32 {
         self.spans(file).name(pos as usize) as u32
     }
 
-    /// `GetRangeOfTokenAtPosition`: where the token that starts at `pos` ends, operators of any length included. `pos` where there is
-    /// no text: that of the default library is not kept.
+    /// `GetRangeOfTokenAtPosition`: the end of the token that starts at `pos`, operators of any
+    /// length included. Returns `pos` where there is no text: the text of the default library is
+    /// not retained.
     pub(super) fn end_of_token_at(&self, file: FileId, pos: u32) -> u32 {
         (self.spans(file).token(pos as usize) as u32).max(pos)
     }
 
-    /// Where what the bracket at `open` opens is closed: after the matching `)`, `]`, `}`.
+    /// End of the bracketed group opened at `open`: after the matching `)`, `]`, `}`.
     pub(super) fn end_of_bracket_at(&self, file: FileId, open: u32) -> u32 {
         self.spans(file).bracket(open as usize) as u32
     }
 
-    /// `SkipTrivia`: from `pos`, past blanks and comments.
+    /// `SkipTrivia`: from `pos`, past whitespace and comments.
     pub(super) fn skip_trivia_from(&self, file: FileId, pos: u32) -> u32 {
         self.spans(file).skip_trivia(pos as usize) as u32
     }
 
-    /// Where the token before `pos` ends: back over blanks and comments. Where a missing node is, and `node.Pos()` of what starts at
-    /// `pos`.
+    /// End of the token before `pos`: scans back over whitespace and comments. This is the position
+    /// of a missing node, and `node.Pos()` of the node that starts at `pos`.
     pub(super) fn end_of_token_before(&self, file: FileId, pos: u32) -> u32 {
         skip_trivia_back(&self.hir(file).text, pos as usize) as u32
     }
@@ -1594,7 +1621,7 @@ impl Checker<'_> {
             NodeData::Part(Part::ExportClause, row) => {
                 self.end_of_node(file, row.with(Part::BindingsName))
             }
-            // The tree does not say.
+            // The HIR does not store it.
             NodeData::Part(..) => 0,
             NodeData::Expr(e) => self.end_inside_parentheses(file, e),
             NodeData::Stmt(s) => self.end_of_stmt(file, s),
@@ -1627,7 +1654,7 @@ impl Checker<'_> {
     pub(super) fn get_error_range_for_node(&self, file: FileId, node: Node) -> (u32, u32) {
         let hir = self.hir(file);
         match hir.data(node) {
-            // The file goes by its first token.
+            // The file uses its first token.
             NodeData::File => {
                 let start = self.skip_trivia_from(file, 0);
                 (start, self.end_of_token_at(file, start))

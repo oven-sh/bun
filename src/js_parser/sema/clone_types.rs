@@ -1,8 +1,10 @@
-//! Makes the rows of the type checker's tree (`bun_sema::hir`) of the TypeScript syntax the parser reads, as soon as it has read it:
-//! what `NewTypeReferenceNode` and its like are to TypeScript's parser. What is handed over is in `ts_syntax.rs`.
+//! Builds HIR nodes (`bun_sema::hir`) from TypeScript syntax as the parser reads it: the
+//! counterpart of `NewTypeReferenceNode` and the other node factories of TypeScript's parser. The
+//! input types are in `ts_syntax.rs`.
 //!
-//! What an attempt at parsing made is taken back with the attempt (`P::rewind_type_syntax`). Names are interned here, and the grammar
-//! checks that TypeScript makes on type syntax after parsing are made here.
+//! Nodes built during a speculative parse are rolled back with it (`P::rewind_type_syntax`). Names
+//! are interned here, and the grammar checks that TypeScript runs on type syntax after parsing run
+//! here.
 
 use crate::sema::ts_syntax as ts;
 use bun_ast::Expr;
@@ -18,7 +20,8 @@ use bun_sema::hir::{
 use super::builder::Builder;
 use super::notes::Rows;
 
-/// A part of a row that is written as a JavaScript expression or function body. The lowering converts it and fills it in.
+/// A field of a node whose source is a JavaScript expression or function body. The lowering pass
+/// converts it and fills it in.
 #[derive(Copy, Clone)]
 pub(crate) enum PendingPart {
     /// `[expression]: T`
@@ -43,7 +46,7 @@ pub(crate) enum PendingPart {
 
 #[inline]
 fn pos(loc: bun_ast::Loc) -> u32 {
-    // Nothing is noted of what is handed over.
+    // Input locations are plain offsets, never note indexes.
     debug_assert!(!loc.is_index());
     loc.start.max(0) as u32
 }
@@ -120,8 +123,8 @@ impl Builder<'_> {
             members,
         } = mapped;
         if let Some(loc) = extra_member_loc {
-            // `checkGrammarMappedType`: A mapped type may not declare properties or methods. `GetErrorRangeForNode`: the name of
-            // a property, the whole of a signature.
+            // `checkGrammarMappedType`: A mapped type may not declare properties or methods.
+            // `GetErrorRangeForNode`: the name of a property, the whole node of a signature.
             match members.iter().next().map(|first| self.file[first]) {
                 Some(first) if first.kind != MemberKind::Property => {
                     self.file
@@ -154,7 +157,7 @@ impl Builder<'_> {
         }
     }
 
-    /// `import("specifier")`. `argument`: what is written instead of a string.
+    /// `import("specifier")`. `argument`: the type that appears in place of a string literal.
     pub(crate) fn add_import_type(
         &mut self,
         specifier: (&[u8], u32),
@@ -165,8 +168,9 @@ impl Builder<'_> {
         if let Some(attributes) = attributes {
             self.pending.push(PendingPart::ImportAttributes(attributes));
         }
-        // `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type. `checkImportType` still checks `T`, which is
-        // kept in `args` of a node without a specifier. The type arguments are never looked at.
+        // `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type.
+        // `checkImportType` still checks `T`, which is stored in `args` of a node without a
+        // specifier. The type arguments are never checked.
         if argument.is_some() {
             let bun_sema::hir::TypeNode { pos, end, .. } = self.file[argument];
             self.file.error(DiagnosticKind::Checker, pos, end, 1141);
@@ -216,7 +220,7 @@ impl Builder<'_> {
         TypeNodeKind::Union(self.file.list(&[operand, keyword]))
     }
 
-    /// `getTypeFromRestTypeNode`: the element type if `ty` is written as an array type, otherwise `ty`.
+    /// `getTypeFromRestTypeNode`: the element type if `ty` is an array type node, otherwise `ty`.
     pub(crate) fn rest_element_type(&self, ty: TypeNodeId) -> TypeNodeId {
         match self.file[ty].kind {
             TypeNodeKind::Array(element) => element,
@@ -298,7 +302,7 @@ impl Builder<'_> {
         if params.is_empty() {
             return Span::EMPTY;
         }
-        let made: smallvec::SmallVec<[Param; 4]> = params
+        let created: smallvec::SmallVec<[Param; 4]> = params
             .iter()
             .map(|param| {
                 let mut flags = param.flags;
@@ -324,15 +328,15 @@ impl Builder<'_> {
                 }
             })
             .collect();
-        let made = self.file.add_params(&made);
-        for (param, id) in params.iter().zip(made.iter()) {
+        let created = self.file.add_params(&created);
+        for (param, id) in params.iter().zip(created.iter()) {
             if let Some(default) = param.default {
                 self.pending.push(PendingPart::ParamDefault(id, default));
             }
             let list = self.modifier_list(param.modifiers);
             self.file.set_param_modifiers(id, list);
         }
-        made
+        created
     }
 
     #[inline]
@@ -346,7 +350,7 @@ impl Builder<'_> {
     }
 
     pub(crate) fn add_pattern_elements(&mut self, elements: &[ts::PatternElement]) -> PatKind {
-        let made: smallvec::SmallVec<[PatElem; 4]> = elements
+        let created: smallvec::SmallVec<[PatElem; 4]> = elements
             .iter()
             .map(|element| PatElem {
                 pat: element.pattern,
@@ -356,18 +360,18 @@ impl Builder<'_> {
                 end: pos(element.end),
             })
             .collect();
-        let made = self.file.add_pat_elems(&made);
-        for (element, id) in elements.iter().zip(made.iter()) {
+        let created = self.file.add_pat_elems(&created);
+        for (element, id) in elements.iter().zip(created.iter()) {
             if let Some(default) = element.default {
                 self.pending
                     .push(PendingPart::PatternElementDefault(id, default));
             }
         }
-        PatKind::Array(made)
+        PatKind::Array(created)
     }
 
     pub(crate) fn add_pattern_properties(&mut self, properties: &[ts::PatternProperty]) -> PatKind {
-        let made: smallvec::SmallVec<[PatProp; 4]> = properties
+        let created: smallvec::SmallVec<[PatProp; 4]> = properties
             .iter()
             .map(|property| PatProp {
                 key: self.key(property.key),
@@ -383,8 +387,8 @@ impl Builder<'_> {
                 end: pos(property.end),
             })
             .collect();
-        let made = self.file.add_pat_props(&made);
-        for (property, id) in properties.iter().zip(made.iter()) {
+        let created = self.file.add_pat_props(&created);
+        for (property, id) in properties.iter().zip(created.iter()) {
             if let ts::PropertyKey::Computed(expr) = property.key {
                 self.pending.push(PendingPart::PatternKey(id, expr));
             }
@@ -393,7 +397,7 @@ impl Builder<'_> {
                     .push(PendingPart::PatternPropertyDefault(id, default));
             }
         }
-        PatKind::Object(made)
+        PatKind::Object(created)
     }
 
     /// A computed key is left empty. The caller adds a `PendingPart` for it.
@@ -408,7 +412,7 @@ impl Builder<'_> {
         }
     }
 
-    /// The member it belongs to gives it its name and its start (`member`).
+    /// Its name and start position are set by the member that owns it (`member`).
     pub(crate) fn add_signature(&mut self, signature: ts::Signature) -> FnId {
         let ts::Signature {
             kind,
@@ -450,7 +454,7 @@ impl Builder<'_> {
         self.pending.push(PendingPart::FunctionBody(func, body));
     }
 
-    /// The flags that `export`, `default` and `declare` stand for, and where `export` is.
+    /// The flags for `export`, `default` and `declare`, and the position of `export`.
     pub(crate) fn clone_statement_modifiers(
         &self,
         modifiers: ts::Span<ts::Modifier>,
@@ -466,7 +470,8 @@ impl Builder<'_> {
         (all, export_pos)
     }
 
-    /// Reports what `checkGrammarInterfaceDeclaration` reports, except 1176 for an `implements` clause, which the checker finds in the text.
+    /// Reports what `checkGrammarInterfaceDeclaration` reports, except 1176 for an `implements`
+    /// clause, which the checker finds in the source text.
     pub(crate) fn clone_interface(
         &mut self,
         id: ts::Id<ts::Interface>,
@@ -545,10 +550,10 @@ impl Builder<'_> {
         if members.is_empty() {
             return Span::EMPTY;
         }
-        let made: smallvec::SmallVec<[Member; 8]> =
+        let created: smallvec::SmallVec<[Member; 8]> =
             members.iter().map(|member| self.member(member)).collect();
-        let made = self.file.add_members(&made);
-        for (member, id) in members.iter().zip(made.iter()) {
+        let created = self.file.add_members(&created);
+        for (member, id) in members.iter().zip(created.iter()) {
             if let ts::PropertyKey::Computed(expr) = member.key {
                 self.pending.push(PendingPart::MemberKey(id, expr));
             }
@@ -557,10 +562,10 @@ impl Builder<'_> {
                     .push(PendingPart::MemberInitializer(id, initializer));
             }
         }
-        made
+        created
     }
 
-    /// Not a row yet: the members of a class are made together.
+    /// Not a HIR node yet: the members of a class are allocated together.
     pub(crate) fn member(&mut self, member: &ts::Member) -> Member {
         let ts::Member {
             kind,
@@ -579,20 +584,20 @@ impl Builder<'_> {
         let modifiers = self.modifier_list(modifiers);
         for (at, code) in index_signature_errors.into_iter().flatten() {
             match code {
-                // Without a parameter it is said of the signature.
+                // Without a parameter it is reported on the signature.
                 1096 if at == pos(start) => {
                     self.file.error(DiagnosticKind::Grammar, at, pos(end), code)
                 }
                 _ => self.file.error(DiagnosticKind::Grammar, at, 0, code),
             }
         }
-        // `checkVariableLikeDeclaration`: said whatever else is wrong with the file.
+        // `checkVariableLikeDeclaration`: reported regardless of other errors in the file.
         if kind == MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
             self.file.error(DiagnosticKind::Checker, pos(loc), 0, 1539);
         }
         let is_number = matches!(key, ts::PropertyKey::Number(_));
         let mut key = self.key(key);
-        // `getDeclarationName`: a private name with no class around it names nothing.
+        // `getDeclarationName`: a private name outside a class declares nothing.
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
             key = PropKey::None;
         }
@@ -626,8 +631,9 @@ impl Builder<'_> {
         }
     }
 
-    /// `checkGrammarIndexSignatureParameters`, up to where the type of the parameter is looked at. The checker does the rest.
-    /// `at`: where the member starts.
+    /// `checkGrammarIndexSignatureParameters`, up to the check of the parameter's type. The checker
+    /// does the rest.
+    /// `at`: start of the member.
     pub(crate) fn check_index_signature_parameters(
         &self,
         params: &[ts::Param],
@@ -658,24 +664,27 @@ impl Builder<'_> {
     }
 }
 
-/// The types that are written in the JSDoc comments of a file, as rows of a tree of their own.
+/// The types in a file's JSDoc comments, as nodes of a separate HIR.
 #[derive(Default)]
 pub(crate) struct CommentTypes {
     pub(crate) file: bun_sema::hir::File,
     pub(crate) pending: Vec<PendingPart>,
-    /// What rows there were before and after each type, and each list of type arguments, was read. In order.
-    pub(crate) made: Vec<(Rows, Rows)>,
+    /// Node counts before and after each type and each type argument list was parsed, in source
+    /// order.
+    pub(crate) created: Vec<(Rows, Rows)>,
 }
 
-/// `DeepCloneReparse`: a type in a comment is made anew for each node it is the type of. The rows it made are next to each other in
-/// each vector, so they are appended as they are, and what refers to one of them moves with it.
+/// `DeepCloneReparse`: a JSDoc type is cloned for each node it annotates. Its nodes are contiguous
+/// in each vector, so they are appended as a block and the ids that refer to them are offset.
 impl Builder<'_> {
     pub(crate) fn clone_type(&mut self, from: &CommentTypes, id: TypeNodeId) -> TypeNodeId {
         if id.is_none() {
             return TypeNodeId::NONE;
         }
-        let read = from.made.partition_point(|made| made.1.types <= id.0);
-        let moved = self.clone_rows(from, from.made[read]);
+        let read = from
+            .created
+            .partition_point(|created| created.1.types <= id.0);
+        let moved = self.clone_rows(from, from.created[read]);
         TypeNodeId(id.0.wrapping_add(moved.types))
     }
 
@@ -687,17 +696,20 @@ impl Builder<'_> {
         if list.is_empty() {
             return IdList::EMPTY;
         }
-        let read = from.made.partition_point(|made| made.1.ids <= list.start);
-        let moved = self.clone_rows(from, from.made[read]);
+        let read = from
+            .created
+            .partition_point(|created| created.1.ids <= list.start);
+        let moved = self.clone_rows(from, from.created[read]);
         let list = IdList::new(list.start.wrapping_add(moved.ids), list.len);
-        // No row has this list: `clone_rows` has moved what the rows refer to.
+        // No node owns this list, so `clone_rows`, which offsets the ids held by nodes, has not
+        // offset it.
         for ty in &mut self.file.ids[list.range()] {
             *ty = ty.wrapping_add(moved.types);
         }
         list
     }
 
-    /// Returns by how much the rows of each vector have moved.
+    /// Returns the offset applied to the ids of each vector.
     fn clone_rows(&mut self, from: &CommentTypes, (first, end): (Rows, Rows)) -> Rows {
         let file = &mut self.file;
         let moved = first.copy(&end, &from.file, file);
@@ -715,7 +727,7 @@ impl Builder<'_> {
                 }
             };
         }
-        // The copies. A list most files have nothing in is not touched for nothing.
+        // The copied range. Vectors that are empty in most files are skipped.
         macro_rules! copies {
             ($rows:ident) => {{
                 let copies = first.$rows.wrapping_add(moved.$rows) as usize
@@ -843,12 +855,12 @@ impl Builder<'_> {
             run!(modifiers, modifiers);
             file.set_param_modifiers(ParamId(param.wrapping_add(moved.params)), modifiers);
         }
-        // The parser gave up on these.
+        // The parser failed on these.
         if moved.syntax_errors > 0 {
-            let mut gave_up = copies!(types)
+            let mut bailed_out = copies!(types)
                 .iter()
                 .filter(|node| matches!(node.kind, TypeNodeKind::Error));
-            let at = gave_up.next().map_or(0, |node| node.pos);
+            let at = bailed_out.next().map_or(0, |node| node.pos);
             if file.syntax_errors == 0 {
                 file.error_pos = at;
             }

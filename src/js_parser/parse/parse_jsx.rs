@@ -26,7 +26,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.needs_jsx_import = true;
         }
 
-        // The name of the element that this one is a child of, empty for a fragment. Tolerant mode only.
+        // The tag name of the parent element, empty for a fragment. Tolerant mode only.
         let parent_tag = if p.lexer.tolerant {
             p.jsx_parent_tag.take()
         } else {
@@ -458,7 +458,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.tolerant {
                             if let Some((end_tag, closing_start, end)) = p.jsx_adopted_close.take()
                             {
-                                // The child was not closed, and met the closing tag of this element.
+                                // The child was not closed, and reached the closing tag of this
+                                // element.
                                 p.lexer.list_contexts = saved_contexts;
                                 let closing_tag = end_tag.data.as_expr();
                                 let syntax = p.keep_jsx(
@@ -543,7 +544,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut end = Self::end_of_jsx_tag(p);
                         let close_tag_loc = end_tag.range.loc;
                         let closing_tag = if belongs_to_parent {
-                            // The closing tag of this one is missed where that of the parent starts.
+                            // The closing tag of this element is reported as missing at the start
+                            // of the parent's closing tag.
                             p.jsx_adopted_close = Some((end_tag, less_than_loc, end));
                             end = less_than_loc;
                             p.new_expr(E::Missing {}, less_than_loc)
@@ -596,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let end = Self::end_of_jsx_tag(p);
 
                     p.lexer.list_contexts = saved_contexts;
-                    // The type checker looks at both names (`checkJsxElementDeferred`).
+                    // The type checker checks both names (`checkJsxElementDeferred`).
                     let closing_tag = end_tag.data.as_expr();
                     let kept_tag = if p.preserves_type_syntax() {
                         start_tag
@@ -641,9 +643,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                         ));
                     }
-                    // `parseJsxChild`: a conflict marker ends the children. The lexer gives it as a syntax error that starts where the
-                    // text before it does, and that is where `parseJsxClosingElement` misses the `</`. What else it misses is at
-                    // the same place. The marker stays: a parent element scans it again, and a statement list skips it.
+                    // `parseJsxChild`: a conflict marker ends the children. The lexer returns it as
+                    // a syntax error token that starts at the start of the preceding text, and
+                    // `parseJsxClosingElement` reports the missing `</` there. Its other missing
+                    // tokens are reported at the same position. The marker is not consumed: a
+                    // parent element rescans it, and a statement list skips it.
                     if p.lexer.token == T::TSyntaxError
                         && p.lexer.tolerant
                         && !p.lexer.is_log_disabled
@@ -674,7 +678,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `finishNode`, of an opening or closing tag. Call before its last `>` is consumed, or where that is missed.
+    /// `finishNode` for an opening or closing tag. Call before its last `>` is consumed, or where
+    /// that `>` is reported as missing.
     #[inline]
     fn end_of_jsx_tag(p: &mut Self) -> bun_ast::Loc {
         if p.lexer.token == T::TGreaterThan {
@@ -706,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(false);
         }
         if p.lexer.is_identifier_or_keyword() {
-            // A word that the ordinary lexer scanned.
+            // An identifier or keyword that was scanned as an ordinary token.
             Self::rescan_inside_jsx_element(p)?;
             return Ok(p.lexer.token == T::TIdentifier);
         }
@@ -721,7 +726,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// `scanJsxIdentifier`: scans the current token again as a token inside a JSX tag.
+    /// `scanJsxIdentifier`: rescans the current token as a token inside a JSX tag.
     #[cold]
     #[inline(never)]
     fn rescan_inside_jsx_element(p: &mut Self) -> crate::CrateResult<()> {
@@ -743,7 +748,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer
                 .ts_error_about(tag.range, 17008, Self::jsx_tag_name_text(p, tag));
         } else {
-            // The fragment's node starts at the full start of its `<`. It ends with its `>`, which is where `JSXTag::parse` says the tag is.
+            // The fragment's node starts at the full start of its `<`. It ends with its `>`, which
+            // is the position `JSXTag::parse` returns for the tag.
             let len = tag.range.loc.start + 1 - start.start;
             p.lexer.ts_error(bun_ast::Range { loc: start, len }, 17014);
         }
@@ -751,7 +757,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.ts_expected(end_of_file, "</");
     }
 
-    /// `GetTextOfNodeFromSourceText`, of the name of `tag`.
+    /// `GetTextOfNodeFromSourceText` for the name of `tag`.
     fn jsx_tag_name_text(p: &Self, tag: &JSXTag<'a>) -> &'a [u8] {
         p.source
             .contents()
@@ -759,9 +765,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap_or_default()
     }
 
-    /// `parseJsxElementOrSelfClosingElementOrFragment`: the closing tag `end_tag`, just parsed, does not name the element `tag`.
-    /// `loc` is the `<` of the element, `after_slash` is where the `</` ends. Returns true if the closing tag names the parent
-    /// element, which then takes it.
+    /// `parseJsxElementOrSelfClosingElementOrFragment`: the closing tag `end_tag`, just parsed,
+    /// does not name the element `tag`. `loc` is the `<` of the element, `after_slash` is the end
+    /// of the `</`. Returns true if the closing tag names the parent element, which then adopts it.
     #[cold]
     #[inline(never)]
     fn report_jsx_tag_mismatch(
@@ -781,7 +787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token != T::TGreaterThan {
             p.lexer.expected(T::TGreaterThan)?;
         }
-        // The node of a tag name starts where the `<` or `</` before it ends.
+        // The node of a tag name starts at the end of the preceding `<` or `</`.
         if parent_tag.is_some_and(|parent| !parent.is_empty() && parent == end_tag.name) {
             let start = bun_ast::Loc {
                 start: loc.start + 1,

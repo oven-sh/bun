@@ -1,7 +1,8 @@
-//! `Type.alias`. A type that is interned by what it is made of (a union, an intersection, a tuple, a reference, an indexed access)
-//! keeps it, as part of what it is interned by. A type that is known by the node it is written at (a type literal, a function
-//! type, a mapped type, a conditional type) has the alias whose body the node is, and keeps one only if it was instantiated under
-//! another (`getTypeFromTypeAliasReference`).
+//! `Type.alias`. A type that is interned structurally (a union, an intersection, a tuple, a
+//! reference, an indexed access) stores it as part of its interning key. A type that is identified
+//! by its type node (a type literal, a function type, a mapped type, a conditional type) has the
+//! alias whose body is that node, and stores one only if it was instantiated under a different
+//! alias (`getTypeFromTypeAliasReference`).
 
 use super::*;
 use crate::bind::ScopeId;
@@ -9,12 +10,12 @@ use smallvec::SmallVec;
 
 static NO_ORIGIN: UnionOrigin = UnionOrigin::None;
 
-/// The alias `instantiateMappedType` is handed.
+/// The alias passed to `instantiateMappedType`.
 #[derive(Clone, Copy)]
 pub(super) enum NewAlias<'a> {
     None,
-    /// `getObjectTypeInstantiation`, given none: `instantiateTypeAlias(t.alias, m)`, of a type that keeps no alias. It is the alias
-    /// whose body the node is, under the mapper.
+    /// `getObjectTypeInstantiation` without an alias: `instantiateTypeAlias(t.alias, m)` for a type
+    /// that stores no alias. It is the alias whose body is the node, instantiated with the mapper.
     OfNode,
     Given(Sym, &'a [TypeId]),
 }
@@ -40,13 +41,13 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// The alias `ty` keeps.
+    /// The alias stored in `ty`.
     #[inline]
     pub(super) fn stored_alias(&self, ty: TypeId) -> Option<&'p (Sym, Box<[TypeId]>)> {
         self.types().provenance(ty)?.alias.as_ref()
     }
 
-    /// `ty` with `alias` and `type_arguments` for `Type.alias`.
+    /// `ty` with `alias` and `type_arguments` as `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
         let origin = match self.types().provenance(ty) {
             Some(provenance) => provenance.origin.clone(),
@@ -62,8 +63,8 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `t.alias`. What is known by the node it is written at has the alias whose body the node is, with what its mapper puts for the
-    /// type parameters of that.
+    /// `t.alias`. A type identified by its type node has the alias whose body is that node, with
+    /// the type parameters of the alias instantiated by the mapper of the type.
     pub(super) fn alias_of_type(&self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
         if let Some((alias, type_arguments)) = self.stored_alias(ty) {
             return Some((*alias, type_arguments.to_vec()));
@@ -105,7 +106,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The alias whose body `node` is, with what `mapper` puts for its type parameters.
+    /// The alias whose body is `node`, with its type parameters instantiated by `mapper`.
     pub(super) fn alias_of_node_under(
         &self,
         file: FileId,
@@ -118,16 +119,17 @@ impl<'p> Checker<'p> {
         Some((alias, parameters.iter().map(map).collect()))
     }
 
-    /// `source.alias.symbol == target.alias.symbol`: that alias, and `fillMissingTypeArguments` of the type arguments of each. Both
-    /// lists are empty if neither has any. The flag: `len(source.alias.typeArguments) != 0`. `None` while the alias is being worked
-    /// out too: nothing can be measured.
+    /// `source.alias.symbol == target.alias.symbol`: that alias, and `fillMissingTypeArguments` of
+    /// the type arguments of each. Both lists are empty if neither has any. The flag:
+    /// `len(source.alias.typeArguments) != 0`. Also `None` while the alias is in progress: nothing
+    /// can be measured.
     pub(super) fn same_alias(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>, bool)> {
-        // Fast path for the common failure. Two types that store no alias have the same alias only if they are written at the same
-        // node: an alias declaration has one body.
+        // Fast path for the common failure. Two types that store no alias have the same alias only
+        // if they have the same type node: an alias declaration has one body.
         if self.stored_alias(source).is_none() && self.stored_alias(target).is_none() {
             let (source, target) = (
                 self.alias_node_of_type(source)?,
@@ -180,7 +182,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let alias = self.files().sym(file, symbol);
-        // A class or an interface of the same name is what the name means.
+        // If a class or an interface has the same name, the name refers to it.
         if self
             .files()
             .flags(alias)
@@ -191,7 +193,8 @@ impl<'p> Checker<'p> {
         Some(alias)
     }
 
-    /// What `getTypeFromUnionTypeNode` does with `getAliasForTypeNode(node)`. `ty`: what `node` comes to.
+    /// What `getTypeFromUnionTypeNode` does with `getAliasForTypeNode(node)`. `ty`: the type `node`
+    /// resolves to.
     pub(super) fn with_alias_for_type_node(
         &mut self,
         file: FileId,
@@ -247,7 +250,8 @@ impl<'p> Checker<'p> {
                 }
                 self.instantiate_mapped_type(file, node, new, NewAlias::Given(alias.0, alias.1))
             }
-            // Only a deferred type reference goes through `getObjectTypeInstantiation`: the body of an alias, which has it for an alias.
+            // Only a deferred type reference goes through `getObjectTypeInstantiation`: it is the
+            // body of an alias and has that alias.
             TypeData::Ref { .. } | TypeData::Tuple { .. } if self.stored_alias(ty).is_none() => {
                 self.instantiate(ty, mapper)
             }
@@ -258,8 +262,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `newAlias` of `getObjectTypeInstantiation`, on `result`, which is what `ty` comes to under `mapper`: `alias`, or else
-    /// `instantiateTypeAlias(t.alias, m)` if `ty` keeps one.
+    /// `newAlias` of `getObjectTypeInstantiation`, applied to `result`, the instantiation of `ty`
+    /// with `mapper`: `alias`, or else `instantiateTypeAlias(t.alias, m)` if `ty` stores one.
     pub(super) fn with_new_alias(
         &mut self,
         ty: TypeId,
@@ -286,7 +290,7 @@ impl<'p> Checker<'p> {
             return result;
         }
         match (alias, kept) {
-            // What mentions no type parameter is not instantiated.
+            // A type that references no type parameter is not instantiated.
             (Some(_), _) if result == ty => ty,
             (Some((alias, type_arguments)), _) => self.with_alias(result, alias, type_arguments),
             (None, Some((alias, type_arguments))) => {
@@ -362,12 +366,14 @@ impl<'p> Checker<'p> {
             }
             _ => alias,
         };
-        // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to complain at, so what is not there is `unknown`.
+        // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to report at, so a
+        // missing property is `unknown`.
         self.indexed_access_flagged(obj, index, undefined, alias)
             .unwrap_or(TypeId::UNKNOWN)
     }
 
-    /// `ty` as `createTypeReference` makes it: a reference or a tuple without the alias of the deferred reference it is.
+    /// `ty` as `createTypeReference` creates it: a reference or a tuple without the alias of the
+    /// deferred reference that it is.
     pub(super) fn without_alias_of_reference(&mut self, ty: TypeId) -> TypeId {
         if self.stored_alias(ty).is_none() && self.types().deferred(ty).is_none() {
             return ty;

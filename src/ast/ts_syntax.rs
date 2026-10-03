@@ -1,4 +1,5 @@
-//! Handles to what the parser keeps of TypeScript syntax for the type checker (`bun_js_parser::sema::ts_syntax`).
+//! Handles to the TypeScript syntax the parser saves for the type checker
+//! (`bun_js_parser::sema::ts_syntax`).
 
 macro_rules! handle {
     ($(#[$doc:meta])* $name:ident) => {

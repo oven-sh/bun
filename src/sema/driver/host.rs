@@ -1,6 +1,7 @@
-//! The file system as the checker sees it.
+//! The checker's view of the file system.
 //!
-//! The checker's paths are absolute, use `/`, and start with one. On Windows `C:\a\b` is `/C:/a/b` to it.
+//! The checker's paths are absolute, use `/`, and start with one. On Windows it represents `C:\a\b`
+//! as `/C:/a/b`.
 
 use bun_core::strings::{BOM, index_of, without_trailing_slash};
 use bun_paths::platform::Posix;
@@ -18,8 +19,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Where TypeScript's `lib.*.d.ts` are for a project in `dir`: in the `typescript` package it has installed, which is also what its
-/// editor reads them from. TypeScript 7 keeps them in a package for the platform. Last, in what is installed globally.
+/// The directory of TypeScript's `lib.*.d.ts` files for a project in `dir`: the `typescript`
+/// package the project has installed, which is also where its editor reads them from. TypeScript 7
+/// ships them in a platform-specific package. The global install is searched last.
 pub fn find_lib_dir(
     host: &dyn Host,
     dir: &[u8],
@@ -33,7 +35,8 @@ pub fn find_lib_dir(
         let for_the_platform = |node_modules: &[u8]| -> Option<Vec<u8>> {
             let scope = [node_modules, b"/@typescript"].concat();
             let (_, mut packages) = host.entries(&scope);
-            // The package for the platform goes with `typescript` itself. Others may be older versions under another name.
+            // The platform-specific package belongs to `typescript` itself. Other packages may be
+            // older versions under another name.
             packages.sort_by_key(|name| {
                 !(name.starts_with(b"typescript-") || name.starts_with(b"native-preview-"))
             });
@@ -43,7 +46,8 @@ pub fn find_lib_dir(
                 .find(|lib| host.is_file(&[&lib[..], b"/lib.es5.d.ts"].concat()))
         };
         for_the_platform(node_modules).or_else(|| {
-            // An isolated install keeps what a package depends on beside the package, and `node_modules/typescript` is a link to it.
+            // An isolated install places a package's dependencies next to the package, and
+            // `node_modules/typescript` is a symlink to it.
             let package = [node_modules, b"/typescript"].concat();
             let real = host.realpath(&package);
             (real != package).then(|| for_the_platform(dirname::<Posix>(&real)))?
@@ -63,7 +67,7 @@ pub fn find_lib_dir(
     global_node_modules.and_then(in_node_modules)
 }
 
-/// `/C:/a` is `C:/a`, which Windows takes.
+/// `/C:/a` becomes `C:/a`, which Windows accepts.
 pub fn to_native(path: &[u8]) -> &[u8] {
     match path {
         [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
@@ -71,7 +75,8 @@ pub fn to_native(path: &[u8]) -> &[u8] {
     }
 }
 
-/// Every `/C:/a` that `text`, a message, speaks of as `to_native` has it, which is how TypeScript shows it.
+/// Rewrites every `/C:/a` in the message `text` to its `to_native` form, which is how TypeScript
+/// prints it.
 pub fn show_drives(text: &mut Vec<u8>) {
     let mut from = 0;
     while let Some(colon) = index_of(&text[from..], b":/").map(|at| from + at) {
@@ -89,31 +94,31 @@ pub fn show_drives(text: &mut Vec<u8>) {
     }
 }
 
-/// A path of the operating system as the checker names it. It has to be absolute.
+/// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
     join(b"/", path.strip_prefix(br"\\?\").unwrap_or(path))
 }
 
-/// What is in a directory. The names are sorted.
+/// The entries of a directory. The names are sorted.
 struct Listing {
     files: Vec<Vec<u8>>,
     directories: Vec<Vec<u8>>,
-    /// Those of either that are links.
+    /// The entries of either kind that are symlinks.
     links: Vec<Vec<u8>>,
-    /// All of them in lower case, with the name as it is written and whether it is a directory: for a file system that does not
-    /// tell `A` from `a`. Put together when a name is first not found as it is written.
+    /// All names lowercased, each with its original spelling and whether it is a directory: for a
+    /// case-insensitive file system. Built lazily, the first time an exact-case lookup fails.
     folded: OnceLock<Vec<(Vec<u8>, Vec<u8>, bool)>>,
 }
 
 enum Directory {
     Missing,
-    /// It is there and cannot be listed: what is in it has to be asked about one by one.
+    /// It exists but cannot be listed: its entries have to be queried one by one.
     Unreadable,
     Listed(Listing),
 }
 
 impl Listing {
-    /// The name as it is written in the directory, and whether it is a directory.
+    /// The name as spelled in the directory, and whether it is a directory.
     fn find(&self, name: &[u8], case_sensitive: bool) -> Option<(&[u8], bool)> {
         if let Ok(i) = self.files.binary_search_by(|n| n.as_slice().cmp(name)) {
             return Some((&self.files[i], false));
@@ -149,18 +154,19 @@ impl Listing {
     }
 }
 
-/// The disk. A directory is read once: whether something is there, what kind of thing it is and where it really is are answered from what the
-/// directories say, which takes no system call. Resolving the imports of a project asks about the same few directories over and over,
-/// mostly about what is not there.
+/// The disk. A directory is read once: existence, entry kind and real path are answered from the
+/// cached directory listings, without a system call. Resolving the imports of a project queries the
+/// same few directories repeatedly, mostly for entries that do not exist.
 pub struct Disk {
     pub threads: usize,
     pub(crate) caches: crate::ThreadCaches,
     case_sensitive: bool,
     directories: ShardedMap<Vec<u8>, Directory>,
-    /// Where each directory that was asked about really is.
+    /// The real path of each directory that was queried.
     real_directories: ShardedMap<Vec<u8>, Vec<u8>>,
-    /// On macOS, opening and reading files gets slower the more threads do it at once, by more than they get done: 16 threads take six times
-    /// as long over the same files as 4 do. So few are let in at a time, as in the bundler.
+    /// On macOS, opening and reading files slows down with the number of concurrent threads by more
+    /// than the parallelism gains: 16 threads take six times as long for the same files as 4 do. So
+    /// only a few readers are admitted at a time, as in the bundler.
     reading: Option<bun_threading::Semaphore>,
     /// Readers that are not in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
@@ -173,19 +179,20 @@ pub struct Disk {
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
 #[derive(Default)]
 struct Reader {
-    /// The directory of the file read last.
+    /// The directory of the most recently read file.
     directory: Vec<u8>,
     /// Opened when a second file is read from `directory`.
     handle: Option<bun_sys::Dir>,
     buffer: Vec<u8>,
 }
 
-/// How many idle readers, and so open directories, are kept.
+/// The maximum number of idle readers, and so of open directories, that are retained.
 const MAX_IDLE_READERS: usize = 16;
 
-/// One of the few places there are for reading a file.
-/// How many threads read at a time on macOS, where opening a file goes through locks all threads meet at. With 16 threads and 45,000 files, 4 to
-/// 10 are as good as each other when the system is quick to open a file. When it is slow to, which comes and goes, 5 or 6 do best.
+/// One of the few slots for reading a file.
+/// The number of threads that read concurrently on macOS, where opening a file takes locks that all
+/// threads contend on. With 16 threads and 45,000 files, 4 to 10 perform equally when the system
+/// opens files quickly. When it is slow, which is intermittent, 5 or 6 perform best.
 const READERS: usize = 6;
 
 struct Turn<'a>(&'a bun_threading::Semaphore);
@@ -203,7 +210,7 @@ impl Drop for Turn<'_> {
     }
 }
 
-/// All that the file `name` in `directory` says.
+/// The full contents of the file `name` in `directory`.
 fn read_file(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     /// Few files are bigger.
     const FIRST_READ: usize = 64 * 1024;
@@ -222,7 +229,8 @@ fn read_file(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -
     Some(all)
 }
 
-/// `decodeBytes`: what a file says, going by the mark at its start. `BOM` knows no big endian, so the pairs are swapped first.
+/// `decodeBytes`: the text of a file, decoded according to its byte order mark. `BOM` does not
+/// support big endian, so the byte pairs are swapped first.
 fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         for pair in bytes.as_chunks_mut::<2>().0 {
@@ -231,13 +239,13 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     }
     Cow::Owned(match BOM::detect(&bytes) {
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
-        // `BOM::detect` needs three bytes. A UTF-16 mark alone is an empty file.
+        // `BOM::detect` needs three bytes. A UTF-16 byte order mark alone is an empty file.
         None if bytes == [0xFF, 0xFE] => Vec::new(),
         None => bytes,
     })
 }
 
-/// The directory `path` is in, and its name there.
+/// The parent directory of `path`, and its base name.
 fn split(path: &[u8]) -> (&[u8], &[u8]) {
     (dirname::<Posix>(path), basename_posix(path))
 }
@@ -278,7 +286,8 @@ impl Disk {
         }
     }
 
-    /// An idle reader that read from `directory` last, or else a new one, or the least recently used once enough are kept.
+    /// An idle reader whose last read was from `directory`, or else a new one, or the least
+    /// recently used one once enough are retained.
     fn take_reader(&self, directory: &[u8]) -> Reader {
         let mut idle = self.idle_readers.lock();
         match idle.iter().position(|r| r.directory == directory) {
@@ -296,7 +305,8 @@ impl Disk {
         idle.push(reader);
     }
 
-    /// Whether the system is asked each time about what is in `path`: the roots, which on Windows are no directories.
+    /// Whether the entries of `path` are queried from the system every time: true for the roots,
+    /// which on Windows are not directories.
     fn is_above_listings(path: &[u8]) -> bool {
         path.is_empty() || path == b"/" && cfg!(windows)
     }
@@ -306,7 +316,7 @@ impl Disk {
         if let Some(known) = self.directories.get_ref(path) {
             return known;
         }
-        // What its parent does not list is not there, and need not be asked for.
+        // An entry that its parent does not list does not exist, so no system call is needed.
         let (parent, name) = split(path);
         if !name.is_empty()
             && !Self::is_above_listings(parent)
@@ -321,7 +331,7 @@ impl Disk {
         self.directories.insert_ref(path.to_vec(), read)
     }
 
-    /// `None`: the system has to be asked.
+    /// `None`: the system has to be queried.
     fn find(&self, path: &[u8]) -> Option<Option<(&[u8], bool)>> {
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
@@ -378,7 +388,7 @@ impl Disk {
     }
 }
 
-/// What the system says is in the directory at `path`.
+/// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
     let directory = match bun_sys::open_dir_absolute(to_native(path)) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
@@ -396,7 +406,7 @@ fn list(path: &[u8]) -> Directory {
     let mut entries = bun_sys::iterate_dir(directory.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
-        // What the directory says about the entry spares asking about each file.
+        // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {
             EntryKind::SymLink => true,
             EntryKind::Unknown => {
@@ -409,7 +419,7 @@ fn list(path: &[u8]) -> Directory {
         };
         let is_dir = match entry.kind {
             EntryKind::Directory => true,
-            // A link has to be followed. It may lead nowhere.
+            // A symlink has to be followed. It may be dangling.
             EntryKind::SymLink | EntryKind::Unknown => match is_directory(directory.fd(), name) {
                 Some(is_dir) => is_dir,
                 None => continue,
@@ -554,7 +564,7 @@ impl Host for Disk {
         }
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        // In runs: what is next to each other is in the same directory.
+        // In runs: adjacent paths are in the same directory.
         crate::for_each_parallel_in_runs(
             &self.caches,
             self.threads,

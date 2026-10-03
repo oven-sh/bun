@@ -1,4 +1,5 @@
-//! Narrowing: what a variable or a property is known to be at a place, going by the tests and assignments on the way there.
+//! Narrowing: the type of a variable or a property at a location, derived from the tests and
+//! assignments on the control flow paths that reach it.
 
 use super::decl::Predicate;
 use super::errors::Container;
@@ -22,7 +23,7 @@ impl From<FlowId> for u32 {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Root {
     Symbol(SymbolId),
-    /// A name nothing in the file declares.
+    /// A name that is not declared in the file.
     Global(Atom),
     This,
     Super,
@@ -30,10 +31,11 @@ enum Root {
     ImportMeta,
     /// `new.target`
     NewTarget,
-    /// What a pattern destructures. Nothing is written that means it; tests of the variables the pattern binds narrow it.
+    /// The value a pattern destructures. No expression refers to it. Tests of the variables the
+    /// pattern binds narrow it.
     Pattern(PatId),
-    /// All that a function is passed, where it is expected to take one rest parameter that is a union of tuples. Tests of its
-    /// parameters narrow it.
+    /// The argument list of a function whose contextual signature has a single rest parameter that
+    /// is a union of tuples. Tests of its parameters narrow it.
     Params(FnId),
 }
 
@@ -43,7 +45,7 @@ pub(super) struct Reference {
     file: FileId,
     root: Root,
     path: SmallVec<[Atom; 4]>,
-    /// Where it is written, if it is. Two that are written in different places are the same reference.
+    /// Its expression, if it has one. Two references at different positions are the same reference.
     at: ExprId,
     /// `getFlowReferenceKey` has a key for it. It has none for what starts at `super`, `import.meta` or `new.target`, or goes
     /// through a comma or a `satisfies`.
@@ -58,50 +60,56 @@ impl PartialEq for Reference {
 
 impl Eq for Reference {}
 
-/// Memo tables of flow analysis that are not keyed by a node alone. They belong to the checker, so they end with the task. Those keyed
-/// by a node are fields of `Program`. They are written with `rewrite`: tsgo assigns the link when the computation ends,
-/// over what a nested computation for the same node has assigned.
+/// Memo tables of flow analysis that are not keyed by a node alone. They belong to the checker, so
+/// they are dropped at the end of the task. Those keyed by a node are fields of `Program`. They are
+/// stored with `rewrite`: tsgo assigns the link when the computation ends, overwriting what a
+/// nested computation for the same node has assigned.
 #[derive(Default)]
 pub(super) struct FlowMemo {
-    /// See `index_narrowing_subjects`: of which file; by symbol, the first flow node with a test, a `switch` or an assignment that is about
-    /// it (empty: the file has no such filter); a bit by symbol, for calls that are statements and have not all been found idle;
-    /// those calls, by symbol.
+    /// See `index_narrowing_subjects`: the file it is for; indexed by symbol, the first flow node
+    /// with a test, a `switch` or an assignment that concerns it (empty: the file has no such
+    /// filter); one bit per symbol, for call statements that have not all been found idle; those
+    /// calls, by symbol.
     narrowing_index_file: Option<FileId>,
     first_narrowing_node: Vec<u32>,
     in_call_statements: Vec<u64>,
     call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
-    /// By flow node: no node with a higher number is on any way back from it. (Only the back edge of a loop leads to a higher one.)
+    /// Indexed by flow node: an upper bound on the node numbers reachable through its antecedents.
+    /// (Only the back edge of a loop leads to a higher one.)
     max_antecedent: Vec<u32>,
-    /// By symbol: the flow node at which its declaration gives it its value.
+    /// Indexed by symbol: the flow node at which its declaration initializes it.
     declaration_node: Vec<u32>,
     /// The functions whose `type_predicates_from_body` is being computed: `sig.resolvedTypePredicate = c.noTypePredicate`.
     type_predicates_in_progress: SmallVec<[(FileId, FnId); 2]>,
     /// `flowNodePostSuper`
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
-    /// The `Flow::Call` nodes of the file `idle_calls_of` for whose calls `effects_signatures` has `None`: a bit for each flow node.
+    /// The `Flow::Call` nodes of the file `idle_calls_of` for whose calls `effects_signatures` has
+    /// `None`: one bit per flow node.
     idle_calls: Vec<u64>,
     idle_calls_of: Option<FileId>,
-    /// What each test of the file `tests_of` is about, by the flow node of the test.
+    /// The subjects of each test of the file `tests_of`, indexed by the flow node of the test.
     tests: Vec<About>,
     tests_of: Option<FileId>,
     /// The same for the tests of other files.
     other_tests: FxHashMap<(FileId, FlowId), About>,
-    /// `getAssignmentReducedType`, by declared and assigned type.
+    /// `getAssignmentReducedType`, keyed by declared and assigned type.
     assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
-    /// `getNarrowedType`, by type, candidate, `assumeTrue` and `checkDerived`.
+    /// `getNarrowedType`, keyed by type, candidate, `assumeTrue` and `checkDerived`.
     narrowed_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `narrowTypeByEquality`, by the type, the type compared with as it is written, whether it is `==` that compares and whether
-    /// they are equal.
+    /// `narrowTypeByEquality`, keyed by the type, the unmodified type of the other operand, whether
+    /// the operator is `==`, and whether the operands are equal.
     equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `type_of_discriminant`, by the type, the name, `?.` and `!`.
+    /// `type_of_discriminant`, keyed by the type, the name, `?.` and `!`.
     discriminant_types: FxHashMap<(TypeId, Atom, bool, bool), Option<(TypeId, bool)>>,
-    /// `members_with_discriminant`, by the type, the name and what the property is narrowed to.
+    /// `members_with_discriminant`, keyed by the type, the name and the narrowed type of the
+    /// property.
     discriminated_types: FxHashMap<(TypeId, Atom, TypeId), TypeId>,
-    /// `flowLoopCache`, by the loop label and `getFlowReferenceKey`: the declared and the initial type, then the reference.
+    /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
+    /// initial type, then the reference.
     flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
 }
 
-/// `FlowLoopKey`, less the reference.
+/// `FlowLoopKey`, without the reference.
 type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
 
 impl FlowMemo {
@@ -117,13 +125,13 @@ impl FlowMemo {
     }
 }
 
-/// Whether tests made outside a function still hold inside it.
+/// Whether narrowing from outside a function is still valid inside it.
 #[derive(Copy, Clone)]
 enum Crossing {
     No,
     Yes,
-    /// They do if the variable is not assigned to any more once the expression has been reached. That is looked into where a walk
-    /// gets to the start of a function.
+    /// It is if the variable is no longer assigned after the expression is reached. That is
+    /// evaluated when a walk reaches the start of a function.
     PastLastAssignment(SymbolId, ExprId),
 }
 
@@ -131,7 +139,7 @@ enum Crossing {
 #[derive(Copy, Clone)]
 struct FlowType {
     ty: TypeId,
-    /// It rests on the types a loop that is still being analysed has collected so far.
+    /// It depends on the types collected so far by a loop whose analysis is in progress.
     incomplete: bool,
 }
 
@@ -149,11 +157,11 @@ impl FlowType {
     }
 }
 
-/// What was found at labels.
+/// The flow types computed at labels.
 #[derive(Default)]
 struct Labels {
     few: SmallVec<[(FlowId, FlowType); 8]>,
-    /// Those that came when `few` was full.
+    /// Overflow entries, added once `few` was full.
     many: FxHashMap<FlowId, FlowType>,
 }
 
@@ -177,39 +185,42 @@ impl Labels {
     }
 }
 
-/// How far it is known what a walk starts from.
+/// How far the initial type of a walk has been determined.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Start {
     /// From `Walk::initial`.
     Known,
-    /// From `Walk::initial` if `assumes_initialized`, which has not been asked, and from `declared | undefined` otherwise.
+    /// `Walk::initial` if `assumes_initialized`, which has not been evaluated yet, and `declared |
+    /// undefined` otherwise.
     Unsettled,
-    /// From `declared | undefined`, which is another type than `declared` and has not been made.
+    /// `declared | undefined`, which differs from `declared` and has not been created yet.
     Unassigned,
 }
 
 struct Walk {
     reference: Reference,
     declared: TypeId,
-    /// What it is where the walk ends without having met an assignment. See `initial_of`.
+    /// The type of the reference where the walk ends without reaching an assignment. See
+    /// `initial_of`.
     initial: TypeId,
     start: Start,
     crossing: Crossing,
     labels: Labels,
-    /// The `finally` blocks being gone back through: where each starts, and the label whose edges count instead.
+    /// The `finally` blocks being traversed backwards: the start of each, and the label whose
+    /// antecedents are used instead.
     reduced: Vec<(FlowId, FlowId)>,
-    /// For each loop being worked out: what was found at labels during this round.
+    /// For each loop in progress: the flow types computed at labels during this iteration.
     round_labels: Vec<Labels>,
     steps: u32,
-    /// How many invocations of `getTypeAtFlowNode` would be under way, one inside the other.
+    /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
     depth: u32,
-    /// There were `MAX_FLOW_DEPTH` of them (`flowAnalysisDisabled`): the answer is errorType.
+    /// The depth reached `MAX_FLOW_DEPTH` (`flowAnalysisDisabled`): the result is errorType.
     too_deep: bool,
 }
 
 const MAX_STEPS: u32 = 2_000_000;
 
-/// A number for a name or for `this`, which two of them may share. 0 for whatever else a reference can start with.
+/// A key for a name or for `this`, not necessarily unique. 0 for any other root of a reference.
 fn root_key(root: Root) -> u32 {
     match root {
         Root::Symbol(symbol) => symbol.0 << 2 | 1,
@@ -219,24 +230,25 @@ fn root_key(root: Root) -> u32 {
     }
 }
 
-/// What a test can say something about.
+/// The references a test can narrow.
 #[derive(Copy, Clone, Default)]
 struct About {
-    /// 0: the test has not been looked into.
+    /// 0: the test has not been analyzed.
     state: u32,
-    /// What `narrow` compares a reference with: the `root_key` of what each starts with, and the number of the property it goes on
-    /// with plus one, `ALONE` if it does not go on, 0 if that cannot be told or makes no difference.
+    /// The expressions `narrow` compares a reference with: the `root_key` of the root of each, and
+    /// the number of its first property plus one, `ALONE` if it has no property, 0 if that is
+    /// unknown or irrelevant.
     chains: [(u32, u32); 3],
 }
 
-/// Who `note_test` and `note_chain` tell what a test is about.
+/// The sink to which `note_test` and `note_chain` report the subjects of a test.
 trait NarrowingSubjects {
     fn add(&mut self, root: u32, first: u32);
-    /// Nothing more need be said.
+    /// No further subjects need to be reported.
     fn is_full(&self) -> bool {
         false
     }
-    /// A key that it takes asking to know the name of. `true`: that is the end of it.
+    /// A key whose name can only be resolved by a query. `true`: bail out.
     fn bails_on_computed_key(&mut self) -> bool {
         false
     }
@@ -257,7 +269,8 @@ impl NarrowingSubjects for About {
     }
 }
 
-/// By symbol: the first flow node that is about something that starts with it, however it goes on. The second: the node at hand.
+/// Indexed by symbol: the first flow node that concerns a reference rooted at it, whatever its
+/// path. Second field: the current node.
 struct FirstNarrowingNodes<'a>(&'a mut [u32], u32);
 
 impl NarrowingSubjects for FirstNarrowingNodes<'_> {
@@ -269,7 +282,8 @@ impl NarrowingSubjects for FirstNarrowingNodes<'_> {
     }
 }
 
-/// The symbols a call that is a statement mentions, each once: by symbol, the last call that did; the call at hand; the list.
+/// The symbols a call statement references, each once: indexed by symbol, the last call that
+/// referenced it; the current call; the list.
 struct CallStatementSubjects<'a>(&'a mut [u32], u32, &'a mut Vec<(SymbolId, FlowId)>);
 
 impl NarrowingSubjects for CallStatementSubjects<'_> {
@@ -284,7 +298,8 @@ impl NarrowingSubjects for CallStatementSubjects<'_> {
 impl About {
     const ALONE: u32 = u32::MAX;
     const KNOWN: u32 = 1;
-    /// There is more than `chains` holds, or a key that it takes asking to know the name of.
+    /// There are more subjects than `chains` can hold, or a key whose name can only be resolved by
+    /// a query.
     const ANYTHING: u32 = 2;
 
     fn add(&mut self, root: u32, first: u32) {
@@ -300,7 +315,8 @@ impl About {
         self.state |= About::ANYTHING;
     }
 
-    /// Whether one of `chains` can be `reference`, go through it, or be what its last property is a property of.
+    /// Whether one of `chains` can be `reference`, have it as a prefix, or be the object of its
+    /// last property.
     fn concerns(&self, reference: &Reference) -> bool {
         let root = root_key(reference.root);
         if root == 0 || self.state & About::ANYTHING != 0 {
@@ -316,7 +332,7 @@ impl About {
     }
 }
 
-/// `getTypeAtFlowNode`: the invocation that finds this many under way gives up.
+/// `getTypeAtFlowNode`: the invocation that finds this many in progress bails out.
 pub(super) const MAX_FLOW_DEPTH: u32 = 2000;
 
 /// What `checkNonNullTypeWithReporter` reports.
@@ -328,7 +344,7 @@ pub(super) enum NonNullError {
     IsPossibly { undefined: bool, null: bool },
 }
 
-/// `TypeFacts`: the tests that come out true for some value of a type.
+/// `TypeFacts`: the tests that are true for some value of a type.
 mod facts {
     pub(super) const TYPEOF_EQ_STRING: u32 = 1 << 0;
     pub(super) const TYPEOF_EQ_NUMBER: u32 = 1 << 1;
@@ -361,9 +377,11 @@ mod facts {
     /// All eight of `TYPEOF_NE_*`.
     const TYPEOF_NE: u32 = 0xff << 8;
     const THERE: u32 = NE_UNDEFINED | NE_NULL | NE_UNDEFINED_OR_NULL;
-    /// What all but `undefined`, `null` and `void` have besides without strictNullChecks: `StringFacts` is `StringStrictFacts` and this.
+    /// The additional facts of every type except `undefined`, `null` and `void` without
+    /// strictNullChecks: `StringFacts` is `StringStrictFacts` and this.
     pub(super) const LOOSE: u32 = EQ_UNDEFINED | EQ_NULL | EQ_UNDEFINED_OR_NULL | FALSY;
-    /// `BaseStringStrictFacts` and the like. Of symbols, objects and functions: `SymbolStrictFacts` and the like, without `Truthy`.
+    /// `BaseStringStrictFacts` and similar. For symbols, objects and functions: `SymbolStrictFacts`
+    /// and similar, without `Truthy`.
     pub(super) const OF_STRING: u32 = TYPEOF_EQ_STRING | TYPEOF_NE & !TYPEOF_NE_STRING | THERE;
     pub(super) const OF_NUMBER: u32 = TYPEOF_EQ_NUMBER | TYPEOF_NE & !TYPEOF_NE_NUMBER | THERE;
     pub(super) const OF_BIGINT: u32 = TYPEOF_EQ_BIGINT | TYPEOF_NE & !TYPEOF_NE_BIGINT | THERE;
@@ -394,7 +412,8 @@ mod facts {
         OF_UNKNOWN & !(EQ_UNDEFINED | EQ_NULL | EQ_UNDEFINED_OR_NULL);
     /// `AllTypeofNE`
     pub(super) const ALL_TYPEOF_NE: u32 = TYPEOF_NE & !TYPEOF_NE_HOST_OBJECT | NE_UNDEFINED;
-    /// `OrFactsMask`: what an intersection has if one of its members has it. It has the rest if all of them have it.
+    /// `OrFactsMask`: the facts an intersection has if any of its members has them. It has the
+    /// other facts only if all members have them.
     pub(super) const OR_MASK: u32 = TYPEOF_EQ_FUNCTION | TYPEOF_NE_OBJECT;
 }
 
@@ -413,7 +432,8 @@ fn typeof_ne_facts(name: Atom) -> u32 {
     }
 }
 
-/// `getNotEqualFactsFromTypeofSwitch`: what holds where none of the clauses outside `from..to` was entered.
+/// `getNotEqualFactsFromTypeofSwitch`: the facts that are valid where none of the clauses outside
+/// `from..to` was entered.
 fn not_equal_facts_from_typeof_switch(witnesses: &[Atom], from: usize, to: usize) -> u32 {
     witnesses
         .iter()
@@ -509,10 +529,11 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── truthiness ─────────────────────────────
 
-    /// What `getDefinitelyFalsyPartOfType` gives back as it is, `any` and `unknown` aside. `NaN` is not among it.
+    /// The types `getDefinitelyFalsyPartOfType` returns unchanged, except `any` and `unknown`.
+    /// `NaN` is not among them.
     fn is_definitely_falsy(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
-            // `void`, and `undefined` and `null` of whatever kind.
+            // `void`, and `undefined` and `null` of any kind.
             _ if self.is_nullish(ty) => true,
             TypeData::BoolLit { value, .. } => !value,
             TypeData::StringLit { value, .. }
@@ -534,7 +555,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `hasTypeFacts(ty, TypeFactsFalsy)`. `never` has no facts. Without strictNullChecks all else has this one.
+    /// `hasTypeFacts(ty, TypeFactsFalsy)`. `never` has no facts. Without strictNullChecks every
+    /// other type has this fact.
     pub fn can_be_falsy(&mut self, ty: TypeId) -> bool {
         self.has_type_facts(ty, facts::FALSY)
     }
@@ -608,16 +630,16 @@ impl<'p> Checker<'p> {
         self.type_facts(ty, mask) != 0
     }
 
-    /// `getTypeFactsWorker`. Only what is in `mask` has to be right.
+    /// `getTypeFactsWorker`. Only the facts in `mask` have to be correct.
     fn type_facts_worker(&mut self, ty: TypeId, mask: u32) -> u32 {
         use facts::*;
-        // What it extends leads back to it.
+        // Its constraint is circular.
         if self.is_stack_low() {
             return OF_UNKNOWN;
         }
         let strict = self.p.files.options.strict_null_checks;
-        // What waits for type parameters goes by what it extends, and so does an intersection. A template that mentions no type
-        // parameter extends itself.
+        // A deferred type uses its constraint, and so does an intersection. A template literal type
+        // that references no type parameter is its own constraint.
         let ty = if self.is_deferred(ty)
             || self.is_intersection(ty)
             || self.is_instantiable(ty) && self.has_type_variables(ty)
@@ -711,7 +733,7 @@ impl<'p> Checker<'p> {
                 } else {
                     OF_UNKNOWN
                 };
-                // It is looked into only as far as what is asked depends on what is in it.
+                // It is resolved only if the requested facts depend on its members.
                 if mask & ((empty ^ object) | (function ^ object)) == 0 {
                     return object;
                 }
@@ -769,7 +791,8 @@ impl<'p> Checker<'p> {
         }
         let strict = self.p.files.options.strict_null_checks;
         let reduced = if strict && ty == TypeId::UNKNOWN {
-            // `unknownUnionType`: `unknown` is `{} | null | undefined`, and is `unknown` again if none of them goes.
+            // `unknownUnionType`: `unknown` is `{} | null | undefined`, and becomes `unknown` again
+            // if none of them is removed.
             let everything = self.union(&[
                 TypeId::UNKNOWN_EMPTY_OBJECT,
                 TypeId::NULL,
@@ -819,8 +842,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `removeNullableByIntersection`: what may still turn out to be the one that is ruled out (`target`) is that and `{}`, or that
-    /// and `{} | other_ty` if it may turn out to be the other one and `ty` does not say so as it is.
+    /// `removeNullableByIntersection`: a member that may still be the excluded type (`target`) is
+    /// intersected with `{}`, or with `{} | other_ty` if it may be the other nullable type and `ty`
+    /// does not already include that type.
     fn remove_nullable_by_intersection(
         &mut self,
         ty: TypeId,
@@ -895,7 +919,8 @@ impl<'p> Checker<'p> {
                     at = obj;
                 }
                 ExprKind::NonNull(x) => at = x,
-                // `isMatchingReference` looks through these where they are in what is narrowed. `writeFlowCacheKey` knows neither.
+                // `isMatchingReference` looks through these when they occur in the narrowed
+                // reference. `writeFlowCacheKey` handles neither.
                 ExprKind::Satisfies { expr: x, .. }
                 | ExprKind::Binary {
                     op: BinOp::Comma,
@@ -919,8 +944,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `tryGetElementAccessExpressionName`: the property `a[index]` names, if the syntax says, or a constant that stands for one name
-    /// does. A key in parentheses of its own says nothing.
+    /// `tryGetElementAccessExpressionName`: the property `a[index]` names, if the syntax determines
+    /// it, or if a constant that represents a single name does. A parenthesized key yields nothing.
     pub(super) fn literal_key(&mut self, file: FileId, index: ExprId) -> Option<Atom> {
         let hir = self.hir(file);
         if is_parenthesized(hir, index) {
@@ -957,7 +982,7 @@ impl<'p> Checker<'p> {
         match decl {
             Decl::EnumMember(m) => {
                 let member = self.hir(of)[m];
-                // Without a value written out it goes by its name, not by the number it gets.
+                // Without an explicit initializer it yields its name, not its assigned number.
                 if member.init.is_none() {
                     return Some(member.name);
                 }
@@ -965,7 +990,7 @@ impl<'p> Checker<'p> {
                 self.property_name_of_type(ty)
             }
             Decl::Var(pat) => {
-                // Not what a pattern binds.
+                // Not a variable bound by a pattern.
                 let PatParent::Var(d) = self.bound(of).pat_parent[pat.idx()] else {
                     return None;
                 };
@@ -976,7 +1001,7 @@ impl<'p> Checker<'p> {
                         return Some(name);
                     }
                 }
-                // What another file declares counts as declared.
+                // A declaration in another file counts as declared.
                 if init.is_none()
                     || of == file
                         && !self.is_block_scoped_name_declared_before_use(
@@ -987,8 +1012,9 @@ impl<'p> Checker<'p> {
                 {
                     return None;
                 }
-                // `getTypeOfExpression` of the initializer, even next to an annotation that names nothing. It pushes no resolution of
-                // the constant and is not widened. The declaration makes the unique symbol of `Symbol()`, from the syntax alone
+                // `getTypeOfExpression` of the initializer, even next to an annotation that does
+                // not resolve. It pushes no resolution of the constant and is not widened. The
+                // declaration creates the unique symbol type of `Symbol()`, from the syntax alone
                 // (`getESSymbolLikeTypeForNode`).
                 let ty = if annotation.is_none() && self.is_symbol_or_symbol_for_call(of, init) {
                     self.type_of_symbol(sym)
@@ -1001,7 +1027,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What tells `a[index]` from `a[other]`: the name, or else the variable, if it holds the same key all along.
+    /// The key that distinguishes `a[index]` from `a[other]`: the name, or else the variable, if
+    /// its value never changes.
     pub(super) fn access_key(&mut self, file: FileId, index: ExprId) -> Option<Atom> {
         if let Some(name) = self.literal_key(file, index) {
             return Some(name);
@@ -1013,8 +1040,8 @@ impl<'p> Checker<'p> {
         if is_parenthesized(hir, index) {
             return None;
         }
-        // `isMatchingReference`: a constant, or a parameter, what `catch` binds or a local `let` that nothing assigns to. No property
-        // is called what comes of it.
+        // `isMatchingReference`: a constant, or a parameter, a `catch` binding or a local `let`
+        // that is never assigned. The resulting key cannot collide with a property name.
         let symbol = self.bound(file).expr_symbol[index.idx()];
         if symbol.is_none() {
             // A constant of another script or of the library.
@@ -1038,8 +1065,8 @@ impl<'p> Checker<'p> {
         Some(self.atoms().intern(&[0, a, b, c, d]))
     }
 
-    /// Whether `e` is the first `len` steps of `reference`. `isMatchingReference`, with `e` for the target: `satisfies` is looked
-    /// through in the reference only.
+    /// Whether `e` is the first `len` steps of `reference`. `isMatchingReference`, with `e` as the
+    /// target: `satisfies` is looked through in the reference only.
     fn matches_prefix(&mut self, reference: &Reference, len: usize, e: ExprId) -> bool {
         let hir = self.hir(reference.file);
         let mut at = e;
@@ -1105,13 +1132,14 @@ impl<'p> Checker<'p> {
             .any(|&q| self.is_resolution(q))
     }
 
-    /// How high `stack` was when the top of `flowLoopStack` was pushed, if that was after `stack[since]` was entered.
+    /// The depth of `stack` when the top of `flowLoopStack` was pushed, if that was after
+    /// `stack[since]` was entered.
     pub(super) fn flow_loop_pushed_since(&self, since: usize) -> Option<usize> {
         let depth = self.flow_loops.last()?.5;
         (depth > since && self.is_flow_loop_visible(depth)).then_some(depth)
     }
 
-    /// Whether `e` is something `reference` goes through: `x` or `x.a` for `x.a.b`.
+    /// Whether `e` is a proper prefix of `reference`: `x` or `x.a` for `x.a.b`.
     fn is_proper_prefix(&mut self, reference: &Reference, e: ExprId) -> bool {
         (0..reference.path.len()).any(|len| self.matches_prefix(reference, len, e))
     }
@@ -1121,7 +1149,8 @@ impl<'p> Checker<'p> {
         self.optional_chain_contains_reference(reference, e, true)
     }
 
-    /// `optionalChainContainsReference`. `names_keys`: whether `isMatchingReference` is asked, which names the keys of the links.
+    /// `optionalChainContainsReference`. `names_keys`: whether `isMatchingReference` is called,
+    /// which resolves the key names of the links.
     fn optional_chain_contains_reference(
         &mut self,
         reference: &Reference,
@@ -1129,7 +1158,8 @@ impl<'p> Checker<'p> {
         names_keys: bool,
     ) -> bool {
         let hir = self.hir(reference.file);
-        // `matches` names the keys itself for a reference with a path. Nearly all callers in flow.go test `strictNullChecks` first.
+        // `matches` resolves the key names itself for a reference with a path. Nearly all callers
+        // in flow.go test `strictNullChecks` first.
         let names_keys =
             names_keys && reference.path.is_empty() && self.p.files.options.strict_null_checks;
         let mut at = e;
@@ -1145,8 +1175,9 @@ impl<'p> Checker<'p> {
             if chain == Chain::No {
                 return false;
             }
-            // `isMatchingReference` has the link for its source and the reference for its target here: `getAccessedPropertyName`
-            // names the key of an element access before the target is looked at. `x!` is a link only inside a chain.
+            // `isMatchingReference` has the link as its source and the reference as its target
+            // here: `getAccessedPropertyName` resolves the key name of an element access before the
+            // target is inspected. `x!` is a link only inside a chain.
             if names_keys && !matches!(hir[at].kind, ExprKind::NonNull(_)) {
                 let mut link = obj;
                 while let ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } =
@@ -1166,7 +1197,7 @@ impl<'p> Checker<'p> {
     }
 
     /// If `e` is `reference.name`, the name.
-    /// `e` as an access to a property of the reference that tells the members of its union apart.
+    /// `e` as an access to a discriminant property of the reference.
     fn discriminant_access(
         &mut self,
         reference: &Reference,
@@ -1185,7 +1216,8 @@ impl<'p> Checker<'p> {
             return None;
         }
         let access = self.candidate_discriminant_access(reference, e, ty)?;
-        // Going by the declared type keeps a property a discriminant after the members that made it one are gone.
+        // Using the declared type keeps a property a discriminant after the members that made it
+        // one have been narrowed away.
         let declared_parts = self.parts(declared);
         let is_subset = is_declared_union
             && (ty == declared || self.parts(ty).iter().all(|m| declared_parts.contains(m)));
@@ -1206,7 +1238,8 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// `getCandidateDiscriminantPropertyAccess`: `x.kind`, `x["kind"]` or a name that stands for one. `x.kind!` is none of them.
+    /// `getCandidateDiscriminantPropertyAccess`: `x.kind`, `x["kind"]` or a name that aliases one.
+    /// `x.kind!` is none of them.
     fn candidate_discriminant_access(
         &mut self,
         reference: &Reference,
@@ -1230,7 +1263,8 @@ impl<'p> Checker<'p> {
         if !self.matches(reference, obj) {
             return None;
         }
-        // `getDiscriminantPropertyAccess` asks `getAccessedPropertyName` of a candidate only: naming a constant key resolves a type.
+        // `getDiscriminantPropertyAccess` calls `getAccessedPropertyName` only for a candidate:
+        // resolving the name of a constant key resolves a type.
         let name = match hir[e].kind {
             ExprKind::Dot { name, .. } => name,
             ExprKind::Index { index, .. } => self.literal_key(reference.file, index)?,
@@ -1243,8 +1277,9 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The variable `e` standing for a property of the reference: `const k = x.kind`, `const { kind: k } = x`,
-    /// or bound by the pattern, or a parameter of the function, that is the reference.
+    /// The variable `e` as an alias of a property of the reference: `const k = x.kind`, `const {
+    /// kind: k } = x`, or a variable bound by the pattern, or a parameter of the function, that is
+    /// the reference.
     fn discriminant_alias(
         &mut self,
         reference: &Reference,
@@ -1289,8 +1324,8 @@ impl<'p> Checker<'p> {
         }
         if let Root::Params(func) = reference.root {
             return match parent {
-                // `getAccessedPropertyName`: its place among the parameters, of which a `this` parameter is one, though the tuples
-                // have nothing for it.
+                // `getAccessedPropertyName`: its index among the parameters, which include a `this`
+                // parameter, although the tuples have no element for it.
                 PatParent::Param(p)
                     if bound.param_fn[p.idx()] == func
                         && hir[p].default.is_none()
@@ -1373,7 +1408,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether the pattern `pat` is part of is never bound anew: of a `const`, or of a parameter nothing assigns to.
+    /// Whether the pattern that contains `pat` is never rebound: it belongs to a `const`, or to a
+    /// parameter that is never assigned.
     fn is_constant_pattern(&self, file: FileId, pat: PatId) -> bool {
         let mut at = pat;
         loop {
@@ -1391,7 +1427,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isConstantReference`: whether what the reference means cannot have changed since a test of it was stored in a constant.
+    /// `isConstantReference`: whether the value of the reference cannot have changed since a test
+    /// of it was stored in a constant.
     fn is_constant_reference(&mut self, reference: &Reference) -> bool {
         let is_constant_root = match reference.root {
             Root::This => true,
@@ -1407,14 +1444,14 @@ impl<'p> Checker<'p> {
         if !is_constant_root {
             return false;
         }
-        // `a.b.c`: nothing can be put in the `b` of `a`, or in the `c` of that.
+        // `a.b.c`: neither the `b` of `a` nor the `c` of that can be assigned.
         if !reference.path.is_empty() {
             let file = reference.file;
             let hir = self.hir(file);
             if reference.at.is_none() {
                 return false;
             }
-            // Written just so: `a!.b`, `(a).b` and `(f(), a).b` are none of what it knows.
+            // Only this exact syntax: `a!.b`, `(a).b` and `(f(), a).b` are not recognized.
             let mut at = reference.at;
             for _ in &reference.path {
                 let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[at].kind else {
@@ -1445,12 +1482,13 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `GetRootDeclaration(symbol.ValueDeclaration)`, of a variable or a parameter. `None`: of anything else.
+    /// `GetRootDeclaration(symbol.ValueDeclaration)` for a variable or a parameter. `None` for
+    /// anything else.
     fn root_declaration(&self, file: FileId, symbol: SymbolId) -> PatParent {
         let bound = self.bound(file);
         match bound.symbols[symbol.idx()].decls.first() {
             Some(&(Decl::Var(pat) | Decl::Param(pat))) => {
-                super::errors_modules::root_declaration(bound, pat)
+                super::errors_names_and_exports::root_declaration(bound, pat)
             }
             _ => PatParent::None,
         }
@@ -1475,7 +1513,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isSymbolAssigned`: what `export { x }` names counts as assigned to.
+    /// `isSymbolAssigned`: a name in `export { x }` counts as assigned.
     fn is_symbol_assigned(&self, file: FileId, symbol: SymbolId) -> bool {
         self.bound(file).symbols[symbol.idx()]
             .flags
@@ -1483,8 +1521,8 @@ impl<'p> Checker<'p> {
             || !self.hir(file).exports.is_empty() && self.is_named_by_export_specifier(file, symbol)
     }
 
-    /// `isConstantReference` of a name. What is exported where it is declared is none: the name in the file stands for the export,
-    /// which is not looked through.
+    /// `isConstantReference` of a name. A declaration with an `export` modifier is not constant:
+    /// the name in the file resolves to the export symbol, which is not followed.
     pub(super) fn is_constant_name(&self, file: FileId, symbol: SymbolId) -> bool {
         let hir = self.hir(file);
         match self.root_declaration(file, symbol) {
@@ -1504,7 +1542,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isReadonlySymbol` of the property `name` of `object`: in a union one member that says so will do.
+    /// `isReadonlySymbol` of the property `name` of `object`: in a union one readonly member is
+    /// enough.
     fn is_readonly_property(&mut self, object: TypeId, name: Atom) -> bool {
         if self.is_union(object) {
             let (mut is_readonly, mut is_declared) = (false, false);
@@ -1515,7 +1554,8 @@ impl<'p> Checker<'p> {
                     is_readonly |= prop.flags.contains(PropFlags::READONLY);
                     continue;
                 }
-                // A member that has it by an index signature has it the way the signature says.
+                // A member that has it through an index signature takes the readonly state of the
+                // signature.
                 let Some(members) = self.members(part) else {
                     return false;
                 };
@@ -1537,8 +1577,9 @@ impl<'p> Checker<'p> {
             .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::READONLY))
     }
 
-    /// `getNarrowedTypeOfSymbol`. The type of a variable bound by a pattern that destructures a union, at `e`: tests of the other
-    /// variables of the pattern say which member of the union it was.
+    /// `getNarrowedTypeOfSymbol`. The type of a variable bound by a pattern that destructures a
+    /// union, at `e`: tests of the other variables of the pattern determine which member of the
+    /// union was destructured.
     pub(super) fn narrow_binding(
         &mut self,
         file: FileId,
@@ -1606,8 +1647,9 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `getNarrowedTypeOfSymbol`, of the parameter `p` at `e`. Where nothing is written of its type and the function is expected to
-    /// take one rest parameter that is a union of tuples, tests of the other parameters say which of the tuples was passed.
+    /// `getNarrowedTypeOfSymbol` for the parameter `p` at `e`. If it has no type annotation and the
+    /// contextual signature of the function has a single rest parameter that is a union of tuples,
+    /// tests of the other parameters determine which tuple was passed.
     fn narrow_dependent_parameter(
         &mut self,
         file: FileId,
@@ -1625,7 +1667,8 @@ impl<'p> Checker<'p> {
         // A `this` parameter is one of the parameters that are counted.
         let count = params.len() + hir[func].this_ty(hir).is_some() as usize;
         let flow = bound.expr_flow[e.idx()];
-        // `isContextSensitiveFunctionOrObjectLiteralMethod`: one with type parameters of its own takes nothing from where it is.
+        // `isContextSensitiveFunctionOrObjectLiteralMethod`: a function with its own type
+        // parameters takes nothing from its context.
         if count < 2
             || !matches!(
                 hir[func].kind,
@@ -1677,12 +1720,13 @@ impl<'p> Checker<'p> {
         };
         let walk = Walk::new(reference, rest_ty, rest_ty, true);
         let narrowed = self.get_flow_type_of_reference(walk, flow);
-        // It is this whether or not anything was found out: a parameter written `x?` is not `undefined` for that.
+        // This is the result whether or not anything was narrowed: a parameter declared `x?` does
+        // not include `undefined` because of that.
         let index = self.number_literal((p.0 - params.start) as f64, false);
         self.indexed_access(narrowed, index)
     }
 
-    /// Whether tests made outside a function still hold inside it, found out once for the walk.
+    /// Whether narrowing from outside a function is still valid inside it, evaluated once per walk.
     fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
         let crosses = match walk.crossing {
             Crossing::No => false,
@@ -1722,7 +1766,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What the reference is where `walk` ends without having met an assignment.
+    /// The type of the reference where `walk` ends without reaching an assignment.
     fn initial_of(&mut self, walk: &mut Walk) -> TypeId {
         if walk.start == Start::Unsettled {
             self.settle_start(walk);
@@ -1753,15 +1797,16 @@ impl<'p> Checker<'p> {
             return ty;
         };
         let narrowed = narrow(self, prop);
-        // Every member can hold some of what all of them can hold, but for one whose property can hold nothing.
+        // The property type of every member overlaps the union of all of them, unless it is
+        // `never`.
         if narrowed == prop && !has_never {
             return ty;
         }
         self.members_with_discriminant(ty, access.name, narrowed)
     }
 
-    /// What the property that `access` is to holds in `ty`, and whether it can hold nothing in some member. `None`: nothing is made
-    /// of the property.
+    /// The type in `ty` of the property that `access` accesses, and whether it is `never` in some
+    /// member. `None`: the property is ignored.
     fn type_of_discriminant(&mut self, ty: TypeId, access: Access) -> Option<(TypeId, bool)> {
         let key = (ty, access.name, access.optional, access.non_null);
         if let Some(&known) = self.flow_memo.discriminant_types.get(&key) {
@@ -1788,11 +1833,13 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        // `getTypeOfPropertyOfType`, which for a union is what `createUnionOrIntersectionProperty` makes.
+        // `getTypeOfPropertyOfType`, which for a union is the property
+        // `createUnionOrIntersectionProperty` creates.
         let mut prop_types: SmallVec<[TypeId; 8]> = SmallVec::new();
         let (mut is_declared, mut has_never) = (false, false);
         for &m in self.parts(base) {
-            // What nothing can be has no say in what the property is. (It stays in the union all the same.)
+            // An uninhabited member does not contribute to the property type. (It stays in the
+            // union anyway.)
             if self.is_never_intersection(m) {
                 continue;
             }
@@ -1802,7 +1849,8 @@ impl<'p> Checker<'p> {
             if self.is_error_type(apparent) || apparent.is_never() {
                 continue;
             }
-            // Past the fixed elements of a tuple there is what the rest of it holds, and nothing where it ends.
+            // Past the fixed elements of a tuple the type is its rest element type, or nothing if
+            // the tuple ends there.
             if let TypeData::Tuple { flags, .. } = self.data(apparent)
                 && self.is_numeric_name(name)
                 && self.prop_ref(apparent, name).is_none()
@@ -1822,12 +1870,13 @@ impl<'p> Checker<'p> {
                     has_never |= t.is_never();
                     prop_types.push(t);
                 }
-                // An object literal that does not mention it does not have it; of anything else nothing is known.
+                // An object literal type without the property does not have it. For any other type
+                // that is unknown.
                 None if self.is_closed_object_literal_type(m) => prop_types.push(TypeId::UNDEFINED),
                 None => return None,
             }
         }
-        // An index signature stands in for it only next to a member that has it.
+        // An index signature substitutes for it only next to a member that has it.
         if !is_declared {
             return None;
         }
@@ -1841,7 +1890,7 @@ impl<'p> Checker<'p> {
         Some((prop, has_never))
     }
 
-    /// The members of `ty` whose property `name` can hold some of `narrowed`.
+    /// The members of `ty` whose property `name` overlaps `narrowed`.
     fn members_with_discriminant(&mut self, ty: TypeId, name: Atom, narrowed: TypeId) -> TypeId {
         let key = (ty, name, narrowed);
         if let Some(&known) = self.flow_memo.discriminated_types.get(&key) {
@@ -1865,8 +1914,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── tests ─────────────────────────────
 
-    /// Whether `narrow` may make something of the test `expr`, that of the flow node `flow`, for `reference`. If not, it would ask
-    /// nothing and hand back the type it is given.
+    /// Whether `narrow` may narrow `reference` by `expr`, the test of the flow node `flow`. If not,
+    /// it would run no query and return its input type.
     fn is_test_about(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> bool {
         let file = reference.file;
         let memo = &self.flow_memo;
@@ -1893,7 +1942,7 @@ impl<'p> Checker<'p> {
         self.note_test(file, expr, 0, &mut about);
         let nodes = self.bound(file).flow.len();
         let memo = &mut self.flow_memo;
-        // Nearly all walks are in the file whose errors are being looked for.
+        // Nearly all walks are in the file being checked.
         if self.task.file == Some(file) && memo.tests_of != Some(file) {
             memo.tests_of = Some(file);
             memo.tests.clear();
@@ -1907,8 +1956,8 @@ impl<'p> Checker<'p> {
         about
     }
 
-    /// Adds to `about` all that `narrow` compares a reference with when it is given the test `e`. `level`: how many constants that
-    /// hold a test have been looked through.
+    /// Adds to `about` every expression `narrow` compares a reference with for the test `e`.
+    /// `level`: the number of constants holding a test that have been followed.
     fn note_test(&self, file: FileId, e: ExprId, level: u32, about: &mut impl NarrowingSubjects) {
         if about.is_full() || self.is_stack_low() {
             return;
@@ -1934,8 +1983,8 @@ impl<'p> Checker<'p> {
                 for argument in hir.ids(call.args) {
                     self.note_chain(file, argument, false, About::ALONE, about);
                 }
-                // What it is called on. `x.hasOwnProperty("a")` says something of `x.a`. For any other method `x.method` will do,
-                // which is about less than `x`.
+                // The receiver. `x.hasOwnProperty("a")` narrows `x.a`. For any other method
+                // `x.method` is sufficient, which concerns fewer references than `x`.
                 if let ExprKind::Dot { obj, name, .. } = hir[call.callee].kind {
                     if self.atoms().bytes(name) == b"hasOwnProperty" {
                         self.note_chain(file, obj, false, 0, about);
@@ -1973,7 +2022,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 BinOp::Instanceof => self.note_chain(file, left, false, About::ALONE, about),
-                // `"a" in x` says something of `x.a`.
+                // `"a" in x` narrows `x.a`.
                 BinOp::In => self.note_chain(file, right, false, 0, about),
                 BinOp::Comma => self.note_test(file, right, level, about),
                 BinOp::And | BinOp::Or => {
@@ -1986,10 +2035,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Adds to `about` what `e`, which a reference is compared with, starts with: all that `matches_prefix` and
-    /// `optional_chain_contains` go through on their way in. `is_whole`: `e` is asked whether it is a `discriminant_access`,
-    /// which a constant can stand for: `const k = x.kind`, `const { kind: k } = x`. `first`: what to put down for how it goes on
-    /// if it does not.
+    /// Adds to `about` the root of `e`, which a reference is compared with: everything
+    /// `matches_prefix` and `optional_chain_contains` visit on their way in. `is_whole`: `e` is
+    /// tested as a `discriminant_access`, which a constant can alias: `const k = x.kind`, `const {
+    /// kind: k } = x`. `first`: the value to record for the first property if there is none.
     fn note_chain(
         &self,
         file: FileId,
@@ -2043,7 +2092,7 @@ impl<'p> Checker<'p> {
                     obj
                 }
                 ExprKind::Index { obj, index, .. } => {
-                    // `access_key` asks what such a key holds.
+                    // `access_key` queries the type of such a key.
                     if matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
                         && about.bails_on_computed_key()
                     {
@@ -2078,7 +2127,8 @@ impl<'p> Checker<'p> {
         }
         let file = reference.file;
         let hir = self.hir(file);
-        // The `a` of `a?.b`, `a ?? b` and `a ??= b` is tested for being there, not for being true.
+        // The `a` of `a?.b`, `a ?? b` and `a ??= b` is tested for being non-nullish, not for
+        // truthiness.
         if let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] {
             let is_tested_for_presence = match hir[parent].kind {
                 ExprKind::Dot {
@@ -2135,8 +2185,9 @@ impl<'p> Checker<'p> {
                 self.narrow_by_truthiness(reference, ty, e, sense)
             }
             ExprKind::Call(_) => {
-                // `x?.f()` came to something: `x` was there. (Not seen through `const ok = x?.f()`.) `narrowTypeByCallExpression` has no
-                // such test, so no key is named for it.
+                // `x?.f()` produced a value, so `x` is non-nullish. (Not followed through `const ok
+                // = x?.f()`.) `narrowTypeByCallExpression` has no such test, so no key name is
+                // resolved for it.
                 let ty = if sense
                     && self.inline_level == 0
                     && self.optional_chain_contains_reference(reference, e, false)
@@ -2240,7 +2291,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `getReferenceCandidate`: what `x = v`, `x ||= v` and the like leave behind is `x`, and `a, x` is `x`. `x!` is not looked into.
+    /// `getReferenceCandidate`: the candidate of `x = v`, `x ||= v` and similar is `x`, and that of
+    /// `a, x` is `x`. `x!` is not looked through.
     fn reference_candidate(&self, file: FileId, mut e: ExprId) -> ExprId {
         let hir = self.hir(file);
         loop {
@@ -2304,7 +2356,8 @@ impl<'p> Checker<'p> {
         let mut ty = ty;
         for (chain, value) in [(l, r), (r, l)] {
             if self.optional_chain_contains(reference, chain) {
-                // `x?.a === v` says `x` is there if `v` is not `undefined`; `x?.a !== undefined` says so too.
+                // `x?.a === v` implies that `x` is not nullish if `v` is not `undefined`; so does
+                // `x?.a !== undefined`.
                 let is_equal = matches!(op, BinOp::EqEq | BinOp::EqEqEq) == sense;
                 let value_ty = self.get_type_of_expression(file, value);
                 let loose = matches!(op, BinOp::EqEq | BinOp::NotEq);
@@ -2387,9 +2440,9 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getKeyPropertyName` and the map that goes with it (`computeKeyPropertyNameAndMap`): the property the members of the union `ty`
-    /// are told apart by, and the member that each of its values stands for, UNKNOWN for a value several members have. `None` unless
-    /// `ty` has ten object types or more.
+    /// `getKeyPropertyName` and its map (`computeKeyPropertyNameAndMap`): the discriminant property
+    /// of the members of the union `ty`, and the member that each of its values maps to, UNKNOWN
+    /// for a value shared by several members. `None` unless `ty` has at least ten object types.
     pub(super) fn key_property(
         &mut self,
         ty: TypeId,
@@ -2402,7 +2455,8 @@ impl<'p> Checker<'p> {
             return known.as_ref();
         }
         let (found, stored) = self.run_memoizable(|c| c.compute_key_property_name_and_map(ty));
-        // A result that is not finished is not used: the caller compares with every member of the union instead.
+        // An incomplete result is not used: the caller compares with every member of the union
+        // instead.
         kept.insert_ref(&mut self.task, ty, found, stored?)
             .1
             .as_ref()
@@ -2421,9 +2475,11 @@ impl<'p> Checker<'p> {
         if parts.len() < 10 || parts.iter().filter(|&&m| counts(self, m)).count() < 10 {
             return None;
         }
-        // `getKeyPropertyCandidateName`: the first property met that holds one value. `only_viable` is ours, for speed:
-        // `mapTypesByKeyProperty` gives up unless every member has a literal type under the name, so from the second member on only
-        // the names are looked at under which all before had one. The types of the other properties are not worked out.
+        // `getKeyPropertyCandidateName`: the first property whose type is a unit type.
+        // `only_viable` is not in tsgo and exists for speed: `mapTypesByKeyProperty` bails out
+        // unless every member has a literal type for the name, so from the second member on only
+        // the names for which all previous members had one are inspected. The types of the other
+        // properties are not resolved.
         let candidate = |c: &mut Self, only_viable: bool| {
             let mut viable: Option<SmallVec<[Atom; 16]>> = None;
             for &m in parts {
@@ -2460,7 +2516,8 @@ impl<'p> Checker<'p> {
             None
         };
         let name = candidate(self, true)?;
-        // tsgo takes the first of all, and no map comes of one that was passed over.
+        // tsgo takes the first candidate overall, and a candidate that `only_viable` skipped yields
+        // no map.
         if candidate(self, false) != Some(name) {
             return None;
         }
@@ -2516,7 +2573,7 @@ impl<'p> Checker<'p> {
         identifier: ExprId,
         sense: bool,
     ) -> TypeId {
-        // That it is not the constructor says nothing.
+        // Not being equal to the constructor narrows nothing.
         if ty == TypeId::UNRESOLVED || sense != matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
             return ty;
         }
@@ -2543,7 +2600,7 @@ impl<'p> Checker<'p> {
         self.filter(ty, |c, m| c.is_constructed_by(m, candidate))
     }
 
-    /// `isConstructedBy`: classes are told apart by which they are, not by what is in them.
+    /// `isConstructedBy`: classes are compared nominally, not structurally.
     fn is_constructed_by(&mut self, source: TypeId, target: TypeId) -> bool {
         if self.is_declared_class_type(source) || self.is_declared_class_type(target) {
             // The `this` type of a class has the symbol of the class.
@@ -2557,7 +2614,8 @@ impl<'p> Checker<'p> {
         self.is_subtype(source, target)
     }
 
-    /// `ObjectFlagsClass`: what a class declares. Not that with other type arguments: `C<any>` is a reference to it.
+    /// `ObjectFlagsClass`: the declared type of a class. Not an instantiation with other type
+    /// arguments: `C<any>` is a reference to it.
     fn is_declared_class_type(&mut self, ty: TypeId) -> bool {
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return false;
@@ -2565,9 +2623,10 @@ impl<'p> Checker<'p> {
         self.files().flags(target).contains(SymFlags::CLASS) && self.declared_type(target) == ty
     }
 
-    /// The type of `value`, which something is compared with.
+    /// The type of `value`, the operand being compared against.
     fn type_of_compared(&mut self, file: FileId, value: ExprId) -> TypeId {
-        // A constant that can only be one thing is that thing: following it around leads back here, over and over in a loop.
+        // A constant that can only have one value has the type of that value. Resolving it by flow
+        // analysis re-enters here, repeatedly in a loop.
         let constant = match self.hir(file)[value].kind {
             ExprKind::Ident(name) => self
                 .symbol_of_identifier(file, value, name)
@@ -2617,8 +2676,8 @@ impl<'p> Checker<'p> {
         narrowed
     }
 
-    /// `ty`, of which it is known whether it is equal (`sense`) to something of the type `as_written`, `value_ty` as an annotation
-    /// would name it. `loose`: equal the way `==` has it.
+    /// Narrows `ty` given whether it is equal (`sense`) to a value of type `as_written`.
+    /// `value_ty`: the same type as an annotation would denote it. `loose`: `==` semantics.
     fn narrow_by_equal_type(
         &mut self,
         ty: TypeId,
@@ -2642,7 +2701,7 @@ impl<'p> Checker<'p> {
             return self.adjusted_type_with_facts(ty, include);
         }
         if sense {
-            // Of `unknown` and of `{}`, all that is known is what it was found to be the same as.
+            // `unknown` and `{}` narrow to the type they compared equal to.
             if !loose
                 && (ty == TypeId::UNKNOWN
                     || self
@@ -2669,7 +2728,8 @@ impl<'p> Checker<'p> {
                     || coerces
                         && (m == TypeId::NUMBER || m == TypeId::STRING || c.is_boolean_like(m))
             });
-            // As fresh as it is written: a `string` known to be `"a"` is a `string` again where it is stored.
+            // Keeps the freshness of the source literal: a `string` narrowed to `"a"` widens to
+            // `string` again where it is stored.
             return self.replace_primitives_with_literals(kept, as_written);
         }
         if self.is_unit(value_ty) {
@@ -2680,7 +2740,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `TypeFlagsPrimitive`, which `boolean` and the type of an enum have though they are unions. `string | number` has it not.
+    /// `TypeFlagsPrimitive`, which `boolean` and an enum type have although they are unions.
+    /// `string | number` does not have it.
     fn has_primitive_flags(&mut self, ty: TypeId) -> bool {
         if self.is_primitive(ty) || self.is_boolean(ty) {
             return true;
@@ -2696,7 +2757,7 @@ impl<'p> Checker<'p> {
         self.enum_type_of_member(member) == ty
     }
 
-    /// `isUnitLikeType`: a literal with a tag on it is one too.
+    /// `isUnitLikeType`: a tagged literal type also qualifies.
     fn is_unit_like(&mut self, ty: TypeId) -> bool {
         let ty = self.base_constraint_of(ty).unwrap_or(ty);
         match self.data(ty) {
@@ -2717,7 +2778,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `replacePrimitivesWithLiterals`: `string` that was found equal to `"a"` is `"a"`.
+    /// `replacePrimitivesWithLiterals`: `string` that compared equal to `"a"` becomes `"a"`.
     fn replace_primitives_with_literals(&mut self, ty: TypeId, literals: TypeId) -> TypeId {
         fn is_pattern(c: &Checker<'_>, t: TypeId) -> bool {
             matches!(
@@ -2829,7 +2890,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getEffectsSignature`, of `e`, which is `left instanceof right`. `right_type`: the type of `right`.
+    /// `getEffectsSignature` for `e`, which is `left instanceof right`. `right_type`: the type of
+    /// `right`.
     pub(super) fn effects_signature_of_instanceof(
         &mut self,
         file: FileId,
@@ -2869,7 +2931,7 @@ impl<'p> Checker<'p> {
         if !self.is_type_derived_from(constructor, object) {
             return ty;
         }
-        // A `[Symbol.hasInstance]` that is a type guard has the say.
+        // A `[Symbol.hasInstance]` that is a type guard takes precedence.
         if let Some(sig) = self.effects_signature_of_instanceof(file, e, constructor)
             && let Some(Predicate {
                 param: Some(0),
@@ -2884,8 +2946,8 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let instance = self.map_type(constructor, |c, m| c.instance_type(m));
-        // `any` is not narrowed to `Object` or `Function`. And that it is not an instance says something only of a type that
-        // has something to it.
+        // `any` is not narrowed to `Object` or `Function`. The false branch narrows only if the
+        // instance type is a non-empty object type.
         if self.is_any(ty) && (instance == object || instance == function)
             || !sense
                 && !(self.is_object_type(instance)
@@ -2920,7 +2982,7 @@ impl<'p> Checker<'p> {
                 self.sig_return(s)
             })
             .collect();
-        // Nothing is known of what it makes.
+        // Nothing is known about the type it constructs.
         if returns.is_empty() {
             TypeId::EMPTY_OBJECT
         } else {
@@ -2928,7 +2990,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isTypeDerivedFrom`: going by what is said to extend what, not by what is in it.
+    /// `isTypeDerivedFrom`: uses the declared `extends` relations, not the structure.
     pub(super) fn is_type_derived_from(&mut self, source: TypeId, target: TypeId) -> bool {
         if let TypeData::Union(parts) = self.data(source) {
             return parts.iter().all(|&s| self.is_type_derived_from(s, target));
@@ -3007,7 +3069,7 @@ impl<'p> Checker<'p> {
             if check_derived {
                 return self.filter(ty, |c, m| !c.is_type_derived_from(m, candidate));
             }
-            // `unknownUnionType`: `unknown` is `{} | null | undefined` for the time being.
+            // `unknownUnionType`: `unknown` is temporarily treated as `{} | null | undefined`.
             let everything = self.union(&[
                 TypeId::UNKNOWN_EMPTY_OBJECT,
                 TypeId::NULL,
@@ -3030,8 +3092,9 @@ impl<'p> Checker<'p> {
             return candidate;
         }
         let narrowed = self.map_type(candidate, |c, n| {
-            // Of two that have to do with each other, the more specific. If it goes both ways: what is asserted for a type guard;
-            // what was there for `instanceof`, since a prototype knows nothing of type arguments.
+            // Of two related types, the more specific one. If each is related to the other: the
+            // candidate for a type guard; the original type for `instanceof`, since a prototype
+            // carries no type arguments.
             let matching = c.matching_union_constituent_for_type(ty, n).unwrap_or(ty);
             let directly_related = c.map_type(matching, |c, t| {
                 if check_derived {
@@ -3057,7 +3120,7 @@ impl<'p> Checker<'p> {
             if !directly_related.is_never() {
                 return directly_related;
             }
-            // Failing that, what waits for type parameters and may turn out to be one.
+            // Otherwise, the generic members that may turn out to be a candidate once instantiated.
             c.map_type(ty, |c, t| {
                 let may_be_generic = match c.data(t) {
                     TypeData::Intersection(parts) => parts.iter().any(|&p| c.is_deferred(p)),
@@ -3103,7 +3166,8 @@ impl<'p> Checker<'p> {
         let file = reference.file;
         let hir = self.hir(file);
         let right = self.reference_candidate(file, right);
-        // `narrowTypeByPrivateIdentifierInInExpression`: `#x in v` says whether `v` is of the class that declares `#x`.
+        // `narrowTypeByPrivateIdentifierInInExpression`: `#x in v` tests whether `v` is an instance
+        // of the class that declares `#x`.
         if let ExprKind::String(name) = hir[left].kind
             && is_private_name_at(hir, hir[left].pos)
         {
@@ -3113,7 +3177,8 @@ impl<'p> Checker<'p> {
             if !self.matches(reference, right) {
                 return ty;
             }
-            // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
+            // `lookupSymbolForPrivateIdentifierDeclaration`: searches the instance members of the
+            // class before its statics.
             let is_static = !hir[class].members.iter().any(|m| {
                 hir[m].key == PropKey::Private(name) && !hir[m].flags.contains(Flags::STATIC)
             });
@@ -3125,7 +3190,8 @@ impl<'p> Checker<'p> {
             };
             return self.narrowed_to(ty, target, sense, true);
         }
-        // `"a" in x` says of `x.a` whether it is there, where its type says that it may not be (`containsMissingType`).
+        // `"a" in x` narrows `x.a` by presence if its type includes the missing type
+        // (`containsMissingType`).
         if let Some((&last, _)) = reference.path.split_last()
             && self.contains_missing_type(ty)
             && self.matches_prefix(reference, reference.path.len() - 1, right)
@@ -3150,8 +3216,8 @@ impl<'p> Checker<'p> {
             return ty;
         };
         if self.is_any(ty) {
-            // Nothing is declared in it: the intersection with `Record<K, unknown>` below, which is `errorType` of an error type
-            // and `anyType` of `autoType`.
+            // It declares no properties: the result is the intersection with `Record<K, unknown>`
+            // below, which is `errorType` for an error type and `anyType` for `autoType`.
             let is_intersected = sense && self.global_type_symbol(known::Record).is_some();
             return if is_intersected && self.is_error_type(ty) {
                 TypeId::ERROR
@@ -3161,7 +3227,8 @@ impl<'p> Checker<'p> {
                 ty
             };
         }
-        // `isTypePresencePossible`. What every object and every function has is a property like any other.
+        // `isTypePresencePossible`. A property that every object or every function has counts like
+        // any other property.
         let may_be = |c: &mut Self, m: TypeId, present: bool| {
             let apparent = c.apparent_type(m);
             if c.is_union(apparent) {
@@ -3183,7 +3250,8 @@ impl<'p> Checker<'p> {
         if self.parts(ty).iter().any(|&m| may_be(self, m, true)) {
             return self.filter(ty, |c, m| may_be(c, m, sense));
         }
-        // Nothing declares it: if it is there all the same, that is all that is known of it.
+        // No member declares the property: in the true branch its presence is all that is known
+        // about it.
         if sense && let Some(record) = self.global_type_symbol(known::Record) {
             let key = self.regular(key);
             let record = self.type_reference(record, &[key, TypeId::UNKNOWN]);
@@ -3192,8 +3260,9 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `isTypePresencePossible`, of a type variable whose apparent type is the union `apparent`: `getPropertyOfType` gives what
-    /// `createUnionOrIntersectionProperty` makes, and `getApplicableIndexInfoForName` goes by `getUnionIndexInfos`.
+    /// `isTypePresencePossible` for a type variable whose apparent type is the union `apparent`:
+    /// `getPropertyOfType` returns the property that `createUnionOrIntersectionProperty` creates,
+    /// and `getApplicableIndexInfoForName` uses `getUnionIndexInfos`.
     fn is_type_presence_possible_in_union(
         &mut self,
         apparent: TypeId,
@@ -3255,7 +3324,7 @@ impl<'p> Checker<'p> {
         if let Some(narrowed) = self.narrow_by_type_guard(reference, ty, call, sense) {
             return narrowed;
         }
-        // `x.hasOwnProperty("a")` says of `x.a` what `"a" in x` says.
+        // `x.hasOwnProperty("a")` narrows `x.a` like `"a" in x`.
         let file = reference.file;
         let hir = self.hir(file);
         if let Some((&last, _)) = reference.path.split_last()
@@ -3282,7 +3351,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// What `call` says of the reference if what is called is a type guard that is about it. `None`: it is not.
+    /// Narrows the reference by `call` if the callee is a type guard that applies to it. `None`
+    /// otherwise.
     fn narrow_by_type_guard(
         &mut self,
         reference: &Reference,
@@ -3296,7 +3366,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         let data = &hir[c];
-        // That `x?.isFoo(y)` is not true may be for want of an `x`.
+        // `x?.isFoo(y)` may be falsy because `x` is nullish.
         if !sense && data.chain != Chain::No {
             return None;
         }
@@ -3314,10 +3384,11 @@ impl<'p> Checker<'p> {
         if !concerned {
             return None;
         }
-        // Going by what the function is declared as: the call is only resolved if that is what it takes to know which
-        // type guard is meant. It may well be the call whose arguments are being looked at.
+        // Uses the declared type of the callee: the call is resolved only if that is needed to
+        // select the type guard. It may be the call whose arguments are currently being checked.
         let callee = match hir[data.callee].kind {
-            // A method of what is being narrowed: what that is here is at hand, and asking would come back here.
+            // A method of the reference being narrowed: the narrowed type is already available
+            // here, and querying it would re-enter.
             ExprKind::Dot { obj, name, .. } if self.matches(reference, obj) => {
                 let receiver = self.non_nullable(ty);
                 self.type_of_property(receiver, name)?
@@ -3376,8 +3447,9 @@ impl<'p> Checker<'p> {
                 if self.matches(reference, subject) {
                     return self.narrowed_to(ty, target, sense, false);
                 }
-                // A chain that stops short gives `undefined`. This one did not, if what it gave is something `undefined` is not, or
-                // is not something that is all `undefined` and `null`.
+                // A short-circuited chain yields `undefined`. This one completed if its result is
+                // of a type that excludes `undefined`, or is not of a type that consists only of
+                // `undefined` and `null`.
                 let mut ty = ty;
                 if self.p.files.options.strict_null_checks
                     && self.optional_chain_contains(reference, subject)
@@ -3402,7 +3474,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `narrowTypeByAssertion`: `e` is asserted. Control does not get past `assert(false)`.
+    /// `narrowTypeByAssertion`: `e` is the asserted expression. Code after `assert(false)` is
+    /// unreachable.
     fn narrow_by_asserted(&mut self, reference: &Reference, ty: TypeId, e: ExprId) -> TypeId {
         if self.is_stack_low() {
             return ty;
@@ -3495,7 +3568,8 @@ impl<'p> Checker<'p> {
             if self.matches(reference, operand) {
                 return self.narrow_by_switch_typeof(file, ty, cases, from, to);
             }
-            // `typeof x?.a` is `"undefined"` if the chain stops short. In parentheses it is no chain.
+            // `typeof x?.a` is `"undefined"` if the chain short-circuits. A parenthesized chain is
+            // not a chain.
             if strict
                 && !is_parenthesized(hir, operand)
                 && self.optional_chain_contains(reference, operand)
@@ -3541,7 +3615,7 @@ impl<'p> Checker<'p> {
         to: usize,
     ) -> TypeId {
         let hir = self.hir(reference.file);
-        // None of the tests before came out true.
+        // None of the preceding case tests matched.
         let mut result = ty;
         for i in 0..from {
             let test = hir[cases.at(i)].test;
@@ -3549,7 +3623,8 @@ impl<'p> Checker<'p> {
                 result = self.narrow(reference, result, test, false);
             }
         }
-        // Where `default` is among them, none of those after did either. Those next to it say nothing: there are other ways here.
+        // If `default` is among the clauses, none of the following tests matched either. The
+        // clauses grouped with it narrow nothing: control can arrive by other paths.
         if from == to || (from..to).any(|i| hir[cases.at(i)].test.is_none()) {
             for i in to..cases.len() {
                 let test = hir[cases.at(i)].test;
@@ -3566,8 +3641,9 @@ impl<'p> Checker<'p> {
         self.union(&entered)
     }
 
-    /// `narrowTypeBySwitchOptionalChainContainment`: the chain that the `switch` looks at got to its end if the type of every one of the
-    /// clauses `from..to` passes `check`. That of `default` is `never`.
+    /// `narrowTypeBySwitchOptionalChainContainment`: the optional chain in the `switch` expression
+    /// completed if the type of every clause in `from..to` passes `check`. The type of `default` is
+    /// `never`.
     fn narrow_by_switch_optional_chain_containment(
         &mut self,
         file: FileId,
@@ -3614,7 +3690,8 @@ impl<'p> Checker<'p> {
             let mut candidates = Vec::with_capacity(to - from);
             for i in from..to {
                 let test = hir[cases.at(i)].test;
-                // `default` stands for no member, nor does a value that several members have: the ordinary way.
+                // `default` maps to no member, and neither does a value shared by several members:
+                // fall back to the general path.
                 if test.is_none() {
                     break;
                 }
@@ -3657,7 +3734,7 @@ impl<'p> Checker<'p> {
         let has_default = from == to || all[from..to].contains(&None);
         let clause_types: SmallVec<[TypeId; 8]> = all[from..to].iter().flatten().copied().collect();
         if ty == TypeId::UNKNOWN && !has_default {
-            // An object among the cases says that it is an object, not which.
+            // An object type among the cases only shows that the value is an object, not which one.
             let mut ground = Vec::with_capacity(clause_types.len());
             for &t in &clause_types {
                 if self.has_primitive_flags(t) || t == TypeId::OBJECT {
@@ -3680,7 +3757,8 @@ impl<'p> Checker<'p> {
         if !has_default {
             return case_type;
         }
-        // What is one value goes if a case may be that value: `"a"` for `case E.a`, if that is what `E.a` is.
+        // A unit type is removed if a case may have that value: `"a"` for `case E.a`, if `E.a` has
+        // that value.
         let tested: SmallVec<[TypeId; 8]> = all.iter().flatten().copied().collect();
         let default_type = self.filter(ty, |c, m| {
             if !c.is_unit_like(m) {
@@ -3703,8 +3781,9 @@ impl<'p> Checker<'p> {
         self.union(&[case_type, default_type])
     }
 
-    /// `getSwitchClauseTypeOfWitnesses`: the name each clause tests for. None for `default`, for `""` and for a name an earlier clause
-    /// has. `None`: some clause tests for something that is not written as a string, or as one in parentheses.
+    /// `getSwitchClauseTypeOfWitnesses`: the `typeof` name each clause tests for. `Atom::NONE` for
+    /// `default`, for `""` and for a name an earlier clause has. `None`: the expression of some clause
+    /// is not a string literal, or is a parenthesized one.
     fn switch_typeof_witnesses(&self, file: FileId, cases: Span<CaseId>) -> Option<Vec<Atom>> {
         let hir = self.hir(file);
         let mut witnesses = vec![Atom::NONE; cases.len()];
@@ -3740,7 +3819,7 @@ impl<'p> Checker<'p> {
         };
         let hir = self.hir(file);
         if from == to || (from..to).any(|i| hir[cases.at(i)].test.is_none()) {
-            // What is not taken by any other clause.
+            // Whatever no other clause matches.
             let not_equal = not_equal_facts_from_typeof_switch(&witnesses, from, to);
             return self.filter(ty, |c, m| c.type_facts(m, not_equal) == not_equal);
         }
@@ -3755,7 +3834,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── walking back ─────────────────────────────
 
-    /// `isGenericTypeWithUnionConstraint`: what waits for type parameters, be it a template, and extends a union, `undefined` or `null`.
+    /// `isGenericTypeWithUnionConstraint`: a generic type, including a template literal type, whose
+    /// constraint is a union, `undefined` or `null`.
     fn is_generic_with_union_constraint(&mut self, ty: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(ty) {
             return parts
@@ -3783,7 +3863,8 @@ impl<'p> Checker<'p> {
         !self.maybe_type_of_kind(constraint, |_, m| m.is_undefined() || m.is_null())
     }
 
-    /// Whether `e` is where what its type extends is what counts: `e.x`, `e[x]`, `e()`, `new e()`.
+    /// Whether `e` is in a position where the constraint of its type is what matters: `e.x`,
+    /// `e[x]`, `e()`, `new e()`.
     fn is_constraint_position(&mut self, file: FileId, e: ExprId, ty: TypeId) -> bool {
         let hir = self.hir(file);
         let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else {
@@ -3792,7 +3873,7 @@ impl<'p> Checker<'p> {
         match hir[parent].kind {
             ExprKind::Dot { obj, .. } => obj == e,
             ExprKind::Call(c) | ExprKind::New(c) => hir[c].callee == e,
-            // `t[k]` of a `T` and a `K` is to be `T[K]`.
+            // `t[k]` with `t` of type `T` and `k` of type `K` must have type `T[K]`.
             ExprKind::Index { obj, index, .. } if obj == e => {
                 if !self
                     .parts(ty)
@@ -3854,7 +3935,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The end of `checkIdentifier`, from `getNarrowableTypeForReference` on: 7034 7005, 2454. `sym`: what `e` names.
+    /// The end of `checkIdentifier`, from `getNarrowableTypeForReference` on: 7034 7005, 2454.
+    /// `sym`: the symbol `e` resolves to.
     pub(super) fn narrow_reference(
         &mut self,
         file: FileId,
@@ -3869,7 +3951,8 @@ impl<'p> Checker<'p> {
         let ty = self.flow_type_of(file, e, declared, Start::Unsettled);
         let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
-            // Nothing has these types without `noImplicitAny`. `checkWithStatement` does not come to the body.
+            // These types only occur under `noImplicitAny`. `checkWithStatement` does not check the
+            // body.
             if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
                 let args = [Arg::Sym(sym), Arg::Type(ty)];
                 if let Some(name) = self.place_of_symbol(sym) {
@@ -3903,7 +3986,8 @@ impl<'p> Checker<'p> {
         self.flow_type_of(file, e, declared, Start::Known)
     }
 
-    /// `getFlowTypeOfAccessExpression`, but for a property whose type is `autoType`. `prop`: none for what an index signature gives.
+    /// `getFlowTypeOfAccessExpression`, except for a property whose type is `autoType`. `prop`:
+    /// absent for an access resolved through an index signature.
     /// `error_node`: the name or the index. `target`: the `target_kind` of `e`.
     pub(super) fn get_flow_type_of_access_expression(
         &mut self,
@@ -3914,7 +3998,8 @@ impl<'p> Checker<'p> {
         error_node: Place,
         target: TargetKind,
     ) -> TypeId {
-        // `removeMissingType`. Nor is `missingType` added to what an index signature gives.
+        // `removeMissingType`. `missingType` is not added to a type obtained from an index
+        // signature either.
         if target.definite {
             return self.filter(prop_type, |_, m| m != TypeId::MISSING);
         }
@@ -3969,7 +4054,8 @@ impl<'p> Checker<'p> {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Every access to a property comes here. `prop.ValueDeclaration` matters for `this.x` and for what an assignment declares.
+        // Every property access reaches this point. `prop.ValueDeclaration` matters for `this.x`
+        // and for a property declared by an assignment.
         let by_assignment = SymFlags::ASSIGNMENT | SymFlags::FUNCTION_SCOPED_VARIABLE;
         if !matches!(hir[e].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
                 if matches!(hir[obj].kind, ExprKind::This))
@@ -4008,8 +4094,8 @@ impl<'p> Checker<'p> {
                             && matches!(bound.fns[f.idx()].owner, FnOwner::Member(constructor)
                                 if bound.member_owner[constructor.idx()] == MemberOwner::Class(class)));
             }
-            // What `exports.name = value` declares is a variable. An alias declaration is no value declaration;
-            // `Object.defineProperty(exports, "name", descriptor)` is one.
+            // `exports.name = value` declares a variable. An alias declaration is not a value
+            // declaration; `Object.defineProperty(exports, "name", descriptor)` is one.
             Some((
                 of,
                 Decl::Expando(first) | Decl::ThisProperty(first) | Decl::ExportsProperty(first),
@@ -4023,8 +4109,9 @@ impl<'p> Checker<'p> {
             && container_of(e) == container_of(assignment)
     }
 
-    /// The type of `e`, the initializer of a variable that is declared by a pattern and without a type, for the `...rest` of the
-    /// pattern (`CheckModeRestBindingElement`). `None`: what the other elements see.
+    /// The type of `e`, the initializer of a variable declared by a binding pattern without a type
+    /// annotation, for the `...rest` of the pattern (`CheckModeRestBindingElement`). `None`: the
+    /// same type the other elements see.
     pub(super) fn type_of_reference_for_rest(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let Parent::VarInit(d) = self.bound(file).expr_parent[e.idx()] else {
             return None;
@@ -4032,7 +4119,7 @@ impl<'p> Checker<'p> {
         if self.hir(file)[d].ty.is_some() {
             return None;
         }
-        // Only where a type parameter can be mentioned is there one to keep.
+        // A type parameter can only be preserved where one is in scope.
         let scope = self.scope_of_expr(file, e);
         if !self
             .type_params_in_scope(file, scope)
@@ -4049,7 +4136,7 @@ impl<'p> Checker<'p> {
         (ty != ordinary).then_some(ty)
     }
 
-    /// Whether `e` is the `x` of `x!`. Not of `(x)!`: what is written right around it is what counts.
+    /// Whether `e` is the `x` of `x!`. Not of `(x)!`: only the direct syntactic parent counts.
     fn is_operand_of_non_null(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::NonNull(_)))
@@ -4079,11 +4166,11 @@ impl<'p> Checker<'p> {
             return true;
         }
         let default = self.type_of_expr(file, self.hir(file)[p].default);
-        // `any` has not got the fact. What is not known might.
+        // `any` does not have the fact. An `UNRESOLVED` type might.
         let contains =
             default == TypeId::UNRESOLVED || self.has_type_facts(default, facts::IS_UNDEFINED);
         let left = self.leave(q);
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let stored = self.cycle_result();
             (self.p.circular_initializers).insert(&self.task, (file, pat), (), stored);
             self.report_circularity_error_of_pat(q, file, pat);
@@ -4120,22 +4207,25 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `if c.flowAnalysisDisabled { return c.errorType }`, for the writer alone: in the check the answer would depend on evaluation order.
+    /// `if c.flowAnalysisDisabled { return c.errorType }`, applied for the writer only: during
+    /// checking the result would depend on evaluation order.
     fn is_flow_analysis_disabled(&self, file: FileId) -> bool {
         self.flow_analysis_disabled_in == Some(file) && self.is_rechecking()
     }
 
-    /// `c.flowAnalysisDisabled = true`. No `checkBlock` is under way to put it back while a node is checked again.
+    /// `c.flowAnalysisDisabled = true`. No `checkBlock` is in progress to reset it while a node is
+    /// rechecked.
     fn disable_flow_analysis(&mut self, file: FileId) {
         if self.is_rechecking() {
             self.flow_analysis_disabled_in = Some(file);
         }
     }
 
-    /// OURS. The symbols of `file` that something in its flow graph is about: a test (`note_test`, as for `is_test_about`), a `switch`,
-    /// the target of an assignment, what a `for in` goes over. Nothing else can change what a reference that starts with a name is,
-    /// but a call that asserts: see `FlowMemo::in_call_statements`. Empty: some way back through the graph may be `MAX_FLOW_DEPTH`
-    /// long, and the walk that finds that out reports it.
+    /// Not in tsgo. The symbols of `file` that some node of its flow graph refers to: a condition
+    /// (`note_test`, as for `is_test_about`), a `switch`, an assignment target, the expression of a
+    /// `for in`. Nothing else can change the type of a reference rooted at a name, except an
+    /// assertion call: see `FlowMemo::in_call_statements`. Empty: some backward path through the
+    /// graph may be `MAX_FLOW_DEPTH` long, and the walk that detects that reports it.
     #[inline(never)]
     fn index_narrowing_subjects(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -4150,7 +4240,7 @@ impl<'p> Checker<'p> {
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
             let about = &mut FirstNarrowingNodes(&mut first_nodes, i as u32);
-            // What comes before it: a run of edges, or one node.
+            // Its antecedents: a range of edges, or a single node.
             let before = match node {
                 Flow::Unreachable => &[][..],
                 Flow::Label { start, len } | Flow::Loop { start, len } => bound.edges(start, len),
@@ -4214,7 +4304,8 @@ impl<'p> Checker<'p> {
                         }
                     }
                 },
-                // `asserts x`: the argument is a test. `asserts x is T`, `asserts this`: an argument, what it is called on.
+                // `asserts x`: the argument is a condition. `asserts x is T`, `asserts this`: an
+                // argument, the receiver.
                 Flow::Call { call, .. } => {
                     if let ExprKind::Call(c) = hir[call].kind {
                         let about = &mut CallStatementSubjects(
@@ -4248,8 +4339,9 @@ impl<'p> Checker<'p> {
         (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
     }
 
-    /// Whether every call that is a statement, mentions `s` and has a number up to `highest` has been found idle BY A WALK. None is
-    /// asked here: that may well lead back to what is being worked out, and tsgo asks when a walk gets there.
+    /// Whether every call statement that mentions `s` and has a number up to `highest` has already
+    /// been found by a walk to have no effect. None is resolved here: that may re-enter the
+    /// computation in progress, and tsgo resolves it when a walk reaches it.
     #[inline(never)]
     fn are_call_statements_idle(&mut self, file: FileId, s: SymbolId, highest: u32) -> bool {
         let memo = &self.flow_memo;
@@ -4274,7 +4366,8 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// OURS. Whether `getFlowTypeOfReference` can only come to `declared` for `reference`, written `e`: see `index_narrowing_subjects`.
+    /// Not in tsgo. Whether `getFlowTypeOfReference` can only return `declared` for `reference`,
+    /// the expression `e`: see `index_narrowing_subjects`.
     fn is_never_narrowed(
         &mut self,
         reference: &Reference,
@@ -4297,8 +4390,9 @@ impl<'p> Checker<'p> {
             return false;
         };
         let symbol = &bound.symbols[s.idx()];
-        // `let`, `const` or `using` with an initializer, in a list of statements, and `e` comes after: every way back from `e` comes
-        // to the declaration. (Not in a `case`, nor `if (a) const b = 1`, which is an error and parses.)
+        // `let`, `const` or `using` with an initializer, in a statement list, and `e` comes after
+        // it: every backward path from `e` reaches the declaration. (Not in a `case`, nor `if (a)
+        // const b = 1`, which is an error but parses.)
         let is_dominated_by_declaration = match symbol.decls[..] {
             [Decl::Var(_)] => match self.root_declaration(file, s) {
                 PatParent::Var(d) => {
@@ -4317,8 +4411,9 @@ impl<'p> Checker<'p> {
             },
             _ => false,
         };
-        // No node with a higher number is on a way back from here that counts. A walk that ends at the declaration goes round
-        // a loop only if the loop is inside what the declaration is in.
+        // No node with a higher number is on a relevant backward path from here. A walk that ends
+        // at the declaration follows the back edge of a loop only if the loop is inside the scope
+        // that contains the declaration.
         let flow = bound.expr_flow[e.idx()];
         let mut highest = memo.max_antecedent[flow.idx()];
         if is_dominated_by_declaration
@@ -4332,14 +4427,14 @@ impl<'p> Checker<'p> {
         if first_about <= highest {
             return false;
         }
-        // Whatever declares the name again on the way back leaves `a.b` what it is declared as.
+        // A redeclaration of the name on the backward path leaves `a.b` at its declared type.
         let is_plain = if !reference.path.is_empty() {
             start == Start::Known
         } else if symbol.flags.contains(SymFlags::ASSIGNED) || self.is_union(declared) {
             false
         } else {
             match symbol.decls[..] {
-                // `isAlias`: taken to hold a value where the file starts.
+                // `isAlias`: assumed to be initialized at the start of the file.
                 [
                     Decl::ImportDefault(_)
                     | Decl::ImportNamespace(_)
@@ -4375,8 +4470,9 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let is_automatic = self.is_automatic_type(declared);
-        // Nothing but `[]` was ever assigned to it: where it is being filled it is an array of anything, whatever is in it
-        // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
+        // Only `[]` was ever assigned to it: where elements are added it is an array of any element
+        // type, whatever its element type is by then. Skipping the walk avoids resolving the type
+        // of the added element while its contextual type is being computed.
         if declared == self.auto_array_type
             && let Root::Symbol(s) = reference.root
             && !bound.symbols[s.idx()].flags.contains(SymFlags::ASSIGNED)
@@ -4392,8 +4488,8 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let crossing = if !reference.path.is_empty() {
-            // `getTypeAtFlowNode` stops at the start of a function for a property or element access expression. `a.b` in `typeof a.b`
-            // is a qualified name, and goes on.
+            // `getTypeAtFlowNode` stops at the start of a function for a property or element access
+            // expression. `a.b` in `typeof a.b` is a qualified name, and continues.
             if bound.is_in_type_query(e) {
                 Crossing::Yes
             } else {
@@ -4421,7 +4517,7 @@ impl<'p> Checker<'p> {
             }
         };
         let mut initial = declared;
-        // `removeOptionalityFromDeclaredType`: `(x: T | undefined = d)` starts out as something.
+        // `removeOptionalityFromDeclaredType`: `(x: T | undefined = d)` starts without `undefined`.
         if self.p.files.options.strict_null_checks
             && reference.path.is_empty()
             && let Root::Symbol(s) = reference.root
@@ -4471,7 +4567,8 @@ impl<'p> Checker<'p> {
         if walk.steps >= MAX_STEPS {
             return declared;
         }
-        // What is done to fill an array is done to `autoArrayType`, whatever is in it by then.
+        // An operation that adds elements to an evolving array sees `autoArrayType`, whatever its
+        // element type is by then.
         let result = if matches!(self.data(evolved), TypeData::EvolvingArray(_))
             && e.is_some()
             && self.is_evolving_array_operation_target(file, e)
@@ -4480,7 +4577,7 @@ impl<'p> Checker<'p> {
         } else {
             self.finalize_evolving_array(evolved)
         };
-        // `x!` where all that is left of `x` is what `!` takes away.
+        // `x!` where `x` has been narrowed to only the types that `!` removes.
         if result == TypeId::UNREACHABLE_NEVER
             || e.is_some()
                 && !result.is_never()
@@ -4494,7 +4591,8 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `getFlowTypeOfDestructuring` of what a pattern binds. `const { a } = o.p`: `a` is whatever `o.p.a` is known to be there.
+    /// `getFlowTypeOfDestructuring` for a binding pattern element. `const { a } = o.p`: `a` has the
+    /// narrowed type of `o.p.a` at that point.
     pub(super) fn narrow_destructured(
         &mut self,
         file: FileId,
@@ -4502,7 +4600,7 @@ impl<'p> Checker<'p> {
         declared: TypeId,
     ) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // From the inside out.
+        // Innermost first.
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut at = pat;
         let init = loop {
@@ -4527,8 +4625,9 @@ impl<'p> Checker<'p> {
         self.narrow_path_of(file, init, &names, declared)
     }
 
-    /// `getFlowTypeOfDestructuring` of `e`, an element of an array literal or the value of a property of an object literal that is
-    /// assigned to, as it stands there, default and all. `({ a } = o.p)`: `a` is given whatever `o.p.a` is known to be there.
+    /// `getFlowTypeOfDestructuring` for `e`, an element of an array literal or a property value of
+    /// an object literal that is an assignment target, including its default. `({ a } = o.p)`: `a`
+    /// is assigned the narrowed type of `o.p.a` at that point.
     pub(super) fn narrow_destructured_assignment(
         &mut self,
         file: FileId,
@@ -4536,10 +4635,11 @@ impl<'p> Checker<'p> {
         declared: TypeId,
     ) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // From the inside out.
+        // Innermost first.
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut at = e;
-        // `getParentElementAccess`. It goes by what is written right around a literal: one in parentheses is in nothing it knows.
+        // `getParentElementAccess`. It uses the direct syntactic parent of a literal: a
+        // parenthesized literal has no parent it recognizes.
         let init = loop {
             if !names.is_empty() && is_parenthesized(hir, at) {
                 return declared;
@@ -4557,7 +4657,8 @@ impl<'p> Checker<'p> {
                         at = x;
                         Some(self.number_name(index as f64))
                     }
-                    // The literal as a whole: what is on the right of it, be that the default of an element.
+                    // The outermost literal: the right-hand side of its assignment, which may be
+                    // the default of an element.
                     ExprKind::Assign {
                         op: None,
                         target,
@@ -4573,8 +4674,9 @@ impl<'p> Checker<'p> {
         self.narrow_path_of(file, init, &names, declared)
     }
 
-    /// `getSyntheticElementAccess`, and `getFlowTypeOfReference` of it: what `init.a.b`, declared as `declared`, is known to be where
-    /// `init` is written. `names`: `b`, `a`, from the inside out.
+    /// `getSyntheticElementAccess`, and `getFlowTypeOfReference` of it: the narrowed type of
+    /// `init.a.b`, declared as `declared`, at the position of `init`. `names`: `b`, `a`, innermost
+    /// first.
     fn narrow_path_of(
         &mut self,
         file: FileId,
@@ -4582,7 +4684,8 @@ impl<'p> Checker<'p> {
         names: &[Atom],
         declared: TypeId,
     ) -> TypeId {
-        // What is in parentheses is not told where control is, no more than a call or a comma is.
+        // A parenthesized expression has no flow node, and neither does a call or a comma
+        // expression.
         if init.is_none()
             || is_parenthesized(self.hir(file), init)
             || declared == TypeId::UNRESOLVED
@@ -4601,13 +4704,14 @@ impl<'p> Checker<'p> {
             return declared;
         };
         reference.path.extend(names.iter().rev().copied());
-        // Nowhere is it written.
+        // It does not occur in the source.
         reference.at = ExprId::NONE;
         let walk = Walk::new(reference, declared, declared, false);
         self.get_flow_type_of_reference(walk, flow)
     }
 
-    /// Whether `this.name`, declared as `declared`, has been given a value by the time the constructor `func` is left.
+    /// Whether `this.name`, declared as `declared`, has been assigned by the end of the constructor
+    /// `func`.
     pub(super) fn is_assigned_in_constructor(
         &mut self,
         file: FileId,
@@ -4635,9 +4739,11 @@ impl<'p> Checker<'p> {
         !self.contains_undefined(ty)
     }
 
-    /// `getFlowTypeInConstructor`, and one turn of the loop of `getFlowTypeInStaticBlocks`: what the property `name`, of which nothing
-    /// is said, has been assigned by the time the constructor or the static block `func` is left. `None` if that is nothing to go
-    /// by. `initial`: what `getFlowTypeOfProperty` starts from, the type of the property in the base class, else `undefined`.
+    /// `getFlowTypeInConstructor`, and one iteration of the loop of `getFlowTypeInStaticBlocks`:
+    /// the type assigned to the property `name`, which declares no type, by the end of the
+    /// constructor or static block `func`. `None` if that gives no usable type. `initial`: the type
+    /// `getFlowTypeOfProperty` starts from, the type of the property in the base class, else
+    /// `undefined`.
     /// `value_declaration`: `symbol.ValueDeclaration`.
     pub(super) fn flow_type_in_constructor_from(
         &mut self,
@@ -4675,8 +4781,9 @@ impl<'p> Checker<'p> {
         Some(self.convert_auto_to_any(ty))
     }
 
-    /// `getFlowTypeOfProperty`: the flow type of `e`, an access to a property whose declared type is `autoType` in the constructor
-    /// around `e`. `initial`: the type of the property in the base class, else `undefined`.
+    /// `getFlowTypeOfProperty`: the flow type of `e`, an access to a property whose declared type
+    /// is `autoType` in the constructor enclosing `e`. `initial`: the type of the property in the
+    /// base class, else `undefined`.
     pub(super) fn flow_type_of_property(
         &mut self,
         file: FileId,
@@ -4707,7 +4814,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `markNodeAssignmentsWorker`: what `export { x }` names may be assigned to at any time, for all that can be seen from here.
+    /// `markNodeAssignmentsWorker`: a symbol named by `export { x }` may be assigned at any time,
+    /// as far as this file can tell.
     fn is_named_by_export_specifier(&self, file: FileId, symbol: SymbolId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let name = bound.symbols[symbol.idx()].name;
@@ -4723,9 +4831,10 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The node around the node `parent` stands for, going out of functions and classes too. `None` also for what is not kept track
-    /// of: the default of a binding element, a computed name, the initializer of an enum member, `extends`, a decorator, the body
-    /// of a namespace, and what is in a signature or in a member of an interface or a type literal.
+    /// The parent of the node that `parent` represents, crossing function and class boundaries.
+    /// `None` also for parents that are not tracked: the default of a binding element, a computed
+    /// name, the initializer of an enum member, `extends`, a decorator, the body of a namespace,
+    /// and anything in a signature or in a member of an interface or a type literal.
     #[inline]
     pub fn parent_of(&self, file: FileId, parent: crate::bind::Parent) -> crate::bind::Parent {
         use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
@@ -4757,8 +4866,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `FindAncestor(e, IsFunctionOrSourceFile)`: the function `e` is written in, be it in the default of a binding element or in a
-    /// class that is written there.
+    /// `FindAncestor(e, IsFunctionOrSourceFile)`: the function that contains `e`, even if `e` is in
+    /// the default of a binding element or in a class nested there.
     fn function_around(&self, file: FileId, e: ExprId) -> Option<FnId> {
         let bound = self.bound(file);
         let mut at = bound.expr_parent[e.idx()];
@@ -4862,9 +4971,10 @@ impl<'p> Checker<'p> {
         self.array_of(element)
     }
 
-    /// Where paths meet. Arrays that are still being filled stay so if that is all there is.
-    /// What is no part of what the reference was to begin with has been brought in from outside, by
-    /// `instanceof`, `in` or a type guard, and goes again where something it is a subtype of comes together with it.
+    /// The type at a join of control flow paths. Evolving arrays stay evolving if all the types are
+    /// evolving arrays.
+    /// A type that is not part of the initial type of the reference was introduced by `instanceof`,
+    /// `in` or a type guard, and is removed again where it joins a type it is a subtype of.
     fn union_or_evolving(&mut self, types: &[TypeId], walk: &mut Walk) -> TypeId {
         if types.len() < 2 {
             return self.union_or_evolving_with(types, false);
@@ -4898,7 +5008,7 @@ impl<'p> Checker<'p> {
             } else {
                 self.union(types)
             };
-            // `recombineUnknownType`: the pieces `unknown` was taken apart into, all back together.
+            // `recombineUnknownType`: the constituents `unknown` was split into, all present again.
             if self.walk_declared == TypeId::UNKNOWN
                 && let TypeData::Union(parts) = self.data(union)
                 && parts.len() == 3
@@ -4912,7 +5022,7 @@ impl<'p> Checker<'p> {
             {
                 return TypeId::UNKNOWN;
             }
-            // All the members of the declared type are the declared type.
+            // The union of all the members of the declared type is the declared type.
             if union != self.walk_declared
                 && let (TypeData::Union(parts), TypeData::Union(declared)) =
                     (self.data(union), self.data(self.walk_declared))
@@ -4920,7 +5030,8 @@ impl<'p> Checker<'p> {
             {
                 return self.walk_declared;
             }
-            // `false | true` is `boolean` however fresh the two are: together they widen to it anyway.
+            // `false | true` is `boolean` regardless of their freshness: together they widen to it
+            // anyway.
             let parts = self.parts(union);
             let (fresh_false, fresh_true) = (
                 parts.contains(&TypeId::FRESH_FALSE),
@@ -4981,13 +5092,14 @@ impl<'p> Checker<'p> {
                 _ => break parent,
             }
         };
-        // What is written right around `x.push` and `x[n]` is what counts: `(x.push)(v)` and `(x[n]) = v` are something else.
+        // Only the direct syntactic parent of `x.push` and `x[n]` counts: `(x.push)(v)` and `(x[n])
+        // = v` do not qualify.
         match hir[parent].kind {
             ExprKind::Dot { obj, name, .. } if obj == root => {
                 name == known::length
                     || (name == known::push || name == known::unshift)
                         && !is_parenthesized(hir, parent)
-                        // A call it is in, be it as an argument.
+                        // A call that contains it, even as an argument.
                         && matches!(bound.expr_parent[parent.idx()], Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(_)))
             }
             ExprKind::Index { obj, index, .. } if obj == root => {
@@ -5037,7 +5149,7 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `addEvolvingArrayElementType`: the array `ty`, still being filled, after `value` was put in it.
+    /// `addEvolvingArrayElementType`: the evolving array `ty` after `value` was added to it.
     fn add_evolving_element(&mut self, file: FileId, ty: TypeId, value: ExprId) -> TypeId {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
             return ty;
@@ -5070,7 +5182,7 @@ impl<'p> Checker<'p> {
         }
         let file = walk.reference.file;
         let bound = self.bound(file);
-        // Tests met on the way back, to be applied on the way forward again.
+        // Conditions encountered during the backward walk, applied in forward order afterwards.
         enum Pending {
             Cond(ExprId, bool),
             Switch(StmtId, u16, u16),
@@ -5083,7 +5195,8 @@ impl<'p> Checker<'p> {
             NonNull,
         }
         let mut pending: SmallVec<[Pending; 8]> = SmallVec::new();
-        // How many tests were not put off because they are about something else. They count as if they had been.
+        // Number of conditions that were not deferred because they do not apply to the reference.
+        // They count as if they had been deferred.
         let mut passed = 0;
         let mut flow = start;
         let depth = walk.depth;
@@ -5093,7 +5206,8 @@ impl<'p> Checker<'p> {
             if walk.steps >= MAX_STEPS {
                 break walk.declared;
             }
-            // This is one invocation of `getTypeAtFlowNode`, and what is put off stands for one more each, inside it.
+            // This is one invocation of `getTypeAtFlowNode`, and each deferred condition represents
+            // one more, nested in it.
             walk.depth = depth + 1 + pending.len() as u32 + passed;
             if walk.depth > MAX_FLOW_DEPTH {
                 walk.too_deep = true;
@@ -5157,7 +5271,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 Flow::ArrayMutation { before, expr } => {
-                    // `getTypeAtFlowArrayMutation`: what is done to something else is passed by.
+                    // `getTypeAtFlowArrayMutation`: a mutation of a different reference is skipped.
                     if self.is_automatic_type(walk.declared)
                         && self.is_mutation_of(&walk.reference, expr)
                     {
@@ -5170,7 +5284,7 @@ impl<'p> Checker<'p> {
                     expr,
                     sense,
                 } => {
-                    // An array that is being filled is looked at by every test.
+                    // Every condition is applied to an evolving array.
                     if self.is_automatic_type(walk.declared)
                         || self.is_test_about(&walk.reference, flow, expr)
                     {
@@ -5217,8 +5331,9 @@ impl<'p> Checker<'p> {
                     break t.ty;
                 }
                 Flow::Label { start, len } => {
-                    // Where a `finally` block that is being gone back through starts: on with the ways in that count. Nothing
-                    // before here depends on which those are, so what is found out from here on is as good as ever.
+                    // The start of a `finally` block the walk is passing through backward: continue
+                    // with the reduced set of antecedents. Nothing before this point depends on
+                    // that set, so results computed from here on are cacheable again.
                     if let Some(at) = walk.reduced.iter().rposition(|r| r.0 == flow) {
                         let entry = walk.reduced.remove(at);
                         let t = self.flow_type(walk, entry.1);
@@ -5231,8 +5346,9 @@ impl<'p> Checker<'p> {
                         break known.ty;
                     }
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-                    // The way past a `switch` none of whose cases matched. There is no such way if the cases cover everything,
-                    // which is only asked when it would make a difference: the question can lead back here.
+                    // The path that bypasses a `switch` when no case matched. It does not exist if
+                    // the `switch` is exhaustive, which is only computed when it would change the
+                    // result: the computation can re-enter here.
                     let mut bypass = None;
                     let mut settled = false;
                     for &edge in bound.edges(start, len) {
@@ -5277,7 +5393,7 @@ impl<'p> Checker<'p> {
                 Flow::Loop { start, len } => {
                     let edges = bound.edges(start, len);
                     match *edges {
-                        // A loop nothing leads to: `while (true) {}` came before.
+                        // A loop label without antecedents: it follows `while (true) {}`.
                         [] => break self.convert_auto_to_any(walk.declared),
                         [only] => {
                             flow = only;
@@ -5285,7 +5401,8 @@ impl<'p> Checker<'p> {
                         }
                         _ => {}
                     }
-                    // `getTypeAtFlowLoopLabel`: what has no key is what it is declared as where a loop comes round.
+                    // `getTypeAtFlowLoopLabel`: a reference without a key has its declared type at
+                    // a loop label.
                     if !walk.reference.has_key {
                         break walk.declared;
                     }
@@ -5321,8 +5438,8 @@ impl<'p> Checker<'p> {
                     incomplete = entry.incomplete;
                     let entry = entry.ty;
                     let mut types: SmallVec<[TypeId; 4]> = smallvec![entry];
-                    // What is the declared type can only be added subtypes to. Unlike where branches meet, what it was to begin with
-                    // is not looked at.
+                    // Once the type is the declared type, only subtypes could be added. Unlike at a
+                    // branch label, the initial type is not considered.
                     if entry != walk.declared {
                         // One pass: each back edge sees the types of the antecedents before it.
                         walk.round_labels.push(Labels::default());
@@ -5370,7 +5487,8 @@ impl<'p> Checker<'p> {
                     }
                     let result = FlowType::new(self.union_or_evolving(&types, walk), incomplete);
                     walk.remember(flow, result);
-                    // What rests on a trial, a guess or a walk that gave up is nobody else's answer.
+                    // A result that depends on a speculative evaluation, a provisional type or a
+                    // walk that bailed out is not cached.
                     if !incomplete && !walk.too_deep && walk.steps < MAX_STEPS {
                         self.flow_memo
                             .flow_loop_cache
@@ -5391,7 +5509,8 @@ impl<'p> Checker<'p> {
             if ty.is_never() {
                 break;
             }
-            // A test sees the array as it would be read; if it says nothing, the array goes on being filled.
+            // A condition is applied to the finalized array type; if it narrows nothing, the array
+            // stays evolving.
             let seen = self.finalize_evolving_array(ty);
             let narrowed = match p {
                 Pending::Cond(expr, sense) => self.narrow(reference, seen, expr, sense),
@@ -5404,7 +5523,7 @@ impl<'p> Checker<'p> {
                     ty = self.after_array_mutation(file, ty, expr);
                     continue;
                 }
-                // Of the array as it would be read: it is not filled any further.
+                // Applied to the finalized array type: the array stops evolving.
                 Pending::NonNull => {
                     ty = self.non_nullable_type_if_needed(seen);
                     incomplete = false;
@@ -5418,14 +5537,14 @@ impl<'p> Checker<'p> {
         FlowType { ty, incomplete }
     }
 
-    /// `checkNonNullTypeWithReporter`: `ty` without `null` and `undefined`, where it has to be neither. `report` is told what is wrong
-    /// with `ty`, if anything is.
+    /// `checkNonNullTypeWithReporter`: `ty` without `null` and `undefined`, where neither is
+    /// allowed. `report` is called with the problem with `ty`, if there is one.
     pub(super) fn check_non_null_type_with_reporter(
         &mut self,
         ty: TypeId,
         report: impl FnOnce(&mut Self, NonNullError),
     ) -> TypeId {
-        // Most types have neither fact, which shows in their kind.
+        // Most types have neither fact, which their kind alone determines.
         if !self.some_type(ty, |c, m| {
             m == TypeId::UNKNOWN
                 || m.is_undefined()
@@ -5464,7 +5583,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkNonNullType`, less what it reports.
+    /// `checkNonNullType`, without its diagnostics.
     pub(super) fn non_null_type(&mut self, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |_, _| {})
     }
@@ -5529,7 +5648,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeAtFlowAssignment`, of an assignment that is not compound. `None`: on from `flow.Antecedent`.
+    /// `getTypeAtFlowAssignment` for a non-compound assignment. `None`: continue from
+    /// `flow.Antecedent`.
     fn type_at_assignment(
         &mut self,
         walk: &Walk,
@@ -5642,7 +5762,7 @@ impl<'p> Checker<'p> {
             // `getAssignedType`
             FlowTarget::Expr(e) => match bound.expr_parent[e.idx()] {
                 Parent::Expr(parent) => match hir[parent].kind {
-                    // Not `[x = d] = v`, where `d` is only for want of anything better.
+                    // Not `[x = d] = v`, where `d` is only a fallback.
                     ExprKind::Assign { target, value, .. }
                         if target == e && !self.is_definite_assignment_target(file, parent) =>
                     {
@@ -5663,9 +5783,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeOfInitializer`, `getTypeOfExpression(node.Right)`. `getTypeOfExpression` checks an expression again while it is being
-    /// checked, and ends at the loop (`recheck_in_flow_loop`). Past a resolution, which hides the loop, `enter` refuses, so a cycle
-    /// through a value assigned on a back edge may not be one in TypeScript. `mark_circle_from` tells which are.
+    /// `getTypeOfInitializer`, `getTypeOfExpression(node.Right)`. `getTypeOfExpression` rechecks an
+    /// expression that is already being checked, and terminates at the loop
+    /// (`recheck_in_flow_loop`). Beyond a type resolution, which hides the loop, `enter` refuses,
+    /// so a cycle through a value assigned on a back edge may not be a cycle in TypeScript.
+    /// `mark_cycle_from` identifies those.
     fn type_of_assigned_value(
         &mut self,
         walk: &Walk,
@@ -5685,7 +5807,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `getInitialType`: what the initializer gives `pat`. `None` where TypeScript has its error type.
+    /// `getInitialType`: the type the initializer gives `pat`. `None` where TypeScript returns its
+    /// error type.
     fn initial_type_of_pat(&mut self, file: FileId, pat: PatId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (ty, default) = match bound.pat_parent[pat.idx()] {
@@ -5730,7 +5853,7 @@ impl<'p> Checker<'p> {
         Some(self.union(&[ty, default]))
     }
 
-    /// `getAssignedType`. `None` where TypeScript has its error type.
+    /// `getAssignedType`. `None` where TypeScript returns its error type.
     fn assigned_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.expr_parent[e.idx()] {
@@ -5744,7 +5867,8 @@ impl<'p> Checker<'p> {
                     if !self.is_definite_assignment_target(file, p) {
                         return Some(self.get_type_of_expression(file, value));
                     }
-                    // `x = d` as an element: `x` is given what the element is, or else the default.
+                    // `x = d` as an element: `x` is assigned the type of the element, or else that
+                    // of the default.
                     let ty = self.assigned_type(file, p)?;
                     let (ty, default) = (
                         self.without_undefined(ty),
@@ -5807,7 +5931,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getInitialTypeOfVariableDeclaration`, `getAssignedType`: what `left`, the head of `for (x in o)` or `for (x of xs)`, is given.
+    /// `getInitialTypeOfVariableDeclaration`, `getAssignedType`: the type assigned to `left`, the
+    /// head of `for (x in o)` or `for (x of xs)`.
     fn initial_type_of_for_head(&mut self, file: FileId, left: StmtId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Stmt(owner) = bound.stmt_parent[left.some()?.idx()] else {
@@ -5815,7 +5940,8 @@ impl<'p> Checker<'p> {
         };
         match hir[owner.some()?].kind {
             StmtKind::ForIn { left: head, .. } if head == left => Some(TypeId::STRING),
-            // `checkRightHandSideOfForOf`: what is gone through is taken to be there (`checkNonNullExpression`).
+            // `checkRightHandSideOfForOf`: the iterated expression is assumed to be non-nullish
+            // (`checkNonNullExpression`).
             StmtKind::ForOf {
                 left: head,
                 expr,
@@ -5830,7 +5956,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether `target` is the `k` of `for (const k in x)`, where `x` is the reference or a chain that goes through it.
+    /// Whether `target` is the `k` of `for (const k in x)`, where `x` is the reference or an access
+    /// chain that contains it.
     fn is_for_in_over(&mut self, reference: &Reference, target: FlowTarget) -> bool {
         let FlowTarget::Var(d) = target else {
             return false;
@@ -5847,8 +5974,8 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// Whether `expr`, `a.push(x)` or `a[i] = x`, is done to the reference. `(a.push)(x)` and `(a[i]) = x` fill nothing
-    /// (`bindCallExpressionFlow`, `bindBinaryExpressionFlow`).
+    /// Whether `expr`, `a.push(x)` or `a[i] = x`, mutates the reference. `(a.push)(x)` and `(a[i])
+    /// = x` are not array mutations (`bindCallExpressionFlow`, `bindBinaryExpressionFlow`).
     fn is_mutation_of(&mut self, reference: &Reference, expr: ExprId) -> bool {
         let hir = self.hir(reference.file);
         let array = match hir[expr].kind {
@@ -5865,8 +5992,9 @@ impl<'p> Checker<'p> {
         self.matches(reference, array)
     }
 
-    /// Whether `getTypeAtFlowNode` gets `MAX_FLOW_DEPTH` deep going straight back from `flow`, for an array nothing is assigned to
-    /// after its declaration. Nothing met is looked into, and where ways meet it is not followed any further.
+    /// Whether `getTypeAtFlowNode` reaches a depth of `MAX_FLOW_DEPTH` walking straight back from
+    /// `flow`, for an array that is not assigned after its declaration. No node on the way is
+    /// evaluated, and the walk stops at a join.
     fn is_flow_too_deep(&mut self, reference: &Reference, mut flow: FlowId) -> bool {
         let (hir, bound) = (self.hir(reference.file), self.bound(reference.file));
         let mut nested = 0;
@@ -5894,7 +6022,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeAtFlowArrayMutation`: the array `ty` after `expr`, which is done to it.
+    /// `getTypeAtFlowArrayMutation`: the array `ty` after the mutation `expr`.
     fn after_array_mutation(&mut self, file: FileId, ty: TypeId, expr: ExprId) -> TypeId {
         if !matches!(self.data(ty), TypeData::EvolvingArray(_)) {
             return ty;
@@ -5925,7 +6053,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── calls that assert or never return ─────────────────────────────
 
-    /// `getTypeOfDottedName`: the type of `e` as far as annotations say, without inferring anything.
+    /// `getTypeOfDottedName`: the type of `e` as determined by annotations alone, without
+    /// inference.
     pub(super) fn explicit_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -5944,12 +6073,12 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getExplicitTypeOfSymbol`, of the property `name` of `obj`.
+    /// `getExplicitTypeOfSymbol` for the property `name` of `obj`.
     fn explicit_type_of_property(&mut self, obj: TypeId, name: Atom) -> Option<TypeId> {
         let apparent = self.apparent_type(obj);
         let (prop, mapper) = self.prop_ref(apparent, name)?;
-        // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration says its type. Not what a getter gives,
-        // whatever it says.
+        // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration has a type
+        // annotation. Not a getter, even an annotated one.
         if prop.flags.contains(PropFlags::ACCESSOR) {
             return None;
         }
@@ -5985,14 +6114,14 @@ impl<'p> Checker<'p> {
         Some(self.type_of_prop(prop, mapper))
     }
 
-    /// `getExplicitTypeOfSymbol`, of what a name or an export of a namespace stands for.
+    /// `getExplicitTypeOfSymbol` for the symbol that a name or a namespace export resolves to.
     fn explicit_type_of_symbol(&mut self, sym: Sym) -> Option<TypeId> {
         // `for (var a of b) for (var b of a)`
         if self.is_stack_low() {
             return None;
         }
         let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
-            // `resolveSymbol`: what the tables do not have is a property.
+            // `resolveSymbol`: a target that is not in the symbol tables is a property.
             let AliasTarget::Property(obj, name, _) = self.resolve_alias(sym) else {
                 return None;
             };
@@ -6005,7 +6134,8 @@ impl<'p> Checker<'p> {
         if !flags.intersects(SymFlags::VARIABLE) {
             return None;
         }
-        // `ValueDeclaration`: the first has the say. A type of the same name may be declared before it.
+        // `ValueDeclaration`: the first value declaration decides. A type with the same name may be
+        // declared before it.
         let files = self.files();
         let (f, pat) = files.parts(sym).iter().find_map(|&part| {
             files
@@ -6019,10 +6149,12 @@ impl<'p> Checker<'p> {
         })?;
         let (hir, bound) = (self.hir(f), self.bound(f));
         match bound.pat_parent[pat.idx()] {
-            // `isDeclarationWithExplicitTypeAnnotation`. It is the type of the variable: a parameter that may be left out may be `undefined`.
+            // `isDeclarationWithExplicitTypeAnnotation`. The result is the type of the variable: an
+            // optional parameter may be `undefined`.
             PatParent::Param(p) if hir[p].ty.is_some() => Some(self.type_of_symbol(sym)),
             PatParent::Var(d) if hir[d].ty.is_some() => Some(self.type_of_symbol(sym)),
-            // The variable of `for (const f of fs)` is what `fs` holds, as far as annotations say what `fs` is.
+            // The variable of `for (const f of fs)` has the element type of `fs`, as far as
+            // annotations determine the type of `fs`.
             PatParent::Var(d) => {
                 let stmt = bound.var_stmt[d.idx()];
                 if stmt.is_some()
@@ -6044,7 +6176,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getExplicitThisType`: what `this` is declared as. Nothing is narrowed, and what is around says nothing.
+    /// `getExplicitThisType`: the declared type of `this`. Nothing is narrowed, and the enclosing
+    /// context contributes nothing.
     fn explicit_this_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         use crate::bind::{FnOwner, MemberOwner};
         let (class, is_static) = match self.this_container(file, e)? {
@@ -6087,13 +6220,13 @@ impl<'p> Checker<'p> {
         resolved.sig
     }
 
-    /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
-    /// never returns.
+    /// `getEffectsSignature` for a call statement: the called signature, if it is declared to
+    /// assert something or to never return.
     pub(super) fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
         self.effects_signature_and_is_cached(file, call).0
     }
 
-    /// The same, and whether `effects_signatures` has it.
+    /// The same, and whether it is cached in `effects_signatures`.
     fn effects_signature_and_is_cached(
         &mut self,
         file: FileId,
@@ -6105,7 +6238,7 @@ impl<'p> Checker<'p> {
         let mut required_resolution = false;
         let (sig, stored) = self
             .run_memoizable(|c| c.effects_signature_uncached(file, call, &mut required_resolution));
-        // `explicit_type_of_symbol` says nothing where the stack is low.
+        // `explicit_type_of_symbol` returns nothing when the stack is low.
         let stored = stored.filter(|_| !required_resolution && !self.is_stack_low());
         if let Some(stored) = stored {
             (self.p.effects_signatures).rewrite(&self.task, (file, call), sig, stored);
@@ -6130,7 +6263,8 @@ impl<'p> Checker<'p> {
         memo.idle_calls[flow.idx() / 64] |= 1 << (flow.idx() % 64);
     }
 
-    /// `required_resolution`: the answer is as good as the resolution of the call, which keeps track of that itself.
+    /// `required_resolution`: the result is as cacheable as the resolution of the call, which
+    /// tracks that itself.
     fn effects_signature_uncached(
         &mut self,
         file: FileId,
@@ -6144,9 +6278,11 @@ impl<'p> Checker<'p> {
         let callee = self.explicit_type(file, hir[c].callee)?;
         let sigs = self.signatures(callee, false);
         let sig = match sigs[..] {
-            // That it asserts, or never returns, holds whatever its type arguments are. What it asserts is asked where that matters.
+            // That it asserts, or never returns, holds for any type arguments. What it asserts is
+            // resolved where that matters.
             [only] => only,
-            // Which of several is meant takes resolving the call, if that can make a difference.
+            // Selecting among several overloads requires resolving the call, if that can make a
+            // difference.
             _ => {
                 if !sigs.iter().any(|&s| self.asserts_or_never_returns(s)) {
                     return None;
@@ -6158,7 +6294,7 @@ impl<'p> Checker<'p> {
         self.asserts_or_never_returns(sig).then_some(sig)
     }
 
-    /// `hasTypePredicateOrNeverReturnType`, `x is T` aside: a call that is a statement makes nothing of that.
+    /// `hasTypePredicateOrNeverReturnType`, excluding `x is T`, which a call statement ignores.
     fn asserts_or_never_returns(&mut self, sig: SigId) -> bool {
         let Some((file, func, _)) = self.sig_decl(sig) else {
             return false;
@@ -6174,7 +6310,7 @@ impl<'p> Checker<'p> {
                 asserts && predicate.is_some()
             }
             TypeNodeKind::Keyword(keyword) => keyword == Keyword::Never,
-            // `getReturnTypeFromAnnotation`: `never` by another name.
+            // `getReturnTypeFromAnnotation`: `never` through an alias.
             _ => {
                 let returned = self.type_from_node(file, ret);
                 returned.is_never()
@@ -6344,7 +6480,7 @@ impl<'p> Checker<'p> {
                 no_cache_check = false;
             }
             match bound.flow[flow.idx()] {
-                // What cannot be reached is let be.
+                // Unreachable nodes are skipped.
                 Flow::Unreachable => return true,
                 Flow::Start { .. } | Flow::StartInvoked { .. } => return false,
                 Flow::Assign { before, .. }
@@ -6396,7 +6532,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `computeExhaustiveSwitchStatement`: whether the cases cover everything the subject can be.
+    /// `computeExhaustiveSwitchStatement`: whether the cases cover every possible value of the
+    /// `switch` expression.
     fn is_exhaustive_switch(&mut self, file: FileId, stmt: StmtId) -> bool {
         let hir = self.hir(file);
         let StmtKind::Switch { expr, cases } = hir[stmt].kind else {
@@ -6417,11 +6554,11 @@ impl<'p> Checker<'p> {
                 return false;
             }
             let not_equal = not_equal_facts_from_typeof_switch(&witnesses, 0, 0);
-            // What can be anything is covered by all that `typeof` can give.
+            // A type that can be anything is covered by all possible `typeof` results.
             if self.has_any_flag(ty) || ty == TypeId::UNKNOWN {
                 return facts::ALL_TYPEOF_NE & not_equal == facts::ALL_TYPEOF_NE;
             }
-            // `someType` asks `never` itself, which has no facts: it has all of none.
+            // `someType` tests `never` itself, which has no facts: the condition holds vacuously.
             if ty.is_never() {
                 return not_equal != 0;
             }
@@ -6450,13 +6587,14 @@ impl<'p> Checker<'p> {
             }
             tested.push(t);
         }
-        // `eachTypeContainedIn`: the very types, not what compares equal to them.
+        // `eachTypeContainedIn`: by type identity, not by comparability.
         self.every_type(ty, |c, m| tested.contains(&c.with_freshness(m, false)))
     }
 
     // ───────────────────────────── the rest ─────────────────────────────
 
-    /// `isInCompoundLikeAssignment`: `x = x + 1` is `x += 1` written out, and a `0` is not held to stay one.
+    /// `isInCompoundLikeAssignment`: `x = x + 1` is `x += 1` expanded, and a `0` is not assumed to
+    /// keep its literal type.
     pub(super) fn is_in_compound_like_assignment(&self, file: FileId, target: ExprId) -> bool {
         let hir = self.hir(file);
         let crate::bind::Parent::Expr(parent) = self.bound(file).expr_parent[target.idx()] else {
@@ -6493,7 +6631,8 @@ impl<'p> Checker<'p> {
         self.map_type(ty, |c, m| c.base_of_literal(m))
     }
 
-    /// Whether `getPropertyOfType` finds `name` in what `ty` is seen as: what an index signature stands in for is not found.
+    /// Whether `getPropertyOfType` finds `name` in the apparent type of `ty`: a name that only an
+    /// index signature covers is not found.
     pub(super) fn finds_property(&mut self, ty: TypeId, name: Atom) -> bool {
         let apparent = self.apparent_type(ty);
         self.parts(apparent).iter().all(|&part| {
@@ -6505,7 +6644,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard though it does not say so.
+    /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard without declaring one.
     pub(super) fn inferred_predicate(&mut self, file: FileId, func: FnId) -> Option<Predicate> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
@@ -6519,7 +6658,8 @@ impl<'p> Checker<'p> {
             return None;
         }
         let info = bound.fns[func.idx()];
-        // The one thing that is returned, and where control is by then. `NONE`: where the function starts.
+        // The single returned expression, and the flow node at that point. `NONE`: the start of the
+        // function.
         let (body, before) = match f.body {
             FnBody::Expr(e) => (e, FlowId::NONE),
             FnBody::Block(_) => {
@@ -6533,8 +6673,8 @@ impl<'p> Checker<'p> {
                 if e.is_none() {
                     return None;
                 }
-                // `checkIfExpressionRefinesParameter`: where control is at the `return` goes for what is written right in it. A test
-                // in parentheses is taken as if nothing came before it.
+                // `checkIfExpressionRefinesParameter`: the flow node of the `return` applies to its
+                // direct operand. A parenthesized condition is treated as if nothing preceded it.
                 let is_on_its_own =
                     is_parenthesized(hir, e) && bound.expr_flow[e.idx()] == UNREACHABLE;
                 (
@@ -6548,7 +6688,7 @@ impl<'p> Checker<'p> {
             }
             FnBody::None => return None,
         };
-        // What cannot narrow anything is not worth asking about.
+        // Expressions that cannot narrow anything are skipped.
         if !matches!(
             hir[body].kind,
             ExprKind::Binary { .. }
@@ -6570,7 +6710,8 @@ impl<'p> Checker<'p> {
         {
             return kept;
         }
-        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: what is tested on the way may call the function.
+        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: a condition
+        // evaluated along the way may call the function.
         if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
             return None;
         }
@@ -6619,7 +6760,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let declared = self.type_of_param(file, p);
-            // `x is true` is of no use to anybody.
+            // `x is true` is not useful.
             if self.is_boolean(declared) {
                 continue;
             }
@@ -6643,7 +6784,8 @@ impl<'p> Checker<'p> {
                 self.reduced(left)
             };
             self.walk_declared = outer;
-            // `x is never` is a type guard like any other, unless that nothing is left rests on something unknown.
+            // `x is never` is a type guard like any other, unless the empty result depends on an
+            // unresolved type.
             if when_true == declared || !leftover.is_never() {
                 continue;
             }
@@ -6656,8 +6798,9 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// `getFlowTypeOfReference` of a parameter declared as `declared` that is `initial` where its function starts, past the test
-    /// `test`, which is made at `before` (`NONE`: where the function starts) and comes out as `sense`.
+    /// `getFlowTypeOfReference` for a parameter declared as `declared` whose type is `initial` at
+    /// the start of its function, after the condition `test`, which is evaluated at `before`
+    /// (`NONE`: the start of the function) with the outcome `sense`.
     fn param_type_past_test(
         &mut self,
         reference: &Reference,

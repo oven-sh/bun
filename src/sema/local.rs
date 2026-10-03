@@ -1,19 +1,23 @@
-//! What a task keeps to itself.
+//! Task-local storage.
 //!
-//! During a step the published state is read-only. Whatever a task creates or works out goes into stores that are fields of the `Task`:
-//! no other thread reads them, so they take no atomic operations, they are small enough to stay in the cache, and what is not handed to
-//! the barrier is freed with the task.
+//! During a step the published state is read-only. Everything a task creates or computes goes into
+//! stores that are fields of the `Task`: no other thread reads them, so they need no atomic
+//! operations, they are small enough to stay in the cache, and what is not passed to the barrier is
+//! freed with the task.
 //!
-//! A type, signature, mapper, component list, atom or handle that a task has created has `LOCAL` set in its number, and the rest of the
-//! number counts from 0 within the task. So what is worked out about one needs no hashing either: it goes in a vector.
+//! A type, signature, mapper, component list, atom or handle that a task has created has `LOCAL`
+//! set in its id, and the rest of the id counts from 0 within the task. So results computed about
+//! one need no hashing either: they are stored in a vector.
 //!
-//! This file has the containers. `crate::types::OwnStore` has the records, `crate::table` the tables, `crate::check::task` the task.
+//! This file has the containers. `crate::types::OwnStore` has the records, `crate::table` the
+//! tables, `crate::check::task` the task.
 
 use std::alloc::Layout;
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Set in the number of a type, a signature, a mapper, a component list, an atom or a handle that belongs to a task.
+/// Set in the id of a type, a signature, a mapper, a component list, an atom or a handle that
+/// belongs to a task.
 pub const LOCAL: u32 = 1 << 30;
 
 #[inline]
@@ -21,7 +25,8 @@ pub const fn is_local_number(number: u32) -> bool {
     number & LOCAL != 0
 }
 
-/// Whether something mentions an id with `LOCAL`. The published half of a table has no entry under such a key.
+/// Whether a value mentions an id with `LOCAL`. The shared part of a table has no entry under such
+/// a key.
 pub trait MaybeLocal {
     fn is_local(&self) -> bool;
 }
@@ -69,8 +74,9 @@ impl<A: MaybeLocal, B: MaybeLocal, C: MaybeLocal> MaybeLocal for (A, B, C) {
     }
 }
 
-/// A vector whose elements never move and that is emptied without giving its memory back. A reference to an element stays good while
-/// others are pushed: the chunks are reached through raw pointers, so a push makes no reference to anything but its own slot.
+/// A vector whose elements never move and that is cleared without releasing its memory. A reference
+/// to an element stays valid while others are pushed: the chunks are accessed through raw pointers,
+/// so a push creates no reference to anything but its own slot.
 pub struct Chunked<T> {
     chunks: Vec<*mut T>,
     len: usize,
@@ -78,7 +84,7 @@ pub struct Chunked<T> {
 
 // SAFETY: owns its elements.
 unsafe impl<T: Send> Send for Chunked<T> {}
-// SAFETY: a shared reference gives out shared references to the elements only.
+// SAFETY: a shared reference only yields shared references to the elements.
 unsafe impl<T: Sync> Sync for Chunked<T> {}
 
 const CHUNK: usize = 1024;
@@ -118,7 +124,7 @@ impl<T> Chunked<T> {
             }
             self.chunks.push(chunk);
         }
-        // SAFETY: inside the chunk, and nothing is there.
+        // SAFETY: the slot is inside the chunk and uninitialized.
         unsafe { self.chunks[index / CHUNK].add(index % CHUNK).write(value) };
         self.len += 1;
         index
@@ -127,7 +133,7 @@ impl<T> Chunked<T> {
     #[inline]
     pub fn get(&self, index: usize) -> &T {
         assert!(index < self.len);
-        // SAFETY: the first `len` are written, so the chunks they are in are there.
+        // SAFETY: the first `len` elements are initialized, so their chunks are allocated.
         unsafe { &*self.chunks.get_unchecked(index / CHUNK).add(index % CHUNK) }
     }
 
@@ -135,7 +141,7 @@ impl<T> Chunked<T> {
     pub fn drain(&mut self, mut take: impl FnMut(usize, T)) {
         let len = std::mem::take(&mut self.len);
         for index in 0..len {
-            // SAFETY: the first `len` were written, and none is reached any more.
+            // SAFETY: the first `len` elements were initialized, and none is accessed again.
             take(index, unsafe {
                 self.chunks[index / CHUNK].add(index % CHUNK).read()
             });
@@ -152,11 +158,11 @@ impl<T> Chunked<T> {
         }
     }
 
-    /// One big file does not make its owner big for good.
+    /// So that one large file does not grow its owner permanently.
     fn release(&mut self, keep: usize) {
         debug_assert!(self.len == 0);
         for chunk in self.chunks.drain(keep.min(self.chunks.len())..) {
-            // SAFETY: allocated in `push` with this layout, and nothing is in it.
+            // SAFETY: allocated in `push` with this layout, and it holds no live element.
             unsafe { std::alloc::dealloc(chunk.cast::<u8>(), Self::LAYOUT) };
         }
     }
@@ -169,10 +175,10 @@ impl<T> Drop for Chunked<T> {
     }
 }
 
-/// Finds numbers by the hash of what they stand for.
+/// Finds indices by the hash of the values they represent.
 #[derive(Default)]
 pub struct Found {
-    /// 0, or the low half of the hash above the number plus one.
+    /// 0, or the low half of the hash in the high bits above the index plus one.
     places: Vec<u64>,
     count: usize,
 }
@@ -187,7 +193,7 @@ impl Found {
         let tag = spread as u32;
         let mut at = Self::start(u64::from(tag)) & mask;
         loop {
-            // SAFETY: `mask` is one less than there are places.
+            // SAFETY: `mask` is one less than the number of slots.
             let place = unsafe { *self.places.get_unchecked(at) };
             if place == 0 {
                 return None;
@@ -203,7 +209,8 @@ impl Found {
         if (self.count + 1) * 4 > self.places.len() * 3 {
             let bigger = (self.places.len() * 2).max(256);
             let old = std::mem::replace(&mut self.places, vec![0; bigger]);
-            // The place goes by bits of the hash that are not kept, so the tag has to do: it is spread again.
+            // The slot index uses bits of the hash that are not stored, so the stored tag is used
+            // instead: it is hashed again.
             for place in old {
                 if place != 0 {
                     self.put(place);
@@ -241,9 +248,9 @@ impl Found {
     }
 }
 
-/// A hash map that lists its entries IN INSERTION ORDER: they are in a vector, and the hash index holds places in it. What
-/// `bun_collections::ArrayHashMap` is, which this crate does not depend on, and which has no insert with a hash that is already computed
-/// for a key without `Default`.
+/// A hash map that iterates in insertion order: the entries are in a vector, and the hash index
+/// holds indices into it. Equivalent to `bun_collections::ArrayHashMap`, which this crate does not
+/// depend on, and which has no insert with a precomputed hash for a key without `Default`.
 pub struct Hashed<K, V> {
     entries: Vec<(K, V)>,
     found: Found,
@@ -259,7 +266,8 @@ impl<K, V> Default for Hashed<K, V> {
 }
 
 impl<K: Eq, V> Hashed<K, V> {
-    /// Where the entry for `key` is in the insertion order. `spread`: the hash of `key`, here and below.
+    /// The index of the entry for `key` in insertion order. `spread`: the hash of `key`, here and
+    /// below.
     #[inline]
     pub fn place(&self, spread: u64, key: &K) -> Option<u32> {
         (self.found).find(spread, |place| self.entries[place as usize].0 == *key)
@@ -271,7 +279,7 @@ impl<K: Eq, V> Hashed<K, V> {
         Some(&self.entries[place as usize].1)
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing entry. Returns the stored value.
     #[inline]
     pub fn insert(&mut self, spread: u64, key: K, value: V) -> &V {
         let place = match self.place(spread, &key) {
@@ -281,7 +289,8 @@ impl<K: Eq, V> Hashed<K, V> {
         &self.entries[place as usize].1
     }
 
-    /// Whatever was there for `key` is gone. The entry keeps its place in the insertion order.
+    /// Overwrites any existing value for `key`. The entry keeps its position in the insertion
+    /// order.
     #[inline]
     pub fn replace(&mut self, spread: u64, key: K, value: V) {
         match self.place(spread, &key) {
@@ -311,8 +320,9 @@ impl<K: Eq, V> Hashed<K, V> {
     }
 }
 
-/// The hash of a key that is one word. `Found` goes by the low half, so that has to depend on BOTH halves of the word, and not on their
-/// exclusive or: the nodes (file, index) with one `file ^ index` are as many as the task has files.
+/// The hash of a one-word key. `Found` uses the low half, so that half has to depend on both halves
+/// of the word, and not on their exclusive or: the number of nodes (file, index) with the same
+/// `file ^ index` equals the number of files of the task.
 #[inline]
 pub fn spread_word(word: u64) -> u64 {
     let product = word.wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -345,29 +355,35 @@ fn clear_cells<C>(cells: &mut Vec<C>) {
     }
 }
 
-// ───────────────────────────── the task's halves of the `Buffered` tables ─────────────────────────────
+// ───────────────────────────── the task-local parts of the `Buffered` tables
+// ─────────────────────────────
 
 const NO_FILE: u32 = u32::MAX;
 
-/// What one task has for one `Buffered` table. A cell holds a packed value, 0 for nothing.
+/// The task-local part of one `Buffered` table. A cell holds a packed value, 0 for empty.
 pub(crate) struct Half {
-    /// A table by id: a cell for each id of the task's own, by its number without `LOCAL`.
-    /// A table by node: a cell for each node of `file`, by its number.
+    /// A table keyed by id: one cell per task-local id, indexed by the id without `LOCAL`.
+    /// A table keyed by node: one cell per node of `file`, indexed by its number.
     dense: Vec<u32>,
-    /// A table by node: the file that `dense` is for, and its `Buffer::ordinal`.
+    /// A table keyed by node: the file that `dense` covers, and its `Buffer::ordinal`.
     file: u32,
     ordinal: u32,
-    /// A table by node: AN ENTRY UNDER A NODE OF `file` MAY BE IN `sparse`, because the task stored it while `dense` was for another file.
-    /// A task that goes through the files of a cycle evaluates nodes of the later ones from the earlier ones. Such an entry stays
-    /// where it is, so an empty dense cell does not say that there is no entry. Never set for the first file of a task.
+    /// A table keyed by node: an entry for a node of `file` may be in `sparse`, because the task
+    /// stored it while `dense` covered another file. A task that visits the files of a cycle
+    /// evaluates nodes of the later files from the earlier ones. Such an entry is not moved, so an
+    /// empty dense cell does not imply that there is no entry. Never set for the first file of a
+    /// task.
     may_be_hashed: bool,
-    /// A table by node: WHAT `dense` WAS FOR THE FILES THAT THE TASK HAS GONE THROUGH BEFORE, each with its file, by ordinal less one. A vector
-    /// is put away as it is: nothing is hashed when the task goes on to the next file. `NO_FILE`: the half has none for the ordinal.
+    /// A table keyed by node: the former `dense` vectors of the files that the task has visited
+    /// before, each with its file, indexed by ordinal minus one. A vector is saved unchanged:
+    /// nothing is hashed when the task moves on to the next file. `NO_FILE`: there is no vector for
+    /// the ordinal.
     earlier: Vec<(u32, Vec<u32>)>,
-    /// A PUBLISHED KEY THAT GETS A NEW ENTRY: a published id by its number. A node by `file << 32 | index`, if `dense` was for another file
-    /// when the entry was stored.
+    /// New entries under published keys: a published id is keyed by its number. A node is keyed by
+    /// `file << 32 | index`, if `dense` covered another file when the entry was stored.
     sparse: Hashed<u64, u32>,
-    /// What only the table knows the type of. A kept table: `Chunked<(u64, T)>`, the values with their keys, by handle without `LOCAL`.
+    /// Type-erased storage whose type only the table knows. A kept table: `Chunked<(u64, T)>`, the
+    /// values with their keys, indexed by handle without `LOCAL`.
     /// A `ByKey`: `Hashed<K, V>`.
     typed: Option<Box<dyn Any + Send>>,
 }
@@ -398,15 +414,17 @@ impl Half {
         (self.sparse.get(spread_word(word), &word)).map_or(0, |&raw| raw)
     }
 
-    /// The cell for the node `index` of the earlier file with `ordinal`. `None`: the half has no vector for it, or a shorter one.
+    /// The cell for the node `index` of the earlier file with `ordinal`. `None`: there is no vector
+    /// for it, or the vector is shorter.
     #[inline]
     fn earlier_cell(&mut self, ordinal: u32, index: u32) -> Option<&mut u32> {
         let cells = &mut self.earlier.get_mut(ordinal.checked_sub(1)? as usize)?.1;
         cells.get_mut(index as usize)
     }
 
-    /// From now on `dense` is for the nodes of `file`. What it was for the file before is put away.
-    /// `may_be_hashed`: whether the task can have evaluated a node of `file` while `dense` was for another file.
+    /// From now on `dense` covers the nodes of `file`. The vector of the previous file is saved.
+    /// `may_be_hashed`: whether the task can have evaluated a node of `file` while `dense` covered
+    /// another file.
     #[cold]
     fn adopt(&mut self, file: u32, ordinal: u32, may_be_hashed: bool) {
         self.may_be_hashed = may_be_hashed && !self.sparse.is_empty();
@@ -418,15 +436,15 @@ impl Half {
             self.earlier[at as usize] = (self.file, cells);
         }
         (self.file, self.ordinal) = (file, ordinal);
-        // The task has gone through the file before.
+        // The task has visited the file before.
         if let Some(before) = self.earlier.get_mut(ordinal as usize - 1) {
             self.dense = std::mem::replace(before, (NO_FILE, Vec::new())).1;
         }
     }
 
-    /// The cells that are not empty: those of the earlier files, in the order of the files, by index. Then the dense ones, by index. Then the
-    /// hashed entries, in insertion order. `(key, raw)`. The key of a dense cell is `dense_key(self, index)`. The half has no cells
-    /// afterwards.
+    /// The non-empty cells: those of the earlier files, in file order, by index. Then the dense
+    /// ones, by index. Then the hashed entries, in insertion order. Each is `(key, raw)`. The key
+    /// of a dense cell is `dense_key(self, index)`. No cells are left afterwards.
     pub(crate) fn take_cells(
         &mut self,
         dense_key: impl Fn(&Half, u32) -> u64,
@@ -450,7 +468,7 @@ impl Half {
         self.clear_cells();
     }
 
-    /// The file that `dense` is for.
+    /// The file that `dense` covers.
     pub(crate) fn file(&self) -> u32 {
         self.file
     }
@@ -463,7 +481,7 @@ impl Half {
     }
 
     /// # Safety
-    /// `T` is the one type that the table of this half asks for.
+    /// `T` is the one type that the table of this `Half` requests.
     #[inline]
     pub(crate) unsafe fn typed<T: 'static>(&self) -> Option<&T> {
         let typed = self.typed.as_deref()?;
@@ -481,7 +499,7 @@ impl Half {
         Some(unsafe { &mut *std::ptr::from_mut(typed).cast::<T>() })
     }
 
-    /// Makes one if there is none.
+    /// Creates one if there is none.
     ///
     /// # Safety
     /// As for `typed`.
@@ -494,16 +512,18 @@ impl Half {
     }
 }
 
-/// The task's halves of all `Buffered` tables, by slot. A field of the `Task`.
+/// The task-local parts of all `Buffered` tables, indexed by slot. A field of the `Task`.
 pub(crate) struct Buffer {
-    /// The file that the task is going through, `NO_FILE` if it has none, and its ordinal.
+    /// The file that the task is visiting, `NO_FILE` if it has none, and its ordinal.
     file: u32,
     ordinal: u32,
-    /// Whether the task can have evaluated a node of `file` before it came to `file`. See `Half::may_be_hashed`.
+    /// Whether the task can have evaluated a node of `file` before it started visiting `file`. See
+    /// `Half::may_be_hashed`.
     may_be_hashed: bool,
-    /// By file: 1 for the first file that the task has come to, 2 for the second, and so on. 0, or no place: the task has not come to it.
+    /// Indexed by file: 1 for the first file that the task has visited, 2 for the second, and so
+    /// on. 0, or out of range: the task has not visited it.
     ordinals: Vec<u32>,
-    /// How many files have an ordinal.
+    /// The number of files that have an ordinal.
     files: u32,
     halves: Vec<Half>,
 }
@@ -522,8 +542,9 @@ impl Default for Buffer {
 }
 
 impl Buffer {
-    /// From now on the new entries under the nodes of `file` are dense. Nothing is dropped. `is_imported`: whether another file can refer
-    /// to `file`. If none can, the task has evaluated no node of `file` so far, unless it has gone through `file` before.
+    /// From now on the new entries under the nodes of `file` are dense. Nothing is dropped.
+    /// `is_imported`: whether another file can refer to `file`. If none can, the task has evaluated
+    /// no node of `file` so far, unless it has visited `file` before.
     pub(crate) fn begin_file(&mut self, file: u32, is_imported: bool) {
         let ordinal = cell_mut(&mut self.ordinals, file);
         let is_new = *ordinal == 0;
@@ -565,9 +586,9 @@ impl Buffer {
         self.halves.resize_with(slot as usize + 1, Half::default);
     }
 
-    // ── a table by id ──
+    // ── a table keyed by id ──
 
-    /// The cell of the task's own id `number`, which is without `LOCAL`.
+    /// The cell of the task-local id `number`, which is given without `LOCAL`.
     #[inline]
     pub(crate) fn own_id(&self, slot: u32, number: u32) -> u32 {
         (self.half(slot)).map_or(0, |half| {
@@ -575,7 +596,7 @@ impl Buffer {
         })
     }
 
-    /// What the cell holds afterwards: `raw`, or what was there first.
+    /// Returns the value the cell holds afterwards: `raw`, or the existing value.
     #[inline]
     pub(crate) fn put_own_id_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
         put_in_if_empty(&mut self.half_mut(slot).dense, number, raw)
@@ -603,9 +624,10 @@ impl Buffer {
         (self.half_mut(slot).sparse).replace(spread_word(word), word, raw);
     }
 
-    // ── a table by node ──
+    // ── a table keyed by node ──
     //
-    // ONE KEY, ONE ENTRY. It is in the vector of its file if that was `dense` when the entry was stored, and else in `sparse`.
+    // A key has exactly one entry. It is in the vector of its file if that was `dense` when the
+    // entry was stored, and otherwise in `sparse`.
 
     #[inline]
     pub(crate) fn node(&self, slot: u32, file: u32, index: u32) -> u32 {
@@ -628,14 +650,14 @@ impl Buffer {
         half.sparse_cell(node_word(file, index))
     }
 
-    /// 0: the task has not come to `file`.
+    /// 0: the task has not visited `file`.
     #[inline]
     fn ordinal_of(&self, file: u32) -> u32 {
         self.ordinals.get(file as usize).copied().unwrap_or(0)
     }
 
-    /// The cell of a vector in which the entry for the node is, or into which a new one goes. `Err`: it is in `sparse` of the half, or goes
-    /// there.
+    /// The vector cell that holds the entry for the node, or that a new entry goes into. `Err`: it
+    /// is in `sparse`, or goes there.
     #[inline]
     fn cell_for_node(&mut self, slot: u32, file: u32, index: u32) -> Result<&mut u32, &mut Half> {
         let (own, ordinal, may_be_hashed) = (self.file, self.ordinal, self.may_be_hashed);
@@ -664,7 +686,7 @@ impl Buffer {
         Err(half)
     }
 
-    /// What the cell holds afterwards: `raw`, or what was there first.
+    /// Returns the value the cell holds afterwards: `raw`, or the existing value.
     #[inline]
     pub(crate) fn put_node_if_empty(&mut self, slot: u32, file: u32, index: u32, raw: u32) -> u32 {
         match self.cell_for_node(slot, file, index) {
@@ -695,21 +717,22 @@ impl Buffer {
 
 // ───────────────────────────── the entries of the `FileLocal` tables ─────────────────────────────
 
-/// What one task has for one `FileLocal` table.
+/// The entries of one task for one `FileLocal` table.
 #[derive(Default)]
 struct FileLocalTable {
-    /// A word for each node of the task's file, 0 for nothing.
+    /// One word per node of the task's file, 0 for empty.
     cells: Vec<u64>,
     /// Words for the nodes of other files, by (file, index).
     sparse: crate::util::FxHashMap<(u32, u32), u64>,
-    /// What does not fit a word.
+    /// Values that do not fit in a word.
     kept: Vec<Box<dyn Any>>,
 }
 
-/// The entries of all `FileLocal` tables of one task, by slot. A field of the `Task`. A node of the task's file has a word in a vector,
-/// by its number. Every other key is hashed. NOTHING LISTS THE ENTRIES, so the order of the map does not matter.
+/// The entries of all `FileLocal` tables of one task, indexed by slot. A field of the `Task`. A
+/// node of the task's file has a word in a vector, indexed by its number. Every other key is
+/// hashed. Nothing iterates over the entries, so the order of the map does not matter.
 pub struct FileLocalTables {
-    /// The file that the task is going through, `NO_FILE` if it has none.
+    /// The file that the task is visiting, `NO_FILE` if it has none.
     file: u32,
     tables: Vec<FileLocalTable>,
 }
@@ -725,7 +748,8 @@ impl Default for FileLocalTables {
 
 static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
 
-/// The most that the `FileLocal` tables of one task have taken for one file, without kept values. For `--timing`.
+/// The peak size of the `FileLocal` tables of one task for one file, excluding kept values. For
+/// `--timing`.
 pub fn peak_file_local_bytes() -> usize {
     PEAK_BYTES.load(Ordering::Relaxed)
 }
@@ -784,7 +808,7 @@ impl FileLocalTables {
         }
     }
 
-    /// What the cell holds afterwards: `raw`, or what was there first.
+    /// Returns the value the cell holds afterwards: `raw`, or the existing value.
     #[inline]
     pub(crate) fn put_if_empty(&mut self, slot: u32, file: u32, index: u32, raw: u64) -> u64 {
         let is_dense = file == self.file;
@@ -796,7 +820,7 @@ impl FileLocalTables {
         }
     }
 
-    /// Whatever the cell held is gone.
+    /// Overwrites the cell.
     #[inline]
     pub(crate) fn store(&mut self, slot: u32, file: u32, index: u32, raw: u64) {
         let is_dense = file == self.file;
@@ -808,18 +832,18 @@ impl FileLocalTables {
         }
     }
 
-    /// Keeps `value` until the task ends or begins another file, and says where.
+    /// Stores `value` until the task ends or begins another file, and returns its index.
     pub(crate) fn keep<T: 'static>(&mut self, slot: u32, value: T) -> u32 {
         let table = self.table_mut(slot);
         table.kept.push(Box::new(value));
         table.kept.len() as u32 - 1
     }
 
-    /// What `keep` was given.
+    /// The value passed to `keep`.
     ///
     /// # Safety
-    /// `T` is the type of what `keep` was given. The reference is good until `begin_file`: whoever extends it beyond the call must not
-    /// hold on to it for longer.
+    /// `T` is the type of the value passed to `keep`. The reference is valid until `begin_file`: a
+    /// caller that extends its lifetime beyond the call must not hold it for longer.
     #[inline]
     pub(crate) unsafe fn kept<'a, T: 'static>(&self, slot: u32, index: u32) -> &'a T {
         let value = &*self.tables[slot as usize].kept[index as usize];

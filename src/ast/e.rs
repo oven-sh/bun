@@ -632,7 +632,7 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 
-    /// What else was written, if the parser keeps TypeScript syntax. `NONE` otherwise.
+    /// The rest of the source syntax, if the parser saves TypeScript syntax. `NONE` otherwise.
     pub syntax: crate::ts_syntax::JsxId,
 }
 impl Default for JSXElement {

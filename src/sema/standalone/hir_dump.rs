@@ -1,7 +1,8 @@
-//! A `hir::File` as text, to compare what two front ends make of the same source.
+//! Dumps a `hir::File` as text, to compare the output of two front ends for the same source.
 //!
-//! In which order the nodes were pushed into their vectors is nobody's business, so no id is ever printed: the tree is walked from
-//! `File::body`, a node is one line with everything it says itself, and what it names follows, indented, after the name of the field.
+//! The order in which the nodes were pushed into their vectors is an implementation detail, so no
+//! id is ever printed: the HIR is walked from `File::body`, a node is one line with all of its own
+//! data, and its children follow, indented, each after the name of its field.
 //!
 //! ```text
 //! body[1]:
@@ -14,10 +15,10 @@
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::*;
 
-/// Nothing is printed below this depth: a tree that got to hold itself would never end.
+/// Nothing is printed below this depth: printing a cyclic HIR would otherwise never terminate.
 const MAX_DEPTH: usize = 2000;
 
-/// Stands for what an id past the end of its vector names.
+/// Placeholder for the node of an out-of-bounds id.
 const NO_SUCH_NODE: &str = "<no such node>";
 
 /// One line: `put!(self, depth, label, "format", arguments..)`.
@@ -28,7 +29,8 @@ macro_rules! put {
     }};
 }
 
-/// The node `$id` names in `File::$arena`. Where there is none to print, a line says why and the function returns.
+/// The node that `$id` refers to in `File::$arena`. If there is none to print, prints a line with
+/// the reason and returns from the function.
 macro_rules! node {
     ($self:ident, $depth:ident, $label:ident, $arena:ident, $id:ident) => {{
         if $id.is_none() {
@@ -51,13 +53,15 @@ struct Dump<'a> {
     file: &'a File,
     atoms: &'a Interner,
     out: String,
-    /// Every node that was come to: in which vector, and where in it.
+    /// Every visited node: its vector and its index.
     seen: std::collections::HashSet<(&'static str, u32)>,
 }
 
-/// With the nodes nothing leads to, which whoever goes over a whole vector comes to all the same: `vector[index] pos=..`.
+/// Also returns the unreachable nodes, which code that iterates over a whole vector still visits:
+/// `vector[index] pos=..`.
 pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) {
-    // Every field by name, so that a new one has to be dealt with. `error_pos` only says where to point when a parser gave up.
+    // Every field is destructured by name, so that a new one must be handled. `error_pos` is only
+    // the position to report when a parser bailed out.
     let File {
         kind,
         has_module_syntax,
@@ -317,7 +321,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         }
     }
 
-    // An expression goes by where it starts and what it is.
+    // An expression is identified by its start and its kind.
     let mut around: Vec<(u32, &str, u32, u32)> = parens
         .iter()
         .map(|&(expr, open, end)| match file.exprs.get(expr.idx()) {
@@ -393,7 +397,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         members MemberId, props PropId, var_decls VarDeclId, cases CaseId, enum_members EnumMemberId, import_specs ImportSpecId,
         export_specs ExportSpecId, tuple_elems TupleElemId, fns FnId, classes ClassId
     );
-    // The two rows that are no node: node.rs.
+    // The two entries that are not nodes: node.rs.
     for (i, statement) in file.stmts.iter().enumerate() {
         let seen = d.seen.contains(&("stmts", i as u32));
         let has_parent = match statement.kind {
@@ -414,7 +418,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     (d.out, orphans)
 }
 
-/// `forEachChild` from the file down, one line a node: how deep, its `Kind`, where it starts.
+/// `forEachChild` from the file down, one line per node: its depth, its `Kind`, its start.
 pub fn nodes(file: &File) -> String {
     let mut out = String::new();
     let mut open = vec![(Node::FILE, 0)];
@@ -486,7 +490,7 @@ impl Dump<'_> {
         out
     }
 
-    /// `A.B.C`, and where each name is.
+    /// `A.B.C`, with the position of each name.
     fn entity_name(&self, names: Span<NameId>) -> String {
         if names.range().end > self.file.names.len() {
             return NO_SUCH_NODE.to_owned();
@@ -498,7 +502,7 @@ impl Dump<'_> {
         format!("[{}]", names.join(", "))
     }
 
-    /// `label[len]:`. False if what is in the list is not to follow.
+    /// Prints `label[len]:`. Returns false if the elements of the list must not be printed.
     fn open_list(&mut self, depth: usize, label: &str, len: usize) -> bool {
         if depth > MAX_DEPTH {
             self.line(depth, label, "...");

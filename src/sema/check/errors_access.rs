@@ -1,9 +1,11 @@
-//! Errors about `a.b` and `a[k]`: `a` may be null, there is no `b`, or `b` is not for whoever is asking. The last two as well of what
-//! a pattern takes out of an object, and the second of what a type looks up in another.
+//! Errors about `a.b` and `a[k]`: `a` may be null, `b` does not exist, or `b` is not accessible at
+//! that location. The last two also apply to the properties a binding pattern destructures, and the
+//! second to indexed access types.
 //!
-//! Follows `checkPropertyAccessExpressionOrQualifiedName`, `reportNonexistentProperty`, `checkPropertyAccessibilityAtLocation`,
-//! `checkElementAccessExpression`, `getPropertyTypeForIndexType`, and `checkVariableLikeDeclaration` with
-//! `getBindingElementTypeFromParentType` as far as the elements of patterns go, of TypeScript 7.0.2's checker.go.
+//! Follows `checkPropertyAccessExpressionOrQualifiedName`, `reportNonexistentProperty`,
+//! `checkPropertyAccessibilityAtLocation`, `checkElementAccessExpression`,
+//! `getPropertyTypeForIndexType`, and `checkVariableLikeDeclaration` with
+//! `getBindingElementTypeFromParentType` for binding elements, of TypeScript 7.0.2's checker.go.
 
 use super::errors::is_close;
 use super::explain::Line;
@@ -13,7 +15,8 @@ use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use bun_core::strings;
 use smallvec::SmallVec;
 
-/// What a type of the standard library got with each version of it: `(lib, properties)`.
+/// The properties each version of the standard library added to one of its types: `(lib,
+/// properties)`.
 type Features = &'static [(&'static str, &'static [&'static str])];
 
 #[rustfmt::skip]
@@ -22,7 +25,7 @@ const TYPED_ARRAY_FEATURES: Features = &[
     ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
 ];
 
-/// The properties of the standard library that came with a version of it, by type. `getFeatureMap`
+/// The standard library properties introduced by each version, keyed by type. `getFeatureMap`
 #[rustfmt::skip]
 const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Array", &[
@@ -153,8 +156,8 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
 ];
 
 impl Checker<'_> {
-    /// `a[k]`, what patterns and types look up by name, and private names out of place. What is wrong with `a.b` is reported where
-    /// its type is worked out (`type_of_property_access`).
+    /// `a[k]`, property lookups by binding patterns and indexed access types, and misplaced private
+    /// names. Errors in `a.b` are reported where its type is computed (`type_of_property_access`).
     pub(super) fn check_property_accesses(&mut self, file: FileId) {
         self.check_private_names(file);
     }
@@ -174,7 +177,8 @@ impl Checker<'_> {
         true
     }
 
-    /// `getEntityNameForExtendingInterface`: the whole of the dotted name that `e` is, or is the left part of, as it is written.
+    /// `getEntityNameForExtendingInterface`: the source text of the whole entity name that `e` is,
+    /// or is a left part of.
     pub(super) fn entity_name_around(&self, file: FileId, e: ExprId) -> Vec<u8> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut top = e;
@@ -187,12 +191,13 @@ impl Checker<'_> {
         self.source_text(file, self.start_of(file, top), self.end_of_expr(file, top))
     }
 
-    /// `DeclarationNameToString` of the name written at `pos`.
+    /// `DeclarationNameToString` of the name at `pos`.
     pub(super) fn declaration_name_at(&self, file: FileId, pos: u32) -> Vec<u8> {
         self.source_text(file, pos, self.end_of_name_at(file, pos))
     }
 
-    /// The name of a property whose declaration cannot be read: a `#x` as it is written, `[Symbol.iterator]` for what a symbol names.
+    /// The name of a property whose declaration cannot be read: a `#x` as in the source,
+    /// `[Symbol.iterator]` for a symbol-named property.
     fn name_of_unread_property(&self, name: Atom) -> Vec<u8> {
         let bytes = self.atoms().bytes(name);
         let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
@@ -204,8 +209,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Private names out of place: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18012 (`checkPrivateIdentifier` of
-    /// binder.go), 18024 (`checkEnumMember`).
+    /// Misplaced private names: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18012
+    /// (`checkPrivateIdentifier` of binder.go), 18024 (`checkEnumMember`).
     /// A bare `#x` is an `ExprKind::String` whose source text starts with `#`.
     fn check_private_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -257,7 +262,7 @@ impl Checker<'_> {
                 self.error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
-            // Parentheses are a parent of their own.
+            // Parentheses count as a separate parent node.
             let is_allowed = !is_parenthesized(self.hir(file), e)
                 && match parent {
                     // `IsExpressionNode`: only as the left operand of `in`.
@@ -281,7 +286,7 @@ impl Checker<'_> {
         }
     }
 
-    /// Where an error points at the expression `e`.
+    /// The error span for the expression `e`.
     pub(super) fn place_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
         (
             file,
@@ -290,8 +295,8 @@ impl Checker<'_> {
         )
     }
 
-    /// `getPropertyTypeForIndexType`, where `noImplicitAny` has something to say of `a[k]`, written at `e`, that finds nothing: 2576 7015
-    /// 2551 7052 7053. `keys`: `indexType` and `fullIndexType`.
+    /// `getPropertyTypeForIndexType`: the `noImplicitAny` errors for `a[k]` at `e` when the lookup
+    /// finds nothing: 2576 7015 2551 7052 7053. `keys`: `indexType` and `fullIndexType`.
     pub(super) fn report_implicit_any_element(
         &mut self,
         (file, e): (FileId, ExprId),
@@ -324,10 +329,11 @@ impl Checker<'_> {
         } else if self.index_type_of_type(object, TypeId::NUMBER).is_some() {
             self.error_at(at_index, 7015, &[]);
         } else if let Some(name) = name
-            && let Some(meant) = self.spelling_suggestion_for_property(object, name, None, true)
+            && let Some(suggestion) =
+                self.spelling_suggestion_for_property(object, name, None, true)
         {
-            let meant = self.name_of_unread_property(meant);
-            let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&meant)];
+            let suggestion = self.name_of_unread_property(suggestion);
+            let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&suggestion)];
             self.error_at(at_index, 2551, &args);
         } else if self.has_accessor_method_for(object, key, is_target) {
             let method: &[u8] = if is_target { b"set" } else { b"get" };
@@ -345,7 +351,7 @@ impl Checker<'_> {
         }
     }
 
-    /// What `getPropertyTypeForIndexType` puts under 7053.
+    /// The messages `getPropertyTypeForIndexType` chains under 7053.
     fn lines_under_implicit_any_element(&mut self, object: TypeId, key: TypeId) -> Vec<Line> {
         let (code, first) = match *self.data(key) {
             TypeData::EnumLit { .. } => (2339, cat!(b"[", self.type_to_string(key), b"]")),
@@ -401,7 +407,8 @@ impl Checker<'_> {
         self.reduced(apparent)
     }
 
-    /// Whether `name` is a global `let`, `const`, class or enum (`SymbolFlagsBlockScoped`): those are no properties of `globalThis`.
+    /// Whether `name` is a global `let`, `const`, class or enum (`SymbolFlagsBlockScoped`): those
+    /// are not properties of `globalThis`.
     pub(super) fn is_block_scoped_global(&self, name: Atom) -> bool {
         self.files().globals.get(name).is_some_and(|&global| {
             self.files()
@@ -410,8 +417,10 @@ impl Checker<'_> {
         })
     }
 
-    /// `getIndexInfosOfType`: the key of each index signature of `ty`, which is an apparent type, and whether it is readonly.
-    /// Of a union (`getUnionIndexInfos`), those of its first member that all the others have, readonly if one of them is.
+    /// `getIndexInfosOfType`: the key type of each index signature of `ty`, which is an apparent
+    /// type, and whether it is readonly.
+    /// For a union (`getUnionIndexInfos`), those of its first member that all other members have,
+    /// readonly if any of them is.
     pub(super) fn index_signatures_of(&mut self, ty: TypeId) -> SmallVec<[(TypeId, bool); 4]> {
         let mut infos: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
         for (at, &part) in self.parts(ty).iter().enumerate() {
@@ -436,9 +445,11 @@ impl Checker<'_> {
         infos
     }
 
-    /// `getApplicableIndexInfo` among `infos`, or else the signature for strings, which stands in where none applies: its key, and
-    /// whether it is readonly. `findApplicableIndexInfo`: the signature for strings counts only where no other applies, and several
-    /// that apply are one, with `unknown` for a key, that is readonly if all of them are.
+    /// `getApplicableIndexInfo` among `infos`, or else the string index signature, which is the
+    /// fallback where none applies: its key type, and whether it is readonly.
+    /// `findApplicableIndexInfo`: the string index signature counts only where no other applies,
+    /// and several applicable signatures are combined into one with the key type `unknown`,
+    /// readonly if all of them are.
     fn index_signature_for_key(
         &mut self,
         infos: &[(TypeId, bool)],
@@ -464,7 +475,8 @@ impl Checker<'_> {
             .is_some_and(|(_, is_readonly)| is_readonly)
     }
 
-    /// `isForInVariableForNumericPropertyNames`: `i` in `for (i in a) a[i]`, where `a` has numbers for names.
+    /// `isForInVariableForNumericPropertyNames`: `i` in `for (i in a) a[i]`, where `a` has numeric
+    /// property names.
     pub(super) fn is_for_in_variable_for_numeric_names(
         &mut self,
         file: FileId,
@@ -496,7 +508,8 @@ impl Checker<'_> {
                     _ => None,
                 };
                 if variable == Some(symbol) {
-                    // `hasNumericPropertyNames`: the one index signature it has is for numbers.
+                    // `hasNumericPropertyNames`: its only index signature is a number index
+                    // signature.
                     let over = self.get_type_of_expression(file, expr);
                     let over = self.reduced_apparent_type(over);
                     if matches!(self.index_signatures_of(over)[..], [(TypeId::NUMBER, _)]) {
@@ -527,7 +540,8 @@ impl Checker<'_> {
         })
     }
 
-    /// The property that may have been meant. `closest`: the one `GetSpellingSuggestion` settles on, and not the first that will do.
+    /// The suggested property. `closest`: the one `GetSpellingSuggestion` selects, rather than the
+    /// first acceptable candidate.
     fn spelling_suggestion_for_property(
         &mut self,
         object: TypeId,
@@ -541,8 +555,9 @@ impl Checker<'_> {
             _ => None,
         });
         let mut candidates: Vec<(((u8, FileId, u32), &[u8]), Atom)> = Vec::new();
-        // `getPropertiesOfUnionOrIntersectionType`: of a union, what all its members have, which is among what the first has. A
-        // member with index signatures may have by them what only the next declares.
+        // `getPropertiesOfUnionOrIntersectionType`: for a union, the properties all its members
+        // have, which are a subset of those of the first member. A member with index signatures may
+        // cover through them a property that only the next member declares.
         for &member in self.parts(object) {
             let member = self.apparent_type(member);
             let Some(members) = self.members(member) else {
@@ -560,7 +575,8 @@ impl Checker<'_> {
                 let is_within_reach = match access {
                     None => true,
                     Some((file, e, obj, chain)) => {
-                        // `isPropertyAccessible`: a `#x` is within reach in the class that declares it, and not in an optional chain.
+                        // `isPropertyAccessible`: a `#x` is accessible inside the class that
+                        // declares it, and not in an optional chain.
                         let is_private_name = matches!(self.value_declaration_of_prop(prop), Some((f, Decl::Member(m)))
                             if matches!(self.hir(f)[m].key, PropKey::Private(_)));
                         if is_private_name {
@@ -591,7 +607,7 @@ impl Checker<'_> {
                 if !closest {
                     return Some(prop.name);
                 }
-                // `compareSymbols` decides between two that are as close.
+                // `compareSymbols` breaks ties between equally close candidates.
                 candidates.push(((self.order_of_property(prop), candidate), prop.name));
             }
             if members.shape().index.is_empty() {
@@ -602,17 +618,18 @@ impl Checker<'_> {
             .map(|found| found.1)
     }
 
-    /// `GetErrorRangeForNode(suggestion.ValueDeclaration)`, of the property `meant` of `object`. `createUnionOrIntersectionProperty`:
-    /// what the members of a union declare in several places has no such declaration.
+    /// `GetErrorRangeForNode(suggestion.ValueDeclaration)` for the property `suggestion` of `object`.
+    /// `createUnionOrIntersectionProperty`: a property with different declarations in the members
+    /// of a union has no such declaration.
     fn span_of_suggested_property(
         &mut self,
         object: TypeId,
-        meant: Atom,
+        suggestion: Atom,
     ) -> Option<(FileId, u32, u32)> {
         let mut declared = None;
         for &member in self.parts(object) {
             let member = self.apparent_type(member);
-            let Some((prop, _)) = self.prop_ref(member, meant) else {
+            let Some((prop, _)) = self.prop_ref(member, suggestion) else {
                 continue;
             };
             let Some(declaration) = self.value_declaration_of_prop(prop) else {
@@ -627,7 +644,7 @@ impl Checker<'_> {
         Some((file, start, end))
     }
 
-    /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: nothing declares `sym` as a value.
+    /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: `sym` has no value declaration.
     pub(super) fn span_of_value_declaration(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
         let (file, decl) = self
             .files()
@@ -646,7 +663,8 @@ impl Checker<'_> {
         self.hir(file)[first].pos
     }
 
-    /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
+    /// The position of the first declaration of `prop`, in `compareSymbols` order: a property
+    /// without a declaration sorts last.
     pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, FileId, u32) {
         let declared = match &prop.source {
             PropSource::Literal(file, literal) => Some((
@@ -661,7 +679,8 @@ impl Checker<'_> {
                 Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                     Some((file, self.hir(file)[first].pos))
                 }
-                // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
+                // Not by symbol id: the binder declares the functions of a block before the rest of
+                // it.
                 _ => super::errors::place_of_first_declaration(self.files(), *symbol)
                     .map(|(_, file, pos)| (file, pos)),
             },
@@ -683,7 +702,8 @@ impl Checker<'_> {
         declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
     }
 
-    /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.
+    /// `getSuggestionForNonexistentIndexSignature`: it has a `get` or a `set` method that accepts
+    /// the key.
     fn has_accessor_method_for(&mut self, object: TypeId, key: TypeId, is_written: bool) -> bool {
         let Some(name) = self
             .atoms()
@@ -705,8 +725,8 @@ impl Checker<'_> {
                 .is_some_and(|p| self.is_assignable(key, p))
     }
 
-    /// `checkVariableLikeDeclaration`, of the binding element whose name is `element`, in `pattern`: "check private/protected variable
-    /// access".
+    /// `checkVariableLikeDeclaration` for the binding element whose name is `element`, in
+    /// `pattern`: "check private/protected variable access".
     pub(super) fn check_binding_element_accessibility(
         &mut self,
         file: FileId,
@@ -714,7 +734,8 @@ impl Checker<'_> {
         element: PatId,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `PropertyNameOrName`, if that is no pattern, and `getLiteralTypeFromPropertyName` of it.
+        // `PropertyNameOrName`, if that is not a pattern, and `getLiteralTypeFromPropertyName` of
+        // it.
         let own_name = match hir[element].kind {
             PatKind::Ident(name) => Some((self.string_literal(name, false), hir[element].pos)),
             _ => None,
@@ -748,7 +769,7 @@ impl Checker<'_> {
             PatParent::None => ExprId::NONE,
         };
         let is_super = initializer.is_some() && matches!(hir[initializer].kind, ExprKind::Super);
-        // `GetRootDeclaration`: where it is asked from.
+        // `GetRootDeclaration`: the location the access is checked from.
         let at = match bound.pat_parent[root_pattern(bound, pattern).idx()] {
             PatParent::Var(d) => Parent::VarInit(d),
             PatParent::Param(param) => Parent::ParamDefault(param),
@@ -767,7 +788,8 @@ impl Checker<'_> {
         );
     }
 
-    /// `reportNonexistentProperty`. `e`: the `a.b` whose name is written at `start`, or the `#b` that is.
+    /// `reportNonexistentProperty`. `e`: the `a.b` whose name is at `start`, or the `#b` at
+    /// `start`.
     pub(super) fn report_nonexistent_property(
         &mut self,
         file: FileId,
@@ -777,7 +799,7 @@ impl Checker<'_> {
         containing: TypeId,
         is_unchecked_js: bool,
     ) {
-        // `NodeCheckFlagsTypeChecked`: the error is being made.
+        // `NodeCheckFlagsTypeChecked`: the error is already being built.
         if self
             .reporting_nonexistent
             .iter()
@@ -785,10 +807,10 @@ impl Checker<'_> {
         {
             return;
         }
-        // `typeToStringEx` says "?" and `addDiagnostic` discards.
+        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic.
         let is_discarded = self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL;
-        let made = self.non_existent_properties.insert((file, e), is_discarded);
-        if made.unwrap_or(is_discarded) {
+        let created = self.non_existent_properties.insert((file, e), is_discarded);
+        if created.unwrap_or(is_discarded) {
             self.non_existent_properties.insert((file, e), true);
             return;
         }
@@ -798,12 +820,14 @@ impl Checker<'_> {
             .iter()
             .map(|frame| frame.drops_reported)
             .collect();
-        // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them: so does this one, the first
-        // time. The error is made again where it was dropped with an answer that was not kept, which tsgo has no need of.
-        let reprinting = std::mem::replace(&mut self.reprinting, made.is_some());
+        // Printing runs behind a boundary that no cycle crosses (`with_printer`). In tsgo printing
+        // closes cycles, and so does this call the first time. The error is rebuilt where it was
+        // dropped along with a result that was not cached, which tsgo does not need.
+        let reprinting = std::mem::replace(&mut self.reprinting, created.is_some());
         let at = self.place_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
-        // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
+        // The static side and the promised type are queried for a `#x` by its source text, which is
+        // not the name of any property.
         let is_private = self.is_private_name(name);
         // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
         let is_enum = match self
@@ -865,16 +889,17 @@ impl Checker<'_> {
         };
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
-        // What the making of the message comes back to is no reason to take the message back.
+        // A query re-entered while building the message is no reason to roll the message back.
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
         }
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
     }
 
-    /// `getSuggestedSymbolForNonexistentProperty`, of the name written in `e` and the apparent type of what lacks it: the property
-    /// that may have been meant, and `GetErrorRangeForNode` of its `ValueDeclaration`. It is for a property access that what is out
-    /// of reach is left out, which the `a.b` of `typeof a.b` in a type is not.
+    /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that
+    /// lacks it: the suggested property, and `GetErrorRangeForNode` of its `ValueDeclaration`.
+    /// Inaccessible properties are omitted only for a property access expression, which the `a.b`
+    /// of `typeof a.b` in a type is not.
     fn suggested_symbol_for_nonexistent_property(
         &mut self,
         file: FileId,
@@ -884,14 +909,17 @@ impl Checker<'_> {
     ) -> Option<(Atom, Option<(FileId, u32, u32)>)> {
         let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
-        let looked_into = self.reduced(apparent);
-        let meant = self.spelling_suggestion_for_property(
-            looked_into,
+        let inspected = self.reduced(apparent);
+        let suggestion = self.spelling_suggestion_for_property(
+            inspected,
             name,
             is_access.then_some((file, e)),
             true,
         )?;
-        Some((meant, self.span_of_suggested_property(looked_into, meant)))
+        Some((
+            suggestion,
+            self.span_of_suggested_property(inspected, suggestion),
+        ))
     }
 
     /// `containerSeemsToBeEmptyDomElement`
@@ -914,9 +942,10 @@ impl Checker<'_> {
             && self.is_empty_object_type(containing)
     }
 
-    /// It is what `containing` promises that has `name`: `await` was forgotten. `GetPromisedTypeOfPromise`
+    /// Whether the promised type of `containing` has `name`: an `await` is missing.
+    /// `GetPromisedTypeOfPromise`
     fn is_property_of_promised_type(&mut self, containing: TypeId, name: Atom) -> bool {
-        // It is asked for a `#x` by its text, which is the name of no property.
+        // It is queried for a `#x` by its source text, which is not the name of any property.
         if self.is_private_name(name) {
             return false;
         }
@@ -933,8 +962,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getSuggestedLibForNonExistentProperty`: the version of the library that `name` came to `apparent` with. It goes by the symbol
-    /// of the type, whatever kind of type that is.
+    /// `getSuggestedLibForNonExistentProperty`: the library version that added `name` to
+    /// `apparent`. It is keyed by the symbol of the type, whatever kind of type that is.
     fn library_with_property(&self, apparent: TypeId, name: Atom) -> Option<&'static str> {
         let container = match *self.data(apparent) {
             TypeData::Ref { target, .. } => target,
@@ -980,13 +1009,13 @@ impl Checker<'_> {
         Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 
-    /// The classes `e` is written in, from the inside out.
+    /// The classes enclosing `e`, innermost first.
     pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
         let hir = self.hir(file);
         Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
-    /// `class`, and `GetContainingClass` again and again.
+    /// `class`, then `GetContainingClass` applied repeatedly.
     fn classes_from(hir: &File, mut class: Node) -> Vec<ClassId> {
         let mut classes = Vec::new();
         while class.is_some() {
@@ -996,7 +1025,8 @@ impl Checker<'_> {
         classes
     }
 
-    /// The same, of what is directly in `parent`. `Parent::Expr(e)` stands for `e` itself: it is what is around it that counts.
+    /// The same for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself: only what
+    /// encloses it counts.
     pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> Vec<ClassId> {
         let hir = self.hir(file);
         let innermost = match parent {
@@ -1006,8 +1036,8 @@ impl Checker<'_> {
         Self::classes_from(hir, innermost)
     }
 
-    /// `lookupSymbolForPrivateIdentifierDeclaration`: the class around the `a.#b` at `e` that declares `#b`, and the declaration.
-    /// What the instances have comes first.
+    /// `lookupSymbolForPrivateIdentifierDeclaration`: the class enclosing the `a.#b` at `e` that
+    /// declares `#b`, and the declaration. Instance members take precedence.
     pub(super) fn lookup_symbol_for_private_identifier_declaration(
         &self,
         file: FileId,
@@ -1025,11 +1055,12 @@ impl Checker<'_> {
         Some((class, declared(false).or_else(|| declared(true))?))
     }
 
-    /// The class that declares the first property of `ty` that goes by a private name written like `name`.
+    /// The class that declares the first property of `ty` whose private name has the same source
+    /// text as `name`.
     fn class_of_private_property(&mut self, ty: TypeId, name: Atom) -> Option<(FileId, ClassId)> {
         let ty = self.apparent_type(ty);
         if let TypeData::Union(parts) = self.data(ty) {
-            // What all members have is what one class declares.
+            // A property common to all members is declared by a single class.
             let first = self.class_of_private_property(*parts.first()?, name)?;
             return parts[1..]
                 .iter()
@@ -1050,7 +1081,7 @@ impl Checker<'_> {
                 continue;
             };
             let member = &self.hir(file)[m];
-            // What is static and private is not inherited.
+            // Static private members are not inherited.
             let is_of_a_base = member.flags.contains(Flags::STATIC)
                 && !matches!(self.data(ty), TypeData::Anon { origin: Origin::ClassStatic(sym), .. } if *sym == self.class_sym(file, c));
             if matches!(member.key, PropKey::Private(_)) && !is_of_a_base {
@@ -1060,8 +1091,8 @@ impl Checker<'_> {
         None
     }
 
-    /// `checkPrivateIdentifierPropertyAccess`, of the `a.#b` at `e`, whose name is written at `start`. `lexical`: what
-    /// `lookup_symbol_for_private_identifier_declaration` found.
+    /// `checkPrivateIdentifierPropertyAccess` for the `a.#b` at `e`, whose name is at `start`.
+    /// `lexical`: the result of `lookup_symbol_for_private_identifier_declaration`.
     pub(super) fn check_private_identifier_property_access(
         &mut self,
         file: FileId,
@@ -1086,21 +1117,21 @@ impl Checker<'_> {
                 .skip_while(|&&class| class != lexical_class)
                 .any(|&class| class == type_class)
         {
-            // Each class has a name of its own for what is written alike.
+            // Private names with the same source text have a distinct name per class.
             let atoms = &self.atoms();
             let written = as_written(atoms.bytes(name));
-            let meant = hir[type_class].members.iter().find(|&m| {
+            let suggestion = hir[type_class].members.iter().find(|&m| {
                 matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)
             });
             let args = [Arg::Bytes(&diag_name)];
             let shadowing = self.place_of_token(file, hir[shadowing].name_pos);
             let shadowing = self.new_diagnostic(shadowing, 18017, &args);
-            let meant = meant.map(|m| self.place_of_token(file, hir[m].name_pos));
-            let meant = meant.map(|place| self.new_diagnostic(place, 18018, &args));
+            let suggestion = suggestion.map(|m| self.place_of_token(file, hir[m].name_pos));
+            let suggestion = suggestion.map(|place| self.new_diagnostic(place, 18018, &args));
             let diagnostic = self.error_at(at, 18014, &[args[0], Arg::Type(left)]);
             diagnostic.add_related_info(shadowing);
-            if let Some(meant) = meant {
-                diagnostic.add_related_info(meant);
+            if let Some(suggestion) = suggestion {
+                diagnostic.add_related_info(suggestion);
             }
             return true;
         }
@@ -1108,8 +1139,8 @@ impl Checker<'_> {
         self.error_at(at, 18013, &[Arg::Bytes(&diag_name), Arg::Sym(class)]);
         true
     }
-    /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` again and again: the classes the private name of `e`,
-    /// an `a.#b`, is looked up in.
+    /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly:
+    /// the classes in which the private name of `e`, an `a.#b`, is resolved.
     pub(super) fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
         let hir = self.hir(file);
         Self::classes_from(
@@ -1167,7 +1198,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkPropertyAccessibility`, of the `a.b` at `e`, whose name is written at `name_pos`.
+    /// `checkPropertyAccessibility` for the `a.b` at `e`, whose name is at `name_pos`.
     pub(super) fn check_property_accessibility(
         &mut self,
         file: FileId,
@@ -1191,8 +1222,9 @@ impl Checker<'_> {
         );
     }
 
-    /// `checkPropertyAccessibilityAtLocation`, for the property `name` of `containing`, asked for at `location`, in what `at` stands
-    /// for (`Parent::Expr(e)`: by `e` itself), which writes to it if `writing`. `error_node`: asked where it is only if there is an
+    /// `checkPropertyAccessibilityAtLocation` for the property `name` of `containing`, accessed at
+    /// `location`, inside the node `at` represents (`Parent::Expr(e)`: by `e` itself), which
+    /// assigns to it if `writing`. `error_node`: evaluated for its position only if there is an
     /// error.
     pub(super) fn check_property_accessibility_at_location(
         &mut self,
@@ -1205,7 +1237,8 @@ impl Checker<'_> {
         name: Atom,
         error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
     ) -> bool {
-        // `forEachProperty`: a property of a union or of an intersection is made of those of the members.
+        // `forEachProperty`: a property of a union or of an intersection is composed of the
+        // properties of the members.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
@@ -1217,14 +1250,16 @@ impl Checker<'_> {
         let Some(&first) = parts.first() else {
             return true;
         };
-        // Every `a.b` comes here. `PropFlags` has the modifiers of the declaration that speaks for a property.
+        // Every `a.b` reaches this point. `PropFlags` has the modifiers of the declaration that
+        // represents a property.
         if !is_super && !(parts.iter()).any(|p| p.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH))
         {
             return true;
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // With one declaration for all of them it goes by that (`createUnionOrIntersectionProperty`). Otherwise it is private if one of
-        // them is, else public if one is, else protected, and static if one is.
+        // If all of them share one declaration, its modifiers are used
+        // (`createUnionOrIntersectionProperty`). Otherwise it is private if any of them is, else
+        // public if any is, else protected, and static if any is.
         let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
         let flags = if is_declared_once {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
@@ -1252,15 +1287,15 @@ impl Checker<'_> {
                     .map(|class| self.declared_type(class));
                 return self.report_inaccessible(error_node, 2513, first, class.as_slice());
             }
-            // `isClassInstanceProperty`: a field is set on the instance, there is nothing of it in the parent's prototype. An
-            // `accessor` is there.
+            // `isClassInstanceProperty`: a field is set on the instance and does not exist on the
+            // parent's prototype. An `accessor` does.
             let is_field = |&(f, m): &(FileId, MemberId)| {
                 let member = &self.hir(f)[m];
                 member.kind == MemberKind::Property
                     && !member.flags.contains(Flags::ACCESSOR)
                     && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
             };
-            // In JavaScript so is what `this.name = value` declares.
+            // In JavaScript so is a property declared by `this.name = value`.
             let is_assigned_field = |f: FileId, e: ExprId| {
                 crate::bind::assignment_declaration_kind(self.hir(f), e)
                     == crate::bind::JsDeclarationKind::ThisProperty
@@ -1305,7 +1340,8 @@ impl Checker<'_> {
             .map(|c| self.class_sym(file, c))
             .collect();
         if flags.contains(Flags::PRIVATE) {
-            // Declared in several places, it makes `never` of an intersection and is no property of a union.
+            // With several declarations, it reduces an intersection to `never` and is not a
+            // property of a union.
             let declaring = self.declaring_class(first).filter(|_| is_declared_once);
             let Some(declaring) = declaring.filter(|declaring| !enclosing.contains(declaring))
             else {
@@ -1330,7 +1366,7 @@ impl Checker<'_> {
                 declaring.push(class);
             }
         }
-        // The innermost class around that is, or derives from, each of them.
+        // The innermost enclosing class that is, or derives from, each of them.
         let mut enclosing_class = None;
         for class in enclosing {
             let declared_type = self.declared_type(class);
@@ -1342,14 +1378,15 @@ impl Checker<'_> {
                 break;
             }
         }
-        // `getEnclosingClassFromThisParameter`: or the function says, or is expected, to be called on an instance of such a class.
+        // `getEnclosingClassFromThisParameter`: or the function's `this` type, declared or
+        // contextual, is an instance of such a class.
         if enclosing_class.is_none()
             && !is_static
             && let Some(Ok(func)) = self.this_container_from(file, at)
         {
             let sig = self.sig_of_fn(file, func);
             let this = match self.sig_this_type(sig) {
-                // What a type parameter extends, if that is what is written.
+                // The constraint, if the declared type is a type parameter.
                 Some(written) if matches!(self.data(written), TypeData::TypeParam(..)) => {
                     self.constraint_of_type_param(written)
                 }
@@ -1368,7 +1405,7 @@ impl Checker<'_> {
             }
         }
         let Some(enclosing_class) = enclosing_class else {
-            // `getDeclaringClass`: what is put together from several declarations has no parent.
+            // `getDeclaringClass`: a property synthesized from several declarations has no parent.
             let class = self.declaring_class(first).filter(|_| is_declared_once);
             let class = class.map_or(containing, |class| self.declared_type(class));
             return self.report_inaccessible(error_node, 2445, first, &[class]);
@@ -1446,12 +1483,13 @@ fn is_node_used_during_class_initialization(hir: &File, node: Node) -> bool {
     found.is_some()
 }
 
-/// Whether the private name written at `pos` is `#constructor`.
+/// Whether the private name at `pos` is `#constructor`.
 fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
     text.get(pos as usize) == Some(&b'#') && is_word_at(text, pos as usize + 1, b"constructor")
 }
 
-/// `SymbolName`: a `#x` as it is written, without what tells it from the `#x` of another class.
+/// `SymbolName`: a `#x` as in the source, without the part that distinguishes it from the `#x` of
+/// another class.
 fn as_written(name: &[u8]) -> &[u8] {
     if name.first() != Some(&b'#') {
         return name;

@@ -1,12 +1,14 @@
-//! Tables that are indexed by the number a thing already has.
+//! Tables indexed by a dense id.
 //!
-//! Nodes and symbols are numbered within their file and types as they are made, so what is worked out about one needs no hashing: it
-//! goes in an array. A cell starts out as zero, "not worked out", and is written once. Reading is one load.
+//! Nodes and symbols are numbered within their file, and types in creation order, so a result
+//! computed for one needs no hashing: it is stored in an array. A cell starts as zero, meaning "not
+//! computed", and is written once. A read is one load.
 //!
-//! The memory comes zero-filled from the allocator, which for arrays this size means from the system: a page nobody touches is never
-//! there.
+//! The memory comes zero-filled from the allocator, which for arrays of this size means from the
+//! operating system: a page that is never touched is never resident.
 //!
-//! WHO WRITES AN ENTRY, AND WHO SEES IT WHEN, IS THE THIRD TYPE PARAMETER OF A TABLE: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
+//! The third type parameter of a table determines who writes an entry and when it becomes visible
+//! to whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
 use crate::atom::{Atom, Interner};
 use crate::check::task::{Stored, Task};
@@ -22,19 +24,21 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
-/// An atomic integer. All bits zero is a valid one, holding zero.
+/// An atomic integer. The all-zero bit pattern is a valid value and holds zero.
 ///
 /// # Safety
-/// That has to be true.
+/// The implementor must guarantee that.
 pub unsafe trait Cell: Sync + Send {
     type Raw: Copy + PartialEq + Default;
     fn widen(raw: Self::Raw) -> u64;
     fn narrow(raw: u64) -> Self::Raw;
-    /// A PLAIN LOAD. Nobody writes to a cell while tasks run, and a barrier has ordered what was written before.
+    /// A plain load. No cell is written while tasks run, and a barrier has ordered the earlier
+    /// writes.
     fn load(&self) -> Self::Raw;
-    /// What the cell holds afterwards: `raw`, or what was there first.
+    /// Returns the value the cell holds afterwards: `raw`, or the value that was already there.
     fn put_if_empty(&self, raw: Self::Raw) -> Self::Raw;
-    /// `put_if_empty` for the bits of `mask` from `shift` on. The other bits of the cell belong to other keys.
+    /// `put_if_empty` for the bit field `mask` that starts at bit `shift`. The other bits of the
+    /// cell belong to other keys.
     fn put_field_if_empty(&self, shift: u32, mask: u64, raw: Self::Raw) -> Self::Raw;
 }
 
@@ -88,10 +92,11 @@ macro_rules! cell {
 cell!(AtomicU32, u32);
 cell!(AtomicU64, u64);
 
-/// A value that fits a cell. It is never packed as zero.
+/// A value that fits in a cell. Its packed form is never zero.
 pub trait Packed: Copy {
     type Cell: Cell;
-    /// How many bits a packed value needs, if the values of several keys are to share a cell. 0: a value has a cell to itself.
+    /// Bit width of a packed value, if the values of several keys share a cell. 0: each value has
+    /// its own cell.
     const BITS: u32 = 0;
     fn pack(self) -> <Self::Cell as Cell>::Raw;
     fn unpack(raw: <Self::Cell as Cell>::Raw) -> Self;
@@ -146,11 +151,11 @@ impl Packed for (crate::types::TypeId, bool) {
     }
 }
 
-/// Something that goes by a number, counted from zero without gaps worth speaking of.
+/// A dense id: an index counted from zero without significant gaps.
 pub trait Id: Copy {
     fn number(self) -> u32;
     fn from_number(number: u32) -> Self;
-    /// `Some`: it belongs to a task, and this is its number among those of the task.
+    /// `Some`: the id is task-local, and this is its index among the task's ids.
     #[inline]
     fn local_number(self) -> Option<u32> {
         let number = self.number();
@@ -201,7 +206,8 @@ macro_rules! packed_ids {
         }
     )*};
 }
-/// Files and nodes are numbered before the first step. For the keys of a `ByKey` that have one beside an id.
+/// Files and nodes are numbered before the first step. For `ByKey` keys that contain one alongside
+/// an id.
 impl MaybeLocal for FileId {
     #[inline]
     fn is_local(&self) -> bool {
@@ -235,7 +241,7 @@ impl Packed for Option<Sym> {
 
 // ───────────────────────────── the memory ─────────────────────────────
 
-/// So many cells, all zero to begin with.
+/// A fixed number of cells, initially all zero.
 struct Flat<C> {
     cells: NonNull<C>,
     len: usize,
@@ -264,7 +270,7 @@ impl<C: Cell> Flat<C> {
     }
 
     fn footprint(&self) -> Footprint {
-        // SAFETY: the allocation, or no cell at all. All zero is a valid `C`.
+        // SAFETY: the slice covers the allocation, or is empty. All zero is a valid `C`.
         Footprint::of_cells(unsafe { std::slice::from_raw_parts(self.cells.as_ptr(), self.len) })
     }
 
@@ -294,9 +300,10 @@ const FIRST_SEGMENT_BITS: u32 = 12;
 /// One for each number of leading zeros a `u64` can have.
 const SEGMENTS: usize = 65;
 
-/// Cells for numbers that keep coming, all zero to begin with. Each segment is as long as all the ones before it together, so there are
-/// few of them, they never move, and which one a number is in takes counting its leading zeros. What is kept of a segment is where it
-/// would begin if it held the cells before it as well: see `locate`.
+/// Cells for an index range that keeps growing, initially all zero. Each segment is as long as all
+/// previous segments together, so there are few segments, they never move, and the segment of an
+/// index is found by counting its leading zeros. The base pointer stored for a segment is the
+/// address it would start at if it also held the cells of the previous segments: see `locate`.
 struct Segmented<C> {
     segments: [AtomicPtr<C>; SEGMENTS],
 }
@@ -306,14 +313,14 @@ unsafe impl<C: Cell> Sync for Segmented<C> {}
 // SAFETY: as above.
 unsafe impl<C: Cell> Send for Segmented<C> {}
 
-/// Which segment `index` is in, and how far its cell is from what is kept of the segment.
+/// The segment of `index`, and the offset of its cell from the segment's stored base pointer.
 #[inline]
 fn locate(index: u32) -> (usize, usize) {
     let n = u64::from(index) + (1 << FIRST_SEGMENT_BITS);
     (n.leading_zeros() as usize, n as usize)
 }
 
-/// Also how far the segment is from what is kept of it.
+/// Also the offset of the segment from its stored base pointer.
 #[inline]
 fn segment_len(segment: usize) -> usize {
     1usize << (63 - segment)
@@ -332,7 +339,8 @@ impl<C: Cell> Segmented<C> {
             let base = base.load(Ordering::Acquire);
             if !base.is_null() {
                 let len = segment_len(segment);
-                // SAFETY: what is kept of a segment is as far before it as it is long. All zero is a valid `C`.
+                // SAFETY: the stored base pointer of a segment precedes the segment by the
+                // segment's length. All zero is a valid `C`.
                 let cells = unsafe { std::slice::from_raw_parts(base.wrapping_add(len), len) };
                 all = all.plus(Footprint::of_cells(cells));
             }
@@ -340,11 +348,11 @@ impl<C: Cell> Segmented<C> {
         all
     }
 
-    /// `None`: nothing has been written anywhere near. While tasks run: plain loads.
+    /// `None`: nothing has been written to the segment. While tasks run: plain loads.
     #[inline]
     fn existing_cell(&self, index: u32) -> Option<&C> {
         let (segment, offset) = locate(index);
-        // SAFETY: there is a place for every number of leading zeros.
+        // SAFETY: there is a slot for every leading-zero count.
         let base = unsafe { self.segments.get_unchecked(segment) }.load(Ordering::Relaxed);
         if base.is_null() {
             return None;
@@ -356,7 +364,7 @@ impl<C: Cell> Segmented<C> {
     #[inline]
     fn cell(&self, index: u32) -> &C {
         let (segment, offset) = locate(index);
-        // SAFETY: there is a place for every number of leading zeros.
+        // SAFETY: there is a slot for every leading-zero count.
         let mut base = unsafe { self.segments.get_unchecked(segment) }.load(Ordering::Acquire);
         if base.is_null() {
             base = self.install(segment);
@@ -365,7 +373,7 @@ impl<C: Cell> Segmented<C> {
         unsafe { &*base.wrapping_add(offset) }
     }
 
-    /// Several threads may get here at once. The first to put its segment in place wins.
+    /// Several threads may race here. The first to install its segment wins.
     #[cold]
     fn install(&self, segment: usize) -> *mut C {
         let layout = Layout::array::<C>(segment_len(segment)).unwrap();
@@ -375,7 +383,7 @@ impl<C: Cell> Segmented<C> {
             std::alloc::handle_alloc_error(layout);
         }
         let base = fresh.wrapping_sub(segment_len(segment));
-        // Null is for a segment that is not there.
+        // Null marks a segment that is not allocated.
         assert!(!base.is_null());
         match self.segments[segment].compare_exchange(
             std::ptr::null_mut(),
@@ -385,7 +393,7 @@ impl<C: Cell> Segmented<C> {
         ) {
             Ok(_) => base,
             Err(installed) => {
-                // SAFETY: allocated above with this layout, and shown to nobody.
+                // SAFETY: allocated above with this layout, and never published.
                 unsafe { std::alloc::dealloc(fresh.cast::<u8>(), layout) };
                 installed
             }
@@ -412,7 +420,8 @@ impl<C> Drop for Segmented<C> {
 
 // ───────────────────────────── by node ─────────────────────────────
 
-/// Where the nodes of one kind of each file begin when those of all files are laid end to end. One more entry says where they end.
+/// For each file, the start index of its nodes of one kind when the nodes of all files are
+/// concatenated. A final entry is the end index.
 #[derive(Clone)]
 pub struct Bases(Arc<[u32]>);
 
@@ -437,16 +446,17 @@ impl Bases {
         *self.0.last().unwrap() as usize
     }
 
-    /// `None`: there is no such node. `NONE` is asked about now and then.
+    /// `None`: there is no such node. Callers occasionally pass `NONE`.
     #[inline]
     fn at(&self, file: FileId, index: u32) -> Option<usize> {
-        // The later one first: where that is in bounds the other is, and is not checked.
+        // The higher index is read first: if it is in bounds so is the lower one, which is then not
+        // bounds-checked.
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         (index < end - start).then(|| (start + index) as usize)
     }
 }
 
-/// A node or a symbol: a file, and a number within it.
+/// A node or a symbol: a file and an index within it.
 pub trait NodeKey: Copy {
     fn file(self) -> FileId;
     fn index(self) -> u32;
@@ -483,21 +493,24 @@ impl NodeKey for Sym {
 
 // ───────────────────────────── policies ─────────────────────────────
 
-/// Who writes an entry of a table, and who sees it when.
+/// Determines who writes an entry of a table and when it becomes visible to whom.
 pub trait Policy {
     const IS_FILE_LOCAL: bool = false;
 }
 
-/// WRITTEN BEFORE THE FIRST STEP, OR AT A BARRIER. READ-ONLY WHILE TASKS RUN, so `get` is plain loads. For the tables of the loader, the link
-/// step and the type store. Many threads of a link step can fill one at once: a cell is written with a compare and swap, and the
-/// first value is kept. Whoever reads what another thread has written has a barrier in between.
+/// Written before the first step or at a barrier. Read-only while tasks run, so `get` is plain
+/// loads. For the tables of the loader, the merge step and the type store. Several threads of a
+/// merge step can fill one concurrently: a cell is written with a compare-and-swap, and the first
+/// value wins. A barrier separates every read from a write by another thread.
 pub struct Frozen;
 
-/// THE DEFAULT FOR A FIELD OF `Program`. The table has the PUBLISHED half, which only `publish` writes, at a barrier. What a task
-/// stores goes to the task's own half (`crate::local::Half`), which no other task sees. `Task::finish` hands it to the barrier.
+/// The default for a field of `Program`. The table holds the shared part, which only `publish`
+/// writes, at a barrier. A task's stores go to its task-local part (`crate::local::Half`), which no
+/// other task sees. `Task::finish` passes it to the barrier.
 pub struct Buffered;
 
-/// The entries are in the task and end with the file that the task goes through. No other task ever sees one.
+/// The entries are task-local and are dropped when the task finishes the file it is visiting. No
+/// other task ever sees one.
 pub struct FileLocal;
 
 impl Policy for Frozen {}
@@ -506,10 +519,11 @@ impl Policy for FileLocal {
     const IS_FILE_LOCAL: bool = true;
 }
 
-/// What a table holds, for `--timing`. Finding out reads every cell.
+/// The memory usage of a table, for `--timing`. Computing it reads every cell.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Footprint {
-    /// Bytes asked of the allocator: cells, map entries, kept values without what they point to.
+    /// Bytes requested from the allocator: cells, map entries, and stored values, excluding the
+    /// memory they point to.
     pub allocated: usize,
     /// `allocated` without the pages of a cell array in which every cell is zero. Such a page of a zeroed allocation was never written, so
     /// it is not resident.
@@ -558,14 +572,14 @@ impl Footprint {
 
 // ───────────────────────────── the tables ─────────────────────────────
 
-/// No slot: `number_tables` has not come by. A `Frozen` table needs none.
+/// No slot: `number_tables` has not assigned one yet. A `Frozen` table needs none.
 const NO_SLOT: u32 = u32::MAX;
 
 /// A value for each node of one kind in the program.
 pub struct ByNode<K, V: Packed, P: Policy = Frozen> {
     bases: Bases,
     cells: Flat<V::Cell>,
-    /// By which the table finds what a task has for it.
+    /// The index at which a task holds the task-local part of this table.
     slot: u32,
     key: PhantomData<fn(K, P)>,
 }
@@ -577,7 +591,7 @@ impl<K: NodeKey, V: Packed, P: Policy> ByNode<K, V, P> {
     } else {
         1
     };
-    /// The bits of one key, once they are shifted down.
+    /// Mask for the bits of one key after they are shifted down.
     const MASK: u64 = if V::BITS != 0 {
         (1 << V::BITS) - 1
     } else {
@@ -602,7 +616,8 @@ impl<K: NodeKey, V: Packed, P: Policy> ByNode<K, V, P> {
         self.slot = slot;
     }
 
-    /// The cell of the key at `at` when all keys are laid end to end, and where in it the bits of the key begin.
+    /// The cell of the key at `at` in the concatenation of all keys, and the bit offset of the key
+    /// within the cell.
     #[inline]
     fn field_at(&self, at: usize) -> (&V::Cell, u32) {
         let shift = (at % Self::PER_CELL) as u32 * V::BITS;
@@ -620,7 +635,7 @@ impl<K: NodeKey, V: Packed, P: Policy> ByNode<K, V, P> {
     }
 }
 
-/// For a table whose owner lays out the bits.
+/// For a table whose owner defines the bit layout.
 #[derive(Copy, Clone)]
 pub struct RawWord(pub u32);
 
@@ -643,14 +658,16 @@ impl<K: NodeKey> ByNode<K, RawWord, Frozen> {
     }
 }
 
-/// Where a kept table has a value. With `LOCAL`: in the task. A HANDLE IS NOT A VALUE: it is not an id of the type store, and the link of
-/// a task says nothing about it. See `ByIdIndirect::hold_handles_of`.
+/// The index of a value in an indirect table. With `LOCAL`: in the task-local part. A handle is not
+/// a value: it is not an id of the type store, and the merge of a task has no mapping for it. See
+/// `ByIdIndirect::hold_handles_of`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
 crate::types::has_no_references!(Handle);
 
-/// Something that does not fit a cell for some of the nodes of one kind. It is kept on the side and never moves.
+/// A value too large for a cell, for some of the nodes of one kind. It is stored out of line and
+/// never moves.
 pub struct ByNodeIndirect<K, T, P: Policy = Frozen> {
     handles: ByNode<K, Handle, P>,
     kept: AppendVec<T>,
@@ -673,7 +690,7 @@ impl<K: NodeKey, T: 'static, P: Policy> ByNodeIndirect<K, T, P> {
     }
 }
 
-/// A value for each of the things that are numbered as they are made.
+/// A value for each id of a kind that is numbered in creation order.
 pub struct ById<I, V: Packed, P: Policy = Frozen> {
     cells: Segmented<V::Cell>,
     slot: u32,
@@ -700,7 +717,7 @@ impl<I: Id, V: Packed, P: Policy> ById<I, V, P> {
     }
 }
 
-/// Something that does not fit a cell for some of the things that are numbered as they are made.
+/// A value too large for a cell, for some of the ids of a kind that is numbered in creation order.
 pub struct ByIdIndirect<I, T, P: Policy = Frozen> {
     handles: ById<I, Handle, P>,
     kept: AppendVec<T>,
@@ -727,7 +744,7 @@ impl<I: Id, T: 'static, P: Policy> ByIdIndirect<I, T, P> {
     }
 }
 
-/// A memo table for what goes by more than a number.
+/// A memo table for keys that are more than a single id.
 pub struct ByKey<K, V, P: Policy = Frozen> {
     published: ShardedMap<K, V>,
     slot: u32,
@@ -735,7 +752,7 @@ pub struct ByKey<K, V, P: Policy = Frozen> {
 }
 
 impl<K: std::hash::Hash + Eq, V, P: Policy> ByKey<K, V, P> {
-    /// Without the index of the map, which has a few bytes for each entry.
+    /// Excludes the index of the map, which takes a few bytes per entry.
     pub fn footprint(&self) -> Footprint {
         let entries = self.published.entries();
         let bytes = entries * size_of::<(K, V)>();
@@ -772,7 +789,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V, Frozen> {
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
         match self.field(key) {
@@ -791,8 +808,9 @@ impl<K: NodeKey, T: 'static> ByNodeIndirect<K, T, Frozen> {
         self.handles.get(key).map(|handle| self.kept.get(handle.0))
     }
 
-    /// Keeps what is there already, and returns what is kept. The value is in place before its handle is in a cell. If another handle is
-    /// kept there, the value is never reached.
+    /// Does not overwrite an existing value. Returns the stored value. The value is written before
+    /// its handle is stored in a cell. If the cell already holds another handle, the new value is
+    /// unreachable.
     pub fn insert_ref(&self, key: K, value: T) -> &T {
         let handle = Handle(self.kept.push(value));
         self.kept.get(self.handles.insert(key, handle).0)
@@ -815,14 +833,14 @@ impl<K: NodeKey, T: 'static> ByNodeIndirect<K, T, Frozen> {
 }
 
 impl<I: Id, V: Packed> ById<I, V, Frozen> {
-    /// `None` for an id with `LOCAL`: nothing is published about it.
+    /// `None` for an id with `LOCAL`: no entry is published for it.
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
         let raw = self.cells.existing_cell(key.number())?.load();
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: I, value: V) -> V {
         assert!(key.local_number().is_none());
@@ -832,11 +850,13 @@ impl<I: Id, V: Packed> ById<I, V, Frozen> {
 
 // ───────────────────────────── `Buffered`: during a step ─────────────────────────────
 //
-// `get`: A HIT ON A PUBLISHED ENTRY IS ONE PLAIN LOAD. The published half is frozen during a step, and the barrier before the step has
-// ordered what was written to it, so the load is relaxed. Only if the cell is empty, the task's half is asked. An id with `LOCAL` has
-// no published cell: the task's dense half.
-// `insert`: into the task's half. It keeps what is there, published or not, and returns what is kept: what `get` returns from now on.
-// `rewrite`: replaces the task's entry. A published entry stays what it is.
+// `get`: a hit on a published entry is one plain load. The shared part is read-only during a step,
+// and the barrier before the step has ordered the writes to it, so the load is relaxed. The
+// task-local part is queried only if the cell is empty. An id with `LOCAL` has no shared cell: it
+// is looked up in the dense task-local part.
+// `insert`: stores into the task-local part. It does not overwrite an existing entry, published or
+// not, and returns the stored value, which `get` returns from then on.
+// `rewrite`: replaces the task-local entry. A published entry is unchanged.
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>> ByNode<K, V, Buffered> {
     /// 0: nothing is published for the key at `at`.
@@ -863,7 +883,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>> ByNode<K, V, Buffered> {
 
     #[inline]
     pub fn insert(&self, task: &Task, key: K, value: V, _: Stored) -> V {
-        // `NONE` is asked about now and then.
+        // Callers occasionally pass `NONE`.
         if key.index() == u32::MAX {
             return value;
         }
@@ -923,11 +943,13 @@ impl<I: Id, V: Packed<Cell = AtomicU32>> ById<I, V, Buffered> {
     }
 }
 
-/// The values that a task keeps for a kept table, each with its key as the task's half has it, by handle without `LOCAL`.
+/// The task-local values of an indirect table, each with its key in the encoding of the task-local
+/// part, indexed by handle without `LOCAL`.
 type IndirectInTask<T> = Chunked<(u64, T)>;
 
-/// What `handle` stands for. THE REFERENCE HAS THE LIFETIME OF THE TABLE. One to a value that is in the task is good until the task ends
-/// (`Task::finish`, `Task::begin`, the drop): whoever holds on to one, in a cache of the checker for example, lets go of it by then.
+/// The value `handle` refers to. The reference has the lifetime of the table. A reference to a
+/// task-local value is valid only until the task ends (`Task::finish`, `Task::begin`, the drop):
+/// any holder, for example a cache of the checker, must release it by then.
 #[inline]
 fn indirect_at<'p, T: 'static>(
     kept: &'p AppendVec<T>,
@@ -939,19 +961,20 @@ fn indirect_at<'p, T: 'static>(
         None => kept.get(handle.0),
         Some(number) => {
             let half = task.buffer().half(slot).unwrap();
-            // SAFETY: the slot is that of a kept table of `T`, which has given out the handle.
+            // SAFETY: the slot belongs to an indirect table of `T`, which issued the handle.
             let value = &unsafe { half.typed::<IndirectInTask<T>>() }
                 .unwrap()
                 .get(number as usize)
                 .1;
-            // SAFETY: an element of a `Chunked` does not move, and is there until the task ends. See above.
+            // SAFETY: an element of a `Chunked` does not move, and lives until the task ends. See
+            // above.
             unsafe { &*std::ptr::from_ref(value) }
         }
     }
 }
 
 fn store_in_task<T: Send + 'static>(slot: u32, task: &Task, key: u64, value: T) -> Handle {
-    // SAFETY: the slot is that of a kept table of `T`.
+    // SAFETY: the slot belongs to an indirect table of `T`.
     let kept = unsafe {
         task.buffer()
             .half_mut(slot)
@@ -967,7 +990,7 @@ impl<K: NodeKey, T: Send + 'static> ByNodeIndirect<K, T, Buffered> {
         Some(indirect_at(&self.kept, self.handles.slot, task, handle))
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task, key: K, value: T, stored: Stored) -> &T {
         let slot = self.handles.slot;
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
@@ -1006,13 +1029,13 @@ impl<I: Id, T: Send + 'static> ByIdIndirect<I, T, Buffered> {
         self.handles.get(task, key)
     }
 
-    /// See `indirect_at` for how long the reference is good.
+    /// See `indirect_at` for how long the reference is valid.
     #[inline]
     pub fn at(&self, task: &Task, handle: Handle) -> &T {
         indirect_at(&self.kept, self.handles.slot, task, handle)
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task, key: I, value: T, stored: Stored) -> (Handle, &T) {
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
             let kept = store_in_task(self.handles.slot, task, u64::from(key.number()), value);
@@ -1036,9 +1059,10 @@ impl<I: Id, T: Send + 'static> ByIdIndirect<I, T, Buffered> {
         self.insert_ref(task, key, value, stored).1.clone()
     }
 
-    /// THE VALUES OF THIS TABLE HOLD HANDLES OF `held`, in the field that `field` returns. So an entry of this table is handed to the
-    /// barrier only if the entry of `held` is, and one thread applies `held` and then this table, and puts the handle that WON into
-    /// the field. `held` comes before this table in `buffered_fields!`. After `set_slot`.
+    /// The values of this table hold handles of `held`, in the field that `field` returns. So an
+    /// entry of this table is passed to the barrier only if the entry of `held` is, and one thread
+    /// applies `held` and then this table, and stores the winning handle into the field. `held`
+    /// comes before this table in `buffered_fields!`. Call after `set_slot`.
     pub(crate) fn hold_handles_of<J: Id, U>(
         &mut self,
         held: &mut ByIdIndirect<J, U, Buffered>,
@@ -1089,7 +1113,7 @@ where
 
 // ───────────────────────────── `Buffered`: the end of a task, and the barrier ─────────────────────────────
 
-/// A `Buffered` table, as `Task::finish` and `publish` see it.
+/// The interface of a `Buffered` table used by `Task::finish` and `publish`.
 pub(crate) trait Publish: Sync {
     fn slot(&self) -> u32;
 
@@ -1098,20 +1122,22 @@ pub(crate) trait Publish: Sync {
         None
     }
 
-    /// How many threads can apply entries at a time.
+    /// How many threads can apply entries concurrently.
     fn parts(&self) -> usize {
         1
     }
 
-    /// ON THE TASK'S OWN THREAD. Takes everything out of `half`. The entries whose key and value are not bound are returned, and what they
-    /// mention is marked. The rest is dropped.
+    /// Runs on the task's own thread. Drains `half`. Returns the entries whose key and value are
+    /// not bound, and marks the records they reference. The rest is dropped.
     fn finish(&self, half: &mut Half, finishing: &mut Finishing<'_>) -> Option<Entries>;
 
-    /// AT THE BARRIER, on any thread. Rewrites every key and value of one task through the link of that task.
+    /// Runs at the barrier, on any thread. Remaps every key and value of one task through that
+    /// task's `link`.
     fn follow(&self, entries: &mut Entries, link: &Link);
 
-    /// AT THE BARRIER, BY THE ONE THREAD THAT HAS THIS PART OF THE TABLE. `shares`: in task order. The first entry for a key stays.
-    /// `handles`, by task: see `Holding`.
+    /// Runs at the barrier, on the one thread that owns this part of the table. `shares`: in task
+    /// order. The first entry for a key wins.
+    /// `handles`, indexed by task: see `Holding`.
     fn apply(
         &self,
         part: usize,
@@ -1121,12 +1147,12 @@ pub(crate) trait Publish: Sync {
     );
 }
 
-/// What `Task::finish` lends to the tables.
+/// The state `Task::finish` lends to the tables.
 pub(crate) struct Finishing<'a> {
     own: &'a OwnStore,
     marks: &'a mut Marks,
-    /// For each table whose handles another one holds, by slot: for each handle of the task, 1 + the place of its entry among those that
-    /// are handed over. 0: the entry is dropped.
+    /// For each table whose handles another table holds, keyed by slot: for each task-local handle,
+    /// 1 + the index of its entry among the entries passed to the barrier. 0: the entry is dropped.
     held: Vec<(u32, Vec<u32>)>,
 }
 
@@ -1139,7 +1165,8 @@ impl<'a> Finishing<'a> {
         }
     }
 
-    /// Whether `key -> value` goes to the barrier. If it does, what it mentions is marked: THE ENTRIES ARE THE ROOTS.
+    /// Whether `key -> value` is passed to the barrier. If it is, the records it references are
+    /// marked: the entries are the roots.
     #[inline]
     fn is_published(&mut self, key: &impl Follow, value: &impl Follow) -> bool {
         if key.is_bound(self.own) || value.is_bound(self.own) {
@@ -1151,11 +1178,11 @@ impl<'a> Finishing<'a> {
     }
 }
 
-/// What one task hands to the barrier for one table.
+/// The entries one task passes to the barrier for one table.
 pub(crate) struct Entries {
     pub(crate) slot: u32,
     pub(crate) len: u32,
-    /// `Vec<(u32, u32)>`, `Vec<(u32, T)>` or `Keyed<K, V>`: the table knows.
+    /// `Vec<(u32, u32)>`, `Vec<(u32, T)>` or `Keyed<K, V>`, depending on the table.
     typed: Box<dyn Any + Send + Sync>,
 }
 
@@ -1181,7 +1208,7 @@ impl Entries {
 pub(crate) enum Payload<'a> {
     /// The table has one part.
     Whole(&'a mut Entries),
-    /// Each part has the same reference, and looks at its own entries.
+    /// Every part gets the same reference and reads only its own entries.
     Part(&'a Entries),
 }
 
@@ -1205,14 +1232,15 @@ impl<'a> Share<'a> {
     }
 }
 
-/// What one thread has applied.
+/// Summary of the entries one thread has applied.
 pub(crate) struct Applied<'a> {
     pub(crate) published: u64,
-    /// The sum of the hashes of (slot, key, value) of the entries that were stored, if it is asked for. A FUNCTION OF THE PROGRAM: keys and
-    /// values hold published ids only, which are given out in (step, task, index) order, an atom goes in as its text, and a sum
-    /// does not depend on how the entries are split among the threads.
+    /// The sum of the hashes of (slot, key, value) of the stored entries, if requested.
+    /// Deterministic for a given program: keys and values hold only published ids, which are
+    /// assigned in (step, task, index) order, an atom is hashed as its text, and a sum does not
+    /// depend on how the entries are partitioned among the threads.
     pub(crate) digest: u64,
-    /// `Some`: the digest is asked for.
+    /// `Some`: the digest is requested.
     atoms: Option<&'a Interner>,
 }
 
@@ -1246,7 +1274,7 @@ impl<'a> Applied<'a> {
         hash.0.write_u32(slot);
         key.visit(&mut hash);
         value.visit(&mut hash);
-        // A sum of hashes whose low bits are poor is poor.
+        // A sum of hashes with weak low bits is itself weak.
         let hash = hash.0.finish();
         self.digest =
             (self.digest).wrapping_add((hash ^ hash >> 32).wrapping_mul(0x9E37_79B9_7F4A_7C15));
@@ -1256,8 +1284,9 @@ impl<'a> Applied<'a> {
 struct HashOfEntry<'a>(FxHasher, &'a Interner);
 
 impl Visitor for HashOfEntry<'_> {
-    /// THE TEXT, NOT THE NUMBER: the parser threads number the atoms in the order in which they come upon them, which is another in
-    /// every run. WHATEVER SHOWS AN ATOM TO `plain`, OR A NUMBER THAT IS MADE OF ONE, MAKES THE DIGEST DEPEND ON TIMING.
+    /// Hashes the text, not the id: the parser threads number the atoms in the order they encounter
+    /// them, which differs between runs. Passing an atom, or a number derived from one, to `plain`
+    /// makes the digest depend on timing.
     fn atom(&mut self, atom: Atom) {
         let text = if atom.is_none() {
             &[][..]
@@ -1287,17 +1316,18 @@ impl Visitor for HashOfEntry<'_> {
     }
 }
 
-/// The published half of a table with a cell for each key, as the end of a task and the barrier see it. On the way to the barrier a key is
-/// one number: where the node is when all are laid end to end, or the number of the id.
+/// The shared part of a table with one cell per key, as used at the end of a task and at the
+/// barrier. In an entry passed to the barrier a key is one number: the index of the node in the
+/// concatenation of all nodes, or the number of the id.
 pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
-    /// What a key on the way to the barrier stands for, for the digest.
+    /// The type that a key passed to the barrier represents, for the digest.
     type Key: Follow;
     fn key(key: u32) -> Self::Key;
     fn table_slot(&self) -> u32;
-    /// The key of the dense cell `index` of `half`, as `Half::sparse` would have it.
+    /// The key of the dense cell `index` of `half`, in the encoding of `Half::sparse`.
     fn dense_key(half: &Half, index: u32) -> u64;
-    /// `None`: `key -> value` is bound. `key`: as the task's half has it.
+    /// `None`: `key -> value` is bound. `key`: in the encoding of the task-local part.
     fn hand_over(
         &self,
         key: u64,
@@ -1307,13 +1337,13 @@ pub(crate) trait Dense: Sync {
     fn follow_key(key: u32, link: &Link) -> u32;
     /// 0: nothing.
     fn load(&self, key: u32) -> u32;
-    /// The cell is empty, and the caller is the one thread that writes to the table.
+    /// Precondition: the cell is empty, and the caller is the only thread that writes to the table.
     fn store(&self, key: u32, raw: u32);
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>> Dense for ByNode<K, V, Buffered> {
     type Value = V;
-    /// Files and nodes are numbered in an order that is a function of the program.
+    /// The numbering of files and nodes is deterministic for a given program.
     type Key = u32;
 
     #[inline]
@@ -1409,7 +1439,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>> Dense for ById<I, V, Buffered>
     }
 }
 
-/// A table whose values fit a cell. The entries on the way to the barrier: `Vec<(u32, u32)>`, a key and a packed value.
+/// A table whose values fit in a cell. The entries passed to the barrier: `Vec<(u32, u32)>`, a key
+/// and a packed value.
 impl<D: Dense<Value: Follow>> Publish for D {
     fn slot(&self) -> u32 {
         self.table_slot()
@@ -1451,12 +1482,14 @@ impl<D: Dense<Value: Follow>> Publish for D {
     }
 }
 
-/// How the handles of one kept table get into the values of another: `ByIdIndirect::hold_handles_of`.
+/// How the handles of one indirect table are translated inside the values of another:
+/// `ByIdIndirect::hold_handles_of`.
 ///
-/// `finish` of the table that is held notes which of the task's handles are handed over, and in which place. `finish` of the holder
-/// drops an entry whose handle is not, and otherwise puts the place into the field, with `LOCAL`. `apply` of the table that is held
-/// leaves in `handles[task][place]` the published handle: that of the entry if it has won, else the winner's. `apply` of the holder,
-/// which the same thread calls next, puts that into the field.
+/// `finish` of the held table records which task-local handles are passed to the barrier, and at
+/// which index. `finish` of the holder drops an entry whose handle is not passed, and otherwise
+/// stores the index into the field, with `LOCAL`. `apply` of the held table stores the published
+/// handle in `handles[task][place]`: that of the entry if it won, else the winner's. `apply` of the
+/// holder, which the same thread calls next, stores that handle into the field.
 struct Holding<T> {
     is_held: bool,
     holds: Option<(u32, fn(&mut T) -> &mut Handle)>,
@@ -1471,16 +1504,17 @@ impl<T> Default for Holding<T> {
     }
 }
 
-/// The entries of a kept table on the way to the barrier: `Vec<(u32, T)>`, a key and a value, IN INSERTION ORDER.
+/// The entries of an indirect table passed to the barrier: `Vec<(u32, T)>`, a key and a value, in
+/// insertion order.
 fn finish_indirect<D: Dense<Value = Handle>, T: Follow + Send + Sync + 'static>(
     handles: &D,
     holding: &Holding<T>,
     half: &mut Half,
     finishing: &mut Finishing<'_>,
 ) -> Option<Entries> {
-    // Every handle in a cell is that of a value below.
+    // Every handle in a cell refers to one of the values below.
     half.clear_cells();
-    // SAFETY: the slot is that of a kept table of `T`.
+    // SAFETY: the slot belongs to an indirect table of `T`.
     let kept = unsafe { half.existing_typed_mut::<IndirectInTask<T>>() }?;
     let mut entries = Vec::new();
     let mut places = vec![0; if holding.is_held { kept.len() } else { 0 }];
@@ -1515,7 +1549,7 @@ fn follow_indirect<D: Dense, T: Follow + 'static>(entries: &mut Entries, link: &
     }
 }
 
-/// A VALUE IS PUSHED WHEN ITS ENTRY WINS. A loser is dropped.
+/// A value is pushed when its entry wins. A losing value is dropped.
 fn apply_indirect<D: Dense<Value = Handle>, T: Follow + 'static>(
     handles: &D,
     kept: &AppendVec<T>,
@@ -1615,7 +1649,7 @@ impl<I: Id + Follow, T: Follow + Send + Sync + 'static> Publish for ByIdIndirect
     }
 }
 
-/// How many threads can fill a `ByKey` at a time. Each has as many shards of the map as the next.
+/// How many threads can fill a `ByKey` concurrently. Each owns an equal number of the map's shards.
 const PARTS: usize = 8;
 
 #[inline]
@@ -1623,16 +1657,16 @@ fn part_of(spread: u64) -> usize {
     shard_of(spread) / (SHARDS / PARTS)
 }
 
-/// The entries of a `ByKey` on the way to the barrier.
+/// The entries of a `ByKey` passed to the barrier.
 struct Keyed<K, V> {
-    /// IN INSERTION ORDER.
+    /// In insertion order.
     entries: Vec<(K, V)>,
-    // THE SHARD OF A KEY IS KNOWN ONLY AFTER THE LINK, so `follow` fills in the rest.
+    // The shard of a key is known only after the merge, so `follow` fills in the remaining fields.
     /// The hash of each key.
     spreads: Vec<u64>,
-    /// The places of the entries of part 0, in order, then those of part 1, and so on.
+    /// The indices of the entries of part 0, in order, then those of part 1, and so on.
     by_part: Vec<u32>,
-    /// Where in `by_part` each part begins. One more says where the last one ends.
+    /// The start of each part in `by_part`. A final entry is the end of the last part.
     starts: [u32; PARTS + 1],
 }
 
@@ -1713,10 +1747,10 @@ where
 
 // ───────────────────────────── `FileLocal` ─────────────────────────────
 
-/// There is no published half. The storage is in words of 64 bits. A value of a bit or two shares its word with the values of the
-/// neighbouring nodes.
+/// There is no shared part. The storage is in 64-bit words. A value of one or two bits shares its
+/// word with the values of the neighbouring nodes.
 impl<K: NodeKey, V: Packed> ByNode<K, V, FileLocal> {
-    /// The word for the node `index`, and where in it the bits of the node begin.
+    /// The word for the node `index`, and the bit offset of the node within it.
     #[inline]
     fn place(index: u32) -> (u32, u32) {
         match V::BITS {
@@ -1732,10 +1766,10 @@ impl<K: NodeKey, V: Packed> ByNode<K, V, FileLocal> {
         (raw != 0).then(|| V::unpack(V::Cell::narrow(raw)))
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, task: &Task, key: K, value: V) -> V {
-        // `NONE` is asked about now and then.
+        // Callers occasionally pass `NONE`.
         if key.index() == u32::MAX {
             return value;
         }
@@ -1751,7 +1785,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V, FileLocal> {
         V::unpack(V::Cell::narrow(kept))
     }
 
-    /// Stores `value` whatever is there.
+    /// Stores `value`, overwriting any existing value.
     #[inline]
     pub fn rewrite(&self, task: &Task, key: K, value: V) {
         if key.index() == u32::MAX {
@@ -1774,11 +1808,12 @@ impl<K: NodeKey, T: 'static> ByNodeIndirect<K, T, FileLocal> {
     #[inline]
     pub fn get_ref(&self, task: &Task, key: &K) -> Option<&T> {
         let handle = self.handles.get(task, key)?;
-        // SAFETY: `insert_ref` kept a `T` there. Nothing that is handed out here outlives the file that the task goes through.
+        // SAFETY: `insert_ref` stored a `T` there. No reference returned here outlives the file
+        // that the task is visiting.
         Some(unsafe { task.file_local().kept(self.handles.slot, handle.0) })
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task, key: K, value: T) -> &T {
         let handle = match self.handles.get(task, &key) {
             Some(handle) => handle,

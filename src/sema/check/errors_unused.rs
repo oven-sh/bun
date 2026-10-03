@@ -1,7 +1,8 @@
-//! What is declared and never used: 6133 6138 6192 6196 6198 6199 6205, under `noUnusedLocals` and `noUnusedParameters`.
+//! Unused declarations: 6133 6138 6192 6196 6198 6199 6205, under `noUnusedLocals` and
+//! `noUnusedParameters`.
 //!
-//! Follows `checkUnusedIdentifiers` and what it calls in TypeScript 7.0.2's checker.go. They note what is referred to while
-//! checking; here a file is gone through once for that.
+//! Follows `checkUnusedIdentifiers` and its callees in TypeScript 7.0.2's checker.go. They record
+//! references during checking. Here one pass over the file collects them.
 
 use super::*;
 use crate::bind::{
@@ -9,7 +10,7 @@ use crate::bind::{
 };
 use crate::program::SymbolTable;
 
-/// The meanings a name was looked up with.
+/// The meanings a name was resolved with.
 const VALUE: u8 = 1;
 const TYPE: u8 = 2;
 const NAMESPACE: u8 = 4;
@@ -22,13 +23,15 @@ struct Unused<'a> {
     hir: &'a hir::File,
     bound: &'a Bound,
     atoms: crate::atom::Atoms<'a>,
-    /// By symbol: the meanings it was referred to with.
+    /// Indexed by symbol: the meanings it was referenced with.
     referenced: Vec<u8>,
-    /// `symbolReferenceLinks`, of the private members of classes and the private parameter properties.
+    /// `symbolReferenceLinks` for the private members of classes and the private parameter
+    /// properties.
     referenced_members: crate::util::FxHashSet<Sym>,
-    /// Something was read under a key that could not be worked out: it may have been any member.
+    /// A read used a key that could not be resolved, so it may have read any member.
     reads_unknown_members: bool,
-    /// By scope: the function, class, interface, enum, alias or namespace declared whose scope it is.
+    /// Indexed by scope: the symbol of the function, class, interface, enum, alias or namespace
+    /// declaration that owns the scope.
     owner_of_scope: Vec<SymbolId>,
     /// The file has a `return` whose expression is never checked: see `is_in_unchecked_return`.
     has_unchecked_returns: bool,
@@ -98,7 +101,8 @@ impl Checker<'_> {
                 *kinds |= ALIAS;
             }
         }
-        // `Resolve` notes the use before `OnPropertyWithInvalidInitializer` makes it return nil, and the binder has no symbol for the name.
+        // `Resolve` records the reference before `OnPropertyWithInvalidInitializer` makes it return
+        // nil, and the binder has no symbol for the name.
         if !self.p.files.options.emit_standard_class_fields {
             for &(e, scope) in &bound.free_idents {
                 if let ExprKind::Ident(name) = hir[e].kind
@@ -123,8 +127,9 @@ impl Checker<'_> {
         self.check_unused_identifiers(&u);
     }
 
-    /// `markJsxAliasReferenced`: a tag is a call of the factory, which has to be in scope where the tag is, unless a module that is there
-    /// is imported for it unasked (`getJsxNamespaceContainerForImplicitImport`).
+    /// `markJsxAliasReferenced`: a tag is a call of the factory, which must be in scope at the tag,
+    /// unless an existing module is imported for it implicitly
+    /// (`getJsxNamespaceContainerForImplicitImport`).
     fn note_jsx_factories(&self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (options, atoms) = (&self.p.files.options, self.atoms());
@@ -149,7 +154,8 @@ impl Checker<'_> {
             }
             let is_fragment = hir[j].tag.is_none();
             let scope = u.scope_of(e);
-            // `symbolReferenced`: what it is made with is used even by a tag inside of it.
+            // `symbolReferenced`: the factory is marked as referenced even by a tag inside its own
+            // declaration.
             if let Some(found) = u.note_name(
                 scope,
                 if is_fragment {
@@ -162,15 +168,15 @@ impl Checker<'_> {
             ) {
                 u.referenced[found.idx()] |= ALL;
             }
-            // `getJsxFactoryEntity`: a fragment is made with both.
+            // `getJsxFactoryEntity`: a fragment uses both factories.
             if is_fragment {
                 u.note_name(scope, factory, SymFlags::VALUE, VALUE);
             }
         }
     }
 
-    /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member or a parameter is resolved,
-    /// which is a use of what it starts with.
+    /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member
+    /// or a parameter is resolved, which references its first identifier.
     fn note_jsdoc_links(&self, file: FileId, u: &mut Unused) {
         let atoms = &self.atoms();
         let text: &[u8] = &self.hir(file).text;
@@ -196,7 +202,8 @@ impl Checker<'_> {
                 let Some(first) = atoms.lookup(names[0]) else {
                     continue;
                 };
-                // `resolveJSDocMemberName`: a qualified name that is no entity name is a member of what its left side names.
+                // `resolveJSDocMemberName`: a qualified name that does not resolve as an entity
+                // name is a member of the symbol its left side names.
                 if names.len() > 1 {
                     u.note_name(scope, first, SymFlags::NAMESPACE, NAMESPACE);
                     let names: Vec<Atom> = names.iter().map(|name| atoms.intern(name)).collect();
@@ -213,10 +220,12 @@ impl Checker<'_> {
         }
     }
 
-    /// The private members that are read: wherever `markPropertyAsReferenced` is called.
+    /// Records the reads of private members: every place where `markPropertyAsReferenced` is
+    /// called.
     fn note_private_reads(&mut self, file: FileId, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Only the private members of the file are marked: what goes by another name is not looked up. A computed name is not known ahead.
+        // Only the private members of the file are marked, so an access with any other name is not
+        // resolved. A computed name is not known in advance.
         let private = hir
             .members
             .iter()
@@ -258,7 +267,7 @@ impl Checker<'_> {
                 }
                 ExprKind::Index { obj, index, .. } => {
                     let key = self.type_of_expr(file, index);
-                    // `shouldDeferIndexedAccessType`: nothing is looked up under a key that waits for a type parameter.
+                    // `shouldDeferIndexedAccessType`: no property is looked up for a generic key.
                     if self.is_generic(key) {
                         continue;
                     }
@@ -284,7 +293,8 @@ impl Checker<'_> {
                     .then_some(e);
                     self.note_destructured(file, u, target, source, from_this);
                 }
-                // `#x in o`: `checkPrivateIdentifierExpression`. A read, whatever `o` is and wherever it is written.
+                // `#x in o`: `checkPrivateIdentifierExpression`. Counts as a read, whatever `o` is
+                // and wherever the expression appears.
                 ExprKind::Binary {
                     op: BinOp::In,
                     left,
@@ -327,8 +337,9 @@ impl Checker<'_> {
                 self.note_destructured(file, u, target, source, None);
             }
         }
-        // `const { x } = o`: `checkVariableLikeDeclaration`. Whatever a binding element goes by is looked up in what is taken apart, be it
-        // the name of a rest element or of an element of an array pattern.
+        // `const { x } = o`: `checkVariableLikeDeclaration`. The name of every binding element is
+        // looked up in the destructured type, even the name of a rest element or of an array
+        // pattern element.
         for i in 0..hir.pats.len() {
             if hir.is_in_with(hir.pats[i].pos) || matches!(bound.pat_parent[i], PatParent::None) {
                 continue;
@@ -361,8 +372,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkDestructuringAssignment`: `target`, the pattern of a destructuring assignment or part of one, is given a `source`.
-    /// `from_this`: the assignment, if `target` is all of its pattern and what is taken apart is written `this`.
+    /// `checkDestructuringAssignment`: `target`, the pattern of a destructuring assignment or a
+    /// part of it, is assigned `source`.
+    /// `from_this`: the assignment, if `target` is its whole pattern and the right-hand side is
+    /// `this`.
     fn note_destructured(
         &mut self,
         file: FileId,
@@ -372,7 +385,7 @@ impl Checker<'_> {
         from_this: Option<ExprId>,
     ) {
         let hir = self.hir(file);
-        // Whether `e` is a pattern in its turn, with or without a default.
+        // Whether `e` is a nested pattern, with or without a default.
         let is_pattern = |e: ExprId| {
             let e = match hir[e].kind {
                 ExprKind::Assign {
@@ -383,7 +396,7 @@ impl Checker<'_> {
             matches!(hir[e].kind, ExprKind::Object(_) | ExprKind::Array(_))
         };
         match hir[target].kind {
-            // The default is assigned too, which is an assignment like any other.
+            // The default is assigned too, as an ordinary assignment.
             ExprKind::Assign {
                 op: None, target, ..
             } => {
@@ -429,7 +442,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `markPropertyAsReferenced`, of the property `name` of `receiver`. `at`: the `a.b` or `a[b]` that gets at it, if that is how.
+    /// `markPropertyAsReferenced` for the property `name` of `receiver`. `at`: the `a.b` or `a[b]`
+    /// that accesses it, if any.
     /// `from_this`: the assignment, for a property named in the pattern of `({ b } = this)`.
     fn note_property(
         &mut self,
@@ -442,8 +456,9 @@ impl Checker<'_> {
     ) {
         let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
         let receiver = self.apparent_type(receiver);
-        // `createUnionOrIntersectionProperty`: what is private has to be there in every member of a union. It is the property of the first
-        // if that of each is the same. If not there is none, or one made up for the occasion, and that is what is marked.
+        // `createUnionOrIntersectionProperty`: a private property must exist in every member of a
+        // union. If all members have the same property, the result is the first member's property.
+        // Otherwise there is no property, or a synthesized one, and that one is marked.
         let mut found: Option<(&Prop, MapperId)> = None;
         for &part in self.parts(receiver) {
             let part = self.apparent_type(part);
@@ -510,7 +525,8 @@ impl Checker<'_> {
         u.referenced_members.insert(symbol);
     }
 
-    /// Whether `createUnionOrIntersectionProperty` takes the two for one property: one declaration, of one type.
+    /// Whether `createUnionOrIntersectionProperty` treats the two as the same property: same
+    /// declaration, same type.
     fn is_same_property(
         &mut self,
         a: &Prop,
@@ -527,7 +543,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `isSelfTypeAccess`, of `e`: `obj.name`, or `obj[key]` where `of` is what `obj` is to a property access.
+    /// `isSelfTypeAccess` for `e`: `obj.name`, or `obj[key]` where `of` is the type a property
+    /// access uses for `obj`.
     fn is_self_type_access(&self, file: FileId, e: ExprId, of: TypeId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (obj, is_dot) = match hir[e].kind {
@@ -541,7 +558,8 @@ impl Checker<'_> {
         if matches!(hir[obj].kind, ExprKind::This) {
             return true;
         }
-        // What `a` of `a.b` means is compared with what its first identifier means. Of `a.c.b` that is the property `c`, which `a` does not mean.
+        // The symbol of `a` in `a.b` is compared with the symbol of its first identifier. For
+        // `a.c.b` the former is the property `c`, which is not the symbol of `a`.
         if is_dot {
             return matches!(hir[obj].kind, ExprKind::Ident(_));
         }
@@ -549,7 +567,7 @@ impl Checker<'_> {
             return false;
         }
         let first = first_identifier(hir, obj);
-        // Of `a[k]` it is the symbol of the type of `a`: the class.
+        // For `a[k]` it is the symbol of the type of `a`: the class.
         let class = match self.data(of) {
             TypeData::Ref { target, .. } => *target,
             TypeData::Anon {
@@ -562,20 +580,22 @@ impl Checker<'_> {
         matches!(hir[first].kind, ExprKind::Ident(_))
             && symbol.is_some()
             && self.files().sym(file, symbol) == class
-            // The name of what is exported where it is declared means the local symbol, and the type has the exported one.
+            // The name of a declaration with an `export` modifier resolves to the local symbol,
+            // while the type has the export symbol.
             && !bound.symbols[symbol.idx()].decls.iter().any(|d| matches!(*d, Decl::Class(c) if hir[c].flags.contains(Flags::EXPORT)))
     }
 
-    /// Whether the property `members` declare is the symbol declared in whatever type it is found in: `instantiateSymbol` leaves it alone.
+    /// Whether the property that `members` declare is the declared symbol in every type it is found
+    /// in: `instantiateSymbol` returns it unchanged.
     fn is_uninstantiated(&mut self, file: FileId, members: &[(FileId, MemberId)]) -> bool {
-        // The static side has the exports of the class themselves.
+        // The properties of the static side are the exports of the class themselves.
         if members
             .iter()
             .all(|&(f, m)| self.hir(f)[m].flags.contains(Flags::STATIC))
         {
             return true;
         }
-        // `isThisless`, in a class where `this` is all there is to instantiate.
+        // `isThisless`, in a class whose only type parameter to instantiate is `this`.
         let &[(of, m)] = members else { return false };
         if of != file {
             return false;
@@ -592,7 +612,7 @@ impl Checker<'_> {
     }
 }
 
-/// Where `needle` first occurs in `text` at or after `from`.
+/// The first position of `needle` in `text` at or after `from`.
 fn find_bytes(text: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     let (&first, rest) = needle.split_first()?;
     let mut at = from;
@@ -605,8 +625,9 @@ fn find_bytes(text: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     }
 }
 
-/// The last byte of the token before the comment that starts at `open`, if the two are on one line, whatever comments are between
-/// them. `GetLeadingCommentRanges` collects a comment only after a line break or at the start of the text.
+/// The last byte of the token before the comment that starts at `open`, if both are on the same
+/// line, ignoring comments between them. `GetLeadingCommentRanges` collects a comment only after a
+/// line break or at the start of the text.
 fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
     loop {
         let before = text[..open].trim_ascii_end();
@@ -627,7 +648,7 @@ fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
     }
 }
 
-/// The identifier at `at`, which may be none. `ScanJSDocToken` takes a `-` for a part of one.
+/// The identifier at `at`, possibly empty. `ScanJSDocToken` treats a `-` as an identifier part.
 fn identifier_at(text: &[u8], at: usize, is_jsdoc_token: bool) -> &[u8] {
     let rest = text.get(at..).unwrap_or(&[]);
     let is_start = |c: u8| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80;
@@ -674,7 +695,7 @@ fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
                 if !first.is_empty() {
                     i += first.len();
                     let mut names = vec![first];
-                    // After the dots, `a#b` is read like `a.b`.
+                    // After the dots, `a#b` is parsed like `a.b`.
                     let mut dots = true;
                     loop {
                         let mut at = skip_spaces(i);
@@ -718,7 +739,7 @@ fn closing_bracket_after(text: &[u8], from: usize) -> u32 {
     text.len() as u32
 }
 
-/// `isThisless`, of a method or an accessor.
+/// `isThisless` for a method or an accessor.
 fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
     if !matches!(
         hir[m].kind,
@@ -747,7 +768,7 @@ fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
 
 /// `isThislessType`
 fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
-    // A type in parentheses is not looked into. Only the text tells.
+    // A parenthesized type is not inspected. Parentheses are only visible in the source text.
     if hir
         .text
         .get(..hir[t].pos as usize)
@@ -768,7 +789,7 @@ fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
 }
 
 impl Unused<'_> {
-    // ───────────────────────────── what is referred to ─────────────────────────────
+    // ───────────────────────────── references ─────────────────────────────
 
     fn note_references(&mut self, index: &ExprsByKind) {
         let (hir, bound) = (self.hir, self.bound);
@@ -812,7 +833,8 @@ impl Unused<'_> {
             } else {
                 (SymFlags::NAMESPACE, NAMESPACE)
             };
-            // `resolveEntityName`: what is found to be no namespace is looked up once more, as an alias, with `isUse`.
+            // `resolveEntityName`: a name that does not resolve to a namespace is looked up again,
+            // as an alias, with `isUse`.
             if self.note_name(scope, first, meaning, bit).is_none()
                 && meaning == SymFlags::NAMESPACE
                 && self
@@ -828,7 +850,7 @@ impl Unused<'_> {
                 continue;
             }
             match s.kind {
-                // `export { a }` uses `a`, whatever it is.
+                // `export { a }` references `a` with any meaning.
                 StmtKind::ExportNamed(id) if hir[id].spec.is_none() => {
                     let scope = bound.export_scope[id.idx()];
                     for item in hir[id].items.iter() {
@@ -850,7 +872,7 @@ impl Unused<'_> {
                 _ => {}
             }
         }
-        // `export default I`, `export = I`: a type will do.
+        // `export default I`, `export = I`: a type is accepted too.
         for &(e, scope) in &bound.free_idents {
             if let Parent::Stmt(s) = bound.expr_parent[e.idx()]
                 && matches!(
@@ -883,7 +905,8 @@ impl Unused<'_> {
             .extend(symbols.map(|symbol| self.files.sym(self.file, symbol)));
     }
 
-    /// The scope `e` is written in. Unless the binder kept it, that of the innermost function, class or namespace around.
+    /// The scope that contains `e`. If the binder did not record it, the scope of the innermost
+    /// enclosing function, class or namespace.
     fn scope_of(&self, e: ExprId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         if let Some(&scope) = bound.expr_scope.get(&e) {
@@ -909,17 +932,19 @@ impl Unused<'_> {
         scope
     }
 
-    /// Where the names in the JSDoc comment `open..end` are resolved from: the scope of the statement, member or parameter it is
-    /// attached to (`withJSDoc`), which are the nodes `checkSourceElement` is given. `NONE` if it is attached to none.
+    /// The scope the names in the JSDoc comment `open..end` are resolved from: that of the
+    /// statement, member or parameter it is attached to (`withJSDoc`), which are the nodes passed
+    /// to `checkSourceElement`. `NONE` if it is attached to no node.
     fn scope_of_jsdoc(&self, open: usize, end: usize) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         let text: &[u8] = &hir.text;
-        // Where the host starts, decorators and modifiers included.
+        // Start of the host, including decorators and modifiers.
         let first = skip_trivia(text, end) as u32;
         if hir.is_in_with(first) {
             return ScopeId::NONE;
         }
-        // `GetJSDocCommentRanges`: a parameter has the comments on the line of the token before it as well.
+        // `GetJSDocCommentRanges`: a parameter also owns the comments on the same line as the
+        // previous token.
         let before = byte_before_comment(text, open);
         if before.is_none() {
             if let Some(s) = (0..hir.stmts.len()).find(|&i| {
@@ -948,7 +973,8 @@ impl Unused<'_> {
         }
     }
 
-    /// The scope of the declaration `s` is. Of another statement, that of the innermost function or namespace around it.
+    /// The scope of the declaration that `s` is. For any other statement, the scope of the
+    /// innermost enclosing function or namespace.
     fn scope_of_statement(&self, mut s: StmtId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         match hir[s].kind {
@@ -974,8 +1000,8 @@ impl Unused<'_> {
         }
     }
 
-    /// `GetHostSignatureFromJSDoc`: the scope of the signature `m` is, or has for a type if it is a property signature. Failing
-    /// that, the scope `m` is declared in.
+    /// `GetHostSignatureFromJSDoc`: the scope of the signature that `m` is, or that is the type of
+    /// `m` if it is a property signature. Otherwise the scope `m` is declared in.
     fn scope_of_member(&self, m: MemberId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         let (member, owner) = (&hir[m], bound.member_owner[m.idx()]);
@@ -996,7 +1022,8 @@ impl Unused<'_> {
         }
     }
 
-    /// `Resolve` with `isUse`. What the name means, if that is declared in the file.
+    /// `Resolve` with `isUse`. Returns the symbol the name resolves to, if it is declared in the
+    /// file.
     fn note_name(
         &mut self,
         from: ScopeId,
@@ -1005,7 +1032,7 @@ impl Unused<'_> {
         bit: u8,
     ) -> Option<SymbolId> {
         let files = self.files;
-        // The scope looked into last.
+        // The most recently searched scope.
         let mut found_in = ScopeId::NONE;
         let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             if let SymbolTable::Locals(_, scope) = table {
@@ -1022,7 +1049,8 @@ impl Unused<'_> {
             .iter()
             .find(|part| part.file == self.file)?
             .id;
-        // `lastSelfReferenceLocation`: the declaration furthest out that the name is written in, short of where it is found.
+        // `lastSelfReferenceLocation`: the outermost declaration that contains the name, below the
+        // scope where it is found.
         let mut inside = SymbolId::NONE;
         let mut scope = from;
         while scope != found_in {
@@ -1042,7 +1070,8 @@ impl Unused<'_> {
         self.bound.is_write_only_access(self.hir, e)
     }
 
-    /// Whether `e` is written in a function, class, enum or namespace declaration of `symbol`: `isSelfReferenceLocation`.
+    /// Whether `e` is inside a function, class, enum or namespace declaration of `symbol`:
+    /// `isSelfReferenceLocation`.
     fn is_inside_declaration_of(&self, e: ExprId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         bound.symbols[symbol.idx()]
@@ -1058,7 +1087,8 @@ impl Unused<'_> {
             })
     }
 
-    /// The method or accessor of a class `e` is directly in: `FindAncestor(e, IsFunctionLikeDeclaration)`, if that is one.
+    /// The class method or accessor that directly contains `e`: `FindAncestor(e,
+    /// IsFunctionLikeDeclaration)`, if that is one.
     fn enclosing_member_fn(&self, e: ExprId) -> Option<MemberId> {
         let hir = self.hir;
         let function = hir.find_ancestor(hir.parent(hir.node(e)), |n| {
@@ -1107,9 +1137,11 @@ impl Unused<'_> {
         name.is_some() && self.atoms.bytes(name).first() == Some(&b'_')
     }
 
-    // `reportUnused` drops what is reported for a node that has `NodeFlagsThisNodeOrAnySubNodesHasError`. The parser flags the first
-    // node it finishes after an error (`finishNodeWithEnd`), and the binder flags the ancestors. Node ends are not kept, so the
-    // `*_has_syntax_error` functions take a node to reach as far as the start of what follows it.
+    // `reportUnused` drops the diagnostics for a node that has
+    // `NodeFlagsThisNodeOrAnySubNodesHasError`. The parser flags the first node it finishes after
+    // an error (`finishNodeWithEnd`), and the binder flags the ancestors. Node ends are not stored,
+    // so the `*_has_syntax_error` functions treat a node as extending to the start of the next
+    // node.
 
     /// `NodeFlagsThisNodeOrAnySubNodesHasError`
     fn has_syntax_error(&self, location: Node) -> bool {
@@ -1132,7 +1164,8 @@ impl Unused<'_> {
                 MemberOwner::Class(class) => self.member_has_syntax_error(class, m),
                 _ => false,
             },
-            // The error may be in another part of the import than the one that is unused: node ends are not kept.
+            // The error may be in another part of the import than the one that is unused: node ends
+            // are not stored.
             NodeData::ImportSpec(_)
             | NodeData::Part(Part::ImportClause | Part::NamedBindings, _) => {
                 let is_statement = |n: Node| matches!(hir.data(n), NodeData::Stmt(_));
@@ -1166,8 +1199,8 @@ impl Unused<'_> {
         }
     }
 
-    /// Where the node after the statement `s` starts, and whether that node is a statement. If nothing follows `s`, the position of
-    /// the bracket that closes the block around it.
+    /// Start of the node after the statement `s`, and whether that node is a statement. If nothing
+    /// follows `s`, the position of the closing bracket of the enclosing block.
     fn start_of_next(&self, s: StmtId) -> (u32, bool) {
         let (hir, bound) = (self.hir, self.bound);
         let next_in = |list: IdList<StmtId>| hir.ids(list).skip_while(|&other| other != s).nth(1);
@@ -1261,7 +1294,7 @@ impl Unused<'_> {
         if hir[f].params.range().contains(&next.idx()) {
             return hir[next].pos > start && self.has_syntax_error_in(start, hir[next].pos - 1);
         }
-        // The last one reaches as far as the `=>` of an arrow function or the `)` of the list.
+        // The last one extends to the `=>` of an arrow function or the `)` of the list.
         let end = if hir[f].kind == FnKind::Arrow {
             hir[f].anchor
         } else {
@@ -1308,7 +1341,7 @@ impl Unused<'_> {
                 heads_a_loop || matches!(hir[d].kind, VarKind::Using | VarKind::AwaitUsing)
             }
             PatParent::Prop(parent, p) => {
-                // In `{ a, ...b }`, `a` is there to be left out of `b`.
+                // In `{ a, ...b }`, `a` exists to be omitted from `b`.
                 if let PatKind::Object(props) = hir[parent].kind
                     && let Some(last) = props.iter().last()
                     && last != p
@@ -1316,7 +1349,8 @@ impl Unused<'_> {
                 {
                     return false;
                 }
-                // Only what is written after the name of a property had a choice of name: not `{ _a }`, not `{ ..._a }`.
+                // Only a binding that follows a property name could choose its name: not `{ _a }`,
+                // not `{ ..._a }`.
                 !hir[p].is_rest && hir[p].pos != hir[pat].pos
             }
             PatParent::Elem(..) => true,
@@ -1334,7 +1368,8 @@ impl Unused<'_> {
 }
 
 impl Checker<'_> {
-    /// `checkUnusedIdentifiers`. What `registerForUnusedIdentifiersCheck` collects there is gone through by kind here.
+    /// `checkUnusedIdentifiers`. The nodes `registerForUnusedIdentifiersCheck` collects there are
+    /// iterated by kind here.
     fn check_unused_identifiers(&mut self, u: &Unused<'_>) {
         let (hir, bound) = (u.hir, u.bound);
         for (i, scope) in bound.scopes.iter().enumerate() {
@@ -1342,7 +1377,7 @@ impl Checker<'_> {
                 // `checkSourceFile`: `IsExternalOrCommonJSModule`
                 ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
                 ScopeKind::Module(_) | ScopeKind::Block => true,
-                // Of overloads only the implementation.
+                // Among overloads, only the implementation.
                 ScopeKind::Fn(f) => {
                     !matches!(hir[f].body, FnBody::None)
                         && hir.kind(hir.node(f)).is_function_like_declaration()
@@ -1419,7 +1454,8 @@ impl Checker<'_> {
         let mut variable_parents: Vec<Node> = Vec::new();
         let mut import_clauses: Vec<(Node, Node)> = Vec::new();
         for &(name, local) in bound.table(bound.scopes[scope.idx()].locals) {
-            // A missing name is a syntax error inside its declaration, so `reportUnused` drops what is reported for it.
+            // A missing name is a syntax error inside its declaration, so `reportUnused` drops its
+            // diagnostic.
             if name == known::empty || name.is_none() {
                 continue;
             }
@@ -1534,7 +1570,8 @@ impl Checker<'_> {
     /// `reportUnusedLocal`
     fn report_unused_local(&mut self, u: &Unused<'_>, node: Node, name: Atom) {
         let hir = u.hir;
-        // `IsTypeDeclaration`: what `import type` brings in are types. (Not so `import { type T }`, nor `* as ns`.)
+        // `IsTypeDeclaration`: the bindings of `import type` are type declarations. (Not those of
+        // `import { type T }`, nor `* as ns`.)
         let is_type_declaration = match hir.kind(node) {
             Kind::ClassDeclaration
             | Kind::InterfaceDeclaration
@@ -1553,8 +1590,9 @@ impl Checker<'_> {
         self.report_unused(u, node, false, at, code, &[Arg::Atom(name)]);
     }
 
-    /// `reportUnusedVariableDeclarations`, for one of them. `root`: the variable declaration or the parameter `pat` is (part of) the name
-    /// of, which is what `reportUnusedVariable` goes up to.
+    /// `reportUnusedVariableDeclarations`, for one of them. `root`: the variable declaration or
+    /// parameter whose name is or contains `pat`, which is the node `reportUnusedVariable` walks up
+    /// to.
     fn report_unused_variable_declaration(&mut self, u: &Unused<'_>, root: Node, pat: PatId) {
         let (hir, file) = (u.hir, u.file);
         let is_parameter = hir.kind(root) == Kind::Parameter;
@@ -1581,7 +1619,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkUnusedTypeParameters`, of the declaration `node`.
+    /// `checkUnusedTypeParameters` for the declaration `node`.
     fn check_unused_type_parameters(
         &mut self,
         u: &Unused<'_>,
@@ -1589,13 +1627,15 @@ impl Checker<'_> {
         params: Span<TypeParamId>,
     ) {
         let (hir, file) = (u.hir, u.file);
-        // `reportUnused` is given the declaration they belong to, which contains the syntax error of a missing name.
+        // `reportUnused` receives the declaration they belong to, which contains the syntax error
+        // of a missing name.
         if params.iter().any(|p| hir[p].name == known::empty) {
             return;
         }
         if params.len() > 1 && params.iter().all(|p| u.is_unreferenced_type_parameter(p)) {
-            // `rangeOfTypeParameters`: from the `<`. A list made of `@template` tags begins at the `@` of the first
-            // (`gatherTypeParameters`), so it is from one before that.
+            // `rangeOfTypeParameters`: starts at the `<`. A list synthesized from `@template` tags
+            // begins at the `@` of the first tag (`gatherTypeParameters`), so the range starts one
+            // position before that.
             let first = hir[params.at(0)].start;
             let before = hir.text.get(..first as usize).unwrap_or_default();
             let open = if hir[params.at(0)].flags.contains(Flags::REPARSED) {

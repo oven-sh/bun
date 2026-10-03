@@ -1,9 +1,10 @@
-//! What comes back to itself: 2313 2615, and 2502 2577 7022 7023 7024.
+//! Circularity errors: 2313 2615, and 2502 2577 7022 7023 7024.
 //!
-//! In TypeScript 7.0.2's checker.go these fall out of `pushTypeResolution` finding what is asked for already under way, in
-//! `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`: everything from there to the top of the stack
-//! is in the circle, and what only leads to it is not. Here the circles are looked for in what is written, and among those that
-//! `Checker::enter` came upon when the types were asked for.
+//! In TypeScript 7.0.2's checker.go these result from `pushTypeResolution` finding the requested
+//! resolution already in progress, in `getBaseConstructorTypeOfClass`, `getBaseTypes` and
+//! `getResolvedBaseConstraint`: every entry from there to the top of the stack is in the cycle, and
+//! an entry that only leads to it is not. Here the cycles are detected in the syntax, and among
+//! those that `Checker::enter` found when the types were requested.
 
 use super::explain::NOWHERE;
 use super::sink::held;
@@ -13,7 +14,8 @@ use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
 
-/// Whether `eagerly_resolved_mapped_keys` has anything to find in `node`, however many type arguments the names in it take.
+/// Whether `eagerly_resolved_mapped_keys` can find anything in `node`, regardless of the type
+/// argument counts of the names in it.
 fn contains_mapped_type_node(hir: &hir::File, node: TypeNodeId) -> bool {
     if node.is_none() {
         return false;
@@ -44,9 +46,9 @@ fn contains_mapped_type_node(hir: &hir::File, node: TypeNodeId) -> bool {
     }
 }
 
-/// `getConstraintDeclaration`: where the constraint `node` starts as it is written. Neither the parentheses around a type are kept
-/// nor a `|` or a `&` before its only member; what comes before a constraint is `extends` or `in`, which none of these can be
-/// mistaken for.
+/// `getConstraintDeclaration`: the start of the constraint `node` in the source. Neither the
+/// parentheses around a type nor a leading `|` or `&` before its only member are stored. A
+/// constraint is preceded by `extends` or `in`, which cannot be confused with any of these.
 fn start_of_constraint(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text = &hir.text[..];
     let mut at = (hir[node].pos as usize).min(text.len());
@@ -59,8 +61,9 @@ fn start_of_constraint(hir: &hir::File, node: TypeNodeId) -> u32 {
     }
 }
 
-/// `getUnionType`, `getIntersectionType`: what the type at `node` is whatever else is written in it. In a union `any`, and then
-/// `unknown`, leaves nothing of the rest; in an intersection `never`, and then `any`.
+/// `getUnionType`, `getIntersectionType`: the keyword that determines the type at `node` regardless
+/// of its other members. In a union `any`, and then `unknown`, absorbs the rest. In an intersection
+/// `never`, and then `any`.
 fn absorbing_keyword(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
     let strongest = |members: IdList<TypeNodeId>, first: Keyword, second: Keyword| {
         let mut found = None;
@@ -107,8 +110,9 @@ impl Checker<'_> {
             }
             let own = TypeParamId(p as u32);
             let mut is_circular = self.is_constraint_circular(file, own);
-            // `checkTypeParameter`: the base constraint is asked for, which shows the circles that are not written out: through what
-            // a type alias stands for, through `T[K]`, through a conditional type.
+            // `checkTypeParameter`: the base constraint is requested, which detects the cycles that
+            // are not visible in the syntax: through the target of a type alias, through `T[K]`,
+            // through a conditional type.
             if !is_circular && bound.type_param_symbol[p].is_some() {
                 let param = self.type_param(file, own);
                 is_circular = self
@@ -128,8 +132,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `getResolvedBaseConstraint`: 2313, of the key of the mapped type at `mapped`, which had to be known to tell whether `extending`
-    /// can extend the type. `c.currentNode` is `extending`, which is being checked.
+    /// `getResolvedBaseConstraint`: 2313 for the key of the mapped type at `mapped`, which had to
+    /// be resolved to decide whether `extending` can extend the type. `c.currentNode` is
+    /// `extending`, which is being checked.
     pub(super) fn report_circular_mapped_key(
         &mut self,
         file: FileId,
@@ -141,8 +146,8 @@ impl Checker<'_> {
             return;
         };
         let param = &hir[hir[m].param];
-        // `GetDiagnostics` reads what is said of a file when it has checked the file, in the order of the program. What the check of a
-        // later file says of it is never read.
+        // `GetDiagnostics` reads the diagnostics of a file once it has checked the file, in program
+        // order. Diagnostics that the check of a later file adds to it are never read.
         let files = self.files();
         let order = |f: FileId| (!files.module(f).is_lib, files.rank_of_file(f));
         if param.constraint.is_none() || order(extending.0) > order(file) {
@@ -165,7 +170,8 @@ impl Checker<'_> {
         self.add_diagnostic(err);
     }
 
-    /// Asks for the types that `reportCircularityError`, `getReturnTypeOfSignature` and `getTypeOfAccessors` report circles of.
+    /// Requests the types for which `reportCircularityError`, `getReturnTypeOfSignature` and
+    /// `getTypeOfAccessors` report cycles.
     fn check_circular_resolutions(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.pats.len() {
@@ -176,7 +182,8 @@ impl Checker<'_> {
                 continue;
             }
             self.type_of_pat(file, pat);
-            // `parameterInitializerContainsUndefined` is asked where the parameter is read: in its own default, that comes back to itself.
+            // `parameterInitializerContainsUndefined` is evaluated where the parameter is read: in
+            // its own default, that is circular.
             if let PatParent::Param(p) = bound.pat_parent[i]
                 && hir[p].ty.is_some()
                 && hir[p].default.is_some()
@@ -193,8 +200,8 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `getTypeOfSymbol`: the properties and accessors among the declarations of one symbol are one property, known by the
-            // first.
+            // `getTypeOfSymbol`: the properties and accessors among the declarations of one symbol
+            // are one property, identified by the first.
             let is_first = bound.member_symbol[i].is_some() && {
                 let sym = self.symbol_of_member(file, member);
                 self.files().value_declaration(sym) == Some((file, Decl::Member(member)))
@@ -208,7 +215,8 @@ impl Checker<'_> {
             if matches!(bound.fns[i].owner, FnOwner::None) {
                 continue;
             }
-            // An accessor of a class, an interface or a type literal that says what it is was asked above, with the property it makes.
+            // An annotated accessor of a class, an interface or a type literal was already
+            // requested above, with the property it declares.
             let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
                 && !(hir[func].kind == FnKind::Getter
                     && matches!(bound.fns[i].owner, FnOwner::Expr(_)));
@@ -252,7 +260,7 @@ impl Checker<'_> {
         let ((file, accessor), code) = match (annotated_getter, annotated_setter) {
             (Some(getter), _) => (getter, 2502),
             (None, Some(setter)) => (setter, 2502),
-            // It goes to the set accessor, which is nil.
+            // It is reported on the set accessor, which is nil.
             _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
                 let err = Reported::new(NOWHERE, 2502, held(vec![name]));
                 return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
@@ -271,7 +279,8 @@ impl Checker<'_> {
         self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
     }
 
-    /// `symbol.ValueDeclaration` of the CommonJS export `symbol`: the assignment. `None` if it is no assignment.
+    /// `symbol.ValueDeclaration` of the CommonJS export `symbol`: the assignment. `None` if it is
+    /// not an assignment.
     pub(super) fn commonjs_value_declaration(&self, symbol: &Symbol) -> Option<ExprId> {
         match *symbol.decls.get(symbol.value_declaration as usize)? {
             Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => Some(assignment),
@@ -279,8 +288,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkExportAssignment`, `checkBinaryLikeExpression`: the types of `export default e`, `export = e`, `module.exports = e` and
-    /// `exports.a = e` are asked for.
+    /// `checkExportAssignment`, `checkBinaryLikeExpression`: the types of `export default e`,
+    /// `export = e`, `module.exports = e` and `exports.a = e` are requested.
     fn check_circular_exports(&mut self, file: FileId) {
         for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
             if symbol
@@ -327,12 +336,14 @@ impl Checker<'_> {
         found.sort_by_key(|&(node, ..)| node);
         found.dedup_by_key(|&mut (node, ..)| node);
         for ((file, node), mapped, name) in found {
-            // A variable of that type that is read while the file is emitted makes the type first.
-            let made = self.type_from_node(file, node);
+            // A variable of that type that is read during emit creates the type first.
+            let created = self.type_from_node(file, node);
             // Under any alias: the keys of the mapped type, which lead into the cycle, are the same.
-            let made = self.intern(self.data(made).clone());
-            let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
-                self.first_variable_read_by_emit(file, |c, ty| c.intern(c.data(ty).clone()) == made)
+            let created = self.intern(self.data(created).clone());
+            let variable = if matches!(self.data(created), TypeData::Anon { .. }) {
+                self.first_variable_read_by_emit(file, |c, ty| {
+                    c.intern(c.data(ty).clone()) == created
+                })
             } else {
                 None
             };
@@ -352,8 +363,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getNameOfDeclaration`: where the name of `func` is: its own or, for a function expression that has none, that of what it is
-    /// given to (`GetAssignedName`).
+    /// `getNameOfDeclaration`: the position of the name of `func`: its own or, for an anonymous
+    /// function expression, the name it is assigned to (`GetAssignedName`).
     fn name_of_function(&self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let e = match bound.fns[func.idx()].owner {
@@ -363,7 +374,7 @@ impl Checker<'_> {
             _ => return None,
         };
         match bound.expr_parent[e.idx()] {
-            // A method or an accessor of an object literal, under a name that is worked out.
+            // A method or an accessor of an object literal, with a computed name.
             Parent::Prop(p)
                 if matches!(
                     hir[p].kind,
@@ -376,8 +387,9 @@ impl Checker<'_> {
         }
     }
 
-    /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the circle: 2577, 7023 at the name of the function, 7024
-    /// at one that has none. Of a getter of an object literal it is the end of `getTypeOfAccessors`. `owner`: see `add_diagnostic_of`.
+    /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the cycle: 2577, 7023
+    /// at the name of the function, 7024 at a function without a name. For a getter of an object
+    /// literal it is the end of `getTypeOfAccessors`. `owner`: see `add_diagnostic_of`.
     pub(super) fn report_circular_return_type(
         &mut self,
         owner: Option<Query>,
@@ -398,7 +410,8 @@ impl Checker<'_> {
             false
         };
         if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
-            // The accessors of classes, interfaces and type literals are reported with the property they make.
+            // The accessors of classes, interfaces and type literals are reported with the property
+            // they declare.
             if hir[func].kind == FnKind::Getter && matches!(fn_owner, FnOwner::Expr(_)) {
                 let setter = self
                     .sibling_accessor(file, func, FnKind::Setter)
@@ -427,9 +440,10 @@ impl Checker<'_> {
         }
     }
 
-    /// A file is emitted before it is checked: `markPropertyAliasReferenced` takes the type of the `a` of every `a.b`, then
-    /// `GetConstantValue` that of every `a.b` and `a[b]`. Where the first `a`, in that order, is that is a name and `is_it` holds for
-    /// the type of.
+    /// A file is emitted before it is checked: `markPropertyAliasReferenced` resolves the type of
+    /// the `a` of every `a.b`, then `GetConstantValue` that of every `a.b` and `a[b]`. Returns the
+    /// position of the first `a`, in that order, that is an identifier and whose type satisfies
+    /// `is_it`.
     fn first_variable_read_by_emit(
         &mut self,
         file: FileId,
@@ -441,7 +455,7 @@ impl Checker<'_> {
             return None;
         }
         let index = self.exprs_by_kind(file);
-        // Whether it is only looked at the second time round, and where it is.
+        // Whether it is only visited in the second pass, and its position.
         let mut first: Option<(bool, u32)> = None;
         for (tag, is_second) in [(ExprTag::Dot, hir.is_js), (ExprTag::Index, true)] {
             for &e in index.of(tag) {
@@ -465,8 +479,9 @@ impl Checker<'_> {
         first.map(|first| first.1)
     }
 
-    /// `getResolvedBaseConstraint`: `c.currentNode` when the circle the type parameter `own` is in is first come upon, unless that is in
-    /// what `own` extends, which is written from `start` to `end`, or around it.
+    /// `getResolvedBaseConstraint`: `c.currentNode` when the cycle that contains the type parameter
+    /// `own` is first detected, unless that node is inside the constraint of `own`, which spans
+    /// `start` to `end`, or encloses it.
     fn origin_of_circular_constraint(
         &mut self,
         file: FileId,
@@ -474,7 +489,7 @@ impl Checker<'_> {
         start: u32,
         end: u32,
     ) -> Vec<Reported> {
-        // `getNarrowableTypeForReference` asks what the type of a variable extends.
+        // `getNarrowableTypeForReference` requests the constraint of the type of a variable.
         let variable = self.first_variable_read_by_emit(file, |c, ty| {
             matches!(
                 *c.data(ty),
@@ -499,7 +514,8 @@ impl Checker<'_> {
         at.map(|at| Reported::bare(at, 2751)).into_iter().collect()
     }
 
-    /// Whether `from` is `to`, or what it extends leads there, going by what is written as `is_constraint_circular` does.
+    /// Whether `from` is `to`, or its constraint leads to it, based on the syntax as in
+    /// `is_constraint_circular`.
     fn constraint_leads_to(&self, file: FileId, from: TypeParamId, to: TypeParamId) -> bool {
         let hir = self.hir(file);
         let (mut seen, mut todo) = (TypeParams::new(), TypeParams::new());
@@ -518,9 +534,10 @@ impl Checker<'_> {
         false
     }
 
-    /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made. For `own`, the key of a mapped type
-    /// that is written in a type alias, that is when the first type reference that leads to the alias is checked. Children have lower
-    /// ids and are checked first.
+    /// `getTypeFromMappedTypeNode` resolves the constraint of its key eagerly when the type is
+    /// created. For `own`, the key of a mapped type inside a type alias, that is when the first
+    /// type reference that leads to the alias is checked. Children have lower ids and are checked
+    /// first.
     fn first_reference_resolving_mapped_key(
         &self,
         file: FileId,
@@ -565,7 +582,7 @@ impl Checker<'_> {
             .then_some(named)
     }
 
-    /// Whether making what the type alias `from` stands for makes what `to` stands for.
+    /// Whether creating the type aliased by `from` creates the type aliased by `to`.
     fn alias_leads_to(&self, from: Sym, to: Sym, seen: &mut Vec<Sym>) -> bool {
         if from == to {
             return true;
@@ -585,8 +602,9 @@ impl Checker<'_> {
             .any(|next| self.alias_leads_to(next, to, seen))
     }
 
-    /// The type aliases referred to in what is resolved as soon as the type at `node` is made, as in `eagerly_resolved_mapped_keys`: of a
-    /// mapped type what its key extends.
+    /// The type aliases referenced in the parts that are resolved eagerly when the type at `node`
+    /// is created, as in `eagerly_resolved_mapped_keys`: for a mapped type the constraint of its
+    /// key.
     fn eagerly_resolved_aliases(&self, file: FileId, node: TypeNodeId, into: &mut Vec<Sym>) {
         if node.is_none() {
             return;
@@ -630,9 +648,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `hasNonCircularBaseConstraint`, the other way round and going by what is written: whether what the type parameter `own`
-    /// extends comes back to it, by way of what `type_parameters_of_constraint` finds in each constraint. One that only leads to a circle
-    /// is not in it.
+    /// `hasNonCircularBaseConstraint`, negated and based on the syntax: whether the constraint of
+    /// the type parameter `own` leads back to it, through the type parameters
+    /// `type_parameters_of_constraint` finds in each constraint. One that only leads to a cycle is
+    /// not in it.
     pub(super) fn is_constraint_circular(&self, file: FileId, own: TypeParamId) -> bool {
         let hir = self.hir(file);
         if hir[own].constraint.is_none() {
@@ -654,8 +673,8 @@ impl Checker<'_> {
         false
     }
 
-    /// The type parameters a constraint comes down to: itself, the members of a union or an intersection, and the keys of the mapped
-    /// types that are made with it.
+    /// The type parameters a constraint reduces to: itself, the members of a union or an
+    /// intersection, and the keys of the mapped types that are created with it.
     fn type_parameters_of_constraint(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[node].kind {
@@ -673,7 +692,8 @@ impl Checker<'_> {
                     into.push(p);
                 }
             }
-            // `computeBaseConstraint` goes by the type: of `T | unknown` or `T & never` no `T` is left.
+            // `computeBaseConstraint` uses the type: `T | unknown` and `T & never` no longer
+            // contain `T`.
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types)
                 if absorbing_keyword(hir, node).is_none() =>
             {
@@ -685,9 +705,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made: the keys of the mapped types that
-    /// are made together with `node`, which is in a constraint, where nothing is put off (`isDeferredTypeReferenceNode`). Members,
-    /// signatures, the templates of mapped types and what they rename to wait.
+    /// `getTypeFromMappedTypeNode` resolves the constraint of its key eagerly when the type is
+    /// created: the keys of the mapped types that are created together with `node`, which is in a
+    /// constraint, where nothing is deferred (`isDeferredTypeReferenceNode`). Members, signatures,
+    /// the templates of mapped types and their name types are resolved lazily.
     fn eagerly_resolved_mapped_keys(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         if node.is_none() {
             return;
@@ -708,8 +729,9 @@ impl Checker<'_> {
                 if !hir.ids(args).any(|t| contains_mapped_type_node(hir, t)) {
                     return;
                 }
-                // `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`: the wrong number of type arguments is an
-                // error, and they are not looked at. Those of a name that means nothing are.
+                // `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`: a wrong
+                // number of type arguments is an error, and they are not resolved. Those of an
+                // unresolved name are.
                 let files = self.files();
                 let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 let named = files
@@ -737,7 +759,7 @@ impl Checker<'_> {
                 self.eagerly_resolved_mapped_keys(file, obj, into);
                 self.eagerly_resolved_mapped_keys(file, index, into);
             }
-            // Which branch is taken, if any, is not a matter of how it is written.
+            // Which branch is taken, if any, cannot be determined from the syntax.
             TypeNodeKind::Cond { check, extends, .. } => {
                 self.eagerly_resolved_mapped_keys(file, check, into);
                 self.eagerly_resolved_mapped_keys(file, extends, into);

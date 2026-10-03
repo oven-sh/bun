@@ -56,7 +56,8 @@ pub fn is_entity_name(text: &[u8]) -> bool {
     let mut names = text
         .split(|&b| b == b'.')
         .map(|name| name.trim_with(is_white_space_like));
-    // `tokenIsIdentifierOrKeyword` holds for a private identifier, so `parseEntityName` accepts `#a` as the first name.
+    // `tokenIsIdentifierOrKeyword` is true for a private identifier, so `parseEntityName` accepts
+    // `#a` as the first name.
     // `parseRightSideOfDot` rejects it after a dot.
     names
         .next()
@@ -64,37 +65,42 @@ pub fn is_entity_name(text: &[u8]) -> bool {
         && names.all(is_identifier)
 }
 
-/// Where in the configuration file something wrong with the options is pointed out.
+/// The location in the configuration file at which an options diagnostic is reported.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub enum Place {
     /// `NewCompilerDiagnostic`
     #[default]
     Nowhere,
-    /// `createCompilerOptionsDiagnostic`: at the word `compilerOptions`.
+    /// `createCompilerOptionsDiagnostic`: at the property name `compilerOptions`.
     CompilerOptions,
-    /// `createDiagnosticForOption`: at the name of whichever of two options is written first, the second of which may be none.
+    /// `createDiagnosticForOption`: at the name of whichever of two options appears first in the
+    /// file. The second option may be absent.
     Key(&'static [u8], &'static [u8]),
-    /// At what the option is set to.
+    /// At the value of the option.
     Value(&'static [u8]),
-    /// `createDiagnosticForOptionPaths`: at a pattern in `paths`, or at what is to be tried for it.
+    /// `createDiagnosticForOptionPaths`: at a pattern in `paths`, or at its list of substitutions.
     PathsKey(Vec<u8>),
     PathsValue(Vec<u8>),
-    /// `createDiagnosticForOptionPathKeyValue`: at one of those.
+    /// `createDiagnosticForOptionPathKeyValue`: at one of those substitutions.
     PathsElement(Vec<u8>, usize),
-    /// `ForEachTsConfigPropArray`: at what is said for a name beside `compilerOptions`.
+    /// `ForEachTsConfigPropArray`: at the value of a property that is a sibling of
+    /// `compilerOptions`.
     Top(&'static [u8]),
-    /// `GetTsConfigPropArrayElementValue`: at the string in that list. Nowhere if it is not in this file.
+    /// `GetTsConfigPropArrayElementValue`: at the string in that array. No location if it is not in
+    /// this file.
     TopElement(&'static [u8], Vec<u8>),
-    /// `CreateDiagnosticAtReferenceSyntax`: at one of `references`. Nowhere if there are not that many.
+    /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
+    /// is out of range.
     Reference(usize),
 }
 
-/// Something wrong with the options.
+/// A diagnostic about the options.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Problem {
     pub code: u32,
     pub args: Vec<Vec<u8>>,
-    /// `AddMessageChain`: what is said below it. How far it is indented, the code, what goes into the message.
+    /// `AddMessageChain`: the chained messages below it. For each: its indentation level, its code,
+    /// its message arguments.
     pub chain: Vec<(u32, u32, Vec<Vec<u8>>)>,
     pub at: Place,
 }
@@ -109,14 +115,14 @@ impl Problem {
         }
     }
 
-    /// With `code` said below it, `level` steps in.
+    /// Appends `code` to the message chain at indentation `level`.
     pub fn with(mut self, level: u32, code: u32, args: &[&[u8]]) -> Problem {
         self.chain
             .push((level, code, args.iter().map(|&a| a.to_vec()).collect()));
         self
     }
 
-    /// From where to where it is in the configuration file. `None`: it is about no place in it.
+    /// Its span in the configuration file. `None`: it has no location in the file.
     pub fn span_in(&self, file: &TsConfigSourceFile) -> Option<(u32, u32)> {
         if self.at == Place::Nowhere {
             return None;
@@ -130,10 +136,10 @@ impl Problem {
         }
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
-            let Place::TopElement(_, said) = &self.at else {
+            let Place::TopElement(_, specified) = &self.at else {
                 return Some(file.span(list));
             };
-            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(said);
+            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
             return file.elements(list).find(is_it).map(|e| file.span(e));
         }
         let options = file.property(root, b"compilerOptions", b"")?;
@@ -159,7 +165,7 @@ impl Problem {
     }
 }
 
-/// `GetRelativePathFromFile`, both being absolute.
+/// `GetRelativePathFromFile` for two absolute paths.
 pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
     let relative = relative_normalized::<Posix, true>(dirname::<Posix>(from), to);
     // `EnsurePathIsNonModuleName`
@@ -170,8 +176,9 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
     }
 }
 
-/// `verifyProjectReferences`: what is wrong with the projects `root` refers to, directly or not, each with the configuration file that
-/// refers to it. `resolved`: the project of a configuration file, if there is such a file.
+/// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
+/// transitively, each with the configuration file that references it. `resolved`: the project of a
+/// configuration file, if the file exists.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,
@@ -182,7 +189,7 @@ pub fn verify_project_references<'a>(
         root.get_build_info_file_name()
     };
     let mut out = Vec::new();
-    // `rangeResolvedReferenceWorker`: a project, and which of its references comes next.
+    // `rangeResolvedReferenceWorker`: a project and the index of its next reference.
     let mut seen = FxHashSet::from_iter([root.config_path.clone()]);
     let mut pending = vec![(root, 0)];
     while let Some((parent, index)) = pending.pop() {
@@ -221,8 +228,8 @@ pub fn verify_project_references<'a>(
     out
 }
 
-/// `options` is what has been made of `compiler`, the `compilerOptions` as they are written, in the configuration file at `config_path`,
-/// which is empty if there is none.
+/// `options` was built from `compiler`, the raw `compilerOptions`, in the configuration file at
+/// `config_path`, which is empty if there is none.
 pub fn verify_compiler_options(
     compiler: &Json,
     options: &Options,
@@ -234,7 +241,7 @@ pub fn verify_compiler_options(
     let is_false = |name: &[u8]| flag(name) == Some(false);
     let text = |name: &[u8]| compiler.get(name).and_then(Json::as_str).unwrap_or(b"");
     let lower = |name: &[u8]| text(name).to_ascii_lowercase();
-    let said = |name: &[u8]| !text(name).is_empty();
+    let specified = |name: &[u8]| !text(name).is_empty();
     // `createDiagnosticForOptionName`
     fn about(
         out: &mut Vec<Problem>,
@@ -256,8 +263,8 @@ pub fn verify_compiler_options(
         });
     }
 
-    // What is no longer there.
-    if said(b"baseUrl") {
+    // Removed options.
+    if specified(b"baseUrl") {
         removed(&mut out, b"baseUrl", b"");
         if !config_path.is_empty() {
             let relative = relative_from_file(config_path, text(b"baseUrl"));
@@ -266,7 +273,7 @@ pub fn verify_compiler_options(
             out.last_mut().unwrap().chain.push((1, 5106, vec![instead]));
         }
     }
-    if said(b"outFile") {
+    if specified(b"outFile") {
         removed(&mut out, b"outFile", b"");
     }
     if lower(b"target") == b"es5" {
@@ -327,7 +334,7 @@ pub fn verify_compiler_options(
         if is_true(b"sourceMap") {
             about(&mut out, 5053, b"sourceMap", b"inlineSourceMap", &[]);
         }
-        if said(b"mapRoot") {
+        if specified(b"mapRoot") {
             about(&mut out, 5053, b"mapRoot", b"inlineSourceMap", &[]);
         }
     }
@@ -339,7 +346,7 @@ pub fn verify_compiler_options(
             about(&mut out, 6379, b"declaration", b"", &[]);
         }
     }
-    if !said(b"tsBuildInfoFile") && is_true(b"incremental") && config_path.is_empty() {
+    if !specified(b"tsBuildInfoFile") && is_true(b"incremental") && config_path.is_empty() {
         out.push(Problem::new(5074, &[], Place::CompilerOptions));
     }
     if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
@@ -386,11 +393,11 @@ pub fn verify_compiler_options(
         if is_true(b"inlineSources") {
             about(&mut out, 5051, b"inlineSources", b"", &[]);
         }
-        if said(b"sourceRoot") {
+        if specified(b"sourceRoot") {
             about(&mut out, 5051, b"sourceRoot", b"", &[]);
         }
     }
-    if said(b"mapRoot") && !(is_true(b"sourceMap") || is_true(b"declarationMap")) {
+    if specified(b"mapRoot") && !(is_true(b"sourceMap") || is_true(b"declarationMap")) {
         about(
             &mut out,
             5069,
@@ -399,7 +406,7 @@ pub fn verify_compiler_options(
             &[b"declarationMap"],
         );
     }
-    if said(b"declarationDir") && !emits_declarations {
+    if specified(b"declarationDir") && !emits_declarations {
         about(
             &mut out,
             5069,
@@ -464,8 +471,8 @@ pub fn verify_compiler_options(
     let not_with_jsx = |out: &mut Vec<Problem>, name: &'static [u8]| {
         out.push(Problem::new(5089, &[name, jsx], Place::Key(name, b"")));
     };
-    if said(b"jsxFactory") {
-        if said(b"reactNamespace") {
+    if specified(b"jsxFactory") {
+        if specified(b"reactNamespace") {
             about(&mut out, 5053, b"reactNamespace", b"jsxFactory", &[]);
         }
         if is_automatic {
@@ -478,15 +485,15 @@ pub fn verify_compiler_options(
                 Place::Value(b"jsxFactory"),
             ));
         }
-    } else if said(b"reactNamespace") && !is_identifier(text(b"reactNamespace")) {
+    } else if specified(b"reactNamespace") && !is_identifier(text(b"reactNamespace")) {
         out.push(Problem::new(
             5059,
             &[text(b"reactNamespace")],
             Place::Value(b"reactNamespace"),
         ));
     }
-    if said(b"jsxFragmentFactory") {
-        if !said(b"jsxFactory") {
+    if specified(b"jsxFragmentFactory") {
+        if !specified(b"jsxFactory") {
             about(&mut out, 5052, b"jsxFragmentFactory", b"jsxFactory", &[]);
         }
         if is_automatic {
@@ -500,10 +507,10 @@ pub fn verify_compiler_options(
             ));
         }
     }
-    if said(b"reactNamespace") && is_automatic {
+    if specified(b"reactNamespace") && is_automatic {
         not_with_jsx(&mut out, b"reactNamespace");
     }
-    if said(b"jsxImportSource") && options.jsx == JsxEmit::React {
+    if specified(b"jsxImportSource") && options.jsx == JsxEmit::React {
         not_with_jsx(&mut out, b"jsxImportSource");
     }
     if is_true(b"allowImportingTsExtensions")
@@ -517,7 +524,7 @@ pub fn verify_compiler_options(
             Place::Value(b"allowImportingTsExtensions"),
         ));
     }
-    // `GetModuleResolutionKind`: `classic` and `node10` are as good as not said.
+    // `GetModuleResolutionKind`: `classic` and `node10` are treated as unspecified.
     let module = options.module;
     let resolution: &[u8] = match resolution_reported.as_slice() {
         b"node16" => b"Node16",
@@ -541,14 +548,14 @@ pub fn verify_compiler_options(
     let resolves_like_node = matches!(resolution, b"Node16" | b"NodeNext");
     if module.is_node() && !resolves_like_node {
         // `ModuleKindToModuleResolutionKind`
-        let wanted: &[u8] = if module == ModuleKind::NodeNext {
+        let expected: &[u8] = if module == ModuleKind::NodeNext {
             b"NodeNext"
         } else {
             b"Node16"
         };
         out.push(Problem::new(
             5109,
-            &[wanted, module.name()],
+            &[expected, module.name()],
             Place::Value(b"moduleResolution"),
         ));
     } else if resolves_like_node && !module.is_node() {

@@ -37,7 +37,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {
-                // What `new` is given is a primary expression, where `super` is only the keyword.
+                // The operand of `new` is a primary expression, where `super` is only the keyword.
                 if p.lexer.tolerant && !p.lexer.is_log_disabled && level.lt(Level::Member) {
                     return Self::pfx_super_without_access(p, super_range);
                 }
@@ -78,7 +78,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let range = p.lexer.range();
         p.lexer.ts_error(range, 1034);
 
-        // `parseRightSideOfDot`. A missing name is where the previous token ends.
+        // `parseRightSideOfDot`. A missing name is at the end of the previous token.
         let node_pos = p.lexer.full_start();
         let is_name = p.lexer.is_identifier_or_keyword() || p.lexer.token == T::TPrivateIdentifier;
         if is_name
@@ -89,7 +89,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || p.lexer.token == T::TPrivateIdentifier)
             })
         {
-            // A word on a new line that another word follows on that line starts something else.
+            // An identifier or keyword on a new line, followed by another on the same line, starts
+            // a different construct.
             p.lexer.ts_error(
                 bun_ast::Range {
                     loc: node_pos,
@@ -205,7 +206,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn pfx_t_private_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        // `parsePrimaryExpression` takes a private name anywhere. The checker reports 1451, 18016 or 2304.
+        // `parsePrimaryExpression` accepts a private name anywhere. The checker reports 1451, 18016
+        // or 2304.
         if (!p.allow_private_identifiers || !p.allow_in || level.gte(Level::Compare))
             && !p.lexer.tolerant
         {
@@ -227,7 +229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn pfx_t_identifier(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        // For the parameter of `x => x`. Only the type checker asks.
+        // For the parameter of `x => x`. Only the type checker uses it.
         let full_start = if p.preserves_type_syntax() {
             p.lexer.full_start()
         } else {
@@ -288,13 +290,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                     } else {
                         if is_escaped {
-                            // `nextToken`: it is the keyword it spells, and the escape is objected to.
+                            // `nextToken`: it is the keyword it spells, and the escape is reported.
                             p.lexer.ts_error(name_range, 1260);
                         }
 
                         if p.fn_or_arrow_data_parse.is_top_level {
                             p.top_level_await_keyword = name_range;
-                            // `isAwaitExpression`: to the first parse this `await` is a name, so `reparseTopLevelAwait` parses the statement again.
+                            // `isAwaitExpression`: the first parse treats this `await` as an
+                            // identifier, so `reparseTopLevelAwait` reparses the statement.
                             if p.lexer.tolerant && !Self::pfx_operand_follows_on_same_line(p) {
                                 p.lexer.await_name_seen = true;
                             }
@@ -323,8 +326,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     p.lexer.prev_token_was_await_keyword = true;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
-                    // `isUpdateExpression`: `await` starts none even where it is a name, so `parseUnaryExpressionOrHigher`
-                    // objects to it on the left of `**`.
+                    // `isUpdateExpression`: `await` does not start one even where it is an
+                    // identifier, so `parseUnaryExpressionOrHigher` reports it on the left of `**`.
                     if p.lexer.token == T::TAsteriskAsterisk
                         && p.lexer.tolerant
                         && level.lt(Level::Prefix)
@@ -358,7 +361,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         } else {
                             if is_escaped {
-                                // `nextToken`: it is the keyword it spells, and the escape is objected to.
+                                // `nextToken`: it is the keyword it spells, and the escape is
+                                // reported.
                                 p.lexer.ts_error(name_range, 1260);
                             }
 
@@ -446,7 +450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let ref_ = p.store_name_in_ref(name);
         let mut identifier = Expr::init_identifier(ref_, loc);
-        // Written with an escape, it is longer than its name.
+        // With an escape, the source text is longer than the name.
         if Self::IS_TYPESCRIPT_ENABLED && !ref_.is_source_contents_slice() {
             p.finish_expr(&mut identifier);
         }
@@ -478,7 +482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
     ) -> PResult<Expr> {
         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
-            // `nextToken`: a keyword written with an escape.
+            // `nextToken`: a keyword that contains an escape.
             p.lexer.ts_error(await_range, 1260);
         }
         let value = p.parse_expr(Level::Prefix)?;
@@ -499,7 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         in_generator: bool,
     ) -> PResult<Expr> {
         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield {
-            // `nextToken`: a keyword written with an escape.
+            // `nextToken`: a keyword that contains an escape.
             p.lexer.ts_error(yield_range, 1260);
         }
         if !in_generator && !p.lexer.is_log_disabled {
@@ -768,7 +772,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = if !p.lexer.is_log_disabled && Self::pfx_starts_no_primary_expression(p) {
             Self::pfx_missing(p)?
         } else {
-            // Member accesses, calls and `!` are taken. A postfix `++` and binary operators are not.
+            // Member accesses, calls and `!` are consumed. A postfix `++` and binary operators are
+            // not.
             p.parse_expr(Level::Postfix)?
         };
         if Self::cannot_follow_update(p) {
@@ -777,7 +782,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(value)
     }
 
-    /// Whether the current token starts a unary expression that `parsePrimaryExpression` does not take.
+    /// Whether the current token starts a unary expression that `parsePrimaryExpression` does not
+    /// accept.
     fn pfx_starts_no_primary_expression(p: &Self) -> bool {
         matches!(
             p.lexer.token,
@@ -869,7 +875,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Expect class keyword after decorators
         if p.lexer.token != T::TClass {
             if p.lexer.tolerant && !p.lexer.is_log_disabled {
-                // `parseDecoratedExpression`: 1109 where the last decorator ends, and a missing declaration.
+                // `parseDecoratedExpression`: 1109 at the end of the last decorator, and a missing
+                // declaration.
                 let node_pos = p.lexer.full_start();
                 p.note_stray_decorators(ts_decorators.slice(), node_pos);
                 p.lexer.ts_error(
@@ -957,7 +964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Special-case the weird "new.target" expression here
         if p.lexer.token == T::TDot {
             p.lexer.next()?;
-            // What is written instead of "target".
+            // The name used instead of "target".
             let mut other_name = None;
 
             if p.lexer.token != T::TIdentifier || p.lexer.raw() != b"target" {
@@ -966,7 +973,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
                 if !p.lexer.is_identifier_or_keyword() && p.lexer.token != T::TPrivateIdentifier {
-                    // `parseIdentifierName`: 1003, the token stays, and the name is missing.
+                    // `parseIdentifierName`: 1003, the token is not consumed, and the name is
+                    // missing.
                     p.lexer.expect(T::TIdentifier)?;
                     let range = bun_ast::Range { loc, len: 3 };
                     let name = p.new_expr(E::EString::init(b""), loc);
@@ -974,7 +982,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.note_expr(&mut value.loc, crate::sema::Mark::MetaPropertyName, name);
                     return Ok(value);
                 }
-                // `checkGrammarMetaProperty`: any word makes a meta property, and all but `target` are objected to.
+                // `checkGrammarMetaProperty`: any identifier or keyword forms a meta property, and
+                // all but `target` are reported.
                 if p.lexer.identifier != b"target" {
                     let name = p.lexer.range();
                     let named = [p.lexer.raw(), b"new", b"target"].join(&0);
@@ -1023,7 +1032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut type_arguments = None;
         if Self::IS_TYPESCRIPT_ENABLED {
-            // The target's own suffixes may have taken them.
+            // The target's own suffixes may have consumed them.
             type_arguments = p.take_type_arguments();
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan
@@ -1162,7 +1171,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `parseJSONText`, but for `validateJsonValue`: the expression of its one statement. `{}` for a text that says nothing.
+    /// `parseJSONText`, except for `validateJsonValue`: the expression of its single statement.
+    /// `{}` for a text that contains no value.
     #[cold]
     pub(crate) fn parse_json_text(&mut self) -> PResult<Expr> {
         let p = self;
@@ -1522,8 +1532,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(element)
     }
 
-    /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression, at its `<`. Another element right after it is
-    /// reported (2657) where the first of them starts, `first`, and joined to this one by a comma.
+    /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression, at its `<`. Another
+    /// element right after it is reported (2657) at `first`, the start of the first of them, and
+    /// joined to this one by a comma.
     fn pfx_jsx_elements(p: &mut Self, first: bun_ast::Loc, must_be_unary: bool) -> PResult<Expr> {
         let less_than = p.lexer.loc();
         let full_start = p.lexer.full_start();
@@ -1556,15 +1567,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.parse_import_expr(loc, level)
     }
 
-    /// `parseLeftHandSideExpressionOrHigher`: only `(`, `<` and `.` make an expression of `import`. Before anything else it is
-    /// left for the statement it starts.
+    /// `parseLeftHandSideExpressionOrHigher`: `import` starts an expression only before `(`, `<`
+    /// and `.`. Before any other token it is left for the statement it starts.
     #[cold]
     #[inline(never)]
     fn pfx_import_starts_expression(p: &mut Self) -> bool {
         p.next_token_matches(|p| matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot))
     }
 
-    /// `createMissingNode`: 1109 at the current token, which stays, and what should have been there is missing.
+    /// `createMissingNode`: 1109 at the current token, which is not consumed, and the expected node
+    /// is missing.
     #[cold]
     #[inline(never)]
     fn pfx_missing(p: &mut Self) -> PResult<Expr> {
@@ -1574,9 +1586,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Missing {}, range.loc))
     }
 
-    /// `isIdentifier`: `yield` in a generator and `await` where it is a keyword are no names. `word` is the current token.
-    /// Only an assignment expression starts with such a `yield` (`parseAssignmentExpressionOrHigherWorker`) and only a unary
-    /// expression with such an `await` (`parseSimpleUnaryExpression`): for `parsePrimaryExpression` nothing starts there.
+    /// `isIdentifier`: `yield` in a generator and `await` where it is a keyword are not
+    /// identifiers. `word` is the current token. Only an assignment expression starts with such a
+    /// `yield` (`parseAssignmentExpressionOrHigherWorker`) and only a unary expression with such an
+    /// `await` (`parseSimpleUnaryExpression`): for `parsePrimaryExpression` no expression starts
+    /// there.
     #[cold]
     #[inline(never)]
     fn pfx_word_is_no_name_here(
@@ -1593,7 +1607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 level.gt(Level::Assign)
                     && p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
             }
-            // `parseDecoratorExpression` deals with `@await` in a way of its own.
+            // `parseDecoratorExpression` handles `@await` separately.
             AsyncPrefixExpression::IsAwait => {
                 level.gt(Level::Prefix)
                     && flags != EFlags::TsDecorator
@@ -1603,8 +1617,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `async` written with an escape, which has been consumed. `nextToken`: where it is the modifier of a function it is
-    /// objected to. Where it is a name (`createIdentifierWithDiagnostic`) it is not.
+    /// `async` containing an escape, which has been consumed. `nextToken`: it is reported where it
+    /// is the modifier of a function. Where it is an identifier (`createIdentifierWithDiagnostic`)
+    /// it is not.
     #[cold]
     #[inline(never)]
     fn pfx_escaped_async(
@@ -1626,8 +1641,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    /// `nextToken`: 1260 is said of a keyword written with an escape when it is consumed, so only of one that the expression
-    /// wanted at `level` starts with. Any other stays, and is no expression.
+    /// `nextToken`: 1260 is reported for a keyword containing an escape when it is consumed, so
+    /// only for one that starts the expression expected at `level`. Any other is not consumed, and
+    /// is not an expression.
     #[cold]
     #[inline(never)]
     fn pfx_escaped_keyword_starts_expression(p: &mut Self, level: Level) -> bool {
@@ -1648,7 +1664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) => true,
             // `parseSimpleUnaryExpression`
             Some(T::TTypeof | T::TVoid | T::TDelete) => level.lte(Level::Prefix),
-            // `parseLeftHandSideExpressionOrHigher`: what `new` is given is not one.
+            // `parseLeftHandSideExpressionOrHigher`: the operand of `new` is not one.
             Some(T::TImport) => level.lt(Level::Member) && Self::pfx_import_starts_expression(p),
             _ => false,
         }
@@ -1661,8 +1677,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.tolerant && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword())
     }
 
-    /// `isParenthesizedArrowFunctionExpression`: a lone `=>` where an assignment expression starts is taken for an arrow
-    /// function. `parseParenthesizedArrowFunctionExpression`: 1005 for the `(`, and there are no parameters.
+    /// `isParenthesizedArrowFunctionExpression`: a lone `=>` where an assignment expression starts
+    /// is treated as an arrow function. `parseParenthesizedArrowFunctionExpression`: 1005 for the
+    /// `(`, and there are no parameters.
     #[cold]
     #[inline(never)]
     fn pfx_arrow_without_parameters(p: &mut Self) -> PResult<Expr> {
@@ -1678,7 +1695,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(arrow_result?, loc))
     }
 
-    /// `parseUnaryExpressionOrHigher`: what starts at `loc` is on the left of `**`. `operator`: what it starts with, nothing for `<T>`.
+    /// `parseUnaryExpressionOrHigher`: the expression that starts at `loc` is the left operand of
+    /// `**`. `operator`: its leading operator, none for `<T>`.
     #[cold]
     #[inline(never)]
     fn unary_before_exponentiation(
@@ -1690,7 +1708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         if p.lexer.tolerant && !p.lexer.is_log_disabled {
             // The operand of a unary operator, of `await` and of `<T>` is parsed at Level::Prefix
-            // (`parseSimpleUnaryExpression`): only the outermost is objected to.
+            // (`parseSimpleUnaryExpression`): only the outermost is reported.
             if level.lt(Level::Prefix) {
                 let range = p.lexer.range_from(loc);
                 match operator {
@@ -1763,7 +1781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let before = p.lexer.prev_error_loc;
                 p.lexer.unexpected()?;
                 if p.lexer.tolerant && !p.lexer.is_log_disabled {
-                    // `createMissingNode`: nothing is consumed, and what should have been there is missing.
+                    // `createMissingNode`: nothing is consumed, and the expected node is missing.
                     p.lexer.put_up_with(before)?;
                     return Ok(p.new_expr(E::Missing {}, p.lexer.loc()));
                 }
@@ -1772,7 +1790,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `createIdentifierWithDiagnostic`: at the end of the file, 1109 is reported where the last token ended.
+    /// `createIdentifierWithDiagnostic`: at the end of the file, 1109 is reported at the end of the
+    /// last token.
     #[cold]
     #[inline(never)]
     fn pfx_missing_at_end_of_file(p: &mut Self) -> PResult<Expr> {

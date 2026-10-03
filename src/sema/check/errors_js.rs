@@ -5,7 +5,8 @@
 
 use super::*;
 
-/// `plainJSErrors` (compiler/program.go): what is said of JavaScript nobody asked to have checked. In order.
+/// `plainJSErrors` (compiler/program.go): the codes reported for JavaScript that is not opted into
+/// checking. In order.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
     1005, 1009, 1013, 1014, 1029, 1030, 1031, 1042, 1044, 1048, 1049, 1053, 1054, 1089, 1090, 1091,
     1097, 1100, 1101, 1102, 1104, 1105, 1106, 1107, 1111, 1113, 1114, 1115, 1116, 1123, 1155, 1156,
@@ -15,7 +16,8 @@ pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
     17000, 17001, 17012, 18006, 18007, 18012, 18013, 18016, 18036, 18038, 18041,
 ];
 
-/// What TypeScript's checker only ever says through `grammarErrorOnNode` and its like: not of a file its parser objected to. In order.
+/// The codes TypeScript's checker only reports through `grammarErrorOnNode` and similar functions,
+/// so never in a file with parse errors. In order.
 pub(super) const GRAMMAR_ERRORS: [u32; 164] = [
     1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1024, 1028, 1029, 1030, 1031, 1035, 1036,
     1038, 1039, 1040, 1042, 1044, 1046, 1047, 1048, 1049, 1051, 1052, 1053, 1054, 1070, 1071, 1079,
@@ -38,13 +40,13 @@ impl Checker<'_> {
             .unwrap_or_else(|| self.files().options.check_js == Some(true))
     }
 
-    /// `IsPlainJSFile`: JavaScript of which nobody has said whether it is to be checked.
+    /// `IsPlainJSFile`: JavaScript for which checking is neither enabled nor disabled.
     pub(super) fn is_plain_js(&self, file: FileId) -> bool {
         let hir = self.hir(file);
         hir.is_js && hir.check_directive.is_none() && self.files().options.check_js.is_none()
     }
 
-    /// `SkipTypeChecking`: whether anything but syntax is objected to.
+    /// `SkipTypeChecking`: whether anything other than syntax errors is reported.
     pub(super) fn reports_semantic_errors(&self, file: FileId) -> bool {
         let options = &self.files().options;
         let hir = self.hir(file);
@@ -60,8 +62,8 @@ impl Checker<'_> {
 }
 
 impl Checker<'_> {
-    /// `checkGrammarSourceFile`: 1046. At the top of a declaration file, what declares a value says `declare` or `export`. Only the
-    /// first that does not is objected to.
+    /// `checkGrammarSourceFile`: 1046. At the top level of a declaration file, a value declaration
+    /// must have `declare` or `export`. Only the first that does not is reported.
     pub(super) fn check_declare_modifiers(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind != FileKind::Declaration {
@@ -88,8 +90,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkGrammarVariableDeclarationList`: 1123. `var ;` is a list of no declarations to the parser. It is said where the list would
-    /// start: right after the keyword.
+    /// `checkGrammarVariableDeclarationList`: 1123. `var ;` parses as an empty declaration list. It
+    /// is reported where the list would start: right after the keyword.
     pub(super) fn check_empty_declaration_lists(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.text.is_empty() {
@@ -115,7 +117,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getAdditionalJSSyntacticDiagnostics`: the first decorator of each parameter, in a file the checker does not look at.
+    /// `getAdditionalJSSyntacticDiagnostics`: the first decorator of each parameter, in a file the
+    /// checker does not check.
     pub(super) fn get_additional_js_syntactic_diagnostics(&mut self, file: FileId) {
         let hir = self.hir(file);
         if !hir.is_js || hir.legacy_decorators || self.is_check_js(file) {
@@ -126,7 +129,7 @@ impl Checker<'_> {
             if previous_owner.replace(owner) != Some(owner)
                 && let DecoratorOwner::Param(p) = owner
             {
-                // `decorator.Loc`, which starts where the token before it ends.
+                // `decorator.Loc`, which starts at the end of the previous token.
                 let at = (file, hir[p].loc.pos, end_of_expr(hir, decorator));
                 self.add_diagnostic(Reported::bare(at, 1206));
             }

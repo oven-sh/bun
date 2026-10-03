@@ -1,5 +1,6 @@
-//! What can be said of a file without looking at any other: which declaration each name means, who contains what, and
-//! how control flows. Runs right after the parser, on the same thread.
+//! Everything that can be computed for a file in isolation: the declaration each name resolves to,
+//! which node contains which, and the control flow. Runs right after the parser, on the same
+//! thread.
 
 mod binder;
 
@@ -47,14 +48,16 @@ bitflags::bitflags! {
         const PARAMETER = 1 << 15;
         /// `mergedSymbols` has it, or it is transient: see `Files::canonical`.
         const MERGED = 1 << 16;
-        /// A name others import by, which nothing in the file can refer to: `export { a as b }`, `export default e`.
+        /// A name that other files import, which nothing in the file can refer to: `export { a as b
+        /// }`, `export default e`.
         const EXPORT_ONLY = 1 << 18;
         const CONST_ENUM = 1 << 19;
         /// `module` and `exports` in a CommonJS module.
         const MODULE_EXPORTS = 1 << 20;
-        /// `SymbolFlagsTransient`: made by `cloneSymbol`, not by the binder.
+        /// `SymbolFlagsTransient`: created by `cloneSymbol`, not by the binder.
         const TRANSIENT = 1 << 21;
-        /// `SymbolFlagsExportValue`: the local symbol of an exported value (`declareModuleMember`). It is no value itself.
+        /// `SymbolFlagsExportValue`: the local symbol of an exported value (`declareModuleMember`).
+        /// It is not a value itself.
         const EXPORT_VALUE = 1 << 22;
         /// `SymbolFlagsAssignment`: what `bindDeferredExpandoAssignment` declares.
         const ASSIGNMENT = 1 << 23;
@@ -78,7 +81,8 @@ bitflags::bitflags! {
             | Self::TYPE_ALIAS.bits() | Self::ENUM_MEMBER.bits() | Self::TYPE_LITERAL.bits();
         const NAMESPACE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits() | Self::ENUM.bits();
         const MODULE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits();
-        /// `SymbolFlagsModuleMember`: what is in scope in a module or a namespace for being exported from it.
+        /// `SymbolFlagsModuleMember`: the symbols that are in scope in a module or a namespace
+        /// because they are exported from it.
         const MODULE_MEMBER = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::INTERFACE.bits()
             | Self::ENUM.bits() | Self::MODULE.bits() | Self::TYPE_ALIAS.bits() | Self::ALIAS.bits();
 
@@ -138,10 +142,11 @@ pub enum Decl {
     ModuleExports(ExprId),
     /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment. `Object.defineProperty(exports, "a", descriptor)`: the call.
     ExportsProperty(ExprId),
-    /// `f.a = e`, `f["a"] = e`, `f[key] = e`, where `getInitializerSymbol` finds something for `f`, which may be written `a.f`: the
-    /// assignment. In JavaScript `Object.defineProperty(f, "a", descriptor)` too: the call.
+    /// `f.a = e`, `f["a"] = e`, `f[key] = e`, where `getInitializerSymbol` finds a symbol for `f`,
+    /// which may be of the form `a.f`: the assignment. In JavaScript `Object.defineProperty(f, "a",
+    /// descriptor)` too: the call.
     Expando(ExprId),
-    /// `{}`, of the symbol such assignments add to in JavaScript.
+    /// `{}`, for the symbol that such assignments add to in JavaScript.
     ObjectLiteral(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
@@ -162,7 +167,8 @@ pub enum JsDeclarationKind {
     None,
     /// `module.exports = e`, but for `module.exports = exports`
     ModuleExports,
-    /// `exports.name = e`, `module.exports.name = e`. The name is `NONE` for a numeric key, which takes an interner to spell.
+    /// `exports.name = e`, `module.exports.name = e`. The name is `NONE` for a numeric key, whose
+    /// text requires an interner.
     ExportsProperty(Atom),
     /// `this.name = e`
     ThisProperty,
@@ -172,8 +178,8 @@ pub enum JsDeclarationKind {
     ObjectDefinePropertyExports,
 }
 
-/// The text of a string literal or of a template without substitutions, in parentheses or not. `NONE` for anything else,
-/// including a numeric literal, which takes an interner to spell.
+/// The text of a string literal or of a template without substitutions, parenthesized or not.
+/// `NONE` for anything else, including a numeric literal, whose text requires an interner.
 fn string_literal_text(hir: &File, e: ExprId) -> Atom {
     match hir[e].kind {
         ExprKind::String(text) => text,
@@ -297,7 +303,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     .then_some((object, key))
 }
 
-/// `IsRequireCall`: what is required, if `e` is `require(x)`.
+/// `IsRequireCall`: the argument, if `e` is `require(x)`.
 pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
     let ExprKind::Call(c) = hir[e].kind else {
         return None;
@@ -325,21 +331,23 @@ pub struct Symbol {
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
     pub decls: Decls,
-    /// `ValueDeclaration`: which of `Declarations`, those of all its parts for a symbol `mergeSymbol` has put together. `u32::MAX`: none.
+    /// `ValueDeclaration`: an index into `Declarations`, which for a symbol merged by `mergeSymbol`
+    /// are the declarations of all its parts. `u32::MAX`: none.
     pub value_declaration: u32,
-    /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it is declared, be it refused there.
+    /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it
+    /// is declared, even if the declaration conflicts there.
     /// `NONE` for a local.
     pub parent: SymbolId,
-    /// What a module, namespace or enum exports, and the static side of a class.
+    /// The exports of a module, namespace or enum, and the static side of a class.
     pub exports: TableId,
     pub members: TableId,
-    /// `ExportSymbol`, of the local symbol of what a module or a namespace exports.
+    /// `ExportSymbol`, for the local symbol of an export of a module or a namespace.
     pub export_symbol: SymbolId,
 }
 
 const _: () = assert!(size_of::<Symbol>() <= 48);
 
-/// The declarations of a symbol. Nearly every symbol has one, which needs no block of its own.
+/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
 #[derive(Clone, Default)]
 pub enum Decls {
     #[default]
@@ -371,8 +379,9 @@ impl Decls {
     }
 }
 
-/// `SetValueDeclaration`: whether `node` takes the place of `value_declaration`. "Non-assignment declarations take precedence over
-/// assignment declarations and non-namespace declarations take precedence over namespace declarations."
+/// `SetValueDeclaration`: whether `node` replaces `value_declaration`. "Non-assignment declarations
+/// take precedence over assignment declarations and non-namespace declarations take precedence over
+/// namespace declarations."
 pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
     // `isAssignmentDeclaration`
     let is_assignment = |decl: Decl| {
@@ -417,31 +426,36 @@ pub enum ScopeKind {
     Interface(InterfaceId),
     /// The type parameters of a type alias.
     TypeAlias(AliasId),
-    /// The key of a mapped type, or the `infer`s of a conditional type.
+    /// The key of a mapped type, or the `infer` type parameters of a conditional type.
     TypeParams,
     Enum(EnumId),
-    /// Where the constraints and defaults of the type parameters of a function are written. It declares nothing: it lies in the
-    /// scope of the function and says which part of the function a name is written in. `Bound::is_seen_from`
+    /// Encloses the constraints and defaults of the type parameters of a function. It declares
+    /// nothing: it is nested in the scope of the function and identifies the part of the function
+    /// that contains a name. `Bound::is_seen_from`
     TypeParamList(FnId),
     /// The same for the parameters: their types, patterns and defaults. Only a function with a block for a body has one.
     Param(FnId),
     /// The same for the return type.
     ReturnType(FnId),
-    /// Where the `extends` type of a conditional type is written. It declares nothing: the `infer`s are declared in the scope right
-    /// above, which the true branch is in too, and cannot be named from here. `Bound::is_seen_from`
+    /// Encloses the `extends` type of a conditional type. It declares nothing: the `infer` type
+    /// parameters are declared in the parent scope, which also encloses the true branch, and cannot
+    /// be referenced from here. `Bound::is_seen_from`
     Extends,
-    /// Where what an `infer T extends ..` extends is written. It holds `T` once more, which can be named from here.
+    /// Encloses the constraint of an `infer T extends ..`. It declares `T` again, which can be
+    /// referenced from here.
     InferConstraint,
-    /// Where a static member of a class is written, decorators included, a computed name not. It declares nothing: it lies in the
-    /// scope of the class, whose type parameters cannot be named from here. `Bound::type_parameter_out_of_reach`
+    /// Encloses a static member of a class, including its decorators but not a computed name. It
+    /// declares nothing: it is nested in the scope of the class, whose type parameters cannot be
+    /// referenced from here. `Bound::type_parameter_out_of_reach`
     StaticMember,
     /// The same for the computed name of a member of a class or an interface.
     ComputedName,
-    /// The same for the expression a class extends, without its type arguments.
+    /// The same for the `extends` expression of a class, without its type arguments.
     BaseExpression,
-    /// Where the computed name and the initializer of a non-static property of a class are written, if the class has a constructor
-    /// with a body, which is given, and class fields are not emitted as they are. It declares nothing: what the constructor declares
-    /// cannot be named from here, nor what it hides. `Bound::property_with_invalid_initializer`
+    /// Encloses the computed name and the initializer of a non-static class property, if the class
+    /// has a constructor with a body, which is stored here, and class fields are not emitted
+    /// unchanged. It declares nothing: the constructor's declarations cannot be referenced from
+    /// here, nor the names they shadow. `Bound::property_with_invalid_initializer`
     PropertyDeclaration(MemberId, FnId),
     /// The same for the type of the property.
     PropertyType(MemberId, FnId),
@@ -460,15 +474,15 @@ pub struct Scope {
 /// What `GetAssignmentTarget` finds.
 #[derive(Copy, Clone)]
 pub enum AssignmentTarget {
-    /// The left of `=`, or of the operator and `=`.
+    /// The left side of `=`, or of a compound assignment operator.
     Assign(Option<BinOp>),
     /// The operand of `++` or `--`.
     Unary,
-    /// What the head of a `for`-`in` or a `for`-`of` gives a value to.
+    /// The target that the head of a `for`-`in` or a `for`-`of` assigns to.
     ForInOrOf,
 }
 
-/// `ModuleInstanceState`, in its order: where two are compared, it is by number.
+/// `ModuleInstanceState`, in the same order: comparisons use the numeric value.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ModuleInstanceState {
     NonInstantiated,
@@ -492,7 +506,7 @@ pub enum AssignmentKind {
     Compound,
 }
 
-/// What an expression or a statement is directly part of.
+/// The direct parent of an expression or a statement.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Parent {
     None,
@@ -504,11 +518,13 @@ pub enum Parent {
     PatElemDefault(PatElemId),
     /// The value of a property of an object literal or of a JSX attribute.
     Prop(PropId),
-    /// The computed name of a property of the object literal that is no method and no accessor.
+    /// The computed name of a property of the object literal that is neither a method nor an
+    /// accessor.
     PropKey(ExprId, PropId),
     /// The computed name of a binding element.
     PatKey(PatPropId),
-    /// The computed name of a member of a class, an interface or a type literal: as far as the flow of control goes, it is inside.
+    /// The computed name of a member of a class, an interface or a type literal: for control flow,
+    /// it is inside the member.
     MemberKey(MemberId),
     /// The computed name of a method or an accessor of an object literal: the same.
     MethodKey(PropId),
@@ -520,7 +536,8 @@ pub enum Parent {
     EnumInit(EnumMemberId),
     Case(CaseId),
     ClassExtends(ClassId),
-    /// A decorator, of the class or of a member of it or a parameter of one: worked out where the class is.
+    /// A decorator of the class, of one of its members or of a parameter of a member: evaluated at
+    /// the position of the class.
     Decorator(ClassId, DecoratorOwner),
     Module(ModuleId),
     File,
@@ -601,22 +618,24 @@ pub enum FlowTarget {
 #[derive(Copy, Clone, Debug)]
 pub enum Flow {
     Unreachable,
-    /// The top of a function, of a property with an initializer, of the body of a namespace or of the file. That of a method, an
-    /// accessor or a property is before its name, if that is computed. `outer` is where the function expression, the arrow
-    /// function, or the method or accessor of an object literal or a class expression is evaluated.
+    /// The start of a function, of a property with an initializer, of the body of a namespace or of
+    /// the file. That of a method, an accessor or a property is before its name, if that is
+    /// computed. `outer` is the flow node at which the function expression, the arrow function, or
+    /// the method or accessor of an object literal or a class expression is evaluated.
     /// `arrow`: it is an arrow function, which has no `this` of its own.
     Start {
         outer: FlowId,
         arrow: bool,
     },
-    /// Where an `async` function or a generator that is called where it is written starts: what is known of names outside holds,
-    /// as `getControlFlowContainer` has it. A function called where it is written that is neither, like a static block, starts
-    /// nothing. The flow of control around goes on through it (`bindContainer`).
+    /// The start of an immediately invoked `async` function or generator: outer narrowings hold, as
+    /// in `getControlFlowContainer`. An immediately invoked function that is neither, like a static
+    /// block, starts no new flow. The enclosing control flow continues through it
+    /// (`bindContainer`).
     StartInvoked {
         outer: FlowId,
         arrow: bool,
     },
-    /// Where several paths meet. A run of `Bound::flow_edges`.
+    /// A join of several paths. A contiguous range of `Bound::flow_edges`.
     Label {
         start: u32,
         len: u32,
@@ -646,14 +665,15 @@ pub enum Flow {
         before: FlowId,
         call: ExprId,
     },
-    /// Past a `finally` block. Going back through the block from here, only some of the ways into it count: those that
-    /// lead to `instead`, not all that lead to `label`, which is where the block starts.
+    /// After a `finally` block. Walking back through the block from here, only some of its
+    /// antecedents apply: those of `instead`, not all those of `label`, which is the start of the
+    /// block.
     Reduce {
         before: FlowId,
         label: FlowId,
         instead: FlowId,
     },
-    /// `a.push(x)`, `a[i] = x` on an array that is still finding out what it holds.
+    /// `a.push(x)`, `a[i] = x` on an evolving array.
     ArrayMutation {
         before: FlowId,
         expr: ExprId,
@@ -664,25 +684,28 @@ pub enum Flow {
 pub struct FnInfo {
     pub owner: FnOwner,
     pub scope: ScopeId,
-    /// The function-like this one is written in.
+    /// The enclosing function-like.
     pub enclosing: FnId,
     /// The `return` statements, `Bound::ids`.
     pub returns: IdList<StmtId>,
-    /// What `forEachYieldExpression` finds: those in the static blocks of classes in it too, of which a static block has none itself.
+    /// The yield expressions `forEachYieldExpression` finds, including those in the static blocks
+    /// of classes nested in it. A static block itself has none.
     pub yields: IdList<ExprId>,
     /// `Unreachable` if control cannot fall off the end.
     pub end: FlowId,
-    /// Of a constructor, a static block or a function the flow of control around goes on through: where it is left, whether by a
-    /// `return` or by getting to the end. `ReturnFlowNode`
+    /// For a constructor, a static block or a function that the enclosing control flow continues
+    /// through: its exit, reached by a `return` or by reaching the end. `ReturnFlowNode`
     pub exit: FlowId,
-    /// `NodeFlagsContainsThis`: a `this`, expression or type, is written in it, be it inside arrow functions, function types or signatures.
+    /// `NodeFlagsContainsThis`: it contains a `this`, expression or type, possibly inside arrow
+    /// functions, function types or signatures.
     pub contains_this: bool,
 }
 
-/// Where an `infer T` is written, as far as `getInferredTypeParameterConstraint` makes something of it.
+/// The syntactic position of an `infer T`, for the positions `getInferredTypeParameterConstraint`
+/// handles.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InferPosition {
-    /// `Ref<.., infer T, ..>`: in which reference, and as which argument.
+    /// `Ref<.., infer T, ..>`: the type reference and the argument index.
     TypeArgument(TypeNodeId, u32),
     /// `[...infer T]`, `(...args: infer T) => void`
     Rest,
@@ -700,97 +723,109 @@ pub struct Redeclaration {
     /// `len(symbol.Declarations)` by then.
     pub count: u32,
     pub decl: Decl,
-    /// What is reported at each of those declarations and at `decl`.
+    /// The error code reported at each of those declarations and at `decl`.
     pub code: u32,
 }
 
-/// Side tables of a [`File`], index for index.
+/// Side tables parallel to the vectors of a [`File`].
 #[derive(Default)]
 pub struct Bound {
-    /// The tree was too deep to bind. Nothing else is filled in.
+    /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
     pub symbols: Vec<Symbol>,
     pub scopes: Vec<Scope>,
-    /// Each table is a run of `entries`, in the order the symbols were made in.
+    /// Each table is a contiguous range of `entries`, in symbol creation order.
     pub tables: Vec<(u32, u32)>,
     pub entries: Vec<(Atom, SymbolId)>,
-    /// Where in `entries` each name of a table with more than `SCANNED` names is.
+    /// The index in `entries` of each name of a table with more than `SCANNED` names.
     pub large_tables: FxHashMap<(TableId, Atom), u32>,
-    /// A Bloom filter, of one hash, of the names in the `locals` of the scopes that have no `symbol` and are not the file's. A power of
-    /// two of words, or none where they declare nothing. `scope_to_resolve_from`
+    /// A Bloom filter with one hash function over the names in the `locals` of the scopes that have
+    /// no `symbol` and are not the file scope. Its length is a power of two of words, or zero if
+    /// those scopes declare nothing. `scope_to_resolve_from`
     pub nested_names: Box<[u64]>,
     pub ids: Vec<u32>,
 
     /// The file as a module. Its exports are what other files can import.
     pub file_symbol: SymbolId,
-    /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol that says so.
+    /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol
+    /// that contains it.
     pub export_stars: Few<(SymbolId, StmtId)>,
-    /// `declare module "name"` at the top of a file, or right in an ambient module at the top of a script. And
-    /// `IsModuleAugmentationExternal`: it adds to a module that is declared elsewhere.
+    /// `declare module "name"` at the top level of a file, or directly inside an ambient module at
+    /// the top level of a script. The flag is `IsModuleAugmentationExternal`: it augments a module
+    /// that is declared elsewhere.
     pub ambient_modules: Few<(Atom, SymbolId, bool)>,
-    /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
-    /// global.
+    /// `declare global { }` at the top level of a module, or directly inside an ambient module at
+    /// the top level of a script: symbols whose exports are global.
     pub global_augmentations: Few<SymbolId>,
     pub redeclarations: Few<Redeclaration>,
     /// `export as namespace N`
     pub umd_globals: Few<(Atom, SymbolId)>,
-    /// `file.Imports()`: the module specifiers in the file that are looked for, in the order they are first mentioned.
+    /// `file.Imports()`: the module specifiers in the file that are resolved, in order of first
+    /// occurrence.
     /// `collectModuleReferences`
     pub specifiers: Vec<Atom>,
-    /// `file.ModuleAugmentations`: the names of the modules a module adds to, but for those it imports. Looked for after `specifiers`.
+    /// `file.ModuleAugmentations`: the names of the modules that a module augments, except those it
+    /// imports. Resolved after `specifiers`.
     pub module_augmentations: Few<Atom>,
-    /// Those of the import and export statements directly in the ambient modules a script declares, and the names of the modules
-    /// added to there: looked for unless relative.
+    /// The specifiers of the import and export statements directly inside the ambient modules a
+    /// script declares, and the names of the modules augmented there: resolved unless relative.
     pub ambient_specifiers: Few<Atom>,
-    /// `CommonJSModuleIndicator`: what shows that the file is a CommonJS module.
+    /// `CommonJSModuleIndicator`: the expression that marks the file as a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
     /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
     pub module_exports_property: SymbolId,
 
-    /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it. `node.Symbol` of a `Decl::Expando` and of an
-    /// object literal, where `NONE` says that it is not made: see `symbol_of_expando_initializer`.
+    /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it.
+    /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
+    /// not been created: see `symbol_of_expando_initializer`.
     pub expr_symbol: Vec<SymbolId>,
     pub expr_parent: Vec<Parent>,
-    /// Where control is at a name, a `this`, a `super`, and an `a.b` or `a[b]` that can be narrowed (`isNarrowableReference`).
+    /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
+    /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
     pub expr_flow: Vec<FlowId>,
     pub stmt_parent: Vec<Parent>,
-    /// The scope a statement is written in.
+    /// The enclosing scope of a statement.
     pub stmt_scope: Vec<ScopeId>,
-    /// The scope a type is written in.
+    /// The enclosing scope of a type.
     pub type_scope: Vec<ScopeId>,
-    /// `isResolvedByTypeAlias`: between the type node and a type alias there is only what resolves its parts at once.
+    /// `isResolvedByTypeAlias`: between the type node and a type alias there are only nodes that
+    /// resolve their parts eagerly.
     pub type_by_alias: Vec<bool>,
-    /// The `this` types written inside a type literal, where there is no such thing. `getThisType`
+    /// The `this` types inside a type literal, where they are invalid. `getThisType`
     pub this_in_type_literal: FxHashSet<TypeNodeId>,
-    /// `None`: the binder did not reach the row. The parser can leave rows that nothing refers to (a construct dropped during error
-    /// recovery, an annotation in a parenthesized list that is not an arrow function, `<T>(x)` read as a cast). They have no symbol,
-    /// scope or owner, so a pass over a whole vector has to skip them. The same holds for `member_owner`, `fns[..].owner` and
-    /// `type_param_scope`.
+    /// `None`: the binder did not reach the node. The parser can leave unreferenced nodes (a
+    /// construct dropped during error recovery, an annotation in a parenthesized list that is not
+    /// an arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a
+    /// pass over a whole vector has to skip them. The same holds for `member_owner`,
+    /// `fns[..].owner` and `type_param_scope`.
     pub pat_parent: Vec<PatParent>,
     pub pat_symbol: Vec<SymbolId>,
     pub prop_owner: Vec<ExprId>,
     pub member_symbol: Vec<SymbolId>,
-    /// `node.Symbol`, of a parameter property and of a member of an object literal that has symbols.
+    /// `node.Symbol` for a parameter property and for a member of an object literal that has
+    /// symbols.
     pub property_symbol: FxHashMap<Decl, SymbolId>,
     pub member_owner: Vec<MemberOwner>,
-    /// The scope the type, the function and the initializer of a member are written in.
+    /// The enclosing scope of the type, the function and the initializer of a member.
     pub member_scope: Vec<ScopeId>,
     pub param_fn: Vec<FnId>,
     pub type_param_symbol: Vec<SymbolId>,
     /// The scope a type parameter is declared in: that of its class, interface, function, alias..
     pub type_param_scope: Vec<ScopeId>,
     pub fns: Vec<FnInfo>,
-    /// `requiresScopeChange` of some parameter, by function: its parameters see the variables of its body.
+    /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
+    /// resolve to variables of its body.
     pub requires_scope_change: Vec<bool>,
-    /// `node.Symbol`. Of a function expression without a name and of an arrow function `NONE` says that it is not made: see
-    /// `symbol_of_expando_initializer`.
+    /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
+    /// that it has not been created: see `symbol_of_expando_initializer`.
     pub fn_symbol: Vec<SymbolId>,
     pub class_symbol: Vec<SymbolId>,
     pub class_owner: Vec<ClassOwner>,
     pub class_scope: Vec<ScopeId>,
     pub interface_symbol: Vec<SymbolId>,
-    /// The scope an interface, an enum, a module or a namespace makes. What it is written in is the parent of that.
+    /// The scope that an interface, an enum, a module or a namespace creates. Its enclosing scope
+    /// is the parent of that scope.
     pub interface_scope: Vec<ScopeId>,
     pub enum_scope: Few<ScopeId>,
     pub module_scope: Few<ScopeId>,
@@ -803,45 +838,52 @@ pub struct Bound {
     /// `GetModuleInstanceState`, by `ModuleId`.
     pub module_instance_state: Few<ModuleInstanceState>,
     pub var_stmt: Vec<StmtId>,
-    /// The identifiers that are assigned to, by the variable they name.
+    /// The identifiers that are assigned to, keyed by the variable they resolve to.
     pub assignments: Vec<(SymbolId, ExprId)>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
     pub type_query_operands: Few<ExprId>,
-    /// The expressions at or under a node that tsgo has in its tree and `checkSourceFile` never comes to: an element of an `extends`
-    /// clause of a class after the first, the `e` of `[e]` in an enum, the `X` of `for (var of X)`. Sorted.
+    /// The expressions at or under a node that is in tsgo's AST but that `checkSourceFile` never
+    /// reaches: an element of an `extends` clause of a class after the first, the `e` of `[e]` in
+    /// an enum, the `X` of `for (var of X)`. Sorted.
     pub unchecked_exprs: Few<ExprId>,
     /// The type nodes under one of those, and the type arguments of a `super` call. Sorted.
     pub unchecked_types: Few<TypeNodeId>,
-    /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
+    /// The position of each `infer T` whose position implies a constraint on `T`. Ordered by type
+    /// parameter.
     pub infer_positions: Few<(TypeParamId, InferPosition)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
     pub expando_declarations: Few<ExprId>,
     pub case_stmt: Vec<StmtId>,
-    /// Where control is when each statement is reached.
+    /// The flow node at the start of each statement.
     pub stmt_flow: Vec<FlowId>,
-    /// Where control is at the end of a `case` that another follows, if it gets there. `NONE` otherwise.
+    /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
+    /// `NONE` otherwise.
     pub case_fallthrough: Vec<FlowId>,
-    /// Each `var` written in a block, which is not where it ends up, and the scope it is written in.
+    /// Each `var` declared in a block, from which it is hoisted, and its enclosing scope.
     pub hoisted_vars: Few<(PatId, ScopeId)>,
-    /// The decorators of what cannot be decorated: nothing more is said of what is in them.
+    /// The decorators of nodes that cannot be decorated: no further errors are reported inside
+    /// them.
     pub refused_decorators: Few<ExprId>,
-    /// The labeled statements no `break` or `continue` names.
+    /// The labeled statements that no `break` or `continue` refers to.
     pub unused_labels: Few<StmtId>,
     pub import_scope: Vec<ScopeId>,
     pub import_equals_scope: Few<ScopeId>,
     pub export_scope: Vec<ScopeId>,
-    /// The scope an expression that opens none is in, for the few that need it.
+    /// The enclosing scope of an expression that creates no scope, for the few that need it.
     pub expr_scope: FxHashMap<ExprId, ScopeId>,
-    /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost class around that declares an `#x`.
-    /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no class around does.
+    /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost enclosing class that
+    /// declares an `#x`.
+    /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
     pub private_class: FxHashMap<ExprId, ClassId>,
-    /// The identifiers that mean nothing declared in the file, and the scope each is written in: globals, what another file adds to
-    /// a namespace or an enum around, or mistakes. Sorted by expression.
+    /// The identifiers that resolve to nothing declared in the file, each with its enclosing scope:
+    /// globals, members that another file merges into an enclosing namespace or enum, or errors.
+    /// Sorted by expression.
     pub free_idents: Vec<(ExprId, ScopeId)>,
-    /// The identifiers that mean an import or another alias and nothing else, and the scope each is written in: whether that is
-    /// a value only the program can tell. Sorted by expression.
+    /// The identifiers that resolve only to an import or another alias, each with its enclosing
+    /// scope: whether the alias is a value can only be determined with the whole program. Sorted by
+    /// expression.
     pub alias_idents: Vec<(ExprId, ScopeId)>,
-    /// The identifiers `arguments` that mean the arguments of a function around them. Sorted.
+    /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: Few<ExprId>,
     /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName` and are not `withinDeferredContext`:
     /// with its name, and the function whose parameter it is or is part of.
@@ -851,10 +893,11 @@ pub struct Bound {
 
     pub flow: Vec<Flow>,
     pub flow_edges: Vec<FlowId>,
-    /// `FlowFlagsShared`, a bit for each of `flow`: it is the antecedent of more than one.
+    /// `FlowFlagsShared`, a bit for each node of `flow`: it is the antecedent of more than one
+    /// node.
     pub flow_shared: Vec<u64>,
-    /// How many places in the flow of control the binder came to. `flow` leaves out the labels nothing comes after, and has one start for
-    /// all the functions without a body.
+    /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
+    /// and has a single start node for all the functions without a body.
     pub flow_places: u32,
 }
 
@@ -928,13 +971,15 @@ impl Bound {
         }
     }
 
-    /// `GetAssignmentTarget`: what gives `e` a value, if `e` is what it is given to or part of a pattern that is.
+    /// `GetAssignmentTarget`: the node that assigns to `e`, if `e` is its target or part of a
+    /// pattern that is its target.
     #[inline]
     pub fn get_assignment_target(&self, hir: &File, e: ExprId) -> Option<AssignmentTarget> {
         self.assignment_target(hir, e, true)
     }
 
-    /// `GetAssignmentTarget` and `accessKind` go up the same way, but that the second sees through neither `!` nor `...`.
+    /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
+    /// latter looks through neither `!` nor `...`.
     fn assignment_target(
         &self,
         hir: &File,
@@ -955,7 +1000,8 @@ impl Bound {
                     ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => e = parent,
                     _ => return None,
                 },
-                // The value of `name: value` and of `...value`, and the assignment `{ name = value }` is kept as.
+                // The value of `name: value` and of `...value`, and the assignment that `{ name =
+                // value }` is stored as.
                 Parent::Prop(p) => {
                     let owner = self.prop_owner[p.idx()];
                     if owner.is_none()
@@ -1011,7 +1057,7 @@ impl Bound {
         self.access_kind(hir, e) == AccessKind::Write
     }
 
-    /// `isSymbolAssignedDefinitely`: `+=` and `++` change a value, they do not give one.
+    /// `isSymbolAssignedDefinitely`: `+=` and `++` modify a value, they do not initialize one.
     pub fn is_symbol_assigned_definitely(&self, hir: &File, symbol: SymbolId) -> bool {
         let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
         self.assignments[from..]
@@ -1020,8 +1066,8 @@ impl Bound {
             .any(|a| self.get_assignment_target_kind(hir, a.1) == AssignmentKind::Definite)
     }
 
-    /// `GetImmediatelyInvokedFunctionExpression`: the call, if the function expression or arrow function `f` is called where it is
-    /// written.
+    /// `GetImmediatelyInvokedFunctionExpression`: the call, if the function expression or arrow
+    /// function `f` is immediately invoked.
     pub fn get_immediately_invoked_function_expression(
         &self,
         hir: &File,
@@ -1039,7 +1085,7 @@ impl Bound {
         None
     }
 
-    /// `GetAssignedName`: where the name is of what `e` is directly given to.
+    /// `GetAssignedName`: the position of the name of the target that `e` is directly assigned to.
     pub fn get_assigned_name(&self, hir: &File, e: ExprId) -> Option<u32> {
         if is_parenthesized(hir, e) {
             return None;
@@ -1087,8 +1133,8 @@ impl Bound {
         }
     }
 
-    /// Whether `checkSourceFile` never comes to the expression: nothing leads to it, or it is one of `unchecked_exprs`. Who goes through
-    /// all expressions of a file passes over it.
+    /// Whether `checkSourceFile` never reaches the expression: it is unreferenced, or it is one of
+    /// `unchecked_exprs`. A pass over all expressions of a file must skip it.
     pub fn is_unchecked(&self, e: usize) -> bool {
         matches!(self.expr_parent[e], Parent::None)
             || self
@@ -1097,7 +1143,7 @@ impl Bound {
                 .is_ok()
     }
 
-    /// The same of a type node.
+    /// The same for a type node.
     pub fn is_unchecked_type(&self, node: usize) -> bool {
         self.type_scope[node].is_none()
             || self
@@ -1115,7 +1161,7 @@ impl Bound {
         }
     }
 
-    /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.
+    /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()
     }
@@ -1125,7 +1171,8 @@ impl Bound {
         self.arguments_objects.binary_search(&e).is_ok()
     }
 
-    /// `IsVariableDeclarationInitializedToRequire`, of the name `pat`: the module, and which of its exports if it is not all of it.
+    /// `IsVariableDeclarationInitializedToRequire` for the name `pat`: the module, and the export
+    /// name if `pat` does not bind the whole module.
     pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
         let (d, part) = match self.pat_parent[pat.idx()] {
             PatParent::Var(d) => (d, None),
@@ -1146,13 +1193,15 @@ impl Bound {
         Some((required_specifier(hir, init)?, part))
     }
 
-    /// Whether the binder took `e` for the declaration of a property of a function, a class or an object literal
-    /// (`node.Symbol != nil`). That includes a key that names no property, as in `f[a + b] = value`.
+    /// Whether the binder treated `e` as the declaration of a property of a function, a class or an
+    /// object literal (`node.Symbol != nil`). That includes a key that names no property, as in
+    /// `f[a + b] = value`.
     pub fn is_expando_declaration(&self, e: ExprId) -> bool {
         self.expando_declarations.binary_search(&e).is_ok()
     }
 
-    /// `node.Symbol`. `NONE`: it is not kept for a declaration of that kind, none of which has a local symbol.
+    /// `node.Symbol`. `NONE`: it is not stored for a declaration of that kind, none of which has a
+    /// local symbol.
     pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
         match decl {
             Decl::Var(it) | Decl::Param(it) | Decl::Require(it) => self.pat_symbol[it.idx()],
@@ -1176,12 +1225,13 @@ impl Bound {
         }
     }
 
-    /// Where `FindAncestor` from `decl` starts, as far as scopes go: the scope a file, a module or a namespace makes, and the one any
-    /// other declaration is written in. `NONE`: the binder did not come to it, or it is an assignment.
+    /// The scope at which `FindAncestor` from `decl` starts: the scope that a file, a module or a
+    /// namespace creates, and the enclosing scope of any other declaration. `NONE`: the binder did
+    /// not reach it, or it is an assignment.
     pub fn scope_of_declaration(&self, hir: &File, decl: Decl) -> ScopeId {
-        let around = |made: ScopeId| {
-            let made = self.scopes.get(made.idx());
-            made.map_or(ScopeId::NONE, |scope| scope.parent)
+        let around = |created: ScopeId| {
+            let created = self.scopes.get(created.idx());
+            created.map_or(ScopeId::NONE, |scope| scope.parent)
         };
         let of_statement = |it: StmtId| {
             self.stmt_scope
@@ -1232,8 +1282,9 @@ impl Bound {
         }
     }
 
-    /// `ExportSymbol` of the local symbol `scope` holds under `name`. `GetLocalSymbolForExportDefault(result).Name == name` is asked
-    /// this way round: `result` is that.
+    /// `ExportSymbol` of the local symbol named `name` in `scope`.
+    /// `GetLocalSymbolForExportDefault(result).Name == name` is evaluated in this direction:
+    /// `result` is that symbol.
     pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
         match self.lookup(self.scopes[scope.idx()].locals, name) {
             Some(local) => self.symbols[local.idx()].export_symbol,
@@ -1251,7 +1302,7 @@ impl Bound {
         }
     }
 
-    /// A table with no more names than this is gone through to find one.
+    /// A table with at most this many names is searched linearly.
     pub const SCANNED: usize = 8;
 
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {
@@ -1263,7 +1314,7 @@ impl Bound {
         Some(self.entries[place as usize].1)
     }
 
-    /// In the order the symbols were made in.
+    /// In symbol creation order.
     pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
         if table.is_none() {
             return &[];
@@ -1289,26 +1340,29 @@ impl Bound {
         &self.flow_edges[start as usize..(start + len) as usize]
     }
 
-    /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional type: whether one with `flags` is
-    /// seen by a search for `meaning` that has just left a scope of kind `from`.
+    /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional
+    /// type: whether a local with `flags` is visible to a lookup for `meaning` that has just left a
+    /// scope of kind `from`.
     pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
-        // Of the members of a class or an interface the type parameters alone are in scope, as types: `class C<T> { T = 1 }`.
+        // Among the members of a class or an interface only the type parameters are in scope, as
+        // types: `class C<T> { T = 1 }`.
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
             return false;
         }
         let f = match from {
             ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
-            // The `infer`s of a conditional type are seen from its true branch alone.
+            // The `infer` type parameters of a conditional type are visible only from its true
+            // branch.
             ScopeKind::Extends => return false,
             _ => return true,
         };
         let mut seen = true;
-        // Of the types only the type parameters are seen outside of the body.
+        // Among the types only the type parameters are visible outside the body.
         if (meaning & flags).intersects(SymFlags::TYPE) {
             seen = flags.contains(SymFlags::TYPE_PARAMETER);
         }
         if (meaning & flags).intersects(SymFlags::VARIABLE) {
-            // A parameter that a `var` declares again is a parameter first.
+            // A parameter redeclared by a `var` still counts as a parameter.
             let in_body = !flags.contains(SymFlags::PARAMETER);
             // `useOuterVariableScopeInParameter`
             if matches!(from, ScopeKind::Param(_))
@@ -1327,16 +1381,18 @@ impl Bound {
         seen
     }
 
-    /// The word and the bit of a `nested_names` of `words` words that stand for `name`.
+    /// The word index and the bit for `name` in a `nested_names` of `words` words.
     #[inline]
     pub(super) fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
-        // Atoms are numbered as they come: Fibonacci hashing spreads them.
+        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
         let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
         ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
     }
 
-    /// Where `NameResolver.Resolve` may as well start to look for `name` from `scope`. If no scope in between declares the name, that
-    /// is the nearest around whose symbol has exports, which may come from elsewhere, or the file's. For a `lookup` that is `getSymbol`.
+    /// The scope at which `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
+    /// scope in between declares the name, that is the nearest enclosing scope whose symbol has
+    /// exports, which may come from elsewhere, or the file scope. Valid for a `lookup` that is
+    /// `getSymbol`.
     #[inline]
     pub fn scope_to_resolve_from(&self, mut scope: ScopeId, name: Atom) -> ScopeId {
         if !self.nested_names.is_empty() {
@@ -1355,9 +1411,11 @@ impl Bound {
         scope
     }
 
-    /// `NameResolver.Resolve`, at a class or an interface come to from a static member (`IsStatic(lastLocation)`), at
-    /// `KindComputedPropertyName` and at `KindExpressionWithTypeArguments`: the error with which a search for `meaning` that has got
-    /// to `scope` ends, finding nothing, because a type parameter of the class or interface around goes by `name`.
+    /// `NameResolver.Resolve`, at a class or an interface reached from a static member
+    /// (`IsStatic(lastLocation)`), at `KindComputedPropertyName` and at
+    /// `KindExpressionWithTypeArguments`: the error with which a lookup for `meaning` that has
+    /// reached `scope` fails because a type parameter of the enclosing class or interface is named
+    /// `name`.
     pub fn type_parameter_out_of_reach(
         &self,
         scope: ScopeId,
@@ -1377,9 +1435,10 @@ impl Bound {
             .then_some(code)
     }
 
-    /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: `propertyWithInvalidInitializer`, if a search for `meaning` that has got
-    /// to `scope` is to remember one there, with the error `checkAndReportErrorForInvalidInitializer` has for it. The search goes on,
-    /// and returns nil when it is over if it has a `nameNotFoundMessage`.
+    /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: `propertyWithInvalidInitializer`, if
+    /// a lookup for `meaning` that has reached `scope` must record one there, with the error
+    /// `checkAndReportErrorForInvalidInitializer` reports for it. The lookup continues, and returns
+    /// nil at the end if it has a `nameNotFoundMessage`.
     pub fn property_with_invalid_initializer(
         &self,
         scope: ScopeId,
@@ -1400,7 +1459,7 @@ impl Bound {
 }
 
 impl Bound {
-    /// `hir::fit`, for a file that is kept. The other lists are made the size they need.
+    /// `hir::fit`, for a file that is retained. The other lists are allocated at their final size.
     pub fn fit(&mut self) {
         macro_rules! each {
             ($($f:ident),*) => { $(crate::hir::fit(&mut self.$f);)* };
@@ -1421,7 +1480,7 @@ impl Bound {
     }
 }
 
-/// What `requiresScopeChangeWorker` asks of the compiler options.
+/// The compiler options `requiresScopeChangeWorker` reads.
 #[derive(Copy, Clone, Default)]
 pub struct BindOptions {
     /// `GetEmitStandardClassFields`

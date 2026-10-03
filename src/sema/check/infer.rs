@@ -1,16 +1,17 @@
-//! Working out what type parameters stand for from a type that is given and a type that mentions them.
+//! Infers type arguments for type parameters from a source type and a target type that mentions
+//! them.
 //!
-//! Follows `internal/checker/inference.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
-//! a function are the ones there. Left out: what the language service blocks, and the
-//! arity a spread argument implies for `[...T, ...U]`.
+//! Follows `internal/checker/inference.go` of TypeScript 7.0.2 function by function. The names in
+//! `backticks` at the head of a function are the names there. Omitted: what the language service
+//! blocks, and the arity a spread argument implies for `[...T, ...U]`.
 
 use super::*;
 use smallvec::{SmallVec, smallvec};
 
-/// The members of a union or an intersection while they are gone through.
+/// The members of a union or an intersection during iteration.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;
 
-/// From this many pairs on `Inference::visited` is looked up by `Inference::visited_index`.
+/// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
 // InferencePriority. The lower the better.
@@ -18,15 +19,15 @@ pub(super) const PRIORITY_NAKED: u32 = 1;
 const PRIORITY_SPECULATIVE_TUPLE: u32 = 1 << 1;
 const PRIORITY_SUBSTITUTE_SOURCE: u32 = 1 << 2;
 pub(super) const PRIORITY_HOMOMORPHIC: u32 = 1 << 3;
-/// The same, from a source with something left out of it.
+/// The same, from an incomplete source.
 pub(super) const PRIORITY_PARTIAL_HOMOMORPHIC: u32 = 1 << 4;
 pub(super) const PRIORITY_MAPPED_CONSTRAINT: u32 = 1 << 5;
 const PRIORITY_CONTRAVARIANT_CONDITIONAL: u32 = 1 << 6;
 pub(super) const PRIORITY_RETURN: u32 = 1 << 7;
 const PRIORITY_LITERAL_KEYOF: u32 = 1 << 8;
-/// What a type parameter extends is not looked into.
+/// The constraint of a type parameter is not considered.
 pub(super) const PRIORITY_NO_CONSTRAINTS: u32 = 1 << 9;
-/// As under strictFunctionTypes, whatever the options say.
+/// As under strictFunctionTypes, regardless of the options.
 pub(super) const PRIORITY_ALWAYS_STRICT: u32 = 1 << 10;
 const PRIORITY_MAX: i32 = 1 << 11;
 const PRIORITY_CIRCULARITY: i32 = -1;
@@ -38,7 +39,7 @@ const PRIORITY_IMPLIES_COMBINATION: u32 =
 #[derive(Clone, Default)]
 pub(super) struct Candidate {
     pub covariant: SmallVec<[TypeId; 4]>,
-    /// How far inside type arguments each of `covariant` was found. The deepest come first.
+    /// Type argument nesting depth at which each of `covariant` was found. The deepest come first.
     depths: SmallVec<[u32; 4]>,
     pub contravariant: SmallVec<[TypeId; 4]>,
     /// Candidates of a worse priority are dropped.
@@ -46,10 +47,11 @@ pub(super) struct Candidate {
     /// Every inference so far was to the parameter itself, not to something that contains it.
     pub top_level: bool,
     pub fixed: Option<TypeId>,
-    /// `...args: T`: how many arguments there are for it.
+    /// `...args: T`: the number of arguments for it.
     pub implied_arity: Option<usize>,
-    /// `inferredType`: what `getInferredType` came to, until something changes that it rests on (`clearCachedInferences`). While it
-    /// is worked out: what it is before what the parameter extends is looked at.
+    /// `inferredType`: the result of `getInferredType`, cached until something it depends on
+    /// changes (`clearCachedInferences`). While it is in progress: the type before the constraint
+    /// of the parameter is applied.
     inferred: std::cell::Cell<Option<TypeId>>,
 }
 
@@ -58,7 +60,7 @@ pub(super) struct Candidate {
 pub(super) struct Inference {
     pub(super) params: SmallVec<[TypeId; 4]>,
     pub(super) candidates: SmallVec<[Candidate; 2]>,
-    /// The signature the parameters belong to, for looking at where they occur in its return type.
+    /// The signature the parameters belong to, used to find their occurrences in its return type.
     pub(super) sig: Option<SigId>,
     contra: bool,
     bivariant: bool,
@@ -66,7 +68,7 @@ pub(super) struct Inference {
     /// The best priority anything was inferred at since it was last reset.
     inference_priority: i32,
     visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
-    /// Where each pair is in `visited`, once there are `VISITED_INDEX_FROM` of them.
+    /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
     source_stack: SmallVec<[TypeId; 8]>,
     target_stack: SmallVec<[TypeId; 8]>,
@@ -75,23 +77,25 @@ pub(super) struct Inference {
     calls: u32,
     /// The parameter type an inference started from.
     original_target: TypeId,
-    /// What is inferred from is what a binding pattern implies (`patternForType`).
+    /// The source is the type implied by a binding pattern (`patternForType`).
     pub(super) from_pattern: bool,
     /// The types of the array literals in the arguments (`ObjectFlagsArrayLiteral`).
     pub(super) array_literals: Vec<TypeId>,
-    /// `InferenceFlagsAnyDefault`: the call is written in a JavaScript file, where a parameter nothing is known of is `any`.
+    /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
+    /// inferences is `any`.
     pub(super) any_default: bool,
-    /// What has been filled in around the signature that is inferred from. Those of its own type parameters that are not
-    /// clones do not know, so what they extend has to be looked at through this.
+    /// The mapper for the outer type parameters of the source signature. Its own type parameters
+    /// that are not clones are not instantiated with it, so their constraints have to be
+    /// instantiated through this.
     pub(super) around_source: MapperId,
-    /// Without a signature, for `infer`: what has been filled in around the conditional type. What the parameters extend may
-    /// mention it.
+    /// Without a signature, for `infer`: the mapper for the outer type parameters of the
+    /// conditional type. The constraints of the parameters may mention them.
     around: MapperId,
     /// `propagationType`
     propagated: Option<TypeId>,
     /// `returnMapper`. `IDENTITY`: nil.
     pub(super) return_mapper: MapperId,
-    /// The clone that `createOuterReturnMapper` makes, once.
+    /// The clone that `createOuterReturnMapper` creates, once.
     pub(super) outer_return_context: Option<Box<Inference>>,
     /// `InferenceFlagsNoDefault`
     pub(super) no_default: bool,
@@ -159,13 +163,13 @@ impl Inference {
 }
 
 impl<'p> Checker<'p> {
-    /// `ObjectFlagsNonInferrableType`: there is a hole in it.
+    /// `ObjectFlagsNonInferrableType`: part of the type is missing.
     pub(super) fn is_non_inferrable_type(&self, ty: TypeId) -> bool {
         let flags = self.types().object_flags(ty);
         flags.contains(ObjectFlags::HAS_UNRESOLVED)
     }
 
-    /// What `params` are if `source` is to fit `target`. For `infer` in conditional types.
+    /// Infers `params` from `source` to `target`. For `infer` in conditional types.
     pub fn infer_from_types(
         &mut self,
         params: &[TypeId],
@@ -197,7 +201,7 @@ impl<'p> Checker<'p> {
         self.infer_ex(n, source, target, priority, false);
     }
 
-    /// `inferTypes`. `contra`: `target` is something that is taken, not given.
+    /// `inferTypes`. `contra`: `target` is in a contravariant position.
     fn infer_ex(
         &mut self,
         n: &mut Inference,
@@ -246,7 +250,8 @@ impl<'p> Checker<'p> {
             return;
         }
         let (mut source, mut target) = (source, target);
-        // What is expected of the result may have holes where the calls around have nothing to go by yet.
+        // The contextual return type may contain unresolved parts where the enclosing calls have no
+        // inferences yet.
         if source == TypeId::UNRESOLVED && n.priority & PRIORITY_RETURN != 0 {
             return;
         }
@@ -278,12 +283,13 @@ impl<'p> Checker<'p> {
                 _ => {}
             }
         }
-        // The members of `source` and of `target` in order, if they are unions none of whose members paired off.
+        // The members of `source` and of `target` in order, if they are unions none of whose
+        // members were matched.
         let (mut source_in_order, mut target_in_order): (Option<Parts>, Option<Parts>) =
             (None, None);
         match self.data(target) {
             TypeData::Union(_) => {
-                // `never` is a source like any other, not a union of nothing.
+                // `never` is a source like any other, not an empty union.
                 let mut sources: Parts = if source.is_never() {
                     smallvec![source]
                 } else {
@@ -292,8 +298,9 @@ impl<'p> Checker<'p> {
                 let mut targets = self.sorted_parts(target);
                 let (whole_source, whole_target) = (source, target);
                 let (source_count, target_count) = (sources.len(), targets.len());
-                // Members that are the same on both sides pair off (`isTypeOrBaseIdenticalTo`), then those made from the same
-                // generic type or alias (`isTypeCloselyMatchedBy`).
+                // Identical members on both sides are matched (`isTypeOrBaseIdenticalTo`), then
+                // those instantiated from the same generic type or alias
+                // (`isTypeCloselyMatchedBy`).
                 self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
                     if t == TypeId::MISSING {
                         return s == t;
@@ -331,7 +338,8 @@ impl<'p> Checker<'p> {
                 }
                 target = self.union(&targets);
                 if sources.is_empty() {
-                    // From `string` to `string | T`: better `string` for `T` than what `T` extends.
+                    // From `string` to `string | T`: `string` is a better inference for `T` than
+                    // the constraint of `T`.
                     self.infer_with_priority(n, source, target, PRIORITY_NAKED);
                     return;
                 }
@@ -348,8 +356,8 @@ impl<'p> Checker<'p> {
                     .iter()
                     .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t)) =>
             {
-                // From `string[] & { extra: any }` to `string[] & T`: `{ extra: any }` for `T`. But to `string[] & Iterable<T>` the
-                // `string[]` stays, and gives `string` for `T`.
+                // From `string[] & { extra: any }` to `string[] & T`: `{ extra: any }` for `T`. But
+                // to `string[] & Iterable<T>` the `string[]` stays, and yields `string` for `T`.
                 if !self.is_union(source) {
                     let mut sources: Parts = match self.data(source) {
                         TypeData::Intersection(parts) => SmallVec::from_slice(parts),
@@ -375,7 +383,7 @@ impl<'p> Checker<'p> {
         target = self.actual_type_variable(target);
         if self.is_type_variable(target) {
             if let Some(index) = n.index_of(target) {
-                // `ObjectFlagsNonInferrableType`: what has something left out of it is no candidate.
+                // `ObjectFlagsNonInferrableType`: a type with omitted parts is not a candidate.
                 if self.is_non_inferrable(source, 0) {
                     return;
                 }
@@ -404,7 +412,8 @@ impl<'p> Checker<'p> {
         let are_both_deferred =
             self.types().deferred(source).is_some() && self.types().deferred(target).is_some();
         match (self.data(source), self.data(target)) {
-            // Two that are both put off go by way of `invokeOnce`, or it might never end.
+            // Two deferred references go through `invokeOnce`; otherwise inference might not
+            // terminate.
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
                 if (st == tt || self.is_array(source) && self.is_array(target))
                     && !are_both_deferred =>
@@ -496,7 +505,7 @@ impl<'p> Checker<'p> {
                         || self.is_instantiable(source)))
                 {
                     let apparent = self.apparent_type_for_relation(source);
-                    // What a type parameter extends can be anything.
+                    // The constraint of a type parameter can be any type.
                     if apparent != source
                         && !(self.is_object_type(apparent)
                             || matches!(self.data(apparent), TypeData::Intersection(_)))
@@ -515,7 +524,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What `inferFromTypes` does once it has found the type parameter `target` is.
+    /// The part of `inferFromTypes` that runs once it has found which type parameter `target` is.
     fn add_candidate(
         &mut self,
         n: &mut Inference,
@@ -534,7 +543,7 @@ impl<'p> Checker<'p> {
                 c.priority = priority;
             }
             if priority == c.priority {
-                // Contravariant only where nothing on the way went both ways.
+                // Contravariant only if no bivariant position was crossed on the way.
                 if contra {
                     if !c.contravariant.contains(&candidate) {
                         c.contravariant.push(candidate);
@@ -571,7 +580,8 @@ impl<'p> Checker<'p> {
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
 
-    /// The members of a union in the order TypeScript goes through them, as `parts_in_order` gives them.
+    /// The members of a union in the order TypeScript iterates over them, as `parts_in_order`
+    /// returns them.
     pub(super) fn sorted_parts(&self, ty: TypeId) -> Parts {
         let mut parts = Parts::from_slice(self.parts(ty));
         if parts.len() > 1 {
@@ -580,8 +590,9 @@ impl<'p> Checker<'p> {
         parts
     }
 
-    /// `inferFromTypeArguments`, between two instantiations of `of`. Variances that are kept are read where they are: all threads share
-    /// them, and a count that goes up and down for every pair of references is paid for by all.
+    /// `inferFromTypeArguments`, between two instantiations of `of`. Cached variances are read in
+    /// place: all threads share them, and a reference count incremented and decremented for every
+    /// pair of references costs every thread.
     fn infer_from_type_arguments_of(
         &mut self,
         n: &mut Inference,
@@ -643,7 +654,8 @@ impl<'p> Checker<'p> {
         n.contra = !n.contra;
     }
 
-    /// `invokeOnce`: not twice between the same two types, and not on and on between instantiations of the same two.
+    /// `invokeOnce`: not twice for the same pair of types, and not indefinitely between
+    /// instantiations of the same two.
     fn invoke_once(
         &mut self,
         n: &mut Inference,
@@ -698,7 +710,8 @@ impl<'p> Checker<'p> {
         n.inference_priority = n.inference_priority.min(saved_priority);
     }
 
-    /// `inferFromMatchingTypes`: infers between the pairs that `matches`, and leaves the members that are in no pair.
+    /// `inferFromMatchingTypes`: infers between the pairs for which `matches` holds, and leaves the
+    /// unmatched members.
     fn infer_from_matching(
         &mut self,
         n: &mut Inference,
@@ -733,8 +746,8 @@ impl<'p> Checker<'p> {
         retain_unmatched(targets, &matched_targets[..]);
     }
 
-    /// `inferToMultipleTypes`. `sources_in_order`: the members of `source` in order, or `source` alone if it is no union, if that is
-    /// at hand.
+    /// `inferToMultipleTypes`. `sources_in_order`: the members of `source` in order, or `source`
+    /// alone if it is not a union, if already available.
     fn infer_to_multiple_types(
         &mut self,
         n: &mut Inference,
@@ -753,8 +766,9 @@ impl<'p> Checker<'p> {
             };
             let mut matched: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
             let mut circularity = false;
-            // First to what is not a type parameter on its own, keeping track of the sources something as good as what a type
-            // parameter on its own would get was inferred from.
+            // First to the targets that are not naked type parameters, tracking the sources from
+            // which an inference was made at a priority as good as a naked type parameter would
+            // get.
             for &t in targets {
                 if n.index_of(t).is_some() {
                     naked = t;
@@ -791,7 +805,8 @@ impl<'p> Checker<'p> {
                 }
                 return;
             }
-            // One type parameter on its own, and everything was gone through: it is what nothing was inferred from.
+            // A single naked type parameter, and every inference completed: it is inferred from the
+            // sources that nothing was inferred from.
             if type_variable_count == 1 && !circularity {
                 let unmatched: Parts = sources
                     .iter()
@@ -814,8 +829,9 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // To a type parameter on its own last, and for less: from `Promise<string>` to `T | Promise<T>` it is `string` that is
-        // wanted for `T`. In an intersection, only if there is one.
+        // To a naked type parameter last, at a lower priority: from `Promise<string>` to `T |
+        // Promise<T>` the desired inference for `T` is `string`. In an intersection, only if there
+        // is exactly one.
         if if kind == Multiple::Intersection {
             type_variable_count == 1
         } else {
@@ -863,14 +879,15 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
     ) {
         let matches = self.infer_types_from_template_literal_type(source, texts, types);
-        // Nothing but placeholders, and no match: `never` for each, so that what comes of it fits nothing. What they extend,
-        // `string`, would fit.
+        // Only placeholders, and no match: `never` for each, so that the result matches nothing.
+        // Their constraint, `string`, would match.
         if matches.is_none() && !texts.iter().all(|&t| self.atoms().bytes(t).is_empty()) {
             return;
         }
         for (i, &target) in types.iter().enumerate() {
             let source = matches.as_ref().map_or(TypeId::NEVER, |m| m[i]);
-            // A piece of a string for a type parameter that extends `number`, say: the number it spells.
+            // A substring inferred for a type parameter constrained to, for example, `number`: the
+            // number it spells.
             if let TypeData::StringLit { value, .. } = *self.data(source)
                 && let Some(index) = n.index_of(target)
                 && let Some(constraint) = self.base_constraint_of(n.params[index])
@@ -885,7 +902,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The member of `constraint` the text `value` is best taken for. The `choose` closure of `inferToTemplateLiteralType`.
+    /// The member of `constraint` that best represents the text `value`. The `choose` closure of
+    /// `inferToTemplateLiteralType`.
     fn literal_matching_text(
         &mut self,
         value: Atom,
@@ -895,7 +913,7 @@ impl<'p> Checker<'p> {
         let text = self.atoms().bytes(value);
         let number = crate::atom::parse_number(text)
             .filter(|v| v.is_finite() && self.number_name(*v) == value);
-        // `isValidBigIntString(text, roundTripOnly)`: just what a bigint prints as.
+        // `isValidBigIntString(text, roundTripOnly)`: exactly what a bigint prints as.
         let negative = text.starts_with(b"-");
         let digits = text.strip_prefix(b"-").unwrap_or(text);
         let is_bigint = !digits.is_empty()
@@ -980,7 +998,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `createEmptyObjectTypeFromStringLiteral`: an object with the properties named, each `any`.
+    /// `createEmptyObjectTypeFromStringLiteral`: an object type with the named properties, each of
+    /// type `any`.
     fn empty_object_type_from_string_literal(&mut self, ty: TypeId) -> TypeId {
         let mut shape = Shape::default();
         // A string enum member can have the value of another member or of a string literal.
@@ -1018,7 +1037,7 @@ impl<'p> Checker<'p> {
             self.infer_from_type_arguments_of(n, *st, sa, ta);
             return;
         }
-        // Tuples of one make are references to one generic type as well.
+        // Tuples of the same shape are also references to the same generic type.
         if let (
             TypeData::Tuple {
                 flags: sf,
@@ -1054,7 +1073,7 @@ impl<'p> Checker<'p> {
                 return;
             }
         }
-        // Only if the two may have to do with each other.
+        // Only if the two types may be related.
         if self.types_definitely_unrelated(source, target) {
             return;
         }
@@ -1157,7 +1176,8 @@ impl<'p> Checker<'p> {
             if middle_length == 2 {
                 let (a, b) = (element_flags[start_length], element_flags[start_length + 1]);
                 if a.contains(ElemFlags::VARIADIC) && b.contains(ElemFlags::VARIADIC) {
-                    // `[...T, ...U]`: `T` takes as much of the source as there are arguments for it.
+                    // `[...T, ...U]`: `T` takes as many source elements as there are arguments for
+                    // it.
                     if let Some(implied_arity) = n
                         .index_of(element_types[start_length])
                         .and_then(|i| n.candidates[i].implied_arity)
@@ -1175,7 +1195,8 @@ impl<'p> Checker<'p> {
                         self.infer_types(n, second, element_types[start_length + 1]);
                     }
                 } else if a.contains(ElemFlags::VARIADIC) && b.contains(ElemFlags::REST) {
-                    // `[...T, ...rest]`: if `T` extends a tuple of a fixed size, that is how much of the source it takes.
+                    // `[...T, ...rest]`: if the constraint of `T` is a fixed-size tuple, `T` takes
+                    // that many source elements.
                     if let Some(implied_arity) =
                         fixed_tuple_constraint(self, n, element_types[start_length])
                     {
@@ -1226,7 +1247,8 @@ impl<'p> Checker<'p> {
             } else if middle_length == 1
                 && element_flags[start_length].contains(ElemFlags::VARIADIC)
             {
-                // One variadic element: what lies between the fixed parts of the source. A guess if the target ends in optional ones.
+                // One variadic element: the source elements between the fixed parts. Speculative if
+                // the target ends in optional elements.
                 let priority = if element_flags[target_arity - 1].contains(ElemFlags::OPTIONAL) {
                     PRIORITY_SPECULATIVE_TUPLE
                 } else {
@@ -1262,7 +1284,8 @@ impl<'p> Checker<'p> {
         let end = elems.len().saturating_sub(end_skip_count);
         let fixed = Self::fixed_length(flags);
         if index > fixed {
-            // `getRestArrayTypeOfTupleType`: an array of all there is from the first element without a fixed place on.
+            // `getRestArrayTypeOfTupleType`: an array of all the element types from the first
+            // non-fixed element on.
             return match self.element_type_of_slice(elems, flags, fixed, 0) {
                 Some(rest) => self.array_of(rest),
                 None => self.tuple(&[], &[], false),
@@ -1337,11 +1360,12 @@ impl<'p> Checker<'p> {
                 return true;
             };
             if match_discriminant_properties {
-                let wanted = self.type_of_prop(tp, tm.mapper);
-                if self.is_unit(wanted) {
-                    let given = self.type_of_prop(sp, source_mapper);
-                    if !(self.is_any(given)
-                        || self.with_freshness(given, false) == self.with_freshness(wanted, false))
+                let expected = self.type_of_prop(tp, tm.mapper);
+                if self.is_unit(expected) {
+                    let actual = self.type_of_prop(sp, source_mapper);
+                    if !(self.is_any(actual)
+                        || self.with_freshness(actual, false)
+                            == self.with_freshness(expected, false))
                     {
                         return true;
                     }
@@ -1357,24 +1381,24 @@ impl<'p> Checker<'p> {
             return;
         };
         for tp in &tm.shape().props {
-            // A `NoInfer<T>` written there is still that.
-            let wanted = self.type_of_prop(tp, tm.mapper);
-            if !self.has_type_variables(wanted) || self.is_no_infer(wanted) {
+            // A `NoInfer<T>` in the declaration is preserved.
+            let expected = self.type_of_prop(tp, tm.mapper);
+            if !self.has_type_variables(expected) || self.is_no_infer(expected) {
                 continue;
             }
             // `removeMissingType`, as `type_of_prop_as_read` does it.
-            let wanted = if !tp.flags.contains(PropFlags::OPTIONAL) {
-                wanted
+            let expected = if !tp.flags.contains(PropFlags::OPTIONAL) {
+                expected
             } else if self.p.files.options.exact_optional_property_types {
-                self.remove_missing_type(wanted, true)
+                self.remove_missing_type(expected, true)
             } else {
-                self.optional(wanted)
+                self.optional(expected)
             };
             let Some((sp, source_mapper)) = self.property_in(&sm, tp.name) else {
                 continue;
             };
-            let given = self.type_of_prop_as_read(sp, source_mapper);
-            self.infer_types(n, given, wanted);
+            let actual = self.type_of_prop_as_read(sp, source_mapper);
+            self.infer_types(n, actual, expected);
         }
     }
 
@@ -1397,9 +1421,10 @@ impl<'p> Checker<'p> {
         if ss.is_empty() {
             return;
         }
-        // `returnOnlyType`: a function that waits for its context, kept for what it returns.
+        // `returnOnlyType`: a context sensitive function, retained only for its return type.
         let return_only = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::Partial);
-        // From the bottom up. If the source has fewer, its first does for the rest of the target's.
+        // From the last signature to the first. If the source has fewer, its first signature is
+        // paired with the remaining target signatures.
         for (i, &t) in ts.iter().enumerate() {
             let source_index = (ss.len() + i).saturating_sub(ts.len());
             let s = if ss.len() == 1 {
@@ -1416,8 +1441,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `instantiate_sig(sig, mapper)`, where `sig` is the only call (or construct) signature among the members of `ty` and `mapper`
-    /// is what they come with. `signatures` keeps it for an object type that is looked into as it stands.
+    /// `instantiate_sig(sig, mapper)`, where `sig` is the only call (or construct) signature among
+    /// the members of `ty` and `mapper` is their mapper. `signatures` caches it for an object type
+    /// that is inspected as is.
     pub(super) fn instantiate_only_sig(
         &mut self,
         ty: TypeId,
@@ -1441,9 +1467,10 @@ impl<'p> Checker<'p> {
         self.instantiate_sig(sig, mapper)
     }
 
-    /// The heart of `instantiateTypeWithSingleGenericCallSignature`. `generic` is given where `contextual`, which is not generic,
-    /// is expected, by a function that returns a function. If what it says of the type parameters being inferred is news, it
-    /// says it in terms of its own type parameters, which then become those of the function returned.
+    /// The core of `instantiateTypeWithSingleGenericCallSignature`. `generic` is passed where
+    /// `contextual`, which is not generic, is expected, by a function that returns a function. If
+    /// it contributes new inferences for the type parameters being inferred, they are expressed in
+    /// its own type parameters, which then become those of the returned function.
     pub(super) fn adopt_generic_argument(
         &mut self,
         n: &mut Inference,
@@ -1490,7 +1517,8 @@ impl<'p> Checker<'p> {
         return_only: bool,
     ) {
         let source = self.base_sig(source);
-        // `target.declaration`: the signature of a union is declared where the first it stands for is.
+        // `target.declaration`: the signature of a union has the declaration of the first signature
+        // it represents.
         let is_method = match self.sig_decl(self.types().sig_origin(target)) {
             Some((file, func, _)) => matches!(
                 self.hir(file)[func].kind,
@@ -1498,11 +1526,11 @@ impl<'p> Checker<'p> {
             ),
             None => false,
         };
-        // The target's own type parameters are nobody's business. They may be the very declarations that are being
-        // inferred: the members of what `flat` returns include `flat`.
+        // The target's own type parameters are irrelevant. They may be the very declarations that
+        // are being inferred: the members of the return type of `flat` include `flat`.
         let target = self.erased_sig(target);
         if !return_only {
-            // Once through a signature that goes both ways, everything further in does.
+            // Once a bivariant signature has been crossed, everything nested in it is bivariant.
             let saved_bivariant = n.bivariant;
             n.bivariant |= is_method;
             let strict = self.p.files.options.strict_function_types
@@ -1521,19 +1549,20 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `applyToParameterTypes`: the pairs it goes through.
+    /// `applyToParameterTypes`: the pairs it visits.
     fn parameter_type_pairs(
         &mut self,
         source: SigId,
         target: SigId,
     ) -> SmallVec<[(TypeId, TypeId); 8]> {
         let tp = self.sig_params(target);
-        // `getTypeAtPosition(source, i)`, and `getRestTypeAtPosition(source, ..)` for all that are left.
-        let asked = match tp.last() {
+        // `getTypeAtPosition(source, i)`, and `getRestTypeAtPosition(source, ..)` for all remaining
+        // positions.
+        let requested = match tp.last() {
             Some(last) if last.rest => usize::MAX,
             _ => tp.len(),
         };
-        let sp = self.sig_params_up_to(source, asked);
+        let sp = self.sig_params_up_to(source, requested);
         let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
         let (source_rest, target_rest) =
             (self.effective_rest_type(&sp), self.effective_rest_type(&tp));
@@ -1561,7 +1590,8 @@ impl<'p> Checker<'p> {
             pairs.push((s, t));
         }
         if let Some(target_rest) = target_rest {
-            // For a `const` type parameter that need not be an array that can be written to, the rest is not one.
+            // For a `const` type parameter whose constraint does not require a mutable array, the
+            // rest type is readonly.
             let readonly = self.is_const_type_variable(target_rest, 0)
                 && !self
                     .parts(target_rest)
@@ -1587,7 +1617,8 @@ impl<'p> Checker<'p> {
         self.is_assignable(ty, any_array)
     }
 
-    /// `applyToReturnTypes`: the pair it goes through, if any. What the source tests or returns is asked only if it is needed.
+    /// `applyToReturnTypes`: the pair it visits, if any. The type predicate or return type of the
+    /// source is resolved only if needed.
     fn return_type_pair(&mut self, source: SigId, target: SigId) -> Option<(TypeId, TypeId)> {
         if let Some(t) = self.sig_predicate(target)
             && let Some(s) = self.sig_predicate(source)
@@ -1597,12 +1628,12 @@ impl<'p> Checker<'p> {
         {
             return Some((st, tt));
         }
-        // A `NoInfer<T>` written there is still that.
-        let wanted = self.sig_return(target);
-        if !self.has_type_variables(wanted) {
+        // A `NoInfer<T>` in the declaration is preserved.
+        let expected = self.sig_return(target);
+        if !self.has_type_variables(expected) {
             return None;
         }
-        Some((self.sig_return(source), wanted))
+        Some((self.sig_return(source), expected))
     }
 
     /// `inferFromIndexTypes`
@@ -1627,8 +1658,9 @@ impl<'p> Checker<'p> {
         } else {
             0
         };
-        // What is known to have nothing but what is seen has an index signature for it. `inferFromTypes` has put
-        // `getApparentType(source)` for the source, unless what type parameters extend is to be left out of it.
+        // A type known to have exactly its visible properties has an implicit index signature.
+        // `inferFromTypes` has replaced the source with `getApparentType(source)`, unless the
+        // constraints of type parameters are to be ignored.
         let looks = if n.priority & PRIORITY_NO_CONSTRAINTS != 0 {
             source
         } else {
@@ -1636,14 +1668,14 @@ impl<'p> Checker<'p> {
         };
         if self.is_object_type_with_inferable_index(looks) {
             for info in &tm.shape().index {
-                let wanted = self.instantiate(info.value, tm.mapper);
-                if !self.has_type_variables(wanted) {
+                let expected = self.instantiate(info.value, tm.mapper);
+                if !self.has_type_variables(expected) {
                     continue;
                 }
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
                     if self.is_name_applicable_to_index(prop.name, info.key) {
-                        // What is there if the property is.
+                        // The type of the property when it is present.
                         let ty = self.type_of_prop(prop, sm.mapper);
                         types.push(if prop.flags.contains(PropFlags::OPTIONAL) {
                             self.remove_missing_or_undefined_type(ty)
@@ -1662,18 +1694,18 @@ impl<'p> Checker<'p> {
                 }
                 if !types.is_empty() {
                     let all = self.union(&types);
-                    self.infer_with_priority(n, all, wanted, priority);
+                    self.infer_with_priority(n, all, expected, priority);
                 }
             }
         }
         for info in &tm.shape().index {
-            let wanted = self.instantiate(info.value, tm.mapper);
-            if self.has_type_variables(wanted)
-                && let Some(given) = self
+            let expected = self.instantiate(info.value, tm.mapper);
+            if self.has_type_variables(expected)
+                && let Some(actual) = self
                     .applicable_index_info(&sm, info.key)
                     .map(|info| info.value)
             {
-                self.infer_with_priority(n, given, wanted, priority);
+                self.infer_with_priority(n, actual, expected, priority);
             }
         }
     }
@@ -1701,8 +1733,9 @@ impl<'p> Checker<'p> {
                 result
             }
             TypeData::Keyof(of) => {
-                // `{ [P in keyof T]: X }`: work out what it was made from, and infer from that to `T`, for less than what is
-                // inferred to `T` directly, and for less still if it is only part of the answer.
+                // `{ [P in keyof T]: X }`: reverse the mapping to recover the type it was mapped
+                // from, and infer from that to `T`, at a lower priority than a direct inference to
+                // `T`, and lower still if it is only partial.
                 if let Some(index) = n.index_of(of)
                     && n.candidates[index].fixed.is_none()
                     && let Some(inferred) = self.reverse_mapped_type(source, target, of)
@@ -1719,7 +1752,8 @@ impl<'p> Checker<'p> {
             TypeData::TypeParam(..) => {
                 // `{ [P in K]: X }`: `K` is the keys of the source.
                 let keys = match self.data(source) {
-                    // `patternForType`, `IndexFlagsNoIndexSignatures`: the `...rest` of a pattern is no key.
+                    // `patternForType`, `IndexFlagsNoIndexSignatures`: the `...rest` of a pattern
+                    // is not a key.
                     TypeData::Synth(shape)
                         if n.from_pattern
                             || matches!(
@@ -1749,7 +1783,7 @@ impl<'p> Checker<'p> {
                 {
                     return true;
                 }
-                // `X` is what the properties of the source hold.
+                // `X` is the type of the properties of the source.
                 let Some(sm) = self.members(source) else {
                     return true;
                 };
@@ -1783,7 +1817,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `createReverseMappedType`: what `{ [P in keyof T]: X }` was made from to come out as `source`.
+    /// `createReverseMappedType`: the type that `{ [P in keyof T]: X }` maps to `source`.
     pub(super) fn reverse_mapped_type(
         &mut self,
         source: TypeId,
@@ -1791,7 +1825,7 @@ impl<'p> Checker<'p> {
         of: TypeId,
     ) -> Option<TypeId> {
         let members = self.members(source)?;
-        // It takes a string index signature, or properties that are not all left out.
+        // It requires a string index signature, or properties that are not all omitted.
         if !(members
             .shape()
             .index
@@ -1832,7 +1866,7 @@ impl<'p> Checker<'p> {
                 .collect();
             return Some(self.tuple(&types, &flags, *readonly));
         }
-        // What is in it is worked out when it is asked for.
+        // Its members are resolved on demand.
         Some(self.intern(TypeData::ReverseMapped {
             source,
             mapped: target,
@@ -1840,8 +1874,8 @@ impl<'p> Checker<'p> {
         }))
     }
 
-    /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, `autoType`, `silentNeverType` or a literal looked at without the functions
-    /// in it that wait for their context.
+    /// `ObjectFlagsNonInferrableType`: `ty` is, or contains, `autoType`, `silentNeverType` or a
+    /// literal checked without its context sensitive functions.
     pub(super) fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
         if depth > 8 {
             return false;
@@ -1879,8 +1913,10 @@ impl<'p> Checker<'p> {
             | TypeData::Intersection(list) => {
                 list.iter().any(|&m| self.is_non_inferrable(m, depth + 1))
             }
-            // `instantiateAnonymousType`: `objectFlags |= getPropagatingFlagsOfTypes(aliasTypeArguments)`. What is put for a type
-            // parameter in an anonymous type does not mark it, unless an alias stands for it and that is a type argument of the alias.
+            // `instantiateAnonymousType`: `objectFlags |=
+            // getPropagatingFlagsOfTypes(aliasTypeArguments)`. A type substituted for a type
+            // parameter in an anonymous type does not mark it, unless the anonymous type has an
+            // alias and the substituted type is a type argument of the alias.
             TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. }
                 if self
                     .types()
@@ -1934,7 +1970,8 @@ impl<'p> Checker<'p> {
         });
         let limited = self.limited_constraint(target, of);
         for prop in &members.shape().props {
-            // What the rest of the constraint does not let through would not have come through the mapping.
+            // Properties that the rest of the constraint filters out would not have passed through
+            // the mapping.
             if let Some(limited) = limited
                 && let Some(key) = self.key_type_of_name(prop.name)
                 && !self.is_assignable(key, limited)
@@ -1976,7 +2013,7 @@ impl<'p> Checker<'p> {
         shape
     }
 
-    /// `getTypeOfReverseMappedSymbol`, of the property `name` of the reverse mapped type `ty`.
+    /// `getTypeOfReverseMappedSymbol` for the property `name` of the reverse mapped type `ty`.
     pub(super) fn type_of_reverse_mapped_prop(&mut self, ty: TypeId, name: Atom) -> TypeId {
         let TypeData::ReverseMapped { source, mapped, of } = *self.data(ty) else {
             return TypeId::UNRESOLVED;
@@ -1988,7 +2025,8 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         };
         let property_type = self.type_of_prop_with_missing(prop, members.mapper);
-        // `{ [P in keyof T[K]]: X }` was made from the same as `{ [P in keyof T]: X }`. Said so, fewer types come of it.
+        // `{ [P in keyof T[K]]: X }` was mapped from the same type as `{ [P in keyof T]: X }`.
+        // Normalizing to that form creates fewer types.
         let (mut mapped, mut of) = (mapped, of);
         if let TypeData::IndexedAccess { obj, index, .. } = *self.data(of)
             && matches!(self.data(obj), TypeData::TypeParam(..))
@@ -2011,7 +2049,8 @@ impl<'p> Checker<'p> {
     fn limited_constraint(&mut self, target: TypeId, of: TypeId) -> Option<TypeId> {
         let keys = self.mapped_keys(target);
         let own = self.intern(TypeData::Keyof(of));
-        // `keyof T & ("a" | "b")` is `keyof T & "a" | keyof T & "b"` by now, and does not remember (`UnionType.origin`).
+        // `keyof T & ("a" | "b")` is `keyof T & "a" | keyof T & "b"` by now, and the original form
+        // is not recorded (`UnionType.origin`).
         let mut limits = Vec::new();
         for &part in self.parts(keys) {
             let TypeData::Intersection(members) = self.data(part) else {
@@ -2086,9 +2125,10 @@ impl<'p> Checker<'p> {
         from: usize,
         readonly: bool,
     ) -> TypeId {
-        // Position by position: `...args: [a: A, b?: B, ...c: C[]]` is as good as `a: A, b?: B, ...c: C[]`.
+        // Position by position: `...args: [a: A, b?: B, ...c: C[]]` is equivalent to `a: A, b?: B,
+        // ...c: C[]`.
         let mut elems = Parts::new();
-        // `getNameableDeclarationAtPosition`: what each is called.
+        // `getNameableDeclarationAtPosition`: the name of each.
         let mut labels: SmallVec<[Atom; 8]> = SmallVec::new();
         let mut rest = None;
         let mut rest_label = Atom::NONE;
@@ -2133,7 +2173,8 @@ impl<'p> Checker<'p> {
                 });
             }
         }
-        // Those that can go without an argument may be missing, whatever is written with a `?`.
+        // Parameters that need no argument are optional, regardless of which are declared with a
+        // `?`.
         let min = self.min_argument_count(params);
         let mut flags: SmallVec<[ElemFlags; 8]> = (0..elems.len())
             .map(|i| {
@@ -2177,7 +2218,8 @@ impl<'p> Checker<'p> {
                 None => TypeId::UNKNOWN,
             })
             .collect();
-        // As often as it takes for those that depend on one another to come down to what is outside; what still goes round is `any`.
+        // Repeated until mutually dependent constraints reduce to outer types; whatever is still
+        // circular becomes `any`.
         let to_constraints = self.mapper_from(&params, &bases);
         for _ in 1..params.len() {
             for base in &mut bases {
@@ -2202,7 +2244,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `adopted_type_params`, of the signature of `func` that has `mapper`.
+    /// `adopted_type_params` for the signature of `func` that has `mapper`.
     pub(super) fn adopted_type_params_of(
         &mut self,
         file: FileId,
@@ -2229,20 +2271,21 @@ impl<'p> Checker<'p> {
         params.retain(|&param| {
             self.types()
                 .map(mapper, param)
-                .is_none_or(|given| given == param)
+                .is_none_or(|actual| actual == param)
         });
         params
     }
 
-    /// `cloneTypeParameter`: `param` is that of a signature found in something instantiated. What it extends and defaults to
-    /// comes with what is around the signature filled in; for any other that is still to be done.
+    /// `cloneTypeParameter`: `param` belongs to a signature found in an instantiated type. Its
+    /// constraint and default are already instantiated with the outer mapper of the signature; for
+    /// any other type parameter that remains to be done.
     fn is_cloned_type_param(&self, param: TypeId) -> bool {
         matches!(*self.data(param), TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY)
     }
 
     // ───────────────────────────── conclusions ─────────────────────────────
 
-    /// `hasPrimitiveConstraint`, of a type parameter that extends `constraint`.
+    /// `hasPrimitiveConstraint` for a type parameter with the constraint `constraint`.
     fn is_primitive_constraint(&mut self, constraint: Option<TypeId>) -> bool {
         let Some(mut constraint) = constraint else {
             return false;
@@ -2294,7 +2337,7 @@ impl<'p> Checker<'p> {
         if types.len() == 1 {
             return types[0];
         }
-        // What can be missing is set aside, and put back at the end.
+        // Nullable members are set aside and added back at the end.
         let is_nullable = |m: TypeId| m.is_undefined() || m.is_null();
         let primary: Parts = if self.p.files.options.strict_null_checks {
             types
@@ -2304,7 +2347,8 @@ impl<'p> Checker<'p> {
         } else {
             Parts::from_slice(types)
         };
-        // Literals of one primitive stay a union. Otherwise the leftmost that nothing to its right is a supertype of.
+        // Literals of one primitive stay a union. Otherwise the leftmost type that has no supertype
+        // to its right.
         let supertype = if self.literal_types_with_same_base_type(&primary) {
             self.union(&primary)
         } else {
@@ -2362,7 +2406,7 @@ impl<'p> Checker<'p> {
         leftmost(self, Self::is_subtype)
     }
 
-    /// `getCommonSubtype`: the leftmost that nothing to its right is a subtype of.
+    /// `getCommonSubtype`: the leftmost type that has no subtype to its right.
     fn common_subtype(&mut self, types: &[TypeId]) -> TypeId {
         let mut best = types[0];
         for &t in &types[1..] {
@@ -2384,7 +2428,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getCovariantInference`, and what `param` extends.
+    /// `getCovariantInference`, and the constraint of `param`.
     fn covariant_inference(
         &mut self,
         c: &Candidate,
@@ -2408,8 +2452,8 @@ impl<'p> Checker<'p> {
                 candidates.push(self.union_reduced(&literals));
             }
         }
-        // Literals are widened if every inference was to the type parameter itself, it does not extend anything primitive, and
-        // it was settled early or is not what is returned.
+        // Literals are widened if every inference was to the type parameter itself, its constraint
+        // is not primitive, and it was fixed early or is not the return type.
         let constraint = self.constraint_of_type_param(param);
         let primitive_constraint =
             self.is_primitive_constraint(constraint) || self.is_const_type_variable(param, 0);
@@ -2433,7 +2477,8 @@ impl<'p> Checker<'p> {
         (self.regular_object(unwidened), constraint)
     }
 
-    /// `getInferredType`. `is_fixed`: it is being settled, because something has to know it before everything has been seen.
+    /// `getInferredType`. `is_fixed`: the inference is being fixed, because something needs it
+    /// before all candidates have been collected.
     pub(super) fn get_inferred_type(
         &mut self,
         n: &Inference,
@@ -2460,7 +2505,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let c = &n.candidates[index];
         let param = n.params[index];
-        // What the signature was found in has been filled in. A clone knows.
+        // The type containing the signature has been instantiated. A clone already reflects that.
         let outer = if self.is_cloned_type_param(param) {
             MapperId::IDENTITY
         } else {
@@ -2470,7 +2515,7 @@ impl<'p> Checker<'p> {
         };
         let mut inferred = None;
         let mut fallback = None;
-        // What `param` extends, if that has been asked.
+        // The constraint of `param`, if it has been resolved.
         let mut extended = None;
         if let Some(sig) = n.sig {
             let covariant = if c.covariant.is_empty() {
@@ -2489,8 +2534,9 @@ impl<'p> Checker<'p> {
                 Some(self.common_subtype(&c.contravariant))
             };
             if covariant.is_some() || contravariant.is_some() {
-                // The covariant one, unless it is `never` or `any`, or is one of several that do not agree, or fits nowhere the
-                // parameter is consumed, or something inferred for a parameter that extends this one does not fit it.
+                // The covariant inference, unless it is `never` or `any`, or is one of several
+                // candidates that disagree, or is assignable to no contravariant candidate, or an
+                // inference for a parameter constrained by this one is not assignable to it.
                 let prefer_covariant = match (covariant, contravariant) {
                     (Some(_), None) => true,
                     (None, _) => false,
@@ -2516,7 +2562,8 @@ impl<'p> Checker<'p> {
             } else if n.no_default {
                 inferred = Some(TypeId::SILENT_NEVER);
             } else if let Some(default) = self.default_of_type_param(param) {
-                // A default may mention the parameters before it. Those from it on are nothing yet.
+                // A default may mention the preceding parameters. Those from it on have no type
+                // yet.
                 let mut default = self.instantiate(default, outer);
                 if self.has_type_variables(default) {
                     let unknowns: SmallVec<[TypeId; 4]> =
@@ -2537,14 +2584,14 @@ impl<'p> Checker<'p> {
             TypeId::UNKNOWN
         });
         let extended = match extended {
-            Some(asked) => asked,
+            Some(requested) => requested,
             None => self.constraint_of_type_param(param),
         };
         let Some(constraint) = extended else {
             return provisional;
         };
         let constraint = self.instantiate(constraint, outer);
-        // What it extends may lead back to it.
+        // Its constraint may refer back to it.
         c.inferred.set(Some(provisional));
         let so_far = self.non_fixing_mapper(n, constraint);
         let constraint = self.instantiate(constraint, so_far);
@@ -2552,7 +2599,8 @@ impl<'p> Checker<'p> {
             && !self.is_assignable(ty, constraint)
             && !self.satisfies_constraint_in_outer_context(n, ty, constraint)
         {
-            // Going by what is expected of the result alone is a guess anyway: what of it fits will do.
+            // An inference from the contextual return type alone is speculative anyway: the part of
+            // it that satisfies the constraint is used.
             let filtered = if c.priority == PRIORITY_RETURN {
                 self.filter(ty, |k, m| k.is_assignable(m, constraint))
             } else {
@@ -2569,8 +2617,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether the type parameter `ty` of the signature that is inferred from extends something that fits `constraint`, once
-    /// what is around that signature is filled in.
+    /// Whether the constraint of the type parameter `ty` of the source signature is assignable to
+    /// `constraint`, once it is instantiated with the outer mapper of that signature.
     fn satisfies_constraint_in_outer_context(
         &mut self,
         n: &Inference,
@@ -2651,7 +2699,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// Every parameter as it stands.
+    /// Maps every parameter to its current inference.
     pub(super) fn inference_mapper(&mut self, n: &Inference) -> MapperId {
         let types: SmallVec<[TypeId; 4]> = (0..n.params.len())
             .map(|i| self.get_inferred_type(n, i, false))
@@ -2664,14 +2712,14 @@ impl<'p> Checker<'p> {
         self.any_type_in(ty, false, |t| t == param)
     }
 
-    /// `couldContainTypeVariables`: whether instantiating `ty` can come to map a type parameter.
+    /// `couldContainTypeVariables`: whether instantiating `ty` may map a type parameter.
     fn may_mention_type_parameter(&self, ty: TypeId) -> bool {
         self.types()
             .object_flags(ty)
             .intersects(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_REVERSE_MAPPED)
     }
 
-    /// `mentions`, for each of `params`, going through `ty` once.
+    /// `mentions` for each of `params`, in a single traversal of `ty`.
     pub(super) fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
         let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
         let may_be_any = self.any_type_in(ty, false, |t| {
@@ -2686,10 +2734,12 @@ impl<'p> Checker<'p> {
         mentioned
     }
 
-    /// Whether `found` says yes to `ty` or to something `ty` is made of, as far as can be told without resolving members. Yes also
-    /// where that cannot be told. A type refers only to types made before it, and each is looked at once, however deep it lies.
-    /// `all`: through signatures too, so it can always be told. Not through the type arguments of an alias: `getObjectTypeInstantiation`
-    /// leaves a type alone that mentions none of the type parameters around it, whatever it is an alias of.
+    /// Whether `found` holds for `ty` or for a constituent of `ty`, as far as can be determined
+    /// without resolving members. Also true where that cannot be determined. A type refers only to
+    /// types created before it, and each is visited once, however deeply nested.
+    /// `all`: also traverses signatures, so the result is always exact. Not the type arguments of
+    /// an alias: `getObjectTypeInstantiation` leaves a type unchanged that mentions none of its
+    /// outer type parameters, whatever it is an alias of.
     pub(super) fn any_type_in(
         &self,
         ty: TypeId,
@@ -2698,7 +2748,7 @@ impl<'p> Checker<'p> {
     ) -> bool {
         let mut left: SmallVec<[TypeId; 16]> = smallvec![ty];
         let mut signatures: SmallVec<[SigId; 4]> = SmallVec::new();
-        // The first few are looked up as they come.
+        // The first few are searched linearly.
         let mut seen: SmallVec<[TypeId; 16]> = SmallVec::new();
         let mut seen_later = crate::util::FxHashSet::default();
         while let Some(ty) = left.pop() {
@@ -2719,7 +2769,7 @@ impl<'p> Checker<'p> {
                     left.extend_from_slice(types);
                 }
                 TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
-                    TypeArguments::Given(given) => left.extend_from_slice(given),
+                    TypeArguments::Given(actual) => left.extend_from_slice(actual),
                     TypeArguments::Deferred(deferred) => left.extend(values(deferred.mapper)),
                 },
                 TypeData::Template { types, .. } => left.extend_from_slice(types),

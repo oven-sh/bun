@@ -25,7 +25,7 @@ pub(super) enum AccessNode {
 }
 
 impl<'p> Checker<'p> {
-    /// The pairs of `mapper`, and after them `ty` for `param`.
+    /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
         let mapping = self.types().mapping(mapper);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(mapping.len() + 1);
@@ -34,7 +34,7 @@ impl<'p> Checker<'p> {
         self.types().mapper_of(&pairs)
     }
 
-    /// Whether what `ty` is depends on type parameters in a way that puts off `keyof`, `T[K]` and `extends`.
+    /// Whether `ty` depends on type parameters in a way that defers `keyof`, `T[K]` and `extends`.
     pub fn is_generic(&mut self, ty: TypeId) -> bool {
         if !self.has_type_variables(ty) {
             return false;
@@ -54,8 +54,8 @@ impl<'p> Checker<'p> {
                 if self.is_generic(constraint) {
                     return true;
                 }
-                // So is one whose `as` clause mentions something generic other than the key: the name is generic even with the
-                // keys, which are known, put for the key.
+                // So is one whose `as` clause mentions something generic other than the key: the
+                // name is generic even after the known keys are substituted for the key parameter.
                 let mapped = self.mapped_decl(file, node);
                 if mapped.name_ty.is_none() {
                     return false;
@@ -219,7 +219,8 @@ impl<'p> Checker<'p> {
                 keys.extend(self.key_type_of_prop(apparent, prop));
             }
         }
-        // `enumNumberIndexInfo`, the way back from a number to the name of a member, is left out.
+        // `enumNumberIndexInfo`, the reverse mapping from a number to the name of a member, is
+        // omitted.
         if !matches!(
             self.data(apparent),
             TypeData::Anon {
@@ -260,15 +261,17 @@ impl<'p> Checker<'p> {
                 if parts.iter().any(|&part| self.is_key_type_included(part, include)))
     }
 
-    /// The literal type that names the property `name`, as far as the name alone tells. `None` for private names.
+    /// The literal type for the property name `name`, as far as the name alone determines it.
+    /// `None` for private names.
     pub(super) fn key_type_of_name(&mut self, name: Atom) -> Option<TypeId> {
         let text = self.atoms().bytes(name);
-        // A string that starts with `#` is a string like another: it is the renaming that tells (`rename_private_names`).
+        // A string that starts with `#` is an ordinary string: the renaming distinguishes a private
+        // name (`rename_private_names`).
         if text.starts_with(b"#") && text.contains(&b'@') {
             return None;
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
-            // As `property_name_of_type` writes it.
+            // In the format `property_name_of_type` produces.
             let mut parts = rest.splitn(2, |&c| c == b'@');
             let symbol = self.atoms().intern(parts.next().unwrap());
             let number = |b: &[u8]| {
@@ -299,7 +302,8 @@ impl<'p> Checker<'p> {
                 name: symbol,
             }));
         }
-        // `NaN`, `Infinity` and `-Infinity` read as numbers but are only ever written as identifiers or strings.
+        // `NaN`, `Infinity` and `-Infinity` parse as numbers but only ever occur as identifiers or
+        // strings.
         let digits = text.strip_prefix(b"-").unwrap_or(text);
         if digits.first().is_some_and(|c| c.is_ascii_digit()) && self.is_numeric_name(name) {
             let n: f64 = std::str::from_utf8(text).unwrap().parse().unwrap();
@@ -308,10 +312,11 @@ impl<'p> Checker<'p> {
         Some(self.string_literal(name, false))
     }
 
-    /// `getLiteralTypeFromProperty`: the literal type that names `prop`, a property of `owner`. `None` for private names. It goes
-    /// by what the name was made from (`nameType`), then by how it is written where the property is declared: what reads as a
-    /// number is the number only if it is written as one. What is declared nowhere, like the elements of a tuple, is named by
-    /// a string.
+    /// `getLiteralTypeFromProperty`: the literal type for the name of `prop`, a property of
+    /// `owner`. `None` for private names. It uses the type the name was created from (`nameType`),
+    /// then the syntax of the name in the declaration of the property: a name that parses as a
+    /// number is the number only if it is a numeric literal in the source. A property without a
+    /// declaration, like a tuple element, is named by a string.
     pub(super) fn key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
         if prop.flags.contains(PropFlags::STRING_NAME) {
             return Some(self.string_literal(prop.name, false));
@@ -339,12 +344,13 @@ impl<'p> Checker<'p> {
                 return Some(self.string_literal(prop.name, false));
             }
             PropSource::Intersected(_, parts) => return self.key_type_of_props(owner, parts),
-            // It has the `ValueDeclaration` of the first, and goes by how the name is written there.
+            // It has the `ValueDeclaration` of the first, and uses the syntax of the name there.
             PropSource::Copy(_, parts, true) => return self.key_type_of_prop(owner, &parts[0]),
             _ => return self.key_type_of_name(prop.name),
         };
         match key {
-            // `getLiteralTypeFromPropertyName`: the type of the expression. Which symbol it is the name tells as well.
+            // `getLiteralTypeFromPropertyName`: the type of the expression. The name also
+            // identifies which symbol it is.
             PropKey::Computed(e) if !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => {
                 let ty = self.type_of_expr(file, e);
                 let ty = self.regular(ty);
@@ -361,9 +367,10 @@ impl<'p> Checker<'p> {
         self.key_type_of_name(prop.name)
     }
 
-    /// The same of the property that stands for `props`, those of one name that the members of a union or an intersection have;
-    /// `owner` has the first. `createUnionOrIntersectionProperty`: it takes the `nameType` of the first. Where that has none it
-    /// goes by the declaration, and has one only if all that are declared are declared in one place.
+    /// The same for the property that represents `props`, the properties of one name in the members
+    /// of a union or an intersection; `owner` has the first. `createUnionOrIntersectionProperty`:
+    /// it takes the `nameType` of the first. If that has none it uses the declaration, and has one
+    /// only if all declared properties share one declaration.
     pub(super) fn key_type_of_props(&mut self, owner: TypeId, props: &[Prop]) -> Option<TypeId> {
         let first = &props[0];
         let key = self.key_type_of_prop(owner, first)?;
@@ -391,8 +398,9 @@ impl<'p> Checker<'p> {
         Some(key)
     }
 
-    /// Whether the name of a property of an object literal, which starts at `pos` of `file`, is a string: `"0"`, `["0"]`. Object
-    /// literals are never in declaration files, so the text is there.
+    /// Whether the name of a property of an object literal, which starts at `pos` of `file`, is a
+    /// string: `"0"`, `["0"]`. Object literals are never in declaration files, so the text is
+    /// available.
     fn is_string_literal_name_in_source(&self, file: FileId, pos: u32) -> bool {
         let text = &self.hir(file).text;
         let at = pos as usize;
@@ -407,14 +415,15 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── T[K] ─────────────────────────────
 
-    /// `obj[index]` as a type. Where there is no such property it is `unknown`.
+    /// `obj[index]` as a type. `unknown` if there is no such property.
     pub fn indexed_access(&mut self, obj: TypeId, index: TypeId) -> TypeId {
         self.indexed_access_if_any(obj, index, false)
             .unwrap_or(TypeId::UNKNOWN)
     }
 
-    /// What comes of a type `obj[index]` that had to wait, now that more is known of `obj` or `index`. `undefined`: what it
-    /// has kept of how it was made (`AccessFlagsPersistent`). No expression looks it up any more, so it waits as types do.
+    /// The instantiation of a deferred `obj[index]`, now that more is known of `obj` or `index`.
+    /// `undefined`: the flag preserved from its creation (`AccessFlagsPersistent`). It is no longer
+    /// an expression access, so it is deferred by the rules for types.
     pub(super) fn indexed_access_flagged(
         &mut self,
         obj: TypeId,
@@ -427,7 +436,8 @@ impl<'p> Checker<'p> {
         self.indexed_access_worker(obj, index, access_flags, AccessNode::None, alias)
     }
 
-    /// `getTypeFromIndexedAccessTypeNode`. `None`: `obj[index]`, written as a type at `node`, finds nothing.
+    /// `getTypeFromIndexedAccessTypeNode`. `None`: the type node `obj[index]` at `node` resolves to
+    /// nothing.
     pub(super) fn indexed_access_of_type_node(
         &mut self,
         obj: TypeId,
@@ -439,7 +449,7 @@ impl<'p> Checker<'p> {
         self.indexed_access_worker(obj, index, AccessFlags::empty(), access_node, alias)
     }
 
-    /// `None`: the expression `obj[index]` at `e` finds nothing.
+    /// `None`: the expression `obj[index]` at `e` resolves to nothing.
     pub(super) fn indexed_access_of_element_access(
         &mut self,
         obj: TypeId,
@@ -451,7 +461,7 @@ impl<'p> Checker<'p> {
         self.indexed_access_worker(obj, index, access_flags, access_node, None)
     }
 
-    /// `None`: `obj` has nothing under `index` for the element of a binding pattern that `access_node` is the name of.
+    /// `None`: `obj` has nothing at `index` for the binding pattern element named by `access_node`.
     pub(super) fn indexed_access_of_binding_element(
         &mut self,
         obj: TypeId,
@@ -472,8 +482,8 @@ impl<'p> Checker<'p> {
         self.indexed_access_worker(obj, index, access_flags, AccessNode::None, None)
     }
 
-    /// `None`: `obj` has nothing under `index`, or under a member of the union that is.
-    /// `is_expression`: it is an expression or a pattern that looks it up, not a type.
+    /// `None`: `obj` has nothing at `index`, or at a member of `index` if it is a union.
+    /// `is_expression`: the access comes from an expression or a pattern, not a type.
     pub(super) fn indexed_access_if_any(
         &mut self,
         obj: TypeId,
@@ -503,7 +513,7 @@ impl<'p> Checker<'p> {
         if obj == TypeId::WILDCARD || index == TypeId::WILDCARD {
             return Some(TypeId::WILDCARD);
         }
-        // `getReducedType`: an intersection nothing can be is not there.
+        // `getReducedType`: an intersection that reduces to `never` is removed.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
         if self.p.files.options.no_unchecked_indexed_access
@@ -570,8 +580,9 @@ impl<'p> Checker<'p> {
         self.property_type_for_index(apparent, (index, index), access_node, access_flags)
     }
 
-    /// The start of `getIndexedAccessTypeOrUndefined`: where `obj`, reduced, has a string index signature and nothing else, it is
-    /// the signature that answers, whatever the key, which is `string` from there on.
+    /// The start of `getIndexedAccessTypeOrUndefined`: if `obj`, reduced, has a string index
+    /// signature and nothing else, that signature applies to any key, and the key is `string` from
+    /// there on.
     pub(super) fn key_into_string_index_only(&mut self, obj: TypeId, index: TypeId) -> TypeId {
         if index != TypeId::STRING
             && !self.is_nullish(index)
@@ -596,7 +607,8 @@ impl<'p> Checker<'p> {
         if !self.is_object_type(ty) || self.is_tuple(ty) || self.is_generic(ty) {
             return false;
         }
-        // A mapped type over a name has a property of that name. What its properties are is not worked out to see that.
+        // A mapped type over a name has a property of that name. Its members are not resolved to
+        // determine that.
         if let TypeData::Anon {
             origin: Origin::Mapped(file, node),
             mapper,
@@ -622,7 +634,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `shouldDeferIndexedAccessType`, as far as the object goes.
+    /// `shouldDeferIndexedAccessType`, the part for the object type.
     fn defers_access(&mut self, obj: TypeId, index: TypeId, is_expression: bool) -> bool {
         if let TypeData::Tuple { flags, .. } = self.data(obj) {
             if !flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) {
@@ -649,13 +661,15 @@ impl<'p> Checker<'p> {
                 at >= 0.0 && at < limit
             });
         }
-        // An expression looks into what a type parameter extends. It is the type that waits for it.
+        // An expression access uses the constraint of a type parameter. Only a type access is
+        // deferred.
         !is_expression
             && self.has_type_variables(obj)
             && (self.is_generic_object_type(obj) || self.is_generic_reducible(obj))
     }
 
-    /// `getTotalFixedElementCount`: the elements before the first and after the last that stands for any number of them.
+    /// `getTotalFixedElementCount`: the elements before the first and after the last
+    /// variable-length element.
     fn total_fixed_element_count(flags: &[ElemFlags]) -> usize {
         let variable = ElemFlags::REST | ElemFlags::VARIADIC;
         flags.iter().take_while(|f| !f.intersects(variable)).count()
@@ -666,8 +680,8 @@ impl<'p> Checker<'p> {
                 .count()
     }
 
-    /// `isGenericReducibleType`: whether filling in type parameters could make nothing of the intersection `ty`, or of a member
-    /// of the union `ty` (`isReducibleIntersection`).
+    /// `isGenericReducibleType`: whether instantiation could reduce the intersection `ty`, or a
+    /// member of the union `ty`, to nothing (`isReducibleIntersection`).
     pub(super) fn is_generic_reducible(&mut self, ty: TypeId) -> bool {
         if !self.has_type_variables(ty) {
             return false;
@@ -714,7 +728,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getIndexNodeForAccessExpression`, where an error points at it.
+    /// `getIndexNodeForAccessExpression`, as an error position.
     fn place_of_index_node(&self, access_node: AccessNode) -> Option<Place> {
         match access_node {
             AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
@@ -733,7 +747,8 @@ impl<'p> Checker<'p> {
                 )),
                 _ => None,
             },
-            // Of a computed name, what is in the brackets. `["a"]` is kept as the name `a`.
+            // For a computed name, the expression in the brackets. `["a"]` is stored as the name
+            // `a`.
             AccessNode::PropertyName(file, prop) => {
                 let (hir, prop) = (self.hir(file), &self.hir(file)[prop]);
                 Some(match prop.key {
@@ -779,7 +794,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getPropertyTypeForIndexType`. `object`: a reduced apparent type. `indexes`: `indexType`, which is no union, and `fullIndexType`.
+    /// `getPropertyTypeForIndexType`. `object`: a reduced apparent type. `indexes`: `indexType`,
+    /// which is not a union, and `fullIndexType`.
     fn property_type_for_index(
         &mut self,
         object: TypeId,
@@ -1065,8 +1081,9 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── conditional types ─────────────────────────────
 
-    /// `getInferTypeParameters`, of the conditional type whose `extends` type is written at `extends`: the type parameters among its
-    /// locals, each by the declaration that `getDeclaredTypeOfSymbol` goes by.
+    /// `getInferTypeParameters` for the conditional type whose `extends` type node is `extends`:
+    /// the type parameters among its locals, each identified by the declaration that
+    /// `getDeclaredTypeOfSymbol` uses.
     pub(super) fn collect_infer_params(
         &self,
         file: FileId,
@@ -1078,7 +1095,8 @@ impl<'p> Checker<'p> {
         if own.is_none() {
             return;
         }
-        // The scope of `extends` alone (`ScopeKind::Extends`) lies in the scope that has the locals.
+        // The scope of `extends` alone (`ScopeKind::Extends`) is nested in the scope that has the
+        // locals.
         let scope = bound.scopes[own.idx()].parent;
         for &(_, symbol) in bound.table(bound.scopes[scope.idx()].locals) {
             out.extend(
@@ -1094,13 +1112,14 @@ impl<'p> Checker<'p> {
         out.sort_unstable();
     }
 
-    /// `getConditionalTypeInstantiation`, given no alias.
+    /// `getConditionalTypeInstantiation` without an alias.
     pub fn conditional_type(&mut self, file: FileId, node: TypeNodeId, mapper: MapperId) -> TypeId {
         self.conditional_type_instantiation(file, node, mapper, None)
     }
 
-    /// `getConditionalTypeInstantiation`: the conditional type at `node`, with `mapper` for the type parameters around it. What is
-    /// made under an alias is not kept: `getConditionalTypeKey` has the alias in it, `conditionals` has not.
+    /// `getConditionalTypeInstantiation`: the conditional type at `node`, with `mapper` for its
+    /// outer type parameters. A type created with an alias is not cached: `getConditionalTypeKey`
+    /// includes the alias, `conditionals` does not.
     pub(super) fn conditional_type_instantiation(
         &mut self,
         file: FileId,
@@ -1144,8 +1163,8 @@ impl<'p> Checker<'p> {
         matches!(self.data(declared), TypeData::TypeParam(..))
     }
 
-    /// `for_constraint`: what is checked is not the type itself but what it extends, so that failing the test does not
-    /// rule out that the type passes it.
+    /// `for_constraint`: the check type is not the type itself but its constraint, so failing the
+    /// test does not rule out that the type passes it.
     pub(super) fn conditional_type_uncached(
         &mut self,
         file: FileId,
@@ -1158,11 +1177,12 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         };
         let check_declared = self.type_from_node(file, check);
-        // `T extends U ? X : Y` on a bare `T` is applied to each member of a union.
+        // `T extends U ? X : Y` with a naked `T` distributes over a union.
         if matches!(self.data(check_declared), TypeData::TypeParam(..))
             && let Some(value) = self.types().map(mapper, check_declared)
         {
-            // `getConditionalTypeInstantiation`: an intersection nothing can be is not there to be gone through.
+            // `getConditionalTypeInstantiation`: an intersection that reduces to `never` is removed
+            // before distribution.
             let value = self.reduced(value);
             if (value.is_never() || self.is_union(value))
                 && self.is_distributive_conditional(file, node)
@@ -1192,7 +1212,7 @@ impl<'p> Checker<'p> {
         self.resolve_conditional(file, node, mapper, for_constraint, alias)
     }
 
-    /// How many elements the tuple written at `node` has, if none is optional or a rest.
+    /// The number of elements of the tuple type node at `node`, if none is optional or a rest.
     fn simple_tuple_len(&self, file: FileId, node: TypeNodeId) -> Option<usize> {
         let hir = self.hir(file);
         let TypeNodeKind::Tuple(elems) = hir[node].kind else {
@@ -1225,7 +1245,8 @@ impl<'p> Checker<'p> {
         // Whether each of their nodes is the body of a type alias.
         let mut has_alias: SmallVec<[((FileId, TypeNodeId), bool); 4]> = SmallVec::new();
         let result = loop {
-            // `tailCount` leaves out a root that is not the body of a type alias. In tsgo `instantiationCount` ends a loop of those.
+            // `tailCount` does not count a root that is not the body of a type alias. In tsgo
+            // `instantiationCount` ends a loop of those.
             if tail_count == 1000 || tail_roots.len() == 10_000 {
                 return self.excessively_deep();
             }
@@ -1253,7 +1274,7 @@ impl<'p> Checker<'p> {
             if check_ty == TypeId::WILDCARD || extends_before_inference == TypeId::WILDCARD {
                 return TypeId::WILDCARD;
             }
-            // `[A] extends [B]` waits for its elements like `A extends B` would.
+            // `[A] extends [B]` is deferred on its elements like `A extends B` would be.
             let check_tuples = match (
                 self.simple_tuple_len(file, check),
                 self.simple_tuple_len(file, extends),
@@ -1273,7 +1294,8 @@ impl<'p> Checker<'p> {
                     .map(|&p| self.type_param(file, p))
                     .collect();
                 if !check_is_generic {
-                    // The `infer` positions are found in the `extends` type with everything else filled in.
+                    // The `infer` positions are found in the `extends` type with everything else
+                    // instantiated.
                     let target = self.instantiate(extends_declared, mapper);
                     let inferred = self.infer_from_types(&params, check_ty, target, mapper);
                     let mapping = self.types().mapping(mapper);
@@ -1298,7 +1320,8 @@ impl<'p> Checker<'p> {
                 && (self.has_any_flag(check_ty)
                     || !self.is_assignable_permissive(check_ty, extends_ty))
             {
-                // `any` may pass. So may what extends `check_ty`, if something that passes is one of the things `check_ty` can be.
+                // `any` may pass. So may a type constrained by `check_ty`, if some type that passes
+                // is assignable to `check_ty`.
                 let with_true = self.has_any_flag(check_ty)
                     || for_constraint != MapperId::IDENTITY && !extends_ty.is_never() && {
                         let (extends_ty, check_ty) = (
@@ -1337,10 +1360,11 @@ impl<'p> Checker<'p> {
                     if is_tail_call {
                         alias = None;
                     }
-                    // A root that is not written in the branch itself is reached through a type reference. The other steps descend in
-                    // the syntax.
+                    // A root that is not the branch node itself is reached through a type
+                    // reference. The other steps descend in the syntax.
                     if is_tail_call && (root.0, root.1) != (file, branch) {
-                        // The loop is deterministic: a root that comes back under the same mapper comes back until a limit is hit.
+                        // The loop is deterministic: a root that recurs under the same mapper
+                        // recurs until a limit is hit.
                         if !tail_roots.insert(root) {
                             return self.excessively_deep();
                         }
@@ -1375,7 +1399,8 @@ impl<'p> Checker<'p> {
         self.union(&extra_types)
     }
 
-    /// `newConditionalType`, with `alias`. Given none it has `instantiateTypeAlias(root.alias, mapper)`, which the node says.
+    /// `newConditionalType`, with `alias`. Without one it has `instantiateTypeAlias(root.alias,
+    /// mapper)`, which the node determines.
     fn deferred_conditional_type(
         &self,
         file: FileId,
@@ -1396,9 +1421,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `Ok`: the conditional type that the loop of `getConditionalType` continues with instead of instantiating the branch at `branch`
-    /// under `mapper`, and whether `getTailRecursionRoot` gives it. `Err`: the declared type of the branch, which is to be
-    /// instantiated. `outer_check` is the declared check type of the conditional type that has the branch.
+    /// `Ok`: the conditional type that the loop of `getConditionalType` continues with instead of
+    /// instantiating the branch at `branch` under `mapper`, and whether `getTailRecursionRoot`
+    /// returns it. `Err`: the declared type of the branch, which is to be instantiated.
+    /// `outer_check` is the declared check type of the conditional type that has the branch.
     fn tail_recursion_root(
         &mut self,
         file: FileId,
@@ -1431,8 +1457,9 @@ impl<'p> Checker<'p> {
         {
             return Ok(((root_file, root, root_mapper), false));
         }
-        // `getTailRecursionRoot`. A root without outer type parameters has the identity mapper, which `map_mapper` returns as it is.
-        // A mapper that changes no type argument gives `declared` again.
+        // `getTailRecursionRoot`. A root without outer type parameters has the identity mapper,
+        // which `map_mapper` returns unchanged.
+        // A mapper that changes no type argument yields `declared` again.
         if root_mapper == own {
             return Err(declared);
         }
@@ -1444,16 +1471,19 @@ impl<'p> Checker<'p> {
         Ok(((root_file, root, root_mapper), true))
     }
 
-    /// `getConstraintFromConditionalType`, and the base constraint of what it gives (`computeBaseConstraint`).
+    /// `getConstraintFromConditionalType`, and the base constraint of its result
+    /// (`computeBaseConstraint`).
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> TypeId {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
-        // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query for lack of room on `stack`.
+        // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query
+        // for lack of capacity on `stack`.
         if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
-            self.gave_up();
+            self.bailed_out();
             return TypeId::UNKNOWN;
         }
         self.conditional_constraint_depth += 1;
-        // `getConstraintOfTypeParameter`: a type parameter whose constraint comes back to it has none to put in its place.
+        // `getConstraintOfTypeParameter`: a type parameter with a circular constraint has no
+        // constraint to substitute.
         let check_declared = self.type_from_node(file, check);
         let checked = self.instantiate(check_declared, mapper);
         let is_circular = matches!(self.data(check_declared), TypeData::TypeParam(..))
@@ -1468,7 +1498,8 @@ impl<'p> Checker<'p> {
             self.constraint_from_conditional(this)
         };
         self.conditional_constraint_depth -= 1;
-        // What is left of a type variable is no constraint. A mapped type over one is an object type like another.
+        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
+        // object type.
         let constraint = self.next_base_constraint(constraint);
         if self.some_type(constraint, |c, m| c.is_deferred(m)) {
             TypeId::UNKNOWN
@@ -1487,7 +1518,7 @@ impl<'p> Checker<'p> {
         &hir[m]
     }
 
-    /// `getConstraintOfTypeParameter`, of the parameter of the mapped type at `node`.
+    /// `getConstraintOfTypeParameter` for the parameter of the mapped type at `node`.
     fn constraint_of_mapped_param(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
         if let Some(known) = (self.p.mapped_param_constraints).get(&mut self.task, &(file, node)) {
             return known;
@@ -1506,8 +1537,9 @@ impl<'p> Checker<'p> {
         constraint
     }
 
-    /// `getConstraintTypeFromMappedType`: what the parameter of the mapped type ranges over. `any` written there is every kind of
-    /// key (`getConstraintFromTypeParameter`); one that comes back to the parameter is in error.
+    /// `getConstraintTypeFromMappedType`: the type that the parameter of the mapped type ranges
+    /// over. An `any` annotation there means every kind of key (`getConstraintFromTypeParameter`);
+    /// a constraint that refers back to the parameter is an error.
     pub(super) fn mapped_constraint(
         &mut self,
         file: FileId,
@@ -1520,9 +1552,10 @@ impl<'p> Checker<'p> {
         self.instantiate(declared, mapper)
     }
 
-    /// `getModifiersTypeFromMappedType`. For `{ [P in keyof T]: X }`, and for `{ [P in K]: X }` where `K` is `keyof T` by another
-    /// name or extends it: `T` as declared. Its properties say what is optional and what is read-only. With it, whether
-    /// `keyof T` is what is written (`isMappedTypeWithKeyofConstraintDeclaration`).
+    /// `getModifiersTypeFromMappedType`. For `{ [P in keyof T]: X }`, and for `{ [P in K]: X }`
+    /// where `K` is an alias of `keyof T` or is constrained by it: `T` as declared. Its properties
+    /// determine what is optional and what is read-only. Also returns whether the constraint node
+    /// is `keyof T` (`isMappedTypeWithKeyofConstraintDeclaration`).
     pub(super) fn mapped_modifiers_source(
         &mut self,
         file: FileId,
@@ -1530,7 +1563,7 @@ impl<'p> Checker<'p> {
     ) -> Option<(TypeId, bool)> {
         let mapped = self.mapped_decl(file, node);
         let constraint = self.hir(file)[mapped.param].constraint;
-        // Going by how it is written: `keyof` of something that is not generic is a mere union by now.
+        // Decided by the syntax: `keyof` of a non-generic type is a plain union by now.
         if let TypeNodeKind::Keyof(of) = self.hir(file)[constraint].kind {
             return Some((self.type_from_node(file, of), true));
         }
@@ -1548,7 +1581,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose constraint type is `keyof T`, however that is written.
+    /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose constraint type is `keyof T`,
+    /// regardless of its syntax.
     pub(super) fn homomorphic_type_variable(
         &mut self,
         file: FileId,
@@ -1563,7 +1597,8 @@ impl<'p> Checker<'p> {
         matches!(self.data(variable), TypeData::TypeParam(..)).then_some(variable)
     }
 
-    /// `getResolvedApparentTypeOfMappedType`: `{ [P in keyof T]: X }` where all `T` can be is an array or a tuple is one too.
+    /// `getResolvedApparentTypeOfMappedType`: `{ [P in keyof T]: X }` where `T` can only be an
+    /// array or a tuple is one too.
     pub(super) fn apparent_type_of_mapped(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Anon {
             origin: Origin::Mapped(file, node),
@@ -1607,7 +1642,8 @@ impl<'p> Checker<'p> {
         self.instantiate_mapped(file, node, applied)
     }
 
-    /// The mapped type at `node` under `mapper`, as `getObjectTypeInstantiation` makes it where it is given no alias.
+    /// The mapped type at `node` under `mapper`, as `getObjectTypeInstantiation` creates it without
+    /// an alias.
     pub fn instantiate_mapped(
         &mut self,
         file: FileId,
@@ -1617,7 +1653,7 @@ impl<'p> Checker<'p> {
         self.instantiate_mapped_type(file, node, mapper, NewAlias::OfNode)
     }
 
-    /// `instantiateMappedType`. One over the keys of an array is an array, and so on.
+    /// `instantiateMappedType`. A mapped type over the keys of an array is an array, and so on.
     pub(super) fn instantiate_mapped_type(
         &mut self,
         file: FileId,
@@ -1626,8 +1662,9 @@ impl<'p> Checker<'p> {
         alias: NewAlias<'_>,
     ) -> TypeId {
         let anon = |c: &mut Self| {
-            // `instantiateMappedType` instantiates the constraint type at once (its wildcard test), so a cycle through the keys starts
-            // here. `getTypeFromMappedTypeNode` has resolved the constraint of the declared type.
+            // `instantiateMappedType` instantiates the constraint type eagerly (its wildcard test),
+            // so a cycle through the keys starts here. `getTypeFromMappedTypeNode` has resolved the
+            // constraint of the declared type.
             if c.types()
                 .mapping(mapper)
                 .iter()
@@ -1636,14 +1673,16 @@ impl<'p> Checker<'p> {
             {
                 return TypeId::WILDCARD;
             }
-            let made = c.intern(TypeData::Anon {
+            let created = c.intern(TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper,
             });
             // `instantiateAnonymousType`
             match alias {
-                NewAlias::Given(alias, type_arguments) => c.with_alias(made, alias, type_arguments),
-                _ => made,
+                NewAlias::Given(alias, type_arguments) => {
+                    c.with_alias(created, alias, type_arguments)
+                }
+                _ => created,
             }
         };
         let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
@@ -1674,7 +1713,8 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `instantiateConstituent`: the mapped type over the keys of `source`, with `t`, which is no union, for `source`.
+    /// `instantiateConstituent`: the mapped type over the keys of `source`, with `t`, which is not
+    /// a union, substituted for `source`.
     fn instantiate_mapped_constituent(
         &mut self,
         file: FileId,
@@ -1727,7 +1767,7 @@ impl<'p> Checker<'p> {
                 return ty;
             }
             match mapped.optional {
-                // `getTemplateTypeFromMappedType` has it in the template as declared.
+                // `getTemplateTypeFromMappedType` adds the optionality to the declared template type.
                 MappedModifier::Add => c.optional_property(ty),
                 MappedModifier::Remove if is_optional => {
                     c.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
@@ -1735,7 +1775,8 @@ impl<'p> Checker<'p> {
                 _ => ty,
             }
         };
-        // `hasArrayOrTypeTypeConstraint`: `any` for a `T` that can only be an array or a tuple is mapped as an array.
+        // `hasArrayOrTypeTypeConstraint`: `any` for a `T` constrained to arrays or tuples is mapped
+        // as an array.
         let any_as_array = self.has_any_flag(t)
             && !self.stack.contains(&Query::Constraint(source))
             && match self.constraint_of_type_param(source) {
@@ -1764,8 +1805,9 @@ impl<'p> Checker<'p> {
         } = self.data(t)
         {
             let elems = self.type_arguments(t);
-            // `instantiateMappedTupleType`: up to the first rest or variadic element each is looked up by its place. From there
-            // on places are not known: what is spread is mapped as a whole, the others as the element of an array of their own.
+            // `instantiateMappedTupleType`: up to the first rest or variadic element each element
+            // is looked up by its index. From there on indexes are unknown: a variadic element is
+            // mapped as a whole, the others as the element of a separate array.
             let fixed = Self::fixed_length(flags);
             let mut new_elems = Vec::with_capacity(elems.len());
             let mut new_flags = Vec::with_capacity(elems.len());
@@ -1775,8 +1817,10 @@ impl<'p> Checker<'p> {
                     let key = self.string_literal(name, false);
                     template(self, one, key, f.contains(ElemFlags::OPTIONAL))
                 } else if f.contains(ElemFlags::VARIADIC) {
-                    // `prependTypeMapping(typeVariable, e, m)` is a merged mapper: `e` goes through `m` as well. `...T` in the tuple
-                    // that `m` has for `T` is that tuple again, and the same instantiation starts over until `instantiationDepth == 100`.
+                    // `prependTypeMapping(typeVariable, e, m)` is a merged mapper: `e` is
+                    // instantiated with `m` as well. `...T` in the tuple that `m` has for `T` is
+                    // that tuple again, and the same instantiation starts over until
+                    // `instantiationDepth == 100`.
                     if elems[i] == source {
                         return self.excessively_deep();
                     }
@@ -1785,7 +1829,8 @@ impl<'p> Checker<'p> {
                 } else {
                     let list = self.array_of(elems[i]);
                     let of_list = with(self, list);
-                    // `getElementTypeOfArrayType` of what `instantiateMappedArrayType` gives, and the error type is no array.
+                    // `getElementTypeOfArrayType` of the result of `instantiateMappedArrayType`,
+                    // and the error type is not an array.
                     match template(self, of_list, TypeId::NUMBER, true) {
                         element if self.is_error_type(element) => TypeId::UNKNOWN,
                         element => element,
@@ -1804,7 +1849,7 @@ impl<'p> Checker<'p> {
                     }
                     _ => f,
                 };
-                // `TupleNormalizer.add`: what may be left out reads as `undefined` when it is.
+                // `TupleNormalizer.add`: an optional element reads as `undefined` when omitted.
                 new_elems.push(if flag.contains(ElemFlags::OPTIONAL) {
                     self.optional_property(elem)
                 } else {
@@ -1835,8 +1880,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getKnownKeysOfTupleType`: the places before the first element that stands for any number of them, and the keys of
-    /// `globalArrayType` or `globalReadonlyArrayType`.
+    /// `getKnownKeysOfTupleType`: the indexes before the first variable-length element, and the
+    /// keys of `globalArrayType` or `globalReadonlyArrayType`.
     pub(super) fn known_keys_of_tuple_type(
         &mut self,
         flags: &[ElemFlags],
@@ -1857,12 +1902,14 @@ impl<'p> Checker<'p> {
         self.union(&keys)
     }
 
-    /// `getLowerBoundOfKeyType`: of keys that are not known yet, those that are there whatever they turn out to be.
+    /// `getLowerBoundOfKeyType`: for keys that are still generic, those that exist in every
+    /// instantiation.
     fn lower_bound_of_key_type(&mut self, ty: TypeId) -> TypeId {
         match *self.data(ty) {
             TypeData::Keyof(of) => {
                 let apparent = self.apparent_type(of);
-                // `getApparentTypeOfIntersectionType`: in an intersection each type variable gives way to what it extends.
+                // `getApparentTypeOfIntersectionType`: in an intersection each type variable is
+                // replaced by its constraint.
                 let apparent = if apparent == of && self.is_intersection(of) {
                     self.base_constraint(of)
                 } else {
@@ -1881,7 +1928,7 @@ impl<'p> Checker<'p> {
                     self.keyof(apparent)
                 }
             }
-            // `Exclude<keyof T, "a">`: over what `keyof T` is at least.
+            // `Exclude<keyof T, "a">`: over the lower bound of `keyof T`.
             TypeData::Cond {
                 file, node, mapper, ..
             } => {
@@ -1908,7 +1955,8 @@ impl<'p> Checker<'p> {
                 let mapper = self.types().mapper(pairs);
                 self.conditional_type(file, node, mapper)
             }
-            // `mapTypeEx(.., noReductions)`: `string` from `keyof S` does not swallow the names next to it.
+            // `mapTypeEx(.., noReductions)`: `string` from `keyof S` does not absorb the names next
+            // to it.
             TypeData::Union(ref parts) => {
                 let bounds: Vec<TypeId> = parts
                     .iter()
@@ -1921,7 +1969,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Intersection(ref parts) => {
-                // `string & {}` and the like are kept as they are.
+                // `string & {}` and the like are preserved.
                 if let [first, TypeId::EMPTY_OBJECT] = parts[..]
                     && matches!(first, TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT)
                 {
@@ -1941,8 +1989,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `{ [P in K]: E }[X]` where `K` is known and `X` is not: `E` with `X` for `P`, which keeps what `E` says of one key
-    /// together where the union over all keys would not.
+    /// `{ [P in K]: E }[X]` where `K` is known and `X` is generic: `E` with `X` substituted for
+    /// `P`, which preserves the per-key correlation in `E` that the union over all keys would lose.
     pub(super) fn substitute_indexed_mapped(
         &mut self,
         obj: TypeId,
@@ -1969,7 +2017,7 @@ impl<'p> Checker<'p> {
         let with_key = self.mapper_with_pair(mapper, param, index);
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
-        // `couldAccessOptionalProperty`: it may be one of the properties that can be left out.
+        // `couldAccessOptionalProperty`: it may be one of the optional properties.
         let optional = mapped.optional == MappedModifier::Add || {
             let keys = self.base_constraint(index);
             let members = self.members(obj)?;
@@ -1992,9 +2040,10 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The base constraint of what `getSimplifiedIndexedAccessType` makes of an `obj[index]` that has to wait though `index` is
-    /// known. `[A, ...T][1]` is `T[number]`. Where a mapped type does not know its keys yet, `(T & U)[K]` is `T[K] & U[K]`, and
-    /// `{ [P in K]: E }[X]` is `E` with `X` for `P`, whether or not `X` turns out to be a key.
+    /// The base constraint of the result of `getSimplifiedIndexedAccessType` for an `obj[index]`
+    /// that is deferred although `index` is known. `[A, ...T][1]` is `T[number]`. Where the keys of
+    /// a mapped type are still generic, `(T & U)[K]` is `T[K] & U[K]`, and `{ [P in K]: E }[X]` is
+    /// `E` with `X` substituted for `P`, whether or not `X` turns out to be a key.
     pub(super) fn simplified_access_to_intersection(
         &mut self,
         obj: TypeId,
@@ -2020,7 +2069,8 @@ impl<'p> Checker<'p> {
             if !self.is_number_like(index) {
                 return None;
             }
-            // By `number` it is any element, by a number any from the first that stands for any number of them on.
+            // With `number` it is any element, with a numeric literal any element from the first
+            // variable-length element on.
             let from = if index == TypeId::NUMBER {
                 0
             } else {
@@ -2069,8 +2119,8 @@ impl<'p> Checker<'p> {
         any.then(|| self.intersection(&types))
     }
 
-    /// What can be said of a value of the union `ty` without knowing which member it is: `getPropertiesOfUnionOrIntersectionType`, and
-    /// the index signatures all of them have.
+    /// The properties available on a value of the union `ty` without knowing which member it is:
+    /// `getPropertiesOfUnionOrIntersectionType`, and the index signatures common to all members.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
         let parts = self.parts(ty);
         let mut shape = Shape::default();
@@ -2095,7 +2145,8 @@ impl<'p> Checker<'p> {
                     );
                 }
             }
-            // What all have, the first without an index signature to stand in for names has by name.
+            // A property common to all members is declared by name in the first member that has no
+            // index signature to cover names.
             if members.shape().index.is_empty() {
                 break;
             }
@@ -2104,8 +2155,9 @@ impl<'p> Checker<'p> {
         self.synth(shape)
     }
 
-    /// What `resolveMappedTypeMembers` and `getIndexTypeForMappedType` go over, for the mapped type at `node` under `mapper`, whose
-    /// keys are `constraint`. With it, what the `T` of `keyof T` has (`getModifiersTypeFromMappedType`).
+    /// The key types that `resolveMappedTypeMembers` and `getIndexTypeForMappedType` iterate over,
+    /// for the mapped type at `node` under `mapper`, whose constraint is `constraint`. Also returns
+    /// the members of the `T` of `keyof T` (`getModifiersTypeFromMappedType`).
     fn mapped_key_types(
         &mut self,
         file: FileId,
@@ -2115,7 +2167,8 @@ impl<'p> Checker<'p> {
     ) -> (List<'p, TypeId>, Option<Members<'p>>) {
         let source = self.mapped_modifiers_source(file, node);
         let over_keyof = matches!(source, Some((_, true)));
-        // `getReducedApparentType`: of a type parameter what it extends, and an intersection nothing can be is not there.
+        // `getReducedApparentType`: the constraint of a type parameter, and an intersection that
+        // reduces to `never` is removed.
         let modifiers_ty = match source {
             Some((source, _)) => {
                 let ty = self.instantiate(source, mapper);
@@ -2134,8 +2187,9 @@ impl<'p> Checker<'p> {
             None => None,
         };
         let keys = match (&modifiers, owner) {
-            // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. Over `keyof T`, the properties and index signatures of
-            // `T` one by one: in the union that `keyof T` is, `string` has swallowed the names.
+            // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. Over `keyof T`, the
+            // properties and index signatures of `T` one by one: in the union `keyof T`, `string`
+            // has absorbed the names.
             (Some(m), Some(owner)) if over_keyof => {
                 let renames = self.mapped_decl(file, node).name_ty.is_some();
                 let mut keys = Vec::with_capacity(m.shape().props.len() + m.shape().index.len());
@@ -2150,7 +2204,8 @@ impl<'p> Checker<'p> {
                     };
                     match key {
                         Some(key) => keys.push(key),
-                        // One that is not public goes by `never`, which only an `as` clause makes something of.
+                        // A non-public property has the key `never`, which only an `as` clause can
+                        // turn into a name.
                         None if renames => keys.push(TypeId::NEVER),
                         None => {}
                     }
@@ -2158,11 +2213,12 @@ impl<'p> Checker<'p> {
                 keys.extend(m.shape().index.iter().map(|i| i.key));
                 List::Own(keys)
             }
-            // What can be anything is gone over as if it had any string for a name.
+            // A type that can be anything is iterated as if every string were a property name.
             _ if over_keyof && modifiers_ty.is_some_and(|ty| self.has_any_flag(ty)) => {
                 List::One(TypeId::STRING)
             }
-            // Only `T` is looked at: `never`, `unknown` and the like have nothing to go over, whatever `keyof` makes of them.
+            // Only `T` is inspected: `never`, `unknown` and the like have nothing to iterate over,
+            // whatever `keyof` yields for them.
             _ if over_keyof => List::Kept(&[]),
             _ if self.is_generic(constraint) => {
                 let bound = self.lower_bound_of_key_type(constraint);
@@ -2173,8 +2229,9 @@ impl<'p> Checker<'p> {
         (keys, modifiers)
     }
 
-    /// `getTypeOfMappedSymbol`: what a property of a mapped type holds, `ty` being what the template comes to for it.
-    /// `strips`: `-?` makes it a property that cannot be left out of one that could (`CheckFlagsStripOptional`).
+    /// `getTypeOfMappedSymbol`: the type of a property of a mapped type, where `ty` is the
+    /// instantiated template for it.
+    /// `strips`: `-?` turns an optional property into a required one (`CheckFlagsStripOptional`).
     fn mapped_property_type(
         &mut self,
         ty: TypeId,
@@ -2183,7 +2240,8 @@ impl<'p> Checker<'p> {
         strips: bool,
     ) -> TypeId {
         if modifier == MappedModifier::Add {
-            // `getTemplateTypeFromMappedType` has it in the template as declared, whatever comes of that.
+            // `getTemplateTypeFromMappedType` adds the optionality to the declared template type, whatever it
+            // instantiates to.
             self.optional_property(ty)
         } else if optional {
             // `maybeTypeOfKind(ty, TypeFlagsUndefined | TypeFlagsVoid)`
@@ -2199,8 +2257,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeOfMappedSymbol`: the type of `prop`, which `build_mapped_shape` made for the mapped type `of`. `prop.mapper` is the
-    /// mapper of `of` with the key type for the type parameter, or that mapper composed with another in a copy of the property
+    /// `getTypeOfMappedSymbol`: the type of `prop`, which `build_mapped_shape` created for the
+    /// mapped type `of`. `prop.mapper` is the mapper of `of` with the key type for the type
+    /// parameter, or that mapper composed with another in a copy of the property
     /// (`getTypeOfInstantiatedSymbol`). `strips` is `CheckFlagsStripOptional`.
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
         let q = Query::MappedProp(of, prop.name);
@@ -2249,7 +2308,7 @@ impl<'p> Checker<'p> {
             strips,
         );
         let left = self.leave(q);
-        if self.left_a_circle {
+        if self.left_a_cycle {
             self.circular_mapped_property(of, prop.name);
             let stored = self.cycle_result();
             let kept = (self.p.mapped_prop_types).insert(
@@ -2307,7 +2366,7 @@ impl<'p> Checker<'p> {
                 Some(declared) => self.is_assignable(declared, param),
                 None => true,
             };
-        // Where in `shape.props` each name is, once there are many.
+        // The index of each name in `shape.props`, once there are many.
         let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
             let with_key = self.mapper_with_pair(mapper, param, key);
@@ -2341,8 +2400,8 @@ impl<'p> Checker<'p> {
                 };
                 match name {
                     Some(name) => match place {
-                        // One property for all the keys that come to its name. Its `keyType` is their union. The first key has
-                        // settled the modifiers.
+                        // One property for all the keys that map to its name. Its `keyType` is
+                        // their union. The first key determines the modifiers.
                         Some(i) => {
                             let so_far = self
                                 .types()
@@ -2377,7 +2436,7 @@ impl<'p> Checker<'p> {
                             if readonly {
                                 flags |= PropFlags::READONLY;
                             }
-                            // `nameType`: made from a string, it is named by one.
+                            // `nameType`: created from a string, it is named by a string.
                             if self.is_string_like(name_ty) && self.is_numeric_name(name) {
                                 flags |= PropFlags::STRING_NAME;
                             }
@@ -2402,8 +2461,9 @@ impl<'p> Checker<'p> {
                         }
                     },
                     None => {
-                        // `isValidIndexKeyType`, `any` and enums: a name that can be anything is any string, one that is some member of
-                        // an enum any number. Anything else, like a type parameter or a template with one in it, adds nothing.
+                        // `isValidIndexKeyType`, `any` and enums: a name of type `any` is any
+                        // string, one that is some member of an enum is any number. Anything else,
+                        // like a type parameter or a template containing one, adds nothing.
                         let index_key = if self.is_any(name_ty) || name_ty == TypeId::STRING {
                             TypeId::STRING
                         } else if name_ty == TypeId::NUMBER
@@ -2419,7 +2479,7 @@ impl<'p> Checker<'p> {
                                     || self.is_pattern_literal(p)
                             })
                         {
-                            // `string & {}` is a key of its own kind: no number goes by it.
+                            // `string & {}` is a distinct key type: no number matches it.
                             name_ty
                         } else {
                             continue;
@@ -2571,13 +2631,13 @@ impl<'p> Checker<'p> {
     /// `applyStringMapping`
     fn map_text(&self, kind: StringMappingKind, value: Atom) -> Atom {
         let mut mapped: Vec<u8> = Vec::new();
-        // A lone surrogate, three bytes that are no UTF-8, has no case.
+        // A lone surrogate, three bytes that are not valid UTF-8, has no case.
         for (i, chunk) in self.atoms().bytes(value).utf8_chunks().enumerate() {
             let text = chunk.valid();
             let mut chars = text.chars();
             let mut push =
                 |c: char| mapped.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-            // How much of `text` is left as it is.
+            // How much of `text` is left unchanged.
             let rest = match (kind, chars.next()) {
                 (StringMappingKind::Uppercase, _) => {
                     text.chars()
@@ -2617,7 +2677,8 @@ impl<'p> Checker<'p> {
                 | Intrinsic::ImplicitNever
                 | Intrinsic::Unresolved,
             ) => ty,
-            // `TypeFlagsStringLiteral`, which a member of an enum that is a string has too: what comes of it is a plain string.
+            // `TypeFlagsStringLiteral`, which a string enum member has too: the result is a plain
+            // string.
             TypeData::StringLit { value, .. }
             | TypeData::EnumLit {
                 value: EnumValue::String(value),
@@ -2626,7 +2687,8 @@ impl<'p> Checker<'p> {
                 let mapped = self.map_text(kind, *value);
                 self.string_literal(mapped, false)
             }
-            // `applyTemplateStringMapping`: the case of all letters goes for every part, that of the first for the first part.
+            // `applyTemplateStringMapping`: a mapping of all letters applies to every part, a
+            // mapping of the first letter to the first part.
             TypeData::Template { texts, types } => {
                 let (mut texts, mut types) = (texts.to_vec(), types.to_vec());
                 match kind {
@@ -2643,7 +2705,7 @@ impl<'p> Checker<'p> {
                 }
                 self.template_type(&texts, &types)
             }
-            // Twice is once.
+            // The mapping is idempotent.
             TypeData::StringMapping { kind: same, .. } if *same == kind => ty,
             TypeData::Intrinsic(
                 Intrinsic::Any
@@ -2656,7 +2718,7 @@ impl<'p> Checker<'p> {
             | TypeData::UnresolvedName { .. }
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),
             _ if self.is_generic(ty) => self.intern(TypeData::StringMapping { kind, ty }),
-            // A number is mapped as the string it makes.
+            // A number is mapped as its string form.
             _ if self.is_pattern_literal_placeholder(ty) => {
                 let inner = self.template_type(&[known::empty, known::empty], &[ty]);
                 self.intern(TypeData::StringMapping { kind, ty: inner })
@@ -2666,8 +2728,8 @@ impl<'p> Checker<'p> {
     }
 }
 
-/// `CombineSurrogatePairs`: a lone high surrogate right before a lone low one makes one character with it. Each is three bytes
-/// (`EncodeJSStringRune`).
+/// `CombineSurrogatePairs`: a lone high surrogate immediately before a lone low one combines with
+/// it into one character. Each is three bytes (`EncodeJSStringRune`).
 fn combine_surrogate_pairs(text: &mut Vec<u8>) {
     let mut at = 0;
     while at + 6 <= text.len() {

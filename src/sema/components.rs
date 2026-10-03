@@ -1,7 +1,8 @@
-//! The strongly connected components of the import graph, and their levels. Computed once, where loading ends.
+//! The strongly connected components of the import graph, and their levels. Computed once, at the
+//! end of loading.
 //!
-//! The link step resolves exports and aliases component by component, level by level. Everything here is a function of the graph and
-//! of program order alone.
+//! The link step resolves exports and aliases component by component, level by level. Everything
+//! here is a function of the graph and of program order alone.
 
 use crate::program::FileId;
 

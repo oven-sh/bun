@@ -1,6 +1,7 @@
-//! Names that what is emitted needs for itself, and names no type can have: 2441 2529 18027 2818, 2725, 2414 2427 2431 2457 2368.
+//! Names that the emitted code reserves, and names no type may have: 2441 2529 18027 2818, 2725,
+//! 2414 2427 2431 2457 2368.
 
-use super::errors_x_operators::language_version;
+use super::errors_operators::language_version;
 use super::*;
 use crate::resolve::{ModuleKind, ScriptTarget};
 
@@ -27,8 +28,9 @@ fn is_reserved_type_name(text: Atom) -> bool {
 }
 
 impl Checker<'_> {
-    /// `checkCollisionsForDeclarationName`, of a declaration, or of the identifier that is the name of a variable, a parameter or a
-    /// binding element. `text`: `name.Text()`. Few names are in anybody's way, so that is asked first.
+    /// `checkCollisionsForDeclarationName` for a declaration, or for the identifier that names a
+    /// variable, a parameter or a binding element. `text`: `name.Text()`. Few names can collide, so
+    /// the name is tested first.
     #[inline]
     pub(super) fn check_collisions_for_declaration_name(
         &mut self,
@@ -57,7 +59,8 @@ impl Checker<'_> {
             NodeData::Pat(_) => (hir.parent(declaration), declaration),
             _ => (declaration, hir.name(declaration)),
         };
-        // `checkVariableLikeDeclaration`: `const a = require("m")` is an alias, and looked at no further.
+        // `checkVariableLikeDeclaration`: `const a = require("m")` is an alias and is not checked
+        // further.
         if matches!(hir.data(node), NodeData::VarDecl(d) if self.external_module_require_argument(file, d).is_some())
         {
             return;
@@ -90,7 +93,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the declaration `node` is directly in a file that is a module, and is no namespace that comes to nothing.
+    /// Whether the declaration `node` is at the top level of a file that is a module, and is not a
+    /// namespace that emits nothing.
     fn is_emitted_at_top_level_of_module(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         let is_uninstantiated = matches!(hir.data(node), NodeData::Stmt(s) if matches!(hir[s].kind, StmtKind::Module(m)
@@ -203,7 +207,7 @@ impl Checker<'_> {
             || function.is_some() && !matches!(hir[function].body, FnBody::None)
     }
 
-    /// `nodeLinks.flags |= flag`, of the block scopes around `node`.
+    /// `nodeLinks.flags |= flag` for the block scopes that enclose `node`.
     fn mark_enclosing_block_scope_containers(&mut self, file: FileId, node: Node, flag: u8) {
         let hir = self.hir(file);
         let mut scope = hir.get_enclosing_block_scope_container(node);
@@ -213,7 +217,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `setNodeLinksForPrivateIdentifierScope`, of a member of a class whose name is a private identifier.
+    /// `setNodeLinksForPrivateIdentifierScope` for a class member whose name is a private
+    /// identifier.
     pub(super) fn set_node_links_for_private_identifier_scope(
         &mut self,
         file: FileId,
@@ -228,7 +233,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkSuperExpression`, as far as it marks what is around `super.x` in a static initializer.
+    /// The part of `checkSuperExpression` that marks the scopes enclosing `super.x` in a static
+    /// initializer.
     pub(super) fn mark_super_property_in_static_initializer(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let node = hir.node(e);
@@ -297,7 +303,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let flag = CONTAINS_SUPER_PROPERTY_IN_STATIC_INITIALIZER;
         let has_collision = match hir.kind(node) {
-            // The name of a class expression is in nobody's way but that of its members.
+            // The name of a class expression can only collide within its members.
             Kind::ClassExpression => (hir[hir.class_of(node)].members.iter())
                 .any(|member| self.has_node_check_flag(hir.node(member), flag)),
             Kind::FunctionExpression => self.has_node_check_flag(node, flag),
@@ -319,7 +325,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkTypeNameIsReserved`, of the name of `declaration`. `text`: `name.Text()`.
+    /// `checkTypeNameIsReserved` for the name of `declaration`. `text`: `name.Text()`.
     #[inline]
     pub(super) fn check_type_name_is_reserved(
         &mut self,

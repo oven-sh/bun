@@ -1,4 +1,5 @@
-//! From the statements as the parse pass left them (nothing bound, folded or dropped) to `bun_sema::hir`.
+//! Lowers the statements as the parse pass produced them (nothing bound, folded or dropped) to
+//! `bun_sema::hir`.
 
 use super::builder::Builder;
 use super::clone_types::PendingPart;
@@ -18,11 +19,12 @@ use smallvec::SmallVec;
 pub(crate) struct Lower<'p, 'a> {
     pub(super) b: Builder<'a>,
     pub(super) p: &'p P<'a, true, false>,
-    /// What the parser said of the nodes of the tree.
+    /// The parser's side notes about AST nodes.
     noted: Notes,
     /// `TypeSyntax::class_index_signatures`
     class_index_signatures: Vec<Member>,
-    /// What the lists being lowered have so far, the innermost list last: ids, variables, parameters, properties.
+    /// Scratch stacks for the lists being lowered, innermost list last: ids, variables, parameters,
+    /// properties.
     list_ids: Vec<u32>,
     list_decls: Vec<VarDecl>,
     list_params: Vec<Param>,
@@ -32,25 +34,28 @@ pub(crate) struct Lower<'p, 'a> {
     stack_check: bun_core::StackCheck,
     /// The JSDoc comments of a JavaScript file. None for TypeScript.
     pub(super) jsdoc: std::rc::Rc<Comments>,
-    /// Which of them belong to a node.
+    /// Which of them are attached to a node.
     pub(super) jsdoc_is_attached: Vec<bool>,
-    /// `reparseList`: the statements made of JSDoc tags, until the list of statements they go into takes them.
+    /// `reparseList`: statements synthesized from JSDoc tags, pending insertion into their
+    /// statement list.
     pub(super) reparsed: Vec<StmtId>,
-    /// The same for the overload signatures of the member of a class that was lowered last.
+    /// The same for the overload signatures of the most recently lowered class member.
     pub(super) reparsed_members: Vec<Member>,
-    /// The modifiers JSDoc tags give that member, and where the tags are.
+    /// The modifiers that JSDoc tags add to that member, with the tag positions.
     pub(super) member_modifiers: Vec<(Flags, u32)>,
-    /// `parsingContexts&(1<<PCObjectLiteralMembers)`: how many object literals what is being lowered is written in.
+    /// `parsingContexts&(1<<PCObjectLiteralMembers)`: object literal nesting depth of the node
+    /// being lowered.
     pub(super) object_literals_around: u32,
-    /// `node.End()` of what `expr` made last, as it is written: with the parentheses around it.
+    /// `node.End()` of the last result of `expr`, including enclosing parentheses.
     source_end: u32,
-    /// `GetTokenPosOfNode` of what `expr` made last, as it is written: with the parentheses around it.
+    /// `GetTokenPosOfNode` of the last result of `expr`, including enclosing parentheses.
     source_start: u32,
     /// The functions that have a `FullSignature`.
     pub(super) full_signatures: bun_collections::HashMap<u32, ()>,
     /// The functions whose `@param` tags were compared with their parameters.
     pub(super) documented_functions: bun_collections::HashMap<u32, ()>,
-    /// `NodeFlagsAmbient`: what is being lowered is in a declaration file, or in a declaration that says `declare`.
+    /// `NodeFlagsAmbient`: the node being lowered is in a declaration file or inside a `declare`
+    /// declaration.
     is_ambient: bool,
 }
 
@@ -62,7 +67,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         is_declaration_file: bool,
     ) -> hir::File {
         let end_of_file_full_start = p.lexer.token_full_start as u32;
-        // `withJSDoc`: only in JavaScript is anything made of the tags.
+        // `withJSDoc`: tags are only processed in JavaScript files.
         let (mut syntax, jsdoc) = if syntax.has_jsdoc {
             super::jsdoc::read_comments(p, syntax)
         } else {
@@ -109,7 +114,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .iter()
             .map(|next| next.start.max(0) as u32)
             .collect();
-        // What is in the comments is read after the rest.
+        // Syntax inside comments is parsed after the rest of the file.
         if this.b.file.after_skipped.len() > 1 {
             this.b.file.after_skipped.sort_unstable();
         }
@@ -120,7 +125,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .extend(syntax.stray_decorators.iter().map(pair));
         }
         this.b.file.unclosed_literals = syntax.unclosed_literals.iter().map(pair).collect();
-        // A literal is noted where it ends, so after those in it.
+        // A literal is recorded at its end, so after the literals nested in it.
         if this.b.file.unclosed_literals.len() > 1 {
             this.b.file.unclosed_literals.sort_unstable();
         }
@@ -133,7 +138,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .body_starts
                 .sort_unstable_by_key(|body| body.0.0);
         }
-        // Those of import types come last, and a type in a comment is cloned for each node it is the type of.
+        // The attributes of import types come last, and a JSDoc type is cloned for each node it
+        // annotates.
         if this.b.file.import_attributes.len() > 1 {
             let import_attributes = &mut this.b.file.import_attributes;
             import_attributes.sort_by_key(|attributes| attributes.0);
@@ -153,8 +159,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         std::mem::take(&mut this.b.file)
     }
 
-    /// Converts the expressions and function bodies that are written inside types. Converting one can clone more types, which can add
-    /// more parts.
+    /// Converts the expressions and function bodies that appear inside types. Converting one can
+    /// clone more types, which can add more pending parts.
     fn fill_in_pending_parts(&mut self) {
         while let Some(part) = self.b.pending.pop() {
             match part {
@@ -195,9 +201,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    // ───────────────────────────── what the parser noted ─────────────────────────────
+    // ───────────────────────────── parser notes ─────────────────────────────
 
-    /// Where the node whose `loc` is `loc` is.
+    /// Position of the node whose `loc` is `loc`.
     #[inline]
     pub(super) fn pos_of(&self, loc: ast::Loc) -> u32 {
         self.noted.real_loc(loc).start.max(0) as u32
@@ -210,13 +216,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         (!end.is_empty()).then_some(end.start as u32)
     }
 
-    /// What the parser noted as `what` of the node whose `loc` is `loc`.
+    /// The note of kind `what` that the parser recorded for the node whose `loc` is `loc`.
     #[inline]
     fn note(&self, loc: ast::Loc, what: Mark) -> Option<u32> {
         self.noted.get(loc, what)
     }
 
-    /// All that it noted as `what` of that node, in the order of the source.
+    /// All notes of kind `what` recorded for that node, in source order.
     fn notes(&self, loc: ast::Loc, what: Mark) -> SmallVec<[u32; 4]> {
         let mut found: SmallVec<[u32; 4]> = self
             .noted
@@ -228,7 +234,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         found
     }
 
-    /// `node.Loc`, as the parser said it of the node whose `loc` is `loc`. 0: it did not.
+    /// `node.Loc`, as the parser recorded it for the node whose `loc` is `loc`. 0 if it was not
+    /// recorded.
     fn range_of(&self, loc: ast::Loc) -> TextRange {
         match self.noted.node(loc) {
             Some(node) => TextRange {
@@ -239,13 +246,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `node.Pos()` of that node, if the parser said it.
+    /// `node.Pos()` of that node, if the parser recorded it.
     fn full_start_of(&self, loc: ast::Loc) -> Option<u32> {
         let full_start = self.noted.node(loc)?.full_start;
         (!full_start.is_empty()).then_some(full_start.start as u32)
     }
 
-    /// `node.Loc` of the member of a class that is named at `named_at`.
+    /// `node.Loc` of the class member whose name is at `named_at`.
     fn member_range(&self, named_at: ast::Loc) -> TextRange {
         TextRange {
             pos: self.note(named_at, Mark::MemberFullStart).unwrap_or(0),
@@ -253,13 +260,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// The type that is the payload `kept` of a note.
+    /// The type referenced by the note payload `kept`.
     #[inline]
     fn type_at(&mut self, kept: u32) -> TypeNodeId {
         TypeNodeId(kept)
     }
 
-    /// `T` was read as a type parameter and turned out to be a type.
+    /// `T` was parsed as a type parameter and turned out to be a type.
     fn type_from_type_param(&mut self, param: TypeParamId) -> TypeNodeId {
         let TypeParam { name, pos, .. } = self.b.file[param];
         let kind = match super::keep::keyword_type(self.b.atoms.bytes(name)) {
@@ -280,7 +287,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         (params.len() == 1).then(|| self.type_from_type_param(params.at(0)))
     }
 
-    /// `async<T, U>(x)` likewise, and turned out to be a call.
+    /// Likewise for `async<T, U>(x)`, which turned out to be a call.
     fn type_args_from_type_params(&mut self, kept: u32) -> IdList<TypeNodeId> {
         let types: SmallVec<[TypeNodeId; 4]> = self
             .type_params_at(kept)
@@ -290,13 +297,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.file.list(&types)
     }
 
-    /// The type arguments that are the payload `kept` of a note.
+    /// The type arguments referenced by the note payload `kept`.
     fn type_args_at(&mut self, kept: u32) -> IdList<TypeNodeId> {
         let [start, len] = self.noted.range(kept);
         IdList::new(start, len)
     }
 
-    /// The type parameters that are the payload `kept` of a note.
+    /// The type parameters referenced by the note payload `kept`.
     fn type_params_at(&mut self, kept: u32) -> Span<TypeParamId> {
         let [start, len] = self.noted.range(kept);
         let list: Span<TypeParamId> = Span::new(start, len);
@@ -308,7 +315,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         list
     }
 
-    /// The expression that is the payload `kept` of a note.
+    /// The expression referenced by the note payload `kept`.
     fn expr_at(&mut self, kept: u32) -> ExprId {
         let expression = self.b.ts[ts::Id::<Expr>::from_index(kept)];
         self.expr(&expression)
@@ -321,14 +328,14 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `type_at`, of a type that `checkJSSyntax` says `code` of.
+    /// `type_at` for a type on which `checkJSSyntax` reports `code`.
     fn ts_type_at(&mut self, kept: u32, code: u32) -> TypeNodeId {
         let ty = self.type_at(kept);
         self.js_error_at_types(ty, ty, code);
         ty
     }
 
-    /// `jsErrorAtRange`, of a type or of a list of types.
+    /// `jsErrorAtRange` for a type or a list of types.
     fn js_error_at_types(&mut self, first: TypeNodeId, last: TypeNodeId, code: u32) {
         if first.is_some() {
             let at = (self.b.file[first].pos, self.b.file[last].end);
@@ -336,7 +343,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `checkJSSyntax`, of type arguments.
+    /// `checkJSSyntax` for type arguments.
     fn check_js_type_arguments(&mut self, list: IdList<TypeNodeId>) {
         if !list.is_empty() {
             let last = self.b.file.id_at(list, list.len() - 1);
@@ -344,8 +351,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `checkJSSyntax`: the modifiers that are written and are not of `ModifierFlagsJavaScript`. `checkJSDecoratorSyntax`, with
-    /// `decorators`: the first decorator, of what `CanHaveIllegalDecorators`.
+    /// `checkJSSyntax`: the modifiers that are in the source and not in `ModifierFlagsJavaScript`.
+    /// `checkJSDecoratorSyntax`, if `decorators`: the first decorator of a node for which
+    /// `CanHaveIllegalDecorators` is true.
     fn check_js_modifiers(&mut self, list: Span<ModifierId>, mut decorators: bool) {
         const JAVASCRIPT: Flags = Flags::EXPORT
             .union(Flags::STATIC)
@@ -369,7 +377,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `checkJSSyntax`, of the statement `id`, which has its range and its modifiers and nothing of its comments yet.
+    /// `checkJSSyntax` for the statement `id`, which already has its range and modifiers but
+    /// nothing from its comments yet.
     fn check_js_syntax(&mut self, id: StmtId) {
         let stmt = self.b.file[id];
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
@@ -384,7 +393,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtKind::ImportEquals(_) => (whole, 8002, b""),
             StmtKind::ExportAssign(_) => (whole, 8003, b""),
             StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
-            // `parseAmbientExternalModuleDeclaration` does not ask.
+            // `parseAmbientExternalModuleDeclaration` does not perform this check.
             StmtKind::Module(m) if !matches!(file[m].name, ModuleName::Ident(_)) => return,
             StmtKind::Module(m) if file[m].specifies_module => {
                 ((file[m].name_pos, 0), 8006, b"module")
@@ -420,7 +429,8 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn stmts(&mut self, stmts: &[Stmt], is_top_level: bool) -> IdList<StmtId> {
         let base = self.list_ids.len();
-        // An `export` in a namespace makes no module of the file, from wherever it is parsed.
+        // An `export` inside a namespace does not make the file a module, regardless of where it is
+        // parsed from.
         let was_module = self.b.file.has_module_syntax;
         let outer_reparsed = std::mem::take(&mut self.reparsed);
         for stmt in stmts {
@@ -433,7 +443,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.file.has_module_syntax = true;
             }
             let id = self.stmt(stmt);
-            // `parseListIndex`: what was made of JSDoc tags while the statement was parsed goes before it.
+            // `parseListIndex`: statements synthesized from JSDoc tags while the statement was
+            // parsed are inserted before it.
             self.list_reparsed();
             if let Some(id) = id {
                 if is_top_level && self.is_exported(id) {
@@ -455,7 +466,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.take_ids(base)
     }
 
-    /// Moves what is in `reparsed` to the list of statements being lowered.
+    /// Moves the contents of `reparsed` to the statement list being lowered.
     #[inline]
     fn list_reparsed(&mut self) {
         if !self.reparsed.is_empty() {
@@ -464,7 +475,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// Makes a list of what is in `list_ids` from `base` on, and takes it off.
+    /// Builds a list from the entries of `list_ids` starting at `base`, and pops them.
     fn take_ids<T>(&mut self, base: usize) -> IdList<T> {
         let start = self.b.file.ids.len() as u32;
         self.b.file.ids.extend_from_slice(&self.list_ids[base..]);
@@ -473,7 +484,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         IdList::new(start, len)
     }
 
-    /// `parseList(PCSwitchClauseStatements)`: the type aliases and imports made of JSDoc tags go on to the list around the `switch`.
+    /// `parseList(PCSwitchClauseStatements)`: the type aliases and imports synthesized from JSDoc
+    /// tags are passed on to the statement list that encloses the `switch`.
     fn clause_stmts(&mut self, stmts: &[Stmt]) -> IdList<StmtId> {
         if self.jsdoc.list.is_empty() {
             return self.stmts(stmts, false);
@@ -506,7 +518,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtKind::TypeAlias(x) => f[x].flags,
             StmtKind::Enum(x) => f[x].flags,
             StmtKind::Module(x) => f[x].flags,
-            // `import a = b.c` gives another name to what is there already: no module for that.
+            // `import a = b.c` aliases an existing entity. It does not make the file a module.
             StmtKind::ImportEquals(x) if !matches!(f[x].target, ImportEqualsTarget::Require(_)) => {
                 f[x].flags
             }
@@ -537,17 +549,18 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `finishNode`, of the statement `id`, which the parser says is at `loc`.
+    /// `finishNode` for the statement `id`, whose AST `loc` is `loc`.
     fn finish_stmt(&mut self, id: StmtId, loc: ast::Loc) -> StmtId {
         let start = self.declaration_start(loc);
         let mut range = self.range_of(loc);
-        // A block whose `{` is missing takes no room.
+        // A block whose `{` is missing is zero-width.
         if range.end == 0 {
             range.end = range.pos;
         }
         let stmt = &mut self.b.file[id];
         (stmt.start, stmt.loc) = (start, range);
-        // `else if`: `t_if` makes the chain in a loop, and every `if` of it ends where the first does.
+        // `else if`: `t_if` builds the chain in a loop, and every `if` in it ends where the first
+        // one ends.
         let mut last = id;
         while let StmtKind::If { no, .. } = self.b.file[last].kind
             && no.is_some()
@@ -574,7 +587,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .filter(|modifier| modifier.decorator.is_some())
             .map(|modifier| self.pos_of(modifier.loc))
             .min();
-        // These are said to be at `export` or at their keyword, decorated or not.
+        // Their `loc` is at `export` or at their keyword, decorated or not.
         let keyword = export_pos.unwrap_or_else(|| self.pos_of(loc));
         let pos = first_decorator.map_or(keyword, |at_sign| at_sign.min(keyword));
         let statement = match data {
@@ -611,8 +624,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// All that the modifiers say which the parser took for the statement, or for the member or the parameter whose name it is, that has
-    /// the `loc` `loc`.
+    /// The combined flags of the modifiers the parser consumed for the statement at `loc`, or for
+    /// the member or parameter whose name is at `loc`.
     fn modifier_flags_at(&self, loc: ast::Loc) -> Flags {
         let Some(list) = self.modifier_list_at(loc) else {
             return Flags::empty();
@@ -624,7 +637,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             })
     }
 
-    /// The same, one by one, with where each is.
+    /// The same modifiers individually, each with its position.
     fn modifiers_at(&self, loc: ast::Loc) -> Vec<(Flags, u32)> {
         let Some(list) = self.modifier_list_at(loc) else {
             return Vec::new();
@@ -642,7 +655,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn stmt(&mut self, stmt: &Stmt) -> Option<StmtId> {
-        // `declare` makes all of the statement ambient.
+        // `declare` makes the whole statement ambient.
         let was_ambient = self.is_ambient;
         self.is_ambient |= self.modifier_flags_at(stmt.loc).contains(Flags::AMBIENT);
         let id = self.stmt_in_context(stmt);
@@ -659,7 +672,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.check_js_syntax(id);
             }
         }
-        // `S::Comment`, a comment kept for the printer, is no node. The parser puts it where the next statement starts.
+        // `S::Comment`, a comment preserved for the printer, is not a node. The parser places it at
+        // the start of the next statement.
         if !self.jsdoc.list.is_empty() && !matches!(stmt.data, StmtData::SComment(_)) {
             self.statement_jsdoc(stmt, id);
         }
@@ -672,11 +686,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         Some(ts::Span::from_parts(self.noted.range(kept)))
     }
 
-    /// Gives the statement `id`, which the parser says is at `loc`, the modifiers the parser took for it.
+    /// Assigns the statement `id`, whose AST `loc` is `loc`, the modifiers the parser consumed for
+    /// it.
     fn statement_modifiers(&mut self, loc: ast::Loc, id: StmtId) {
         let list = match self.modifier_list_at(loc) {
             Some(list) => list,
-            // A class has its decorators all the same.
+            // A class still has its decorators.
             None if matches!(self.b.file[id].kind, StmtKind::Class(_)) => ts::Span::EMPTY,
             None => return,
         };
@@ -694,18 +709,20 @@ impl<'p, 'a> Lower<'p, 'a> {
             let pos = self.pos_of(loc);
             modifiers.push(Modifier { kind, pos });
         }
-        // The parser finds out that decorators decorate no class after it has taken the keywords that follow them.
+        // The parser only learns that decorators do not decorate a class after it has consumed the
+        // keywords that follow them.
         modifiers.sort_by_key(|modifier| modifier.pos);
         self.b.statement_modifiers = modifiers;
         self.b.take_statement_modifiers(id, 0);
     }
 
-    /// `withJSDoc`, of the statement `stmt`, which was lowered to `id`.
+    /// `withJSDoc` for the statement `stmt`, which was lowered to `id`.
     fn statement_jsdoc(&mut self, stmt: &Stmt, id: Option<StmtId>) {
         let start = self.declaration_start(stmt.loc);
         let mut host = match id.map(|id| (id, self.b.file[id].kind)) {
             Some((_, StmtKind::Var(decls))) => Host::VariableStatement(decls),
-            // `parseExpressionOrLabeledStatement`: what starts with a parenthesis leaves the comment to that.
+            // `parseExpressionOrLabeledStatement`: a statement that starts with a parenthesis
+            // leaves the comment to the parenthesized expression.
             Some((_, StmtKind::Expr(_))) if self.note(stmt.loc, Mark::HasParen).is_some() => {
                 return;
             }
@@ -722,7 +739,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.with_noted_jsdoc(full_start, start, false, &mut host);
     }
 
-    /// `withJSDoc`, of the node `host` whose first token is at `token`, if the parser said where it fully starts.
+    /// `withJSDoc` for the node `host` whose first token is at `token`, if the parser recorded its
+    /// full start.
     fn with_noted_jsdoc(
         &mut self,
         full_start: Option<u32>,
@@ -737,20 +755,21 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// Where the first token of the statement or the class expression that is said to be at `loc` is: its decorators and modifiers are
-    /// part of it.
+    /// Position of the first token of the statement or class expression whose `loc` is `loc`,
+    /// including its decorators and modifiers.
     fn declaration_start(&self, loc: ast::Loc) -> u32 {
         self.note(loc, Mark::DeclarationStart)
             .unwrap_or_else(|| self.pos_of(loc))
     }
 
-    /// Where the `@` of `decorator` is.
+    /// Position of the `@` of `decorator`.
     fn at_sign(&self, decorator: &Expr) -> u32 {
         self.note(decorator.loc, Mark::AtSign)
             .unwrap_or_else(|| self.pos_of(decorator.loc))
     }
 
-    /// The initializer of a `for` statement, which is no statement: a comment before it belongs to nothing.
+    /// The initializer of a `for` statement, which is not a statement: a comment before it is
+    /// attached to no node.
     fn for_initializer(&mut self, stmt: &Stmt) -> StmtId {
         let id = match self.stmt_without_jsdoc(stmt) {
             Some(id) => id,
@@ -776,7 +795,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             // Nothing is left of it.
             StmtData::STypeScript(_) => return None,
-            // The parser gives `S::TypeScript` for these (`keep_import`, `keep_export`).
+            // The parser emits `S::TypeScript` for these (`keep_import`, `keep_export`).
             StmtData::SImport(_)
             | StmtData::SExportClause(_)
             | StmtData::SExportFrom(_)
@@ -907,10 +926,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtData::SWith(s) => {
                 let value = self.expr(&s.value);
                 let value = self.b.file.stmt(StmtKind::Expr(value), pos);
-                // The expression, which the `)` follows.
+                // The expression that precedes the `)`.
                 self.b.file[value].loc = self.range_of(s.body_loc);
                 let body = self.required_stmt(&s.body);
-                // `parseWithStatement`: `NodeFlagsInWithStatement` is on the statement, not on what is in the parentheses.
+                // `parseWithStatement`: `NodeFlagsInWithStatement` applies to the statement, not to
+                // the expression in the parentheses.
                 let start = self.pos_of(s.body_loc) + 1;
                 let end = self.b.file[body].loc.end;
                 self.b.file.with_bodies.push((start, end));
@@ -1013,7 +1033,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     ModuleName::Ident(self.identifier(s.name.ref_, self.pos_of(s.name.loc)))
                 };
                 let mut flags = self.ambient();
-                // `parseAmbientExternalModuleDeclaration`: what is in it is ambient, with or without `declare`.
+                // `parseAmbientExternalModuleDeclaration`: its contents are ambient, with or
+                // without `declare`.
                 let was_ambient = self.is_ambient;
                 self.is_ambient |= !matches!(name, ModuleName::Ident(_));
                 if name == ModuleName::Global {
@@ -1087,7 +1108,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b.file.ran_out_of_stack = true;
             return self.b.file.pat(PatKind::Missing, pos, pos);
         }
-        // A name that is a piece of the text is as long as it is written.
+        // A name that is a slice of the source text has the same length as its token.
         if let B::B::BIdentifier(id) = &binding.data
             && id.r#ref.is_source_contents_slice()
         {
@@ -1096,10 +1117,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let mut end = self.note(binding.loc, Mark::PatternEnd).unwrap_or(pos);
         let kind = match &binding.data {
-            // `createMissingIdentifier`: a name of no length, where the token before it ends.
+            // `createMissingIdentifier`: an empty name at the end of the previous token.
             B::B::BMissing(_) => PatKind::Ident(self.b.atom(b"")),
             B::B::BIdentifier(id) => {
-                // A name without an escape is as long as it is written.
+                // A name without an escape has the same length as its token.
                 if end == pos {
                     end += self.p.load_name_from_ref(id.r#ref).len() as u32;
                 }
@@ -1112,7 +1133,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     // `parseArrayBindingElement`: each element has its own `...`.
                     let dots = self.note(item.binding.loc, Mark::DotDotDot);
                     let is_rest = dots.is_some();
-                    // `[a, , b]`: only an element that is left out has no name. It is said to be where its comma is.
+                    // `[a, , b]`: only an omitted element has no name. Its `loc` is at its comma.
                     let hole = self
                         .note(item.binding.loc, Mark::OmittedExpression)
                         .filter(|_| {
@@ -1184,7 +1205,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.file.pat(kind, pos, end)
     }
 
-    /// Sets the key of an object type member that the parser kept with `[name]` still as an expression.
+    /// Sets the key of an object type member that the parser saved with `[name]` still as an
+    /// expression.
     fn fill_in_computed_key(&mut self, member: MemberId, name: &Expr) {
         let key = self.key(name, true);
         let file = &mut self.b.file;
@@ -1202,8 +1224,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn key(&mut self, key: &Expr, is_computed: bool) -> PropKey {
-        // `IsDynamicName`: in brackets only a literal by itself is a name. `["a" as T]`, `[<T>"a"]`, `["a"!]` and `[("a")]` are
-        // worked out.
+        // `IsDynamicName`: in brackets only a bare literal is a name. `["a" as T]`, `[<T>"a"]`,
+        // `["a"!]` and `[("a")]` are evaluated.
         if is_computed
             && matches!(key.data, Data::EString(_) | Data::ENumber(_))
             && self.has_casts(key)
@@ -1218,13 +1240,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let expr = self.expr(key);
                 self.b.computed_key(expr)
             }
-            // Only for a binding pattern, where a bigint is no index type (2538). As it is written, `0n` does not find `0`.
+            // Only for a binding pattern, where a bigint is not an index type (2538). The source
+            // spelling is used, so `0n` does not match `0`.
             Data::EBigInt(n) => PropKey::Name(self.b.atom(&[n.value.slice(), &b"n"[..]].concat())),
             _ => PropKey::None,
         }
     }
 
-    /// How the name `key` is written.
+    /// The syntactic form of the name `key`.
     fn name_kind(&self, key: &Expr, is_computed: bool) -> NameKind {
         match (&key.data, is_computed) {
             (Data::EString(_), true) => NameKind::ComputedString,
@@ -1279,7 +1302,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .iter()
                     .fold(Flags::empty(), |seen, modifier| seen | modifier.0);
 
-                // The other modifiers mean nothing on a parameter. They are only objected to.
+                // The other modifiers have no meaning on a parameter. They are only reported as
+                // errors.
                 flags |= seen & PROPERTY_MODIFIERS;
                 if seen.intersects(PROPERTY_MODIFIERS) {
                     flags |= Flags::PARAMETER_PROPERTY;
@@ -1381,7 +1405,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             FnBody::None
         } else {
             self.js_error_at_types(ret, ret, 8010);
-            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: of whatever has a body in an ambient context.
+            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: for anything that
+            // has a body in an ambient context.
             if self.is_ambient || flags.contains(Flags::AMBIENT) {
                 let body = self.pos_of(func.body.loc);
                 self.b.file.error(DiagnosticKind::Grammar, body, 0, 1183);
@@ -1392,12 +1417,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         if self.note(open, Mark::MissingBody).is_some() {
             flags |= Flags::MISSING_BODY;
         }
-        // `createMissingList`: without a `(` the parameters are where the token before them ends. The anchor is one before them.
+        // `createMissingList`: without a `(` the parameter list is at the end of the previous
+        // token. The anchor is one before that position.
         let anchor = match self.note(open, Mark::MissingParameters) {
             Some(list) => list.saturating_sub(1),
             None => self.pos_of(open),
         };
-        let made = self.b.file.add_fn(Func {
+        let created = self.b.file.add_fn(Func {
             kind,
             flags,
             name: func
@@ -1415,9 +1441,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         });
         if matches!(body, FnBody::Block(_)) {
             let open = self.pos_of(func.body.loc);
-            self.b.file.body_starts.push((made, open));
+            self.b.file.body_starts.push((created, open));
         }
-        made
+        created
     }
 
     fn arrow(&mut self, arrow: &ast::E::Arrow, loc: ast::Loc) -> FnId {
@@ -1454,7 +1480,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         };
         let anchor = arrow_token.unwrap_or(pos);
-        let made = self.b.file.add_fn(Func {
+        let created = self.b.file.add_fn(Func {
             kind: FnKind::Arrow,
             flags: if arrow.is_async {
                 Flags::ASYNC
@@ -1473,9 +1499,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         });
         if matches!(body, FnBody::Block(_)) {
             let open = self.pos_of(arrow.body.loc);
-            self.b.file.body_starts.push((made, open));
+            self.b.file.body_starts.push((created, open));
         }
-        made
+        created
     }
 
     fn class(&mut self, class: &G::Class, flags: Flags, pos: u32, start: u32) -> ClassId {
@@ -1491,7 +1517,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(at) => self.type_args_at(at),
             None => IdList::EMPTY,
         };
-        // `parseExpressionWithTypeArguments`: type arguments the expression took for itself are those of the clause.
+        // `parseExpressionWithTypeArguments`: type arguments that the expression consumed belong to
+        // the clause.
         if let Some(written) = &class.extends
             && self.last_cast(written) == Some(Mark::Instantiation)
             && let ExprKind::Instantiation { expr, type_args } = self.b.file[extends].kind
@@ -1528,7 +1555,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .map(|d| (self.expr(d), self.at_sign(d)))
             .collect();
         let mut members = Vec::with_capacity(class.properties.slice().len());
-        // By where the member is: they are put in order further down.
+        // Keyed by the position of the member. They are sorted further down.
         let mut of_members: Vec<(u32, ExprId)> = Vec::new();
         for property in class.properties.slice() {
             let decorators: Vec<(ExprId, u32)> = property
@@ -1574,9 +1601,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             members.push(member);
         }
         self.b.classes_around -= 1;
-        // Overloads go before what implements them.
+        // Overloads precede their implementation.
         members.sort_by_key(|m| m.name_pos);
-        // As they are written; those of one member keep their order.
+        // In source order; those of one member keep their relative order.
         of_members.sort_by_key(|d| d.0);
         let members = self.b.file.add_members(&members);
         for (at, e) in of_members {
@@ -1611,7 +1638,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         id
     }
 
-    /// `checkJSSyntax`, of a member of a class, whose name is at `name`.
+    /// `checkJSSyntax` for a class member whose name is at `name`.
     fn check_js_syntax_of_member(&mut self, member: &Member, name: Option<ast::Loc>) {
         if !self.b.is_js || member.kind == MemberKind::StaticBlock {
             return;
@@ -1675,7 +1702,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         member.start = member.name_pos;
         let is_computed = property.flags.contains(ast::flags::Property::IsComputed);
         member.key = self.key(key, is_computed);
-        // `getDeclarationName`: a bigint names nothing.
+        // `getDeclarationName`: a bigint name declares nothing.
         let is_named_by_bigint = !is_computed && matches!(key.data, Data::EBigInt(_));
         if is_named_by_bigint {
             member.key = PropKey::None;
@@ -1699,8 +1726,8 @@ impl<'p, 'a> Lower<'p, 'a> {
 
         let after_string = self.note(key.loc, Mark::StringLiteralName);
         let is_quoted = after_string.is_some();
-        // `getLiteralTypeFromPropertyName`: `"0"` and `["0"]` name with a string, `0` and `[0]` with a number. An identifier is a
-        // string to the parser as well.
+        // `getLiteralTypeFromPropertyName`: `"0"` and `["0"]` are string names, `0` and `[0]` are
+        // numeric names. The parser also represents an identifier as a string.
         if (is_computed || is_quoted)
             && matches!(key.data, Data::EString(_))
             && matches!(member.key, PropKey::Name(_))
@@ -1723,10 +1750,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             && (property.flags.contains(ast::flags::Property::IsMethod)
                 || matches!(property.kind, G::PropertyKind::Get | G::PropertyKind::Set))
         {
-            // `tryParseConstructorDeclaration`: the keyword, or a string that says the same right before the `(`. Never `[..]`.
+            // `tryParseConstructorDeclaration`: the keyword, or a string literal with the same text
+            // directly before the `(`. Never `[..]`.
             let is_named_constructor = !is_computed
                 && member.key == PropKey::Name(bun_sema::atom::known::constructor)
-                // `parsePropertyOrMethodDeclaration`: after `*` it names a method.
+                // `parsePropertyOrMethodDeclaration`: after `*` it is a method name.
                 && !f.func.flags.contains(ast::flags::Function::IsGenerator)
                 && after_string.is_none_or(|next| next == self.pos_of(f.func.open_parens_loc));
             let is_constructor = is_named_constructor && property.kind == G::PropertyKind::Normal;
@@ -1742,7 +1770,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if !is_parent_ambient && !matches!(member_kind, MemberKind::Method) {
                 member.flags.remove(Flags::AMBIENT);
             }
-            // On a member these are only objected to.
+            // On a member these are only reported as errors.
             member
                 .flags
                 .remove(Flags::CONST | Flags::EXPORT | Flags::DEFAULT);
@@ -1781,7 +1809,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// `expr_at`, of a note that may not be there.
+    /// `expr_at` for a note that may be absent.
     fn optional_expr_at(&mut self, kept: Option<u32>) -> ExprId {
         match kept {
             Some(kept) => self.expr_at(kept),
@@ -1796,8 +1824,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `collectDynamicImportOrRequireOrJsDocImportCalls`: `argument` is what `import()` or `require()` is given, a string or a
-    /// template without substitutions.
+    /// `collectDynamicImportOrRequireOrJsDocImportCalls`: `argument` is the argument of `import()`
+    /// or `require()`, a string or a template without substitutions.
     fn call_specifier(&mut self, argument: ExprId, kind: SpecifierKind) {
         let hir::Expr {
             kind: literal, pos, ..
@@ -1826,7 +1854,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.take_ids(base)
     }
 
-    /// What was made last of `expr`, which is only `expr` in the parser's tree: `(x)`, `x as T`, `x!`, `x<T>`.
+    /// The kind of the outermost cast of `expr`. A cast is syntax that the AST represents as `expr`
+    /// alone: `(x)`, `x as T`, `x!`, `x<T>`.
     #[inline]
     fn last_cast(&self, expr: &Expr) -> Option<Mark> {
         self.noted
@@ -1859,20 +1888,20 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         self.source_end = 0;
         let mut id = self.expr_without_casts(expr);
-        // Where what has been made of it so far starts.
+        // Start of the node built from it so far.
         let mut pos = self.b.file[id].pos;
-        // Where what has been made of it so far ends.
+        // End of the node built from it so far.
         let mut end = self.b.file[id].end;
         if self.noted.has_notes(expr.loc) {
-            // What is made of it, from the inside out.
-            let mut made: SmallVec<[(Mark, u32); 4]> = self
+            // The casts to apply to it, innermost first.
+            let mut created: SmallVec<[(Mark, u32); 4]> = self
                 .noted
                 .of(expr.loc)
                 .map(|note| (note.what, note.payload))
                 .collect();
-            made.reverse();
+            created.reverse();
             let mut paren_full_start = None;
-            for (what, kept) in made {
+            for (what, kept) in created {
                 let kind = match what {
                     Mark::End => {
                         end = kept;
@@ -1908,7 +1937,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                         expr: id,
                         ty: self.ts_type_at(kept, 8037),
                     },
-                    // `parseTypeAssertion`: `<T>e` starts at its `<`, and so does what is made of it afterwards.
+                    // `parseTypeAssertion`: `<T>e` starts at its `<`, and so do the casts applied
+                    // to it afterwards.
                     Mark::LessThan => {
                         pos = kept;
                         continue;
@@ -1934,7 +1964,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             _ => ExprKind::As { expr: id, ty },
                         }
                     }
-                    // Said of the node, and makes nothing of it.
+                    // A note on the node that does not build a node.
                     _ => continue,
                 };
                 id = self.b.file.expr(kind, pos, end);
@@ -1980,12 +2010,13 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn template_text(&mut self, contents: &ast::E::TemplateContents) -> Atom {
         match contents {
             ast::E::TemplateContents::Cooked(s) => self.string(s),
-            // `tagged_template_contents` makes none for the type checker.
+            // `tagged_template_contents` never produces this for the type checker.
             ast::E::TemplateContents::Raw(s) => self.b.atom(s.slice()),
         }
     }
 
-    /// `parsePropertyAccessExpressionRest`: `a<b>.c` is refused, at the `<`. `obj` is what `target` was lowered to.
+    /// `parsePropertyAccessExpressionRest`: `a<b>.c` is an error, reported at the `<`. `obj` is the
+    /// lowered `target`.
     fn refuse_access_to_instantiation(&mut self, target: &Expr, obj: ExprId) {
         if matches!(self.b.file[obj].kind, ExprKind::Instantiation { .. })
             && self.last_cast(target) == Some(Mark::Instantiation)
@@ -1998,8 +2029,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `parseJsxTagName`: `this` at the head of a tag name is the keyword, and a name is an identifier, which the parser gives as a
-    /// string if the element is intrinsic. `tag` may be `NONE`.
+    /// `parseJsxTagName`: `this` at the head of a tag name is the keyword, and a name is an
+    /// identifier, which the parser represents as a string if the element is intrinsic. `tag` may
+    /// be `NONE`.
     fn jsx_tag_name(&mut self, tag: ExprId) {
         let mut root = tag;
         while root.is_some() {
@@ -2026,7 +2058,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn expr_without_casts(&mut self, expr: &Expr) -> ExprId {
-        // What starts with a part starts where that is written to start, parentheses and all (`GetTokenPosOfNode`).
+        // A node that starts with a child starts at the child's source start, including parentheses
+        // (`GetTokenPosOfNode`).
         let (mut pos, mut end) = match self.noted.node(expr.loc) {
             Some(node) => (node.loc.start.max(0) as u32, node.end.start.max(0) as u32),
             None => (expr.loc.start.max(0) as u32, 0),
@@ -2034,7 +2067,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let kind = match &expr.data {
             Data::EInlinedEnum(e) => return self.expr(&e.value),
             Data::EIdentifier(e) => {
-                // A name that is a piece of the text is as long as it is written.
+                // A name that is a slice of the source text has the same length as its token.
                 if e.ref_.is_source_contents_slice() {
                     end = pos + e.ref_.inner_index();
                 }
@@ -2078,7 +2111,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::ERegExp(_) => ExprKind::Regex,
             Data::ENewTarget(_) => {
-                // `parseMetaProperty` takes any word for the name, or none.
+                // `parseMetaProperty` accepts any word as the name, or no name.
                 let written = self
                     .note(expr.loc, Mark::MetaPropertyName)
                     .map(|kept| self.b.ts[ts::Id::<Expr>::from_index(kept)]);
@@ -2114,7 +2147,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                         self.check_js_type_arguments(type_args);
                         let callee = self.expr(tag);
                         pos = pos.min(self.source_start);
-                        // `callIsIncomplete`: the checker takes a `close_pos` where no `)` is for an incomplete call.
+                        // `callIsIncomplete`: the checker treats a `close_pos` at which there is no
+                        // `)` as an incomplete call.
                         let close_pos = if self.note(expr.loc, Mark::IncompleteTemplate).is_some() {
                             u32::MAX - 1
                         } else {
@@ -2211,7 +2245,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             Data::ECall(e) => {
                 let callee = self.expr(&e.target);
                 pos = pos.min(self.source_start);
-                // `IsRequireCall`. `File::parens` is not in order yet: what was lowered last is at its end.
+                // `IsRequireCall`. `File::parens` is not sorted yet: the most recently lowered
+                // entry is at its end.
                 let is_require = self.b.is_js
                     && matches!(
                         self.b.file[callee].kind,
@@ -2350,15 +2385,16 @@ impl<'p, 'a> Lower<'p, 'a> {
             | Data::ESpecial(_) => ExprKind::Missing,
         };
         let end = match kind {
-            // `createMissingNode`: where the token before it ends. One that is made late does not know where.
+            // `createMissingNode`: at the end of the previous token. A node created late does not
+            // have that position.
             ExprKind::Missing if end != 0 => end,
-            // It ends no earlier than its last part: JSX text that is left open is no trivia.
+            // It ends no earlier than its last child: unterminated JSX text is not trivia.
             _ => end.max(pos).max(self.source_end),
         };
         self.b.file.expr(kind, pos, end)
     }
 
-    /// `a + b + c + ...` is as deep to the left as it is long.
+    /// `a + b + c + ...` is left-nested as deep as it is long.
     fn binary(&mut self, expr: &Expr) -> ExprId {
         let mut spine: SmallVec<[&Expr; 8]> = SmallVec::new();
         let mut leftmost = expr;
@@ -2392,15 +2428,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                     }
                 }
             };
-            // What is put together of two expressions ends with the second.
+            // A node composed of two expressions ends with the second.
             let end = self.noted_end(node.loc).unwrap_or(0).max(self.source_end);
             left = self.b.file.expr(kind, pos, end);
         }
         left
     }
 
-    /// `checkGrammarForDisallowedTrailingComma`, for the target of a destructuring assignment: 1013 at the comma after a last `...x`.
-    /// A nested `[..] = default` is an assignment of its own, which `binary` brings here.
+    /// `checkGrammarForDisallowedTrailingComma`, for the target of a destructuring assignment: 1013
+    /// at the comma after a last `...x`.
+    /// A nested `[..] = default` is a separate assignment, which `binary` passes here.
     fn report_trailing_comma_after_rest(&mut self, target: &Expr) {
         if !self.stack_check.is_safe_to_recurse() {
             return;
@@ -2441,10 +2478,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `is_literal`: they are those of an object literal, not the attributes of a JSX element.
+    /// `is_literal`: the properties of an object literal, not the attributes of a JSX element.
     fn props(&mut self, properties: &[G::Property], is_literal: bool) -> Span<PropId> {
         let base = self.list_props.len();
-        // The types of `@type` tags: of which property, and the type.
+        // The types of `@type` tags: the index of the property, and the type.
         let mut types: Vec<(usize, TypeNodeId)> = Vec::new();
         self.object_literals_around += u32::from(is_literal);
         for property in properties {
@@ -2489,7 +2526,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             let start = self.note(key.loc, Mark::MemberStart).unwrap_or(pos);
             let key_in_source = key;
             let mut key = self.key(key, is_computed);
-            // `getDeclarationName`: a private name with no class around it names nothing.
+            // `getDeclarationName`: a private name outside a class declares nothing.
             if self.b.classes_around == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;
             }
@@ -2502,7 +2539,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
                 _ => PropKind::Init,
             };
-            // Neither does a bigint. `checkGrammarObjectLiteralExpression` objects to it on a property assignment only.
+            // Neither does a bigint. `checkGrammarObjectLiteralExpression` reports it on a property
+            // assignment only.
             if !is_computed && matches!(key_in_source.data, Data::EBigInt(_)) {
                 key = PropKey::None;
                 if matches!(kind, PropKind::Init | PropKind::Shorthand) {
@@ -2602,7 +2640,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 }
 
-/// `Err` for the assignments, with the operator they combine with.
+/// `Err` for the assignment operators, with the operator a compound assignment combines with.
 fn binary_op(op: OpCode) -> Result<BinOp, Option<BinOp>> {
     Ok(match op {
         OpCode::BinAdd => BinOp::Add,

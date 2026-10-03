@@ -1,5 +1,6 @@
-//! What is `any` for want of anything that says what it is, under `noImplicitAny`: 7010 7011 7012 7013 7020 7032 7033. The rest of
-//! `reportImplicitAny` is in symbols.rs (`report_implicit_any_of_name`) and shape.rs (`report_implicit_any`).
+//! Implicit `any` under `noImplicitAny`: 7010 7011 7012 7013 7020 7032 7033. The rest of
+//! `reportImplicitAny` is in symbols.rs (`report_implicit_any_of_name`) and shape.rs
+//! (`report_implicit_any`).
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent};
@@ -13,7 +14,8 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (decl, owner) = (&hir[func], bound.fns[func.idx()].owner);
         let is_private_ambient = self.is_private_within_ambient(file, func);
-        // `getTypeOfAccessors`: what is written decides, a type on either or a body of the getter. What that comes to plays no part.
+        // `getTypeOfAccessors`: the syntax decides, an annotation on either accessor or a body on
+        // the getter. The resulting type is irrelevant.
         if matches!(decl.kind, FnKind::Getter | FnKind::Setter) {
             if is_private_ambient || !self.accessor_has_no_type_source(file, func) {
                 return;
@@ -28,7 +30,7 @@ impl Checker<'_> {
                     getter.is_none_or(|g| self.accessor_has_no_type_source(file, g)),
                 )
             } else {
-                // The setter is the one to be told, if it can be.
+                // The error is reported on the setter, if possible.
                 let setter = self.sibling_accessor(file, func, FnKind::Setter);
                 (
                     7033,
@@ -56,7 +58,8 @@ impl Checker<'_> {
             FnKind::CallSignature => {
                 self.error_at((file, start, self.end_of_fn(file, func)), 7020, &[]);
             }
-            // `checkObjectLiteralMethod`, unlike `checkFunctionOrMethodDeclaration`, says nothing of a missing body.
+            // `checkObjectLiteralMethod`, unlike `checkFunctionOrMethodDeclaration`, reports
+            // nothing for a missing body.
             FnKind::Method if matches!(owner, FnOwner::Expr(_)) => {}
             FnKind::Decl | FnKind::Method if !is_private_ambient => {
                 let is_missing = match owner {
@@ -65,8 +68,8 @@ impl Checker<'_> {
                     }
                     _ => decl.name == known::empty,
                 };
-                // `GetErrorRangeForNode` has no case for a method signature: the error is on the whole of it. A name that is
-                // missing takes no room.
+                // `GetErrorRangeForNode` has no case for a method signature: the error spans the
+                // whole node. A missing name has zero length.
                 let (name_end, end) = match owner {
                     FnOwner::Member(m) => {
                         let name_end = self.end_of_member_name(file, m);
@@ -83,7 +86,8 @@ impl Checker<'_> {
                     }
                 };
                 let (node, any) = ((file, start, end), Arg::Type(TypeId::ANY));
-                // `reportImplicitAny`: one without a name is spoken of as a function expression is.
+                // `reportImplicitAny`: one without a name gets the message of a function
+                // expression.
                 if decl.kind == FnKind::Decl && decl.name.is_none() {
                     self.error_at(node, 7011, &[any]);
                 } else if decl.flags.contains(Flags::REPARSED) {
@@ -99,7 +103,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `isPrivateWithinAmbient`, of the member `func` is.
+    /// `isPrivateWithinAmbient` for the member that `func` is.
     pub(super) fn is_private_within_ambient(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let FnOwner::Member(m) = bound.fns[func.idx()].owner else {
@@ -108,15 +112,15 @@ impl Checker<'_> {
         let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
             return false;
         };
-        // `parseClassElement`: a member that says `declare` is ambient by itself.
+        // `parseClassElement`: a member with `declare` is itself ambient.
         (hir[c].flags.contains(Flags::AMBIENT)
             || hir[m].flags.contains(Flags::AMBIENT)
             || hir.kind == FileKind::Declaration)
             && (hir[m].flags.contains(Flags::PRIVATE) || matches!(hir[m].key, PropKey::Private(_)))
     }
 
-    /// Whether the accessor `func` gives `getTypeOfAccessors` nothing to go by: a getter neither a type nor a body, a setter no type
-    /// for what it takes.
+    /// Whether the accessor `func` gives `getTypeOfAccessors` no type source: a getter with neither
+    /// an annotation nor a body, a setter without a parameter annotation.
     fn accessor_has_no_type_source(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let f = &hir[func];
@@ -126,7 +130,7 @@ impl Checker<'_> {
         }
     }
 
-    /// Where the name of the accessor `func` starts. `None`: which property it is cannot be told.
+    /// Start of the name of the accessor `func`. `None`: its property cannot be determined.
     pub(super) fn start_of_accessor_name(&mut self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (key, pos) = match bound.fns[func.idx()].owner {
@@ -170,9 +174,10 @@ impl Checker<'_> {
                 .is_some()
     }
 
-    /// `checkVariableLikeDeclaration` returns before it asks for the type of a renamed element in a function without a body. 7031
-    /// comes from `getTypeFromBindingPattern`, which only runs once the type of the parameter is asked for: by another element of
-    /// the pattern, by a call, or by a comparison with another signature.
+    /// `checkVariableLikeDeclaration` returns before it requests the type of a renamed element in a
+    /// function without a body. 7031 comes from `getTypeFromBindingPattern`, which only runs once
+    /// the type of the parameter is requested: by another element of the pattern, by a call, or by
+    /// a comparison with another signature.
     pub(super) fn is_parameter_type_never_requested(
         &self,
         file: FileId,

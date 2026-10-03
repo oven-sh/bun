@@ -1,7 +1,9 @@
-//! Shows a [`Report`].
+//! Formats a [`Report`].
 //!
-//! For a person at a terminal: `bun_ast::Msg::write_format`, which is how Bun shows its own errors.
-//! For everything else: TypeScript's plain format, which editors, continuous integration and other tools already read.
+//! For an interactive terminal: `bun_ast::Msg::write_format`, which is how Bun prints its own
+//! errors.
+//! For everything else: TypeScript's plain format, which editors, continuous integration and other
+//! tools already parse.
 
 use crate::{Category, Diagnostic, Report};
 use bstr::{BString, ByteSlice};
@@ -20,7 +22,7 @@ macro_rules! alloc_print {
     }};
 }
 
-/// `write!`, of a text in Bun's markup (`<red>`, `<d>`, `<r>`), with the colors or without.
+/// `write!` for text in Bun's markup (`<red>`, `<d>`, `<r>`), with or without colors.
 macro_rules! pretty {
     ($out:expr, $color:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
         let _ = if $color {
@@ -37,7 +39,8 @@ pub enum Layout {
     Pretty,
     /// `file(line,column): error TS1234: message`, as `tsc --pretty false` prints it.
     Plain,
-    /// A tag for each error with the source around it inside, so that whoever reads it does not have to open the file.
+    /// One tag per error that contains the surrounding source, so that the reader does not have to
+    /// open the file.
     Agent,
 }
 
@@ -45,11 +48,11 @@ pub enum Layout {
 pub struct Style<'a> {
     pub layout: Layout,
     pub color: bool,
-    /// What paths are shown relative to, as the checker names it.
+    /// The directory that displayed paths are relative to, in the checker's path format.
     pub cwd: &'a [u8],
     /// Also print `::error` workflow commands, which GitHub Actions turns into annotations.
     pub github_annotations: bool,
-    /// How many columns the terminal has. 0: it is not known, or there is none.
+    /// The terminal width in columns. 0: unknown, or not a terminal.
     pub width: usize,
     /// `--all`: never group identical diagnostics.
     pub show_all: bool,
@@ -67,7 +70,7 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 
 /// `ConvertToRelativePath`
 pub fn relative_path(path: &[u8], cwd: &[u8]) -> BString {
-    // On Windows what is on another drive has no relative path.
+    // On Windows a path on another drive has no relative form.
     if cfg!(windows) && path.get(..3) != cwd.get(..3) {
         return crate::host::to_native(path).into();
     }
@@ -101,33 +104,35 @@ fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
     alloc_print!("{} {}", with_commas(n), noun.as_bstr())
 }
 
-/// How many columns of a terminal `text` takes: two for most of what is written in East Asia and for emoji, none for what combines with the
-/// character before it.
+/// The display width of `text` in terminal columns: two for most East Asian characters and for
+/// emoji, zero for combining characters.
 fn columns(text: &[u8]) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8(text)
 }
 
-/// The longest start of `text` that fits `width` columns.
+/// The longest prefix of `text` that fits in `width` columns.
 fn fitting(text: &[u8], width: usize) -> &[u8] {
     let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
 }
 
-/// What `bun_ast::Msg::write_format` shows of `d`: the message, where it is, and the last `shown` lines up to the one it starts on.
-/// Only an error says its code.
+/// `d` as input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown`
+/// source lines up to the line it starts on.
+/// Only an error includes its code.
 fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_ast::Data {
-    // What is Bun's own to say has no code.
+    // Bun's own diagnostics have no code.
     let text = match d.code {
         code if code != 0 && says_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
         _ => d.text.clone(),
     };
-    // Blank lines at the start show nothing.
+    // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
     let lines = &lines[lines.len().saturating_sub(shown)..];
     let blank = lines.iter().take_while(|line| line.trim_ascii().is_empty());
     let lines = &lines[blank.count()..];
-    // Nor is anything shown of an error on a blank line, at the end of the file say: the line before would be taken for its own.
-    // Nor of lines nobody wrote by hand, which fill the screen.
+    // No source is shown either for an error on a blank line, for example at the end of the file:
+    // the preceding line would be mistaken for the error's line.
+    // Nor for lines that are not hand-written, which fill the screen.
     let is_blank = lines.last().is_none_or(|line| line.trim_ascii().is_empty());
     let is_hidden = is_blank || lines.iter().any(|line| line.len() > 1000);
     let lines = if is_hidden { &[] } else { lines };
@@ -135,7 +140,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
         file: Vec::from(display_path(&d.path, style)).into(),
         line: d.line as i32,
         column: d.column as i32,
-        // What goes on in the next line is underlined to the end of this one.
+        // A span that continues on the next line is underlined to the end of this line.
         length: match d.end_line == d.line {
             true => (d.end_column - d.column) as usize,
             false => usize::MAX,
@@ -149,7 +154,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
     }
 }
 
-/// `d` as Bun's own log has what it says: the related information as its notes.
+/// `d` as a message of Bun's own log, with the related information as its notes.
 pub fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
     let related = d.related.iter().take(MAX_RELATED);
     bun_ast::Msg {
@@ -161,7 +166,7 @@ pub fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
         data: to_data(d, style, true, 3),
         notes: related
             .map(|note| {
-                // Not a line that is shown above already.
+                // A line that is already shown above is not repeated.
                 let is_shown = note.path == d.path && (note.line..=note.line + 2).contains(&d.line);
                 to_data(note, style, false, usize::from(!is_shown))
             })
@@ -170,7 +175,8 @@ pub fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
     }
 }
 
-/// As Bun shows its own errors. `duplicates`: other diagnostics with the same code and message, when grouping.
+/// Formatted like Bun's own errors. `duplicates`: other diagnostics with the same code and message,
+/// when grouping.
 fn write_pretty(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
     let message = to_msg(d, style);
     let to = &mut bun_core::fmt::VecWriter(out);
@@ -280,7 +286,7 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     }
 }
 
-/// What is between the quotes of an attribute.
+/// An attribute value, without the quotes.
 fn attribute(text: &[u8]) -> BString {
     strings::replace_owned(
         &strings::replace_owned(text, b"&", b"&amp;"),
@@ -312,7 +318,8 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
     out.push(b'\n');
     if !d.source.is_empty() {
         out.extend_from_slice(b"<source>\n");
-        // Of an error that goes on and on, where it starts. Blank lines at either end show nothing.
+        // For an error that spans many lines, only its start. Leading and trailing blank lines
+        // carry no information.
         let at = (d.line - d.source_line) as usize;
         let blank = |lines: &mut dyn Iterator<Item = &Vec<u8>>| {
             lines
@@ -392,7 +399,7 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
             d.end_column
         );
     }
-    // (`bun_core::fmt::github_action` leaves `%` as it is.)
+    // (`bun_core::fmt::github_action` leaves `%` unchanged.)
     let text = strings::replace_owned(
         &strings::replace_owned(&d.text, b"%", b"%25"),
         b"\r",
@@ -402,7 +409,7 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
 }
 
-/// The errors, one after the other.
+/// Writes the diagnostics, in order.
 pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
     if should_group(report, style) {
         write_grouped(out, report, style);
@@ -486,18 +493,18 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 first.code,
                 width
             );
-            let said = summary_line(&first.text);
+            let reported = summary_line(&first.text);
             let place = alloc_print!("{}:{}", display_path(&first.path, style), first.line);
             // Truncate the message to the terminal width. Append the first location only if it fits.
             let room = match style.width {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
             };
-            let cut = fitting(said, room);
+            let cut = fitting(reported, room);
             out.extend_from_slice(cut);
-            if cut.len() < said.len() {
+            if cut.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");
-            } else if columns(said) + columns(&place) + 2 <= room {
+            } else if columns(reported) + columns(&place) + 2 <= room {
                 pretty!(out, style.color, "  <d>{}<r>", place);
             }
             out.push(b'\n');
@@ -533,7 +540,8 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
     );
 }
 
-/// How far it has got, in a line that takes the place of the one before it. `tick` counts how often it has been shown.
+/// The progress, as a line that overwrites the previous one. `tick`: the number of times it has
+/// been drawn.
 pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Style, tick: usize) {
     use std::sync::atomic::Ordering::Relaxed;
     const SPINNER: [char; 10] = [
@@ -557,7 +565,7 @@ pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Sty
         return;
     }
     out.extend_from_slice(b" Checking ");
-    // Only where there is room for it.
+    // Only if the terminal is wide enough.
     if style.width == 0 || style.width >= 72 {
         let bytes = progress.bytes_to_check.load(Relaxed).max(1);
         let filled = (progress.bytes_checked.load(Relaxed) * BAR / bytes).min(BAR);
@@ -589,7 +597,7 @@ pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Sty
     }
 }
 
-/// Back to the start of the line, with nothing on it.
+/// Moves the cursor to the start of the line and erases the line.
 pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
 /// Whether any diagnostic is about a global or module that `@types/bun` declares.

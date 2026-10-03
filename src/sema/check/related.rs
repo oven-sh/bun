@@ -1,4 +1,4 @@
-//! Related information: where the other things an error is about are. `'x' is declared here.`
+//! Related information: the spans of the other entities an error refers to. `'x' is declared here.`
 
 use super::Checker;
 use super::sink::Reported;
@@ -7,7 +7,7 @@ use crate::bind::Decl;
 use crate::program::{FileId, Sym};
 use crate::types::{Prop, PropSource};
 
-/// A file, and from where to where in it.
+/// A file and a span in it.
 pub(super) type Place = (FileId, u32, u32);
 
 impl Checker<'_> {
@@ -16,7 +16,7 @@ impl Checker<'_> {
         (file, start, self.end_of_token_at(file, start))
     }
 
-    /// `getErrorRangeForNode` of a declaration: its name, or where it starts if it has none.
+    /// `getErrorRangeForNode` of a declaration: its name, or its start if it has none.
     pub(super) fn place_of_declaration(&self, file: FileId, decl: Decl) -> Option<Place> {
         let start = self.declaration_name_start(file, decl)?;
         if let Decl::Member(_) | Decl::Property(_) = decl {
@@ -25,7 +25,7 @@ impl Checker<'_> {
         Some(self.place_of_token(file, start))
     }
 
-    /// `symbol.ValueDeclaration`, or else the first declaration there is.
+    /// `symbol.ValueDeclaration`, or else the first declaration.
     pub(super) fn place_of_symbol(&self, sym: Sym) -> Option<Place> {
         let files = self.files();
         let value_declaration = files.value_declaration(files.canonical(sym));
@@ -33,7 +33,7 @@ impl Checker<'_> {
         self.place_of_declaration(file, decl)
     }
 
-    /// `prop.ValueDeclaration`: the name where the property is declared. `None`: it is made up.
+    /// `prop.ValueDeclaration`: the name where the property is declared. `None`: it is synthesized.
     pub(super) fn place_of_prop(&self, prop: &Prop) -> Option<Place> {
         match Self::value_declaration(prop)? {
             &PropSource::Literal(file, prop) => {
@@ -53,7 +53,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `prop.Declarations[0]`, where `GetErrorRangeForNode` points at it. `None`: nothing declares it.
+    /// The `GetErrorRangeForNode` span of `prop.Declarations[0]`. `None`: it has no declaration.
     pub(super) fn place_of_first_prop_declaration(&mut self, prop: &Prop) -> Option<Place> {
         self.place_of_first_prop_declaration_within(prop, 0)
     }
@@ -75,13 +75,14 @@ impl Checker<'_> {
                 let (file, decl) = self.files().decls_of(sym).first().copied()?;
                 of_declaration(self, file, decl)
             }
-            // `createUnionOrIntersectionProperty`: the declarations of all of them, one after the other.
+            // `createUnionOrIntersectionProperty`: the declarations of all of them, concatenated.
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
             | PropSource::ReverseMapped(_, parts) => parts
                 .iter()
                 .find_map(|part| self.place_of_first_prop_declaration_within(part, depth + 1)),
-            // `resolveMappedTypeMembers`: those of the property the modifiers come from.
+            // `resolveMappedTypeMembers`: the declarations of the property that the modifiers come
+            // from.
             PropSource::Mapped(..) => prop
                 .declared_by_modifiers_property()
                 .iter()

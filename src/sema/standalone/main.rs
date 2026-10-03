@@ -2,7 +2,7 @@ use bun_sema::atom::Interner;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Every file under `dir` the front end reads, `node_modules` too.
+/// Every file under `dir` that the front end reads, including those in `node_modules`.
 fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -25,8 +25,8 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `--timing`: the ten tables whose published halves take the most memory. Without `--keep` the tasks of the last step, which has
-/// most of the files, publish no entries, so theirs are not counted.
+/// `--timing`: the ten tables whose shared parts use the most memory. Without `--keep` the tasks of
+/// the last step, which has most of the files, publish no entries, so theirs are not counted.
 fn list_largest_tables(program: &bun_sema::check::Program) {
     let mut tables = program.table_footprints();
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
@@ -40,7 +40,7 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
     }
 }
 
-/// `BUN_SEMA_LIST=<file>`: the paths of all that is loaded, a line each.
+/// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
         let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| &m.path[..]).collect();
@@ -57,7 +57,8 @@ fn main() {
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        // hir <files or directories> --print: what the front end makes of each file. For telling whether a change to the front end changes any tree.
+        // hir <files or directories> --print: the HIR the front end produces for each file. For
+        // detecting whether a change to the front end changes any HIR.
         Some("hir") => {
             let mut files = Vec::new();
             for arg in args[1..].iter().filter(|a| !a.starts_with("--")) {
@@ -75,7 +76,8 @@ fn main() {
             }
             files.sort();
             let atoms = Interner::new();
-            // --repeat=n [--threads=n]: everything is read first, then parsed and lowered n times: what a pass of that alone takes.
+            // --repeat=n [--threads=n]: all files are read first, then parsed and lowered n times,
+            // to measure parsing and lowering alone.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
                 let threads = flag("--threads=").and_then(|n| n.parse().ok());
                 let read = |file: &PathBuf| std::fs::read(file).unwrap_or_default();
@@ -102,12 +104,12 @@ fn main() {
                 };
                 let file =
                     bun_sema_standalone::parse(&files[i].to_string_lossy(), &text, &atoms, false);
-                // Only parsed and lowered: what that costs is read off `/usr/bin/time -l`.
+                // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
                     return;
                 }
                 if args.iter().any(|a| a == "--nodes") {
-                    // As the checker has it: some kinds are told by how a name is written.
+                    // As the checker sees it: some kinds are determined by the spelling of a name.
                     let mut file = file;
                     file.text = text.into();
                     let nodes = bun_sema_standalone::hir_dump::nodes(&file);
@@ -117,7 +119,7 @@ fn main() {
                 let (dump, orphans) =
                     bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
                 let line = if args.iter().any(|a| a == "--orphans") {
-                    // The nodes nothing leads to.
+                    // The unreachable nodes.
                     if orphans.is_empty() {
                         return;
                     }
@@ -138,7 +140,8 @@ fn main() {
             }
         }
         Some("cli") => {
-            // cli [paths..] [-p <project>] [--threads=n] [--plain] [--no-color] [--github]: what `bun check` does.
+            // cli [paths..] [-p <project>] [--threads=n] [--plain] [--no-color] [--github]: behaves
+            // like `bun check`.
             use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
             let mut paths = Vec::new();
             let mut project = None;
@@ -156,15 +159,16 @@ fn main() {
                 .to_string_lossy()
                 .into_owned();
             let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
-            // `--progress`: as `bun check` shows it at a terminal.
+            // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
             let progress = (shows_progress || is_timed)
                 .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
-            // `--timing`: the instructions of loading, so that those of checking can be told apart. Loading opens every file, and what the
-            // system does for that differs from run to run.
+            // `--timing`: the instruction count of loading, so that checking can be measured
+            // separately. Loading opens every file, and the operating system's work for that varies
+            // between runs.
             let instructions_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            // The trees of all files are alive then.
+            // The HIRs of all files are live at that point.
             let peak_memory_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             if let (true, Some(progress)) = (is_timed, progress.clone()) {
                 let noted = instructions_of_loading.clone();
@@ -220,7 +224,8 @@ fn main() {
             type AfterFile<'a> =
                 &'a (dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync);
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
-            // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each under its absolute path in there.
+            // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
+            // its absolute path inside that directory.
             let declarations_out =
                 (args.iter()).find_map(|a| a.strip_prefix("--declarations-out="));
             let write_declaration_file = |path: &[u8], text: &[u8]| {
@@ -234,10 +239,11 @@ fn main() {
                 }
                 let _ = std::fs::write(path, text);
             };
-            // For choosing the constants of the plan without a build. They go when the constants are chosen.
+            // For tuning the constants of the plan without rebuilding. To be removed once the
+            // constants are chosen.
             let number = |name: &str, default: usize| {
-                let given = args.iter().find_map(|a| a.strip_prefix(name));
-                given.map_or(default, |n| n.parse().expect(name))
+                let actual = args.iter().find_map(|a| a.strip_prefix(name));
+                actual.map_or(default, |n| n.parse().expect(name))
             };
             let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
@@ -306,7 +312,8 @@ fn main() {
                 );
             }
             if number("--repeat=", 0) > 0 {
-                // What the allocator keeps for the next allocation is not what the checks left behind.
+                // Memory that the allocator caches for future allocations is not memory retained by
+                // the checks.
                 bun_alloc::mimalloc::mi_collect(true);
                 eprintln!(
                     "after the allocator gave back what is free: {} MB held",
@@ -392,7 +399,8 @@ fn main() {
                     let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
                         report.steps.iter().map(of).sum::<u64>()
                     };
-                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between runs: they are functions of the program.
+                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between
+                    // runs: they are deterministic for a given program.
                     eprintln!(
                         "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
                         plan_options.step_growth,
@@ -464,7 +472,7 @@ fn main() {
                     let by_step = report.steps.iter().map(|step| step.entries.published);
                     let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
                     eprintln!("entries published by step: {}", by_step.join(" "));
-                    // The ten tables in which the most work was done more than once.
+                    // The ten tables with the most duplicated work.
                     let names = bun_sema::check::task::table_names();
                     let mut by_table = vec![(0u64, 0u64); names.len()];
                     for step in &report.steps {

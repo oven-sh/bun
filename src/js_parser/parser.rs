@@ -869,7 +869,7 @@ impl<'a> JSXTag<'a> {
         let (first, mut tag_range) = Self::parse_identifier_name(p, b"")?;
         let mut name = Self::parse_namespaced_name(p, first, &mut tag_range)?;
 
-        // `isJsxIntrinsicTagName`. A namespaced name takes no member access.
+        // `isJsxIntrinsicTagName`. A namespaced name cannot be followed by a member access.
         if name.contains(&b':')
             || (p.lexer().token != T::TDot
                 && (name.contains(&b'-') || name.first().is_some_and(u8::is_ascii_lowercase)))
@@ -958,8 +958,9 @@ impl<'a> JSXTag<'a> {
         Ok((name, range))
     }
 
-    /// `parseJsxTagName`, `parseJsxAttributeName`, tolerant mode only. The ":" and the name after it are tokens of their own,
-    /// so whitespace and comments may surround the colon. `first` was just consumed and is at `range`.
+    /// `parseJsxTagName`, `parseJsxAttributeName`, tolerant mode only. The ":" and the name after
+    /// it are separate tokens, so whitespace and comments may surround the colon. `first` was just
+    /// consumed and is at `range`.
     /// Returns "first:second", or `first` if no colon follows.
     #[cold]
     #[inline(never)]
@@ -973,7 +974,7 @@ impl<'a> JSXTag<'a> {
     {
         let lexer = p.lexer();
         let namespace = if let Some(namespace) = first.strip_suffix(b":") {
-            // The lexer took the colon together with the name.
+            // The lexer scanned the colon as part of the name.
             namespace
         } else if !first.contains(&b':')
             && (lexer.token == T::TColon || (lexer.token == T::TSyntaxError && lexer.raw() == b":"))
@@ -995,7 +996,7 @@ impl<'a> JSXTag<'a> {
     {
         let lexer = p.lexer();
         if lexer.token == T::TSyntaxError && lexer.raw() == b"#" {
-            // Scan it again as an ordinary token.
+            // Rescan it as an ordinary token.
             lexer.current = lexer.start;
             lexer.step();
             lexer.next()?;
@@ -1004,7 +1005,7 @@ impl<'a> JSXTag<'a> {
             if lexer.is_log_disabled {
                 return Err(crate::Error::Backtrack);
             }
-            // The private name is consumed, and the name is missing where it ends.
+            // The private name is consumed, and the missing name is at its end.
             let missing = bun_ast::Range {
                 loc: lexer.range().end(),
                 len: 0,
@@ -1405,9 +1406,9 @@ pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
-    /// Where the "(" is, if it is not at the `loc` that is given: type parameters come first.
+    /// Position of the "(", if it is not at the given `loc` because type parameters come first.
     pub(crate) open_paren: bun_ast::Loc,
-    /// `TokenFullStart` of the token at the `loc` that is given.
+    /// `TokenFullStart` of the token at the given `loc`.
     pub(crate) full_start: bun_ast::Loc,
 }
 
@@ -2186,7 +2187,8 @@ pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub(crate) is_using_statement: bool,
-    /// `privateIdentifierDiagnosticMessage` of `parseIdentifierOrPatternWithDiagnostic`: TypeScript's code for a private
-    /// name found in this place; 0 stands for 18016. Only read where an error is about to be logged, in tolerant mode.
+    /// `privateIdentifierDiagnosticMessage` of `parseIdentifierOrPatternWithDiagnostic`:
+    /// TypeScript's error code for a private name at this position; 0 means 18016. Only read where
+    /// an error is about to be logged, in tolerant mode.
     pub(crate) private_name_code: u16,
 }

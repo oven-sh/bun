@@ -1,18 +1,20 @@
-//! What the parser says of a node that `bun_ast` has no place for.
+//! Side table for information the parser records about a node that `bun_ast` has no field for.
 //!
-//! A [`Loc`] in the tree is where the node is. When the parser runs for the type checker and has something to say of a node, it makes
-//! an entry for the node in [`Notes::nodes`] and puts the index of the entry where the location was, with bit 30 set
-//! ([`Loc::is_index`]). The entry has the location. So what is said of a node is found from the node, by one index, and nothing is
-//! looked up by where something is written.
+//! A [`Loc`] in the AST is the position of the node. When the parser runs for the type checker and
+//! has information to record about a node, it creates an entry for the node in [`Notes::nodes`] and
+//! replaces the location with the index of the entry, with bit 30 set ([`Loc::is_index`]). The
+//! entry stores the location. So the notes of a node are reached from the node by one index, and
+//! nothing is looked up by source position.
 //!
-//! - A note is made on the `Loc` that ends up in the tree: a field of a node that exists, or a local that is stored in one as it is.
-//! - A new node is born without an entry: `P::new_expr`, `P::s` and `P::b` are often given the location of another node, and take
-//!   where that is ([`P::real_loc`]).
+//! - A note is attached to the `Loc` that ends up in the AST: a field of an existing node, or a
+//!   local that is stored in one unchanged.
+//! - A new node starts without an entry: `P::new_expr`, `P::s` and `P::b` are often passed the
+//!   location of another node, and take its position ([`P::real_loc`]).
 //! - The parser reads the location of a node through [`P::real_loc`].
-//! - What an attempt at parsing noted is taken back with the attempt ([`P::rewind_type_syntax`]). So an attempt makes no first note
-//!   on a `Loc` that outlives it.
+//! - Notes recorded during a speculative parse are rolled back with it ([`P::rewind_type_syntax`]).
+//!   So a speculative parse never attaches the first note to a `Loc` that outlives it.
 //!
-//! An ordinary build makes no entry and never sees such a `Loc`.
+//! An ordinary build creates no entry and never sees such a `Loc`.
 
 use super::{Mark, TypeSyntax};
 use crate::p::P;
@@ -22,31 +24,31 @@ use bun_ast::{Expr, Loc};
 
 const NO_NOTE: u32 = u32::MAX;
 
-/// A node that something is said of.
+/// The entry of a node the parser recorded something about.
 #[derive(Copy, Clone)]
 pub(crate) struct NodeSyntax {
-    /// Where the node is.
+    /// Position of the node.
     pub(crate) loc: Loc,
-    /// `node.Pos()`. `EMPTY` if it is not said.
+    /// `node.Pos()`. `EMPTY` if it is not recorded.
     pub(crate) full_start: Loc,
-    /// `node.End()`. `EMPTY` if it is not said.
+    /// `node.End()`. `EMPTY` if it is not recorded.
     pub(crate) end: Loc,
-    /// The last note that was made of it.
+    /// Its most recent note.
     last_note: u32,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct Note {
     pub(crate) what: Mark,
-    /// A position, or the index of what was kept: see [`Mark`].
+    /// A position, or the index of the saved syntax: see [`Mark`].
     pub(crate) payload: u32,
-    /// The entry it is a note of.
+    /// The entry it belongs to.
     owner: u32,
-    /// The note that was made of that entry before this one.
+    /// The previous note of that entry.
     previous: u32,
 }
 
-/// How much had been noted when a speculative parse began.
+/// Checkpoint: how much had been recorded when a speculative parse began.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Checkpoint {
     nodes: u32,
@@ -62,7 +64,8 @@ pub(crate) struct Checkpoint {
 
 macro_rules! rows {
     ($($list:ident),*) => {
-        /// How many rows of the tree there were, of the kinds the parser makes, and what else it leaves in the tree.
+        /// Counts of the HIR nodes of the kinds the parser builds, and of whatever else it adds to
+        /// the HIR.
         #[derive(Copy, Clone, Default)]
         pub(crate) struct Rows {
             $(pub(crate) $list: u32,)*
@@ -72,8 +75,9 @@ macro_rules! rows {
         }
 
         impl Rows {
-            /// Appends to `to` the rows `from` has from these on up to `end`. Returns by how much those of each vector have moved, and
-            /// how many syntax errors are among them.
+            /// Appends to `to` the nodes of `from` between these counts and `end`. Returns the
+            /// offset applied to the ids of each vector, and the number of syntax errors among the
+            /// nodes.
             pub(crate) fn copy(
                 &self,
                 end: &Rows,
@@ -107,7 +111,7 @@ macro_rules! rows {
                 }
             }
 
-            /// Takes back the rows that were made since.
+            /// Rolls back the nodes built since `to` was taken.
             pub(crate) fn rewind_rows(&mut self, to: Rows) {
                 let file = &mut self.b.file;
                 $(if file.$list.len() > to.$list as usize {
@@ -145,27 +149,27 @@ rows!(
 pub(crate) struct Notes {
     pub(crate) nodes: Vec<NodeSyntax>,
     pub(crate) notes: Vec<Note>,
-    /// `Span`s and `IdList`s that are the payload of a note: where they start, and how long they are.
+    /// `Span`s and `IdList`s that are note payloads: start and length.
     pub(crate) ranges: Vec<[u32; 2]>,
 }
 
 thread_local! {
-    /// The notes of the last file, empty: they have about the room the next needs.
+    /// The emptied notes of the previous file, reused for their capacity.
     static RECYCLED: core::cell::Cell<Notes> = Default::default();
 }
 
-/// Replaces the room the last file of this thread left.
+/// Swaps this thread's recycled buffers.
 pub(crate) fn replace_recycled(room: Notes) -> Notes {
     RECYCLED.replace(room)
 }
 
 impl Notes {
-    /// None, with the room the last file of this thread left.
+    /// Empty notes with the capacity recycled from this thread's previous file.
     pub(crate) fn take_recycled() -> Notes {
         RECYCLED.take()
     }
 
-    /// They have served.
+    /// Called when the notes are no longer needed.
     pub(crate) fn recycle(mut self) {
         self.nodes.clear();
         self.notes.clear();
@@ -173,7 +177,7 @@ impl Notes {
         RECYCLED.set(self);
     }
 
-    /// Where the node whose `loc` is `loc` is.
+    /// Position of the node whose `loc` is `loc`.
     #[inline]
     pub(crate) fn real_loc(&self, loc: Loc) -> Loc {
         if loc.is_index() {
@@ -193,13 +197,13 @@ impl Notes {
         }
     }
 
-    /// Whether anything but its range is noted of the node whose `loc` is `loc`.
+    /// Whether the node whose `loc` is `loc` has any note besides its range.
     #[inline]
     pub(crate) fn has_notes(&self, loc: Loc) -> bool {
         self.node(loc).is_some_and(|node| node.last_note != NO_NOTE)
     }
 
-    /// The notes of the node whose `loc` is `loc`, the last one first.
+    /// The notes of the node whose `loc` is `loc`, most recent first.
     #[inline]
     pub(crate) fn of(&self, loc: Loc) -> NotesOf<'_> {
         NotesOf {
@@ -208,7 +212,7 @@ impl Notes {
         }
     }
 
-    /// What is noted as `what` of the node whose `loc` is `loc`.
+    /// The note of kind `what` on the node whose `loc` is `loc`.
     #[inline]
     pub(crate) fn get(&self, loc: Loc, what: Mark) -> Option<u32> {
         self.of(loc)
@@ -221,7 +225,8 @@ impl Notes {
         self.ranges[payload as usize]
     }
 
-    /// The entry of the node whose `loc` is `at`. Makes it, and puts its index in `at`, if there is none.
+    /// The entry of the node whose `loc` is `at`. Creates it and stores its index in `at` if it
+    /// does not exist.
     fn entry(&mut self, at: &mut Loc) -> usize {
         if !at.is_index() {
             self.nodes.push(NodeSyntax {
@@ -235,7 +240,7 @@ impl Notes {
         at.index()
     }
 
-    /// Takes back the note that was made last, if it says `what`.
+    /// Removes the most recent note if its kind is `what`.
     fn take_back(&mut self, what: Mark) -> bool {
         match self.notes.last() {
             Some(&note) if note.what == what => {
@@ -277,7 +282,7 @@ impl Iterator for NotesOf<'_> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Where the node whose `loc` is `loc` is.
+    /// Position of the node whose `loc` is `loc`.
     #[inline]
     pub(crate) fn real_loc(&self, loc: Loc) -> Loc {
         if TYPESCRIPT && loc.is_index() {
@@ -296,7 +301,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Says `what` of the node whose `loc` is `at`.
+    /// Adds a note of kind `what` to the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note(&mut self, at: &mut Loc, what: Mark, payload: u32) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -304,20 +309,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A note that says all there is to say by being there.
+    /// A note without a payload: its presence is the information.
     #[inline]
     pub(crate) fn note_flag(&mut self, at: &mut Loc, what: Mark) {
         self.note(at, what, 0);
     }
 
-    /// A note of a place in the source.
+    /// A note whose payload is a source position.
     #[inline]
     pub(crate) fn note_loc(&mut self, at: &mut Loc, what: Mark, place: Loc) {
         debug_assert!(!place.is_index());
         self.note(at, what, place.start.max(0) as u32);
     }
 
-    /// A note of the type that `parse_and_keep_type` parsed last.
+    /// A note whose payload is the type that `parse_and_keep_type` parsed last.
     #[inline]
     pub(crate) fn note_type(&mut self, at: &mut Loc, what: Mark) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -344,7 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A note of a type that was parsed before the node was.
+    /// A note whose payload is a type that was parsed before the node.
     #[inline]
     pub(crate) fn note_saved_type(&mut self, at: &mut Loc, what: Mark, ty: ts::TypeId) {
         self.note(at, what, ty.0);
@@ -372,7 +377,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `async<T>(..)` was read as the head of an arrow function and turned out to be a call, whose `)` is at `close_paren`.
+    /// `async<T>(..)` was parsed as the head of an arrow function and turned out to be a call,
+    /// whose `)` is at `close_paren`.
     #[cold]
     pub(crate) fn note_type_arguments_read_as_parameters(
         &mut self,
@@ -390,7 +396,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A note of the type arguments that were parsed last. None if they are unusable.
+    /// A note whose payload is the type arguments that were parsed last. No note if they are
+    /// unusable.
     #[inline]
     pub(crate) fn note_type_arguments_of(&mut self, at: &mut Loc, what: Mark) {
         if let Some(arguments) = self.saved_type_arguments() {
@@ -415,7 +422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseTypeParameters`, of a declaration that `bun_ast` has a node for.
+    /// `parseTypeParameters` for a declaration that `bun_ast` has a node for.
     #[inline]
     pub(crate) fn parse_type_parameters(
         &mut self,
@@ -425,7 +432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.saved_type_parameters(skipped))
     }
 
-    /// A note of `parameters`, which are those of the node.
+    /// A note whose payload is `parameters`, the type parameters of the node.
     #[inline]
     pub(crate) fn note_type_parameters(
         &mut self,
@@ -442,7 +449,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `<T>(operand)` was read as the type parameters of an arrow function and turned out to be a cast. `less_than` is where the `<` is.
+    /// `<T>(operand)` was parsed as the type parameters of an arrow function and turned out to be a
+    /// cast. `less_than` is the position of the `<`.
     #[cold]
     pub(crate) fn note_cast_to_type_parameter(
         &mut self,
@@ -462,7 +470,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A note of `modifiers`, which are those of the node. None if there are none.
+    /// A note whose payload is `modifiers`, the modifiers of the node. No note if the list is
+    /// empty.
     pub(crate) fn note_modifiers(&mut self, at: &mut Loc, modifiers: ts::Span<ts::Modifier>) {
         if TYPESCRIPT
             && let Some(syntax) = &mut self.type_syntax
@@ -474,7 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A note of an expression that `bun_ast` has no place for.
+    /// A note whose payload is an expression that `bun_ast` has no field for.
     #[inline]
     pub(crate) fn note_expr(&mut self, at: &mut Loc, what: Mark, expression: Expr) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -483,7 +492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `finishNode`: a note of where the token before the current one ends.
+    /// `finishNode`: a note whose payload is the end of the previous token.
     #[inline]
     pub(crate) fn note_token_full_start(&mut self, at: &mut Loc, what: Mark) {
         if self.preserves_type_syntax() {
@@ -492,8 +501,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `operand<T>` was parsed, whose `<` is at `less_than`, and the lexer is at what follows. An instantiation expression, unless the
-    /// type arguments are taken. Type arguments that are unusable are as good as none.
+    /// `operand<T>` was parsed, whose `<` is at `less_than`, and the lexer is at the next token. It
+    /// is an instantiation expression unless the type arguments are consumed. Unusable type
+    /// arguments are treated as absent.
     #[inline]
     pub(crate) fn note_type_arguments(&mut self, operand: &mut Expr, less_than: Loc) {
         let (next, end) = (self.lexer.loc(), self.lexer.full_start());
@@ -517,8 +527,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The type arguments that end right before the current token, for the call, `new` or tagged template that has them: the payload
-    /// of its note.
+    /// The type arguments that end directly before the current token, for the call, `new` or tagged
+    /// template that owns them: the payload of its note.
     #[inline]
     pub(crate) fn take_type_arguments(&mut self) -> Option<u32> {
         let here = self.lexer.loc();
@@ -528,7 +538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && next == here
         {
             syntax.pending_type_arguments = None;
-            // Nothing was parsed since they were noted.
+            // Nothing was parsed since they were recorded.
             if syntax.notes.take_back(Mark::Instantiation) {
                 syntax.notes.take_back(Mark::InstantiationStart);
                 syntax.notes.take_back(Mark::End);
@@ -538,8 +548,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    /// Of the tagged template `template`: where its `` ` `` is, the type arguments of its tag (`take_type_arguments`), and whether its
-    /// last piece of text is missing or unterminated.
+    /// Records for the tagged template `template`: the position of its `` ` ``, the type arguments
+    /// of its tag (`take_type_arguments`), and whether its last piece of text is missing or
+    /// unterminated.
     #[inline]
     pub(crate) fn note_tagged_template(
         &mut self,
@@ -560,7 +571,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// What was made last of `expr`, which is only `expr` in the tree: `(x)`, `x as T`, `x!`, `x<T>`.
+    /// The kind of the outermost cast of `expr`. A cast is syntax that the AST represents as `expr`
+    /// alone: `(x)`, `x as T`, `x!`, `x<T>`.
     #[cold]
     pub(crate) fn last_cast(&self, expr: &Expr) -> Option<Mark> {
         let notes = &self.type_syntax.as_ref()?.notes;
@@ -570,7 +582,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .find(|what| what.is_cast())
     }
 
-    /// `(inside)`, whose `(` is at `open` and whose `)` has been taken. `full_start`: `TokenFullStart` of the `(`, or nothing.
+    /// `(inside)`, whose `(` is at `open` and whose `)` has been consumed. `full_start`:
+    /// `TokenFullStart` of the `(`, or none.
     #[inline]
     pub(crate) fn mark_paren(&mut self, inside: &mut Expr, open: Loc, full_start: Loc) {
         if self.has_comments_before(open, full_start) {
@@ -580,8 +593,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.note_loc(&mut inside.loc, Mark::Paren, open);
     }
 
-    /// `withJSDoc`, of a node of which `node.Pos()` is asked for nothing else: it is only said if comments stand before `token`, its
-    /// first token, which fully starts at `full_start`.
+    /// `withJSDoc` for a node whose `node.Pos()` has no other use: it is only recorded if comments
+    /// precede `token`, its first token, whose full start is `full_start`.
     #[inline]
     pub(crate) fn mark_comments_before(&mut self, at: &mut Loc, token: Loc, full_start: Loc) {
         if self.has_comments_before(token, full_start) {
@@ -589,7 +602,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `decorator` decorates nothing (`note_stray_decorators`). `end`: where what comes after the decorators starts.
+    /// `decorator` decorates nothing (`note_stray_decorators`). `end`: the start of the syntax
+    /// after the decorators.
     #[cold]
     pub(crate) fn note_stray_decorator(&mut self, decorator: &Expr, end: Loc) {
         let at = self.real_loc(decorator.loc);
@@ -598,7 +612,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `Expr::join_with_comma`. A new node is born without an entry.
+    /// `Expr::join_with_comma`. A new node starts without an entry.
     pub(crate) fn join_with_comma(&self, a: Expr, b: Expr) -> Expr {
         let is_new = !a.is_missing() && !b.is_missing();
         let mut joined = a.join_with_comma(b);
@@ -608,7 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         joined
     }
 
-    /// `Expr::assign`. A new node is born without an entry.
+    /// `Expr::assign`. A new node starts without an entry.
     #[inline]
     pub(crate) fn assign(&self, a: Expr, b: Expr) -> Expr {
         let mut assignment = Expr::assign(a, b);
@@ -616,16 +630,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         assignment
     }
 
-    /// `P::finish_expr`. Inlined into `new_expr`, which knows the kind: one arm is left of the `match`.
+    /// `P::finish_expr`. Inlined into `new_expr`, which knows the kind, so a single arm of the
+    /// `match` remains.
     #[inline(always)]
     pub(crate) fn note_expr_end(&mut self, expr: &mut Expr, end: Loc) {
         use bun_ast::ExprData as E;
-        // Most expressions end with their last part, with a word of a known length or with a token whose place the tree has. The
-        // lowering works that out (`Lower::expr_without_casts`), and they need no entry.
+        // Most expressions end with their last child, with a word of known length or with a token
+        // whose position is in the AST. The lowering pass computes that end
+        // (`Lower::expr_without_casts`), so they need no entry.
         let follows = match expr.data {
             E::EBinary(_) | E::EIf(_) | E::ESpread(_) | E::EAwait(_) => true,
             E::ESuper(_) | E::ENull(_) | E::EBoolean(_) => true,
-            // Tokens may have been skipped where the operand is missed.
+            // Tokens may have been skipped where the operand is missing.
             E::EUnary(unary) => {
                 !matches!(
                     unary.op,
@@ -636,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::ECall(call) => self.real_loc(call.close_paren_loc).start + 1 == end.start,
             E::EArray(array) => self.real_loc(array.close_bracket_loc).start + 1 == end.start,
             E::EObject(object) => self.real_loc(object.close_brace_loc).start + 1 == end.start,
-            // It is made before its token is taken.
+            // It is created before its token is consumed.
             E::EString(string) => {
                 end_of_quoted(self.source.contents(), string.data.slice()) == Some(self.lexer.end)
                     && self.lexer.start as i32 == expr.loc.start
@@ -644,21 +660,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => false,
         };
         if !follows {
-            self.note_expr_end_as_given(expr, end);
+            self.note_expr_end_as_passed(expr, end);
         }
     }
 
     #[inline(never)]
-    fn note_expr_end_as_given(&mut self, expr: &mut Expr, end: Loc) {
+    fn note_expr_end_as_passed(&mut self, expr: &mut Expr, end: Loc) {
         let start = self.real_loc(expr.loc).start;
         match expr.data {
-            // `createMissingNode`: it takes no room, where the token before it ends. One that is made late does not know where.
+            // `createMissingNode`: zero-width, at the end of the previous token. A node created
+            // late does not have that position.
             bun_ast::ExprData::EMissing(_) if end.start > start => {}
-            // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
+            // `parse_jsx_element` returns before the last ">" is consumed, and text is not trivia:
+            // `hir::Jsx::end`.
             bun_ast::ExprData::EJsxElement(_) => {}
             bun_ast::ExprData::EMissing(_) => self.note_end(&mut expr.loc, end),
             _ if end.start > start => self.note_end(&mut expr.loc, end),
-            // A literal is made before its token is taken.
+            // A literal is created before its token is consumed.
             _ if self.lexer.start as i32 == start => {
                 let end = bun_ast::usize2loc(self.lexer.end);
                 self.note_end(&mut expr.loc, end)
@@ -667,7 +685,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `node.End()` of the array or object literal `literal`, which may not have been noted (`note_expr_end`).
+    /// `node.End()` of the array or object literal `literal`, which may not have been recorded
+    /// (`note_expr_end`).
     pub(crate) fn end_of_literal(&self, literal: &Expr) -> Option<Loc> {
         let close = match literal.data {
             bun_ast::ExprData::EArray(array) => array.close_bracket_loc,
@@ -680,7 +699,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(self.noted_end(literal.loc).unwrap_or(after))
     }
 
-    /// `new_expr`, of an expression that is put together when tokens after it have been taken. It ends at `end`.
+    /// `new_expr` for an expression that is created after tokens that follow it have been consumed.
+    /// It ends at `end`.
     #[cold]
     #[inline(never)]
     pub(crate) fn new_expr_ending_at<T>(&mut self, t: T, loc: Loc, end: Loc) -> Expr
@@ -692,20 +712,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr
     }
 
-    /// What was noted as `what` of the node whose `loc` is `at`.
+    /// The note of kind `what` on the node whose `loc` is `at`.
     #[cold]
     pub(crate) fn noted(&self, at: Loc, what: Mark) -> Option<u32> {
         self.type_syntax.as_ref()?.notes.get(at, what)
     }
 
-    /// `node.End()` of the node whose `loc` is `at`, if it was noted.
+    /// `node.End()` of the node whose `loc` is `at`, if it was recorded.
     #[inline]
     pub(crate) fn noted_end(&self, at: Loc) -> Option<Loc> {
         let end = self.type_syntax.as_ref()?.notes.node(at)?.end;
         (!end.is_empty()).then_some(end)
     }
 
-    /// `node.Pos()` of the node whose `loc` is `at`.
+    /// Records `node.Pos()` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_full_start(&mut self, at: &mut Loc, full_start: Loc) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -714,7 +734,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `node.Loc` of the node whose `loc` is `at`.
+    /// Records `node.Loc` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_range(&mut self, at: &mut Loc, full_start: Loc, end: Loc) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -724,7 +744,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `node.End()` of the node whose `loc` is `at`.
+    /// Records `node.End()` of the node whose `loc` is `at`.
     #[inline]
     pub(crate) fn note_end(&mut self, at: &mut Loc, end: Loc) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -733,8 +753,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `finishNode(node, pos)`: the node whose `loc` is `at` fully starts at `full_start`, and ends where the token before the current
-    /// one does.
+    /// `finishNode(node, pos)`: the node whose `loc` is `at` has the full start `full_start` and
+    /// ends at the end of the previous token.
     #[inline]
     pub(crate) fn finish_node(&mut self, at: &mut Loc, full_start: Loc) {
         let end = self.lexer.full_start();
@@ -745,15 +765,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The same of the member of a class or of an object literal that is named at `named_at`. The name is an expression, which has an
-    /// end of its own.
+    /// The same for the class or object literal member whose name is at `named_at`. The name is an
+    /// expression, which has its own end.
     #[inline]
     pub(crate) fn finish_member(&mut self, named_at: &mut Loc, full_start: Loc) {
         self.note_loc(named_at, Mark::MemberFullStart, full_start);
         self.note_token_full_start(named_at, Mark::MemberEnd);
     }
 
-    /// `mark`: pass the result to `rewind_type_syntax` if what is parsed from here on is abandoned.
+    /// `mark`: pass the result to `rewind_type_syntax` if the parse from this point on is
+    /// abandoned.
     #[inline]
     pub(crate) fn type_syntax_checkpoint(&self) -> Checkpoint {
         match &self.type_syntax {
@@ -772,7 +793,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `rewind`: an attempt that is abandoned leaves nothing behind, also of nodes that were there before it.
+    /// `rewind`: an abandoned speculative parse leaves nothing behind, including on nodes that
+    /// existed before it.
     #[inline]
     pub(crate) fn rewind_type_syntax(&mut self, to: &Checkpoint) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
@@ -782,7 +804,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl TypeSyntax<'_> {
-    /// The type that `parse_and_keep_type` parsed last. If it is unusable, an error type where it starts.
+    /// The type that `parse_and_keep_type` parsed last. If it is unusable, an error type at its
+    /// start.
     pub(super) fn last_type_or_error(&mut self) -> ts::TypeId {
         if self.last_type.is_none() {
             self.last_type = self.b.error_type(self.last_type_start.max(0) as u32);
@@ -813,7 +836,8 @@ impl TypeSyntax<'_> {
         self.type_stack.truncate(snapshot.type_stack as usize);
         self.name_stack.truncate(snapshot.name_stack as usize);
         self.rewind_rows(snapshot.rows);
-        // What was read last in the attempt is gone with its rows. What was read before it is still what was read last.
+        // A result parsed last during the speculative parse is gone with its nodes. A result parsed
+        // before it remains the last parsed one.
         let file = &self.b.file;
         if self.last_type.is_some() && self.last_type.idx() >= file.types.len() {
             self.last_type = ts::TypeId::NONE;
@@ -821,7 +845,7 @@ impl TypeSyntax<'_> {
         if self.last_binding.is_some() && self.last_binding.idx() >= file.pats.len() {
             self.last_binding = ts::PatternId::NONE;
         }
-        // A list of nothing is where it was made all the same.
+        // An empty list still has the start index at which it was created.
         macro_rules! remaining {
             ($list:expr, $rows:expr) => {
                 match $list {
@@ -852,7 +876,8 @@ impl TypeSyntax<'_> {
     }
 }
 
-/// Where the string literal ends whose characters are `inside`, if they are a piece of `source`: after the quote that follows them.
+/// End of the string literal whose contents are `inside`, if they are a slice of `source`: after
+/// the quote that follows them.
 #[inline]
 pub(crate) fn end_of_quoted(source: &[u8], inside: &[u8]) -> Option<usize> {
     let offset = (inside.as_ptr() as usize).checked_sub(source.as_ptr() as usize)?;

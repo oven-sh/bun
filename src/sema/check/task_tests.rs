@@ -1,4 +1,5 @@
-//! Tests for the buffer, `Task::finish`, `publish`, the link and `follow` of ids and handles, and the containers under them.
+//! Tests for the buffer, `Task::finish`, `publish`, the merge and `follow` of ids and handles, and
+//! the underlying containers.
 
 use super::*;
 use crate::atom::{Atom, Atoms};
@@ -29,7 +30,7 @@ impl Holder {
     }
 }
 
-/// One table of each shape, and the store of types that their ids belong to.
+/// One table of each kind, and the type store that their ids belong to.
 struct Tables {
     atoms: Interner,
     types: TypeStore,
@@ -84,12 +85,12 @@ impl Tables {
         ]
     }
 
-    /// `keyof of`, which no store has from the start.
+    /// `keyof of`, which no store contains initially.
     fn keyof(&self, task: &Task, of: TypeId) -> TypeId {
         Types::new(&self.types, &task.own).intern(TypeData::Keyof(of))
     }
 
-    /// The `this` type of a class of `file`: a type that mentions `file`.
+    /// The `this` type of a class of `file`: a type that references `file`.
     fn this_of(&self, task: &Task, file: FileId) -> TypeId {
         let class = Sym {
             file,
@@ -110,7 +111,7 @@ impl Tables {
         }
     }
 
-    /// Link, then publish.
+    /// Merge, then publish.
     fn barrier(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> Published {
         self.link(finished, in_parallel);
         publish_tables(&self.all(), finished, in_parallel, Some(&self.atoms))
@@ -182,7 +183,8 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
     let (mut first, second) = (begin_in(0, A), begin_in(1, B));
     let own = tables.keyof(&first, TypeId::STRING);
     assert!(own.is_local());
-    // A node of the task's file, a node of another file, a published id, an id of the task's own, a key of several ids.
+    // A node of the task's file, a node of another file, a published id, a task-local id, a key of
+    // several ids.
     tables.by_node.insert(&first, (A, 1), own, stored());
     tables
         .by_node
@@ -202,12 +204,13 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
         tables.by_key.get(&first, &(TypeId::ANY, TypeId::ANY)),
         Some(own)
     );
-    // The neighbours have nothing.
+    // The neighbouring keys have no entry.
     assert_eq!(tables.by_node.get(&first, &(A, 2)), None);
     assert_eq!(tables.by_node.get(&first, &(C, 1)), None);
     assert_eq!(tables.by_id.get(&first, &TypeId::NUMBER), None);
 
-    // DURING THE STEP NO OTHER TASK SEES ANY OF IT. The id `own` of the other task is another type, or none.
+    // During the step no other task sees any of it. In the other task the id `own` is a different
+    // type, or none.
     assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
     assert_eq!(tables.by_node.get(&second, &(C, 2)), None);
     assert_eq!(tables.by_id.get(&second, &TypeId::STRING), None);
@@ -220,7 +223,7 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
     assert_eq!(tables.by_id.footprint().entries, 0);
     assert_eq!(tables.by_key.footprint().entries, 0);
 
-    // AFTER THE BARRIER EVERY TASK SEES ALL OF IT, under published ids.
+    // After the barrier every task sees all of it, under published ids.
     let published = tables.barrier(&mut [tables.finish(&mut first)], &forwards);
     assert_eq!(counts(published), (6, 6, 0));
     let reader = Task::new();
@@ -282,7 +285,7 @@ fn a_published_entry_stays_what_it_is() {
     (tables.by_key).insert(&first, (TypeId::ANY, TypeId::ANY), TypeId::STRING, stored());
     tables.barrier(&mut [tables.finish(&mut first)], &forwards);
 
-    // `insert` returns what `get` returns from now on, and buffers nothing.
+    // `insert` returns the value that `get` returns from then on, and buffers nothing.
     let mut later = Task::new();
     later.begin(1, 0, true);
     let kept = tables
@@ -295,7 +298,7 @@ fn a_published_entry_stays_what_it_is() {
     assert_eq!(kept, TypeId::STRING);
     let kept = (tables.by_key).insert(&later, (TypeId::ANY, TypeId::ANY), TypeId::NUMBER, stored());
     assert_eq!(kept, TypeId::STRING);
-    // What `rewrite` stores is hidden by the published entry, and loses at the barrier.
+    // The value that `rewrite` stores is shadowed by the published entry, and loses at the barrier.
     tables
         .by_node
         .rewrite(&later, (A, 1), TypeId::NUMBER, stored());
@@ -339,13 +342,14 @@ fn begin_and_finish_leave_the_task_empty() {
     assert!(task.diagnostics.is_empty() && !task.closed_a_cycle);
     assert_eq!(task.foreign_evaluations, [0; 14]);
     assert_eq!(tables.by_node.get(&task, &(A, 1)), None);
-    // The number of the first own type is given out again.
+    // The number of the first task-local type is reused.
     task.begin(1, 0, true);
     assert_eq!(tables.keyof(&task, TypeId::NUMBER), own);
     assert_eq!(tables.shapes.get(&task, &own), None);
 }
 
-/// A task that goes through the files of a cycle evaluates nodes of a later file from an earlier one.
+/// A task that visits the files of a cycle evaluates nodes of a later file while visiting an
+/// earlier one.
 #[test]
 fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     let tables = Tables::new();
@@ -361,7 +365,7 @@ fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(one));
     assert_eq!(tables.by_node.get(&task, &(B, 2)), Some(two));
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(one));
-    // The entry from before is the entry.
+    // The earlier entry wins.
     assert_eq!(tables.by_node.insert(&task, (B, 1), two, stored()), one);
     tables.by_node.rewrite(&task, (B, 1), two, stored());
     assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(two));
@@ -373,20 +377,21 @@ fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     for key in [(B, 1), (B, 2)] {
         assert_eq!(tables.by_node.get(&task, &key), Some(two));
     }
-    // EACH KEY ONCE: 4 in `by_node`, 1 in `set`, and none loses.
+    // Each key once: 4 in `by_node`, 1 in `set`, and none loses.
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
     assert_eq!(counts(published), (5, 5, 0));
     assert_eq!(tables.by_node.get(&Task::new(), &(B, 1)), Some(two));
 }
 
-/// A chunk of files that nothing imports: no node of one is evaluated before the task comes to it, and the entries stay findable after.
+/// A chunk of files that nothing imports: no node of a file is evaluated before the task reaches
+/// it, and the entries can still be looked up afterwards.
 #[test]
 fn a_task_that_goes_through_files_that_nothing_imports() {
     let tables = Tables::new();
     let mut task = begin(0);
     for file in [A, B, C] {
         task.begin_file(file, false);
-        // Something hashed, before the first entry under a node of the file and after.
+        // A hashed entry, before the first entry keyed by a node of the file and after it.
         tables
             .by_id
             .insert(&task, TypeId(file.0), TypeId::ANY, stored());
@@ -406,7 +411,7 @@ fn a_task_that_goes_through_files_that_nothing_imports() {
             assert_eq!(kept, TypeId(node));
         }
     }
-    // A file that the task comes to a second time.
+    // A file that the task visits a second time.
     task.begin_file(A, false);
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId(1)));
     tables.by_node.insert(&task, (A, 5), TypeId::ANY, stored());
@@ -415,7 +420,8 @@ fn a_task_that_goes_through_files_that_nothing_imports() {
     assert_eq!(kept, TypeId(1));
 }
 
-/// A chunk of many files, against a model. Every second file is imported, so its nodes are evaluated before the task comes to it as well.
+/// A chunk of many files, checked against a model. Every second file is imported, so its nodes are
+/// also evaluated before the task reaches it.
 #[test]
 fn a_task_that_goes_through_many_files_does_what_the_model_says() {
     use crate::util::FxHashMap;
@@ -434,19 +440,19 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
         let mut task = begin(0);
         let mut model: FxHashMap<Node, TypeId> = FxHashMap::default();
         let mut has_come_to = [false; FILES as usize];
-        // Some files a second time.
+        // Some files are visited a second time.
         for _ in 0..FILES * 2 {
             let at_hand = random(FILES);
             task.begin_file(FileId(at_hand), is_imported(at_hand));
             has_come_to[at_hand as usize] = true;
             for _ in 0..60 {
-                // Mostly the file at hand.
+                // Mostly the current file.
                 let file = if random(3) != 0 {
                     at_hand
                 } else {
                     random(FILES)
                 };
-                // Nothing refers to a file that nothing imports before its own turn.
+                // Nothing references a file that nothing imports before the task reaches it.
                 if !is_imported(file) && !has_come_to[file as usize] {
                     continue;
                 }
@@ -472,7 +478,7 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
                 assert_eq!(table.get(&task, &key), model.get(&key).copied());
             }
         }
-        // EACH KEY ONCE, and what is under a node of a file that nothing imports is bound.
+        // Each key once, and an entry keyed by a node of a file that nothing imports is bound.
         model.retain(|key, _| is_imported(key.0.0));
         let mut finished = [task.finish_tables(&[&table], Vec::new())];
         let published = publish_tables(&[&table], &mut finished, &forwards, None);
@@ -517,7 +523,7 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
         let mut finished: Vec<Finished> = (values.iter().enumerate())
             .map(|(index, &value)| {
                 let mut task = begin_in(index as u32, FileId(index as u32));
-                // Everybody has (C, 9) and the like. Only the last two have (C, 8).
+                // Every task has (C, 9) and the like. Only the last two have (C, 8).
                 tables.by_node.insert(&task, (C, 9), value, stored());
                 tables.by_id.insert(&task, TypeId::ANY, value, stored());
                 (tables.by_key).insert(&task, (TypeId::ANY, TypeId::ANY), value, stored());
@@ -552,7 +558,7 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
             tables.kept_by_node.get(&reader, &(C, 9)),
             Some(Box::from([values[0]]))
         );
-        // A VALUE IS PUSHED WHEN ITS ENTRY WINS.
+        // A value is pushed when its entry wins.
         assert_eq!(tables.shapes.footprint().kept, 1);
         assert_eq!(tables.kept_by_node.footprint().kept, 1);
     }
@@ -577,7 +583,7 @@ fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
     });
     let diagnostics = vec![(Some(query), diagnostic(0)), (None, diagnostic(1))];
     let mut finished = [task.finish_tables(&tables.all(), diagnostics.clone())];
-    // As they came.
+    // In their original order.
     assert!(finished[0].diagnostics == diagnostics);
     let published = tables.barrier(&mut finished, &forwards);
     assert_eq!(published.digest, 0);
@@ -613,12 +619,12 @@ fn the_digest_tells_the_content_of_what_was_stored_and_not_how_the_pool_ran() {
     assert_ne!(expected, 0);
     assert_eq!(digest(&backwards, TypeId::STRING, true), expected);
     assert_eq!(digest(&on_threads, TypeId::STRING, true), expected);
-    // One id in one kept value.
+    // One id in one value of an indirect table.
     assert_ne!(digest(&forwards, TypeId::NUMBER, true), expected);
     assert_eq!(digest(&forwards, TypeId::STRING, false), 0);
 }
 
-/// The parser threads number the atoms in another order in every run.
+/// The parser threads number the atoms in a different order in every run.
 #[test]
 fn the_digest_takes_an_atom_as_its_text() {
     let digest = |texts: [&[u8]; 3], used: [&[u8]; 2]| {
@@ -634,7 +640,7 @@ fn the_digest_takes_an_atom_as_its_text() {
         by_key.set_slot(1);
         kept.set_slot(2);
         let mut task = begin(0);
-        // As a key by number, in a key of several parts, in a value.
+        // As a key indexed by number, in a composite key, in a value.
         by_id.insert(&task, used[0], TypeId::ANY, stored());
         by_key.insert(&task, (TypeId::ANY, used[1]), TypeId::ANY, stored());
         kept.insert(
@@ -659,7 +665,7 @@ fn the_digest_takes_an_atom_as_its_text() {
     );
     assert_ne!(atoms[0], other_atoms[0]);
     assert_eq!(same, expected);
-    // The same numbers, other texts.
+    // The same numbers, different texts.
     let (same_atoms, other) = digest(
         [b"other text", b"second text", b"third text"],
         [b"other text", b"second text"],
@@ -755,7 +761,7 @@ fn an_own_type_without_an_entry_dies_with_its_task() {
     assert!(tables.keyof(&reader, TypeId::STRING).is_local());
 }
 
-/// `shapes` and `members`. A HANDLE IS NOT A VALUE.
+/// `shapes` and `members`. A handle is not a value.
 #[test]
 fn a_handle_in_a_value_becomes_the_handle_that_has_won() {
     for pool in POOLS {
@@ -865,7 +871,7 @@ fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
             [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT][link.saturating_sub(1500) / 500];
         assert_eq!(value, expected);
     }
-    // PUBLISHED IDS AND VALUES DO NOT DEPEND ON HOW THE POOL RUNS.
+    // Published ids and values do not depend on how the pool schedules the work.
     assert!(outcomes[0] == outcomes[1] && outcomes[0] == outcomes[2]);
 }
 
@@ -970,7 +976,8 @@ fn nothing_that_is_bound_is_published() {
     let free = tables.keyof(&task, TypeId::STRING);
     let any = TypeId::ANY;
 
-    // A key that is a node of the file. A value that mentions the file, directly or through another type. A key that does.
+    // A key that is a node of the file. A value that references the file, directly or through
+    // another type. A key that does.
     tables.by_node.insert(&task, (A, 1), any, stored());
     tables.set.insert(&task, (A, 1), (), stored());
     tables
@@ -984,17 +991,18 @@ fn nothing_that_is_bound_is_published() {
     tables.by_key.insert(&task, (any, bound), any, stored());
     tables.by_key.insert(&task, (any, any), on_bound, stored());
     (tables.kept_by_node).insert(&task, (B, 1), Box::new([any, bound]), stored());
-    // A shape that is bound under a key that is not, AND THE ENTRY THAT HOLDS ITS HANDLE, which mentions nothing bound itself.
+    // A bound shape under a key that is not bound, and the entry that holds its handle, which
+    // itself references nothing bound.
     let (shape, _) = (tables.shapes).insert_ref(&task, free, Box::new([on_bound]), stored());
     let held = Holder { shape, of: free };
     tables.members.insert(&task, free, held, stored());
-    // THE TASK ITSELF FINDS ALL OF IT.
+    // The task itself finds all of it.
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(any));
     assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(bound));
     assert_eq!(tables.by_id.get(&task, &any), Some(on_bound));
     assert_eq!(tables.members.get(&task, &free), Some(held));
 
-    // What is not bound, between the others.
+    // Entries that are not bound, interleaved with the others.
     tables.by_node.insert(&task, (B, 3), free, stored());
     tables.by_id.insert(&task, free, any, stored());
     tables.by_key.insert(&task, (free, any), free, stored());
@@ -1016,7 +1024,7 @@ fn nothing_that_is_bound_is_published() {
     assert!(!free.is_local());
     assert_eq!(tables.by_node.get(&reader, &(B, 3)), Some(free));
     assert_eq!(tables.by_key.get(&reader, &(free, any)), Some(free));
-    // The bound types are not in the published store.
+    // The bound types are not in the shared store.
     assert!(tables.this_of(&reader, A).is_local());
 }
 
@@ -1042,7 +1050,7 @@ fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
 fn the_fields_of_a_shared_cell() {
     let cell = AtomicU32::new(0);
     assert_eq!(cell.put_field_if_empty(4, 3, 2), 2);
-    // What was there first stays.
+    // The first value wins.
     assert_eq!(cell.put_field_if_empty(4, 3, 1), 2);
     assert_eq!(cell.put_field_if_empty(6, 3, 1), 1);
     assert_eq!(cell.put_field_if_empty(31, 1, 1), 1);
@@ -1104,7 +1112,7 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
     // No node.
     set.insert(&task, (FileId(3), u32::MAX), ());
     assert_eq!(set.get(&task, &(FileId(3), u32::MAX)), None);
-    // The entries end with the file.
+    // The entries are dropped at the end of the file.
     task.begin_file(FileId(4), true);
     assert_eq!(set.get(&task, &(FileId(4), 63)), None);
     assert_eq!(set.get(&task, &(FileId(3), 63)), None);
@@ -1123,7 +1131,7 @@ fn hashed_lists_its_entries_in_insertion_order() {
             place as u32
         );
     }
-    // `insert` keeps. `replace` replaces, and the entry stays in its place.
+    // `insert` does not overwrite. `replace` overwrites, and the entry keeps its position.
     assert_eq!(*hashed.insert(spread_word(keys[5]), keys[5], 77), 5);
     hashed.replace(spread_word(keys[6]), keys[6], 77);
     assert_eq!(hashed.place(spread_word(keys[6]), &keys[6]), Some(6));
@@ -1146,7 +1154,7 @@ fn the_nodes_of_many_files_have_different_hashes() {
             tags.insert(spread_word(file << 32 | index) as u32);
         }
     }
-    // A few of 2^18 among 2^32 meet by chance: 8 are expected.
+    // A few of 2^18 tags among 2^32 collide by chance: 8 collisions are expected.
     assert!(tags.len() > (1 << 18) - 64);
 }
 
@@ -1175,7 +1183,8 @@ fn a_range_of_an_append_vec_is_filled_at_given_indices() {
     assert_eq!((first, vec.len()), (1, 5001));
     on_threads(4, &|part| {
         for index in (first..first + 5000).filter(|index| *index as usize % 4 == part) {
-            // SAFETY: reserved above, each index is one thread's, and nobody reads before the threads have ended.
+            // SAFETY: reserved above, each index is written by one thread, and no thread reads
+            // before the writers have finished.
             unsafe { vec.write(index, Box::new(index)) };
         }
     });

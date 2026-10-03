@@ -1,14 +1,15 @@
-//! Making unions and intersections.
+//! Construction of union and intersection types.
 
 use super::*;
 
-/// Where something is declared: the libraries first, then by file, then by position. `compareNodes`
+/// The sort key of a declaration: library files first, then by file, then by position.
+/// `compareNodes`
 type Place = (bool, FileId, u32);
 
-/// The members of a union that is being put together.
+/// The members of a union under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
-// `create_union` goes by these numbers.
+// `create_union` relies on these id values.
 const _: () = assert!(
     TypeId::UNRESOLVED.0 == 0
         && TypeId::ANY.0 == 1
@@ -16,7 +17,7 @@ const _: () = assert!(
         && TypeId::SYMBOL.0 < 32
 );
 
-/// What has a name, or a declaration, comes before what has none.
+/// `Some`, a name or a declaration, sorts before `None`.
 fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     match (a, b) {
         (Some(a), Some(b)) => a.cmp(&b),
@@ -44,19 +45,21 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `A | B | ...`, with literals that a wider member covers taken out.
+    /// `A | B | ...`, with literal types removed when a wider member subsumes them.
     pub fn union(&mut self, types: &[TypeId]) -> TypeId {
         self.union_ex(types, true)
     }
 
-    /// `merge_constrained`: whether `T & P1 | T & P2` comes to `T`. It does not among the intersections made without looking at
-    /// what `T` extends, which have no `ObjectFlagsIsConstrainedTypeVariable`.
+    /// `merge_constrained`: whether `T & P1 | T & P2` reduces to `T`. It does not for intersections
+    /// created without inspecting the constraint of `T`, which lack
+    /// `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
-        // Two types come to the same in either order.
+        // The union of two types is the same in either order.
         let pair = match *types {
             [] => return TypeId::NEVER,
             [one] => return one,
-            // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned as it is.
+            // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned
+            // unchanged.
             [a, b]
                 if a == b
                     && !self.is_error_type(a)
@@ -90,9 +93,10 @@ impl<'p> Checker<'p> {
         union
     }
 
-    /// `getUnionType(types, UnionReductionNone)`: `A | B | ...` with everything left in, `any` and `unknown` next to others too.
-    /// `string | "a"` says that there is room for the literal and `keyof T | unknown` that there is for something generic, which
-    /// is what matters in what an expression is expected to be.
+    /// `getUnionType(types, UnionReductionNone)`: `A | B | ...` with every member preserved,
+    /// including `any` and `unknown` next to other members. `string | "a"` shows that the literal
+    /// type is accepted and `keyof T | unknown` that a generic type is, which is what matters in a
+    /// contextual type.
     pub fn union_unreduced(&mut self, types: &[TypeId]) -> TypeId {
         if let [one] = types {
             return *one;
@@ -106,7 +110,8 @@ impl<'p> Checker<'p> {
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
         }
-        // `addTypeToUnion`: without strictNullChecks null and undefined are never members. With nothing else there it is never.
+        // `addTypeToUnion`: without strictNullChecks null and undefined are never members. If there
+        // are no other members the result is never.
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
@@ -118,12 +123,12 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getUnionTypeWorker` with `UnionReductionLiteral`. With it, whether nothing but the members was looked at: then the same types
-    /// come to the same whoever asks.
+    /// `getUnionTypeWorker` with `UnionReductionLiteral`. Also returns whether only the members
+    /// were inspected, in which case the same types give the same result for any caller.
     #[inline(never)]
-    fn create_union(&mut self, given: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
+    fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
         let mut members = Flat::new();
-        for &ty in given {
+        for &ty in actual {
             self.add_to_union(&mut members, ty);
         }
         members.sort_unstable_by_key(|m| m.arrival_order());
@@ -132,7 +137,7 @@ impl<'p> Checker<'p> {
         if members.contains(&TypeId::WILDCARD) {
             return (TypeId::WILDCARD, true);
         }
-        // `TypeFlagsIncludesError`: `any` and `unknown` give way to the error type.
+        // `TypeFlagsIncludesError`: the error type takes precedence over `any` and `unknown`.
         if members.first() != Some(&TypeId::UNRESOLVED)
             && members.iter().any(|&member| self.is_error_type(member))
         {
@@ -140,7 +145,8 @@ impl<'p> Checker<'p> {
         }
         match members[..] {
             [] => return (TypeId::NEVER, true),
-            // What is not known, `any` and `unknown`, in this order, leave nothing of the others. Theirs are the lowest numbers.
+            // The unresolved type, `any` and `unknown`, in this order of precedence, absorb all
+            // other members. They have the lowest ids.
             [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, true),
             [
                 first @ (TypeId::UNRESOLVED | TypeId::ANY | TypeId::UNKNOWN),
@@ -151,8 +157,9 @@ impl<'p> Checker<'p> {
             [only] => return (only, true),
             _ => {}
         }
-        // `addTypeToUnion`: without strictNullChecks everything can be null or undefined, and they are never members. With nothing
-        // else there it is null before undefined, and the kind that is not widened if any of them was
+        // `addTypeToUnion`: without strictNullChecks every type includes null and undefined, and
+        // they are never members. If there are no other members the result is null in preference to
+        // undefined, in its non-widening form if any input was non-widening
         // (`TypeFlagsIncludesNonWideningType`).
         if !self.p.files.options.strict_null_checks {
             let null = members.iter().any(|m| m.is_null());
@@ -173,13 +180,13 @@ impl<'p> Checker<'p> {
                 return (left, true);
             }
         }
-        // A bit for each of the types with the lowest numbers that is there. They come first.
+        // A bit for each type that is present among those with the lowest ids. They sort first.
         let mut low = 0u32;
         for m in members.iter().take_while(|m| m.arrival_order() < 32) {
             low |= 1 << m.arrival_order();
         }
         let has = |t: TypeId| low & 1 << t.arrival_order() != 0;
-        // The `undefined` of what is not there says nothing next to the real one.
+        // The missing type is redundant next to the regular `undefined`.
         if has(TypeId::MISSING) && has(TypeId::UNDEFINED) {
             members.retain(|m| *m != TypeId::MISSING);
         }
@@ -197,7 +204,8 @@ impl<'p> Checker<'p> {
                     TypeData::Template { .. } | TypeData::StringMapping { .. } => {
                         has_pattern = true
                     }
-                    // `constrained_type_variable` makes nothing of any other.
+                    // `constrained_type_variable` returns nothing for an intersection of any other
+                    // form.
                     TypeData::Intersection(parts) => {
                         if let [a, b] = parts[..]
                             && (self.is_type_variable(a) || self.is_type_variable(b))
@@ -208,7 +216,8 @@ impl<'p> Checker<'p> {
                     _ => {}
                 }
             }
-            // `removeRedundantLiteralTypes`. It goes by the flags, and a member of an enum has those of its value.
+            // `removeRedundantLiteralTypes`. It tests the type flags, and an enum member has the
+            // flags of its value.
             let (string, number, bigint, symbol) = (
                 has(TypeId::STRING),
                 has(TypeId::NUMBER),
@@ -253,13 +262,13 @@ impl<'p> Checker<'p> {
                 });
             }
             if members.len() > 1 {
-                // `string` has taken the patterns out.
+                // `string` has already removed the patterns.
                 let has_pattern = has_pattern && !string;
                 let has_constrained = has_constrained && merge_constrained;
                 if has_pattern || has_constrained {
                     is_plain = false;
-                    // Both evaluate something for each member, and what is evaluated first creates its types first. tsgo has the set
-                    // sorted from the start.
+                    // Both evaluate something for each member, and evaluation order determines the
+                    // creation order of types. tsgo keeps the set sorted from the start.
                     self.sort_types(&mut members);
                 }
                 if has_pattern {
@@ -270,24 +279,25 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // So far they were in the order of their ids.
+        // Up to here they were ordered by id.
         self.sort_types(&mut members);
         let union = match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
-            _ => self.union_of_named_unions(given, &members),
+            _ => self.union_of_named_unions(actual, &members),
         };
         (union, is_plain)
     }
 
-    /// The end of `getUnionTypeWorker`: the union of `members`, in order, which was made of `given`. It has a denormalized `origin` where some of
-    /// `given` are unions that have a name, or were made of such, and no member is in two of them.
-    fn union_of_named_unions(&self, given: &[TypeId], members: &[TypeId]) -> TypeId {
+    /// The end of `getUnionTypeWorker`: the union of `members`, in order, which was built from
+    /// `actual`. It has a denormalized `origin` if some of `actual` are named unions, or were built
+    /// from named unions, and no member belongs to two of them.
+    fn union_of_named_unions(&self, actual: &[TypeId], members: &[TypeId]) -> TypeId {
         let mut named: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
-        self.add_named_unions(&mut named, given);
+        self.add_named_unions(&mut named, actual);
         if named.is_empty() {
-            // One of those given may be all of it.
-            let whole = given
+            // One of `actual` may already be the whole union.
+            let whole = actual
                 .iter()
                 .copied()
                 .find(|&ty| matches!(self.data(ty), TypeData::Union(all) if all[..] == *members));
@@ -296,7 +306,7 @@ impl<'p> Checker<'p> {
                 None => self.intern(TypeData::Union(Box::from(members))),
             };
         }
-        // `containsType` is asked for identity.
+        // `containsType` tests identity.
         let mut in_named: Vec<TypeId> = Vec::new();
         for &u in &named {
             in_named.extend_from_slice(self.parts(u));
@@ -334,7 +344,7 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `addNamedUnions`. `boolean` has no alias, whatever alias stands for it.
+    /// `addNamedUnions`. `boolean` has no alias, even if an alias refers to it.
     fn add_named_unions(&self, named: &mut smallvec::SmallVec<[TypeId; 4]>, types: &[TypeId]) {
         for &t in types {
             if t == TypeId::BOOLEAN || !self.is_union(t) {
@@ -365,7 +375,8 @@ impl<'p> Checker<'p> {
             return;
         }
         for m in std::mem::take(members) {
-            // Of what has `TypeFlagsStringLiteral`: the value, and whether it is the string literal type of that value itself.
+            // For a type with `TypeFlagsStringLiteral`: the value, and whether it is the plain
+            // string literal type of that value.
             let (value, is_plain) = match *self.data(m) {
                 TypeData::StringLit { value, fresh } => (value, !fresh),
                 TypeData::EnumLit {
@@ -378,8 +389,9 @@ impl<'p> Checker<'p> {
                 }
             };
             let literal = self.string_literal(value, false);
-            // `isTypeMatchedByTemplateLiteralOrStringMapping`: a template goes by the value. `isMemberOfStringMapping` wants what
-            // the mapping makes of the type to be the type, and it makes the plain literal.
+            // `isTypeMatchedByTemplateLiteralOrStringMapping`: a template literal type matches by
+            // value. `isMemberOfStringMapping` requires that applying the mapping to the type
+            // yields the type itself, and the mapping yields the plain literal.
             let matched = patterns.iter().any(|&pattern| match self.data(pattern) {
                 TypeData::Template { texts, types } => {
                     self.is_type_matched_by_template_literal_type(literal, texts, types)
@@ -397,10 +409,11 @@ impl<'p> Checker<'p> {
         self.flags(ty) & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0 || self.is_empty_anonymous(ty)
     }
 
-    /// Of `T & P` or `P & T`, where `T` is a type variable that extends nothing but primitives, `object` and `{}` and `P` is one
-    /// of those: `T`, `P` and what `T` extends. Such an intersection that `getIntersectionTypeEx` lets stand is the one it
-    /// marks `ObjectFlagsIsConstrainedTypeVariable`. `includes_empty_object`: there is or was a `{}` among what is intersected,
-    /// and then `P` may be anything.
+    /// For `T & P` or `P & T`, where `T` is a type variable whose constraint consists only of
+    /// primitives, `object` and `{}`, and `P` is one of those: `T`, `P` and the constraint of `T`.
+    /// An intersection of this form that `getIntersectionTypeEx` does not reduce is the one it
+    /// marks `ObjectFlagsIsConstrainedTypeVariable`. `includes_empty_object`: the intersected types
+    /// include or included a `{}`, in which case `P` may be any type.
     fn constrained_type_variable(
         &mut self,
         a: TypeId,
@@ -433,9 +446,10 @@ impl<'p> Checker<'p> {
         .then_some((variable, primitive, constraint))
     }
 
-    /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` is `T` once the `P`s are all that `T` extends.
+    /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` reduces to `T` once the `P`s cover the
+    /// whole constraint of `T`.
     fn remove_constrained_type_variables(&mut self, members: &mut Flat) {
-        // (member, T, P, what T extends)
+        // (member, T, P, constraint of T)
         let mut constrained: Vec<(TypeId, TypeId, TypeId, TypeId)> = Vec::new();
         for &m in members.iter() {
             if let TypeData::Intersection(parts) = self.data(m)
@@ -473,7 +487,7 @@ impl<'p> Checker<'p> {
 
     /// A union in which no member is a subtype of another. `UnionReductionSubtype`
     pub fn union_reduced(&mut self, types: &[TypeId]) -> TypeId {
-        // A union that is there already is left as it is.
+        // An existing union is left unchanged.
         if let [only] = types {
             return *only;
         }
@@ -481,29 +495,29 @@ impl<'p> Checker<'p> {
         let TypeData::Union(members) = self.data(union) else {
             return union;
         };
-        // `removeRedundantLiteralTypes`, reduceVoidUndefined: `undefined` is one of the things `void` can be.
+        // `removeRedundantLiteralTypes`, reduceVoidUndefined: `void` includes `undefined`.
         if members.contains(&TypeId::VOID) && members.iter().any(|m| m.is_undefined()) {
             union = self.filter(union, |_, m| !m.is_undefined());
         }
         let TypeData::Union(members) = self.data(union) else {
             return union;
         };
-        // Primitives and literals were dealt with above.
+        // Primitives and literals were handled above.
         if !members
             .iter()
             .any(|&m| self.flags(m) & tf::STRUCTURED_OR_INSTANTIABLE != 0)
         {
             return union;
         }
-        // Many are not compared each with each, unless they are so many that the count below can be reached.
+        // A large set is not compared pairwise, unless it is large enough to reach the count below.
         let len = members.len();
         if len > 40 && len * (len - 1) <= 100_000 {
             return union;
         }
         let mut members: Vec<TypeId> = members.to_vec();
-        let mut given: Vec<TypeId> = Vec::with_capacity(len);
+        let mut actual: Vec<TypeId> = Vec::with_capacity(len);
         for &ty in types {
-            given.extend_from_slice(self.parts(ty));
+            actual.extend_from_slice(self.parts(ty));
         }
         let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
@@ -517,9 +531,10 @@ impl<'p> Checker<'p> {
                     | TypeData::Tuple { .. }
             )
         };
-        // `removeSubtypes` goes through the members from the last in the order of `CompareTypes`, which so decides which of two
-        // that are subtypes of each other goes. Where that order comes down to ids, which depend on the thread here: what is
-        // declared before what expressions make, and those in the order given.
+        // `removeSubtypes` iterates over the members from last to first in `CompareTypes` order,
+        // which therefore decides which of two mutual subtypes is removed. Where that order falls
+        // back to ids, which depend on the thread here, declared types come before types created by
+        // expressions, and the latter keep the given order.
         let key = |c: &Self, m: TypeId| {
             let created_by_expression = match c.data(m) {
                 // `{ ...t, a: 1 }`
@@ -530,14 +545,15 @@ impl<'p> Checker<'p> {
             };
             (
                 created_by_expression,
-                given.iter().position(|&g| g == m).unwrap_or(usize::MAX),
+                actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
             )
         };
         members.sort_by(|&x, &y| {
             self.compare_types_without_ids(x, y)
                 .then_with(|| key(self, x).cmp(&key(self, y)))
         });
-        // hasEmptyObject: next to an object type with nothing in it primitives are up for it too: `{} | 0` is `{}`.
+        // hasEmptyObject: next to an empty object type, primitives are candidates for removal too:
+        // `{} | 0` is `{}`.
         let has_empty_object = members.iter().any(|&m| {
             m == TypeId::EMPTY_OBJECT || self.is_object_type(m) && self.is_empty_object_type(m)
         });
@@ -550,7 +566,8 @@ impl<'p> Checker<'p> {
             if !has_empty_object && source_flags & tf::STRUCTURED_OR_INSTANTIABLE == 0 {
                 continue;
             }
-            // A type parameter that extends a union may be a subtype of the others together and of none of them alone.
+            // A type parameter whose constraint is a union may be a subtype of the other members
+            // combined without being a subtype of any single one.
             if source_flags & tf::TYPE_PARAMETER != 0 {
                 let constraint = self.base_constraint(source);
                 if self.is_union(constraint) {
@@ -565,7 +582,7 @@ impl<'p> Checker<'p> {
                     continue;
                 }
             }
-            // The first property with a unit type. Members that differ in it need no comparing.
+            // The first property with a unit type. Members that differ in it need no comparison.
             let key_property = if source_flags & HAS_PROPERTIES != 0 {
                 self.first_unit_property(source)
             } else {
@@ -577,12 +594,13 @@ impl<'p> Checker<'p> {
                 }
                 let target = members[j];
                 if count == 100_000 {
-                    // At this rate more than a million comparisons in all: too complex to represent, the error type.
+                    // At this rate the total exceeds a million comparisons: too complex to
+                    // represent, so the result is the error type.
                     if (count / (len - i)) * len > 1_000_000 {
                         self.error_at_current_node(2590);
                         return TypeId::ERROR;
                     }
-                    // TypeScript goes on. Here it is as with the many above.
+                    // TypeScript continues. Here it is handled like the large sets above.
                     return union;
                 }
                 count += 1;
@@ -594,7 +612,8 @@ impl<'p> Checker<'p> {
                 {
                     continue;
                 }
-                // `emptyObjectType`, which has no symbol, does not go for the type of an object literal with nothing in it.
+                // `emptyObjectType`, which has no symbol, is not removed in favor of the type of an
+                // empty object literal.
                 if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
                     && matches!(self.data(target), TypeData::Anon { .. })
                     && self.is_empty_anonymous(target)
@@ -605,7 +624,8 @@ impl<'p> Checker<'p> {
                 if source_flags & tf::OBJECT != 0 && self.is_primitive(target) {
                     continue;
                 }
-                // Of two classes, one goes only for one it is derived from, however alike they are.
+                // A class type is removed only in favor of a class it derives from, regardless of
+                // structural similarity.
                 if self.is_strict_subtype(source, target)
                     && (!self.is_class_instance(source)
                         || !self.is_class_instance(target)
@@ -633,8 +653,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and that type. The types of the
-    /// properties before it are asked for on the way, as they are there.
+    /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and
+    /// that type. The types of the preceding properties are resolved on the way, as
+    /// `removeSubtypes` does.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
         let apparent = self.apparent_type(ty);
         let members = self.members(apparent)?;
@@ -673,7 +694,8 @@ impl<'p> Checker<'p> {
                     [] => TypeId::NEVER,
                     [only] => only,
                     _ => {
-                        // What is left of a denormalized origin, unless something inside one of the unions in it went.
+                        // The remainder of a denormalized origin, unless a member inside one of its
+                        // unions was removed.
                         let mut new_origin = UnionOrigin::None;
                         if let UnionOrigin::Union(origin) = self.origin(ty) {
                             let left: Vec<TypeId> = origin
@@ -812,7 +834,8 @@ impl<'p> Checker<'p> {
             || self.is_pattern_literal(ty)
     }
 
-    /// A template or the like with nothing generic in it: `a${string}`, `Uppercase<string>`. `isPatternLiteralType`
+    /// A template literal or string mapping type with no generic part: `a${string}`,
+    /// `Uppercase<string>`. `isPatternLiteralType`
     pub(super) fn is_pattern_literal(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Template { types, .. } => types
@@ -823,8 +846,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `IsEmptyAnonymousObjectType`. Like it, it asks for no members that are not worked out: it goes by what is written. A type
-    /// literal with nothing in it is `TypeId::EMPTY_OBJECT`.
+    /// `IsEmptyAnonymousObjectType`. Like it, this does not resolve members that are not resolved
+    /// yet: it inspects the syntax. An empty type literal is `TypeId::EMPTY_OBJECT`.
     fn is_empty_anonymous(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Synth(shape) => match shape.literal {
@@ -853,13 +876,15 @@ impl<'p> Checker<'p> {
         self.intersection_ex(types, false)
     }
 
-    /// The same, but `T & P` does not go by what `T` extends. `IntersectionFlagsNoConstraintReduction`
+    /// The same, but `T & P` is not reduced using the constraint of `T`.
+    /// `IntersectionFlagsNoConstraintReduction`
     pub(super) fn intersection_without_constraint_reduction(&mut self, types: &[TypeId]) -> TypeId {
         self.intersection_ex(types, true)
     }
 
-    /// `addTypesToIntersection`, `addTypeToIntersection`: the order stays, for the sake of overloads, and only repeats go. Gives
-    /// `includes` with what the types have added to it.
+    /// `addTypesToIntersection`, `addTypeToIntersection`: order is preserved, because it matters
+    /// for overloads, and only duplicates are removed. Returns `includes` with the flags the types
+    /// add to it.
     fn add_types_to_intersection(
         &mut self,
         set: &mut Vec<TypeId>,
@@ -872,7 +897,7 @@ impl<'p> Checker<'p> {
                 includes = self.add_types_to_intersection(set, includes, inner);
                 continue;
             }
-            // Of what counts as `{}` only the first is taken.
+            // Only the first of the types that count as `{}` is added.
             if self.is_empty_anonymous(ty) {
                 if includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     includes |= tf::INCLUDES_EMPTY_OBJECT;
@@ -899,7 +924,8 @@ impl<'p> Checker<'p> {
                     ty
                 };
                 if !set.contains(&ty) {
-                    // Nothing is two different unit types. `object` next to them says so further on.
+                    // No value has two different unit types. The `object` flag next to the unit
+                    // flags signals that to the code further on.
                     if flags & tf::UNIT != 0 && includes & tf::UNIT != 0 {
                         includes |= tf::NON_PRIMITIVE;
                     }
@@ -923,10 +949,10 @@ impl<'p> Checker<'p> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         match (self.intersection_worker(types, false), alias) {
-            ((made, true), Some((alias, type_arguments))) => {
-                self.with_alias(made, alias, type_arguments)
+            ((created, true), Some((alias, type_arguments))) => {
+                self.with_alias(created, alias, type_arguments)
             }
-            ((made, _), _) => made,
+            ((created, _), _) => created,
         }
     }
 
@@ -936,17 +962,17 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let made = self.union(types);
+        let created = self.union(types);
         match alias {
-            Some((alias, type_arguments)) if self.is_union(made) => {
-                self.with_alias(made, alias, type_arguments)
+            Some((alias, type_arguments)) if self.is_union(created) => {
+                self.with_alias(created, alias, type_arguments)
             }
-            _ => made,
+            _ => created,
         }
     }
 
-    /// `getIntersectionTypeEx`. The flag: it is made here, so that the alias given, if any, is its alias. One of `types` that is
-    /// all that is left is not.
+    /// `getIntersectionTypeEx`. The flag: the result was created here, so the given alias, if any,
+    /// is its alias. A result that is the one remaining member of `types` was not.
     fn intersection_worker(
         &mut self,
         types: &[TypeId],
@@ -966,7 +992,7 @@ impl<'p> Checker<'p> {
             return (TypeId::UNRESOLVED, false);
         }
         let strict = self.p.files.options.strict_null_checks;
-        // Nothing is an object and null or undefined, or in two of the domains that have nothing in common.
+        // No value is both an object and null or undefined, or belongs to two disjoint domains.
         let is_in_another_too = |domain: u32| {
             includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
         };
@@ -998,7 +1024,8 @@ impl<'p> Checker<'p> {
             };
             return (any, false);
         }
-        // Without strictNullChecks null and undefined were not taken into the set, and are all that is left of it.
+        // Without strictNullChecks null and undefined were not added to the set, and the
+        // intersection reduces to them.
         if !strict && includes & tf::NULLABLE != 0 {
             let left = if includes & tf::INCLUDES_EMPTY_OBJECT != 0 {
                 TypeId::NEVER
@@ -1009,9 +1036,10 @@ impl<'p> Checker<'p> {
             };
             return (left, false);
         }
-        // `{}` goes next to what cannot be null or undefined (`TypeFlagsDefinitelyNonNullable`), which a union is not known to be.
-        // `U & {}` with a union `U` of nothing else is `U` once it is distributed over: no need to. `boolean` and the union an enum is
-        // have a flag of their own that says so, and are not distributed over.
+        // `{}` is removed next to a type that cannot be null or undefined
+        // (`TypeFlagsDefinitelyNonNullable`), which is not known of a union. `U & {}`, where `U` is
+        // a union of only such types, is `U` after distribution, so distribution is skipped.
+        // `boolean` and enum unions have such a flag themselves, and are not distributed over.
         let is_distributed_over = includes & tf::INCLUDES_EMPTY_OBJECT != 0
             && includes & tf::DEFINITELY_NON_NULLABLE == 0
             && set.len() == 2
@@ -1040,7 +1068,7 @@ impl<'p> Checker<'p> {
         }
         match set.len() {
             0 => return (TypeId::UNKNOWN, false),
-            // `getUnionTypeEx(constituents, UnionReductionLiteral, alias, nil)`: a union of its own.
+            // `getUnionTypeEx(constituents, UnionReductionLiteral, alias, nil)`: a separate union.
             1 if is_distributed_over && self.is_union(set[0]) => {
                 let members = self.parts(set[0]);
                 return (self.union(members), true);
@@ -1048,7 +1076,7 @@ impl<'p> Checker<'p> {
             1 => return (set[0], false),
             _ => {}
         }
-        // `T & P` goes by what `T` extends.
+        // `T & P` is reduced using the constraint of `T`.
         if !no_constraint_reduction
             && let [a, b] = set[..]
             && let Some((variable, primitive, constraint)) =
@@ -1058,7 +1086,8 @@ impl<'p> Checker<'p> {
             if self.is_strict_subtype(constraint, primitive) {
                 return (variable, false);
             }
-            // `T & number` is never: nothing `T` extends is a subtype of `P`, nor `P` of what `T` extends.
+            // `T & number` is never: no member of the constraint of `T` is a subtype of `P`, and
+            // `P` is not a subtype of the constraint of `T`.
             let parts = self.parts(constraint);
             if !(parts.len() > 1 && parts.iter().any(|&p| self.is_strict_subtype(p, primitive)))
                 && !self.is_strict_subtype(primitive, constraint)
@@ -1072,8 +1101,9 @@ impl<'p> Checker<'p> {
                 true,
             );
         }
-        // `intersectionTypes`: what the same types came to before.
-        // `len(typeSet) >= 3 && len(types) > 2`. tsgo leaves it out of the key, so there the first caller decides for all.
+        // `intersectionTypes`: the cached result for the same types.
+        // `len(typeSet) >= 3 && len(types) > 2`. tsgo omits it from the key, so there the first
+        // caller decides for all.
         let is_split = set.len() >= 3 && types.len() > 2;
         let key = (
             Box::<[TypeId]>::from(&set[..]),
@@ -1106,18 +1136,19 @@ impl<'p> Checker<'p> {
         (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
     }
 
-    /// `getIntersectionType`, of types some of which are unions. `given`: how many types were asked for.
+    /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in
+    /// the request.
     fn distribute_intersection(
         &mut self,
-        given: usize,
+        actual: usize,
         mut set: Vec<TypeId>,
         no_constraint_reduction: bool,
     ) -> (TypeId, bool) {
         if self.intersect_unions_of_primitive_types(&mut set) {
-            // Once only: no more than one such union is left.
+            // Happens only once: at most one such union is left.
             return self.intersection_worker(&set, no_constraint_reduction);
         }
-        // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and the same of `null`.
+        // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and likewise for `null`.
         if set
             .iter()
             .all(|&t| self.is_union(t) && self.contains_undefined(t))
@@ -1145,8 +1176,9 @@ impl<'p> Checker<'p> {
             let union = self.union_ex(&[rest, TypeId::NULL], !no_constraint_reduction);
             return (union, self.is_union(union));
         }
-        // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may come to never. Not from two types, which would go on for ever.
-        if set.len() >= 3 && given > 2 {
+        // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may reduce to never. Not applied
+        // to two types, which would recurse forever.
+        if set.len() >= 3 && actual > 2 {
             let middle = set.len() / 2;
             let left = self.intersection_ex(&set[..middle], no_constraint_reduction);
             let right = self.intersection_ex(&set[middle..], no_constraint_reduction);
@@ -1209,8 +1241,8 @@ impl<'p> Checker<'p> {
         types.iter().map(|&t| self.constituent_count(t)).sum()
     }
 
-    /// `extractRedundantTemplateLiterals`: `get${T}` next to `"getX"` says nothing more. `false`: nothing is both, as
-    /// `get${string}` and `"setX"`.
+    /// `extractRedundantTemplateLiterals`: `get${T}` is redundant next to `"getX"`. `false`: the
+    /// intersection is empty, as for `get${string}` and `"setX"`.
     fn extract_redundant_template_literals(&mut self, set: &mut Vec<TypeId>) -> bool {
         let literals: Vec<TypeId> = set
             .iter()
@@ -1226,7 +1258,8 @@ impl<'p> Checker<'p> {
             }
             for &literal in &literals {
                 let fits = match *self.data(literal) {
-                    // A member of an enum fits a template by its value, and is no member of a string mapping.
+                    // An enum member matches a template literal type by its value, and is not a
+                    // member of a string mapping type.
                     TypeData::EnumLit {
                         value: EnumValue::String(value),
                         ..
@@ -1249,8 +1282,8 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `ObjectFlagsPrimitiveUnion`: a union with nothing of `TypeFlagsNotPrimitiveUnion` in it. `object` may be, `void`, templates
-    /// and `keyof T` may not.
+    /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`.
+    /// `object` is allowed. `void`, template literal types and `keyof T` are not.
     fn is_primitive_union(&self, ty: TypeId) -> bool {
         let TypeData::Union(parts) = self.data(ty) else {
             return false;
@@ -1262,8 +1295,9 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `intersectUnionsOfPrimitiveTypes`: several unions of primitives, which is what `keyof (A | B | C)` is made of, are
-    /// intersected as sets. What is in all of them takes the place of the first, and the others go. `false`: there are not several.
+    /// `intersectUnionsOfPrimitiveTypes`: multiple unions of primitives, which is what `keyof (A |
+    /// B | C)` produces, are intersected as sets. The common members replace the first union, and
+    /// the other unions are removed. `false`: there are fewer than two.
     fn intersect_unions_of_primitive_types(&mut self, set: &mut Vec<TypeId>) -> bool {
         let unions: Vec<TypeId> = set
             .iter()
@@ -1276,7 +1310,7 @@ impl<'p> Checker<'p> {
         let mut common: Vec<TypeId> = Vec::new();
         for (k, &union) in unions.iter().enumerate() {
             for &t in self.parts(union) {
-                // Looked at with an earlier union.
+                // Already checked with an earlier union.
                 if unions[..k]
                     .iter()
                     .any(|&earlier| self.contains_type(self.parts(earlier), t))
@@ -1286,7 +1320,8 @@ impl<'p> Checker<'p> {
                 if !self.each_union_contains(&unions, t) {
                     continue;
                 }
-                // Of `undefined` and the `undefined` of what is not there, which match each other, the latter stays.
+                // `undefined` and the missing type match each other. The missing type is the one
+                // that stays.
                 if t == TypeId::UNDEFINED && common.contains(&TypeId::MISSING) {
                     continue;
                 }
@@ -1311,7 +1346,7 @@ impl<'p> Checker<'p> {
     /// `eachUnionContains`: `"a"` is in a union that has `string`.
     fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
         for &union in unions {
-            let has = |wanted: TypeId| self.contains_type(self.parts(union), wanted);
+            let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
             if has(t) {
                 continue;
             }
@@ -1344,7 +1379,7 @@ impl<'p> Checker<'p> {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
     }
 
-    /// `ty` without `undefined`, that of what is not there included.
+    /// `ty` without `undefined`, including the missing type.
     pub fn without_undefined(&mut self, ty: TypeId) -> TypeId {
         self.filter(ty, |_, m| !m.is_undefined())
     }
@@ -1392,7 +1427,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// Where the first declaration of `sym` is. `compareSymbols`
+    /// The position of the first declaration of `sym`. `compareSymbols`
     fn symbol_place(&self, sym: Sym) -> Option<Place> {
         let files = self.files();
         let (file, decl) = if files.flags(sym).contains(SymFlags::MERGED) {
@@ -1404,7 +1439,8 @@ impl<'p> Checker<'p> {
         Some((!files.module(file).is_lib, file, pos))
     }
 
-    /// Where the symbol of `ty`, or the syntax it is the type of, is declared. What is made up has no such place here.
+    /// The declaration position of the symbol of `ty`, or of the syntax it is the type of. A
+    /// synthesized type has none here.
     fn sort_place(&self, ty: TypeId) -> Option<Place> {
         let at = |file: FileId, pos: u32| -> Option<Place> {
             Some((!self.files().module(file).is_lib, file, pos))
@@ -1447,8 +1483,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What `compareNodes` orders a node at `pos` of `file` by: the index of the file in the program (`fileIndexMap`), then the
-    /// position. The libraries come first.
+    /// The sort key `compareNodes` uses for a node at `pos` of `file`: the index of the file in the
+    /// program (`fileIndexMap`), then the position. Library files come first.
     pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
         let files = self.files();
         (!files.module(file).is_lib, files.rank_of_file(file), pos)
@@ -1470,7 +1506,7 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `compareSymbols`, as far as the first declarations go.
+    /// `compareSymbols`, limited to the comparison of the first declarations.
     fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| {
             let (_, file, pos) = self.symbol_place(symbol)?;
@@ -1479,8 +1515,9 @@ impl<'p> Checker<'p> {
         some_first(place(s), place(t))
     }
 
-    /// `compareTypeNames`. Two aliases of one name go by their symbols, and an alias comes before another symbol of its name: there
-    /// `CompareTypes` goes on to what the types are made of, and is no order.
+    /// `compareTypeNames`. Two aliases with the same name are ordered by their symbols, and an
+    /// alias sorts before another symbol with its name. In those cases `CompareTypes` falls through
+    /// to the structure of the types, and is not a valid ordering.
     fn compare_type_names(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         let (x, y) = (self.alias_of_type(a), self.alias_of_type(b));
         let symbol = |alias: &Option<(Sym, Vec<TypeId>)>| alias.as_ref().map(|alias| alias.0);
@@ -1493,8 +1530,8 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `compareTypeMappers`, of instantiations of one declaration: by what they put for the type parameters, in the order those are
-    /// declared.
+    /// `compareTypeMappers` for instantiations of the same declaration: by the types they map the
+    /// type parameters to, in the declaration order of the type parameters.
     fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
         let targets = |mapper: MapperId| -> Vec<TypeId> {
             let pairs = self.mapping_in_declaration_order(mapper);
@@ -1503,7 +1540,7 @@ impl<'p> Checker<'p> {
         self.compare_type_lists(&targets(x), &targets(y))
     }
 
-    /// `CompareTypes` without its last resort, the ids.
+    /// `CompareTypes` without its final fallback, the ids.
     fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering::Equal;
         if a == b {
@@ -1521,8 +1558,8 @@ impl<'p> Checker<'p> {
             let (_, file, pos) = self.sort_place(t)?;
             Some(self.place_in_program_order(file, pos))
         };
-        // `compareSymbols`, of a symbol and what `cloneTypeAsModuleType` makes of it, comes down to the ids of the symbols. Here the
-        // symbol comes first, then the copies in the order of the imports.
+        // `compareSymbols` of a symbol and its `cloneTypeAsModuleType` clone falls back to the
+        // symbol ids. Here the symbol comes first, then the clones in the order of the imports.
         let originating_import = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
@@ -1533,7 +1570,8 @@ impl<'p> Checker<'p> {
             } => Some(originating_import),
             _ => None,
         };
-        // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
+        // Among object types with the same symbol, or none, type references come first. A tuple is
+        // a type reference and has no symbol.
         let is_no_reference =
             |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
         let are_of_one_symbol = matches!(
@@ -1563,9 +1601,11 @@ impl<'p> Checker<'p> {
                 return by_symbol;
             }
         }
-        // References that are not deferred go by their type arguments. Deferred ones with the same target are ordered by the source
-        // location of the reference, and instantiations of one by their mappers, never by their arguments, which may be
-        // themselves. One that is not deferred has no node and comes last (`compareNodes`).
+        // References that are not deferred are ordered by their type arguments. Deferred ones with
+        // the same target are ordered by the source position of the reference, and instantiations
+        // of the same reference by their mappers, never by their type arguments, which may be the
+        // references themselves. One that is not deferred has no node and comes last
+        // (`compareNodes`).
         let arguments = |x: &TypeArguments, y: &TypeArguments| match (x, y) {
             (TypeArguments::Given(x), TypeArguments::Given(y)) => lists(x, y),
             _ => {
@@ -1606,7 +1646,7 @@ impl<'p> Checker<'p> {
             (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {
                 s.cmp(t).then_with(|| arguments(x, y))
             }
-            // `compareTupleTypes`, `compareElementLabels`: what has no label comes first.
+            // `compareTupleTypes`, `compareElementLabels`: an element without a label comes first.
             (
                 TypeData::Tuple {
                     elems: x,
@@ -1627,7 +1667,8 @@ impl<'p> Checker<'p> {
                     .then_with(|| f.iter().map(label).cmp(g.iter().map(label)))
                     .then_with(|| arguments(x, y))
             }
-            // What has an `origin` comes first, and origins compare as the types they are: a `keyof`, a union, an intersection.
+            // A union with an `origin` comes first, and origins compare as the types they are: a
+            // `keyof`, a union, an intersection.
             (TypeData::Union(_), TypeData::Union(_)) => {
                 let flags = |origin: &UnionOrigin| match origin {
                     UnionOrigin::Keyof(_) => tf::INDEX,
@@ -1643,7 +1684,7 @@ impl<'p> Checker<'p> {
                     _ => lists(self.parts(a), self.parts(b)),
                 })
             }
-            // Its members are as written.
+            // Its members are in source order.
             (TypeData::Intersection(x), TypeData::Intersection(y)) => lists(x, y),
             (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. })
             | (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => {
@@ -1718,8 +1759,8 @@ impl<'p> Checker<'p> {
                     .cmp(t.iter().map(text))
                     .then_with(|| lists(x, y))
             }
-            // TypeScript has them by id, in the order `getSpreadType` made them: `mapType` goes through the left, and for each of its
-            // members through the right.
+            // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
+            // iterates over the left operand, and for each of its members over the right.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
                 (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
                     .then_with(|| types(l, m))
@@ -1729,7 +1770,8 @@ impl<'p> Checker<'p> {
                     (x, y) => y.is_some().cmp(&x.is_some()),
                 },
             },
-            // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: what has none comes last.
+            // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: a type without a mapper
+            // comes last.
             (x, y) => {
                 let kind = |data: &TypeData| match data {
                     TypeData::Anon {
@@ -1751,8 +1793,9 @@ impl<'p> Checker<'p> {
                 kind(x)
                     .cmp(&kind(y))
                     .then_with(|| match (mapper(x), mapper(y)) {
-                        // `instantiateAnonymousType` combines the mapper of a mapped type with one for its fresh type parameter, and
-                        // `compareTypeMappers` says nothing of a `CompositeTypeMapper`: the ids decide.
+                        // `instantiateAnonymousType` combines the mapper of a mapped type with one
+                        // for its fresh type parameter, and `compareTypeMappers` does not order a
+                        // `CompositeTypeMapper`, so the ids decide.
                         (Some(x), Some(y)) if kind_of_both_is_mapped => {
                             self.is_instantiating(y).cmp(&self.is_instantiating(x))
                         }
@@ -1790,8 +1833,8 @@ impl<'p> Checker<'p> {
         types.sort_by(|&a, &b| self.compare_types(a, b));
     }
 
-    /// `containsType`, of the members of a union. It is asked for identity, and a comparison of two types costs more than going
-    /// through hundreds of numbers.
+    /// `containsType` for the members of a union. It tests identity, and a comparison of two types
+    /// costs more than a linear scan over hundreds of ids.
     pub(super) fn contains_type(&self, types: &[TypeId], t: TypeId) -> bool {
         if types.len() <= 512 {
             return types.contains(&t);

@@ -1,20 +1,23 @@
-//! Interned names. One table for the whole program, filled from every parser thread, and FROZEN WHILE THE PROGRAM IS CHECKED: a text that
-//! is new then is an atom of the task that comes upon it (`OwnStore`), and the link step publishes it.
+//! Interned names. One table for the whole program, filled from every parser thread, and frozen
+//! while the program is checked: a text first seen during checking becomes a task-local atom of the
+//! task that encounters it (`OwnStore`), and the merge at the barrier publishes it.
 
 use crate::local::LOCAL;
 use crate::types::OwnStore;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
-/// A name. Its number is its place in a list that every parser thread adds to, so it is another in every run: atoms have no order.
-/// What is gone through goes by declaration or by text.
+/// A name. Its number is its index in a list that every parser thread appends to, so it differs
+/// from run to run: atoms have no order.
+/// Anything that is iterated over is ordered by declaration or by text.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Atom(pub u32);
 
 impl Atom {
     pub const NONE: Atom = Atom(u32::MAX);
 
-    /// Whether it is a word binder.go knows an `Identifier` by: `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`,
-    /// `await` (`checkContextualIdentifier`), `eval`, `arguments` (`isEvalOrArgumentsIdentifier`).
+    /// Whether it is one of the words binder.go checks an `Identifier` for:
+    /// `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`, `await`
+    /// (`checkContextualIdentifier`), `eval`, `arguments` (`isEvalOrArgumentsIdentifier`).
     #[inline]
     pub fn is_keyword_identifier(self) -> bool {
         self.0.wrapping_sub(known::implements.0) <= known::arguments.0 - known::implements.0
@@ -43,7 +46,7 @@ impl std::fmt::Debug for Atom {
 pub struct Interner {
     shards: Box<[GrowingPlaces]>,
     texts: AppendVec<Box<[u8]>>,
-    /// Which interner it is, of all there have been.
+    /// Sequence number of this interner among all that have been created.
     number: u64,
 }
 
@@ -57,8 +60,8 @@ macro_rules! known_atoms {
             enum Number { $($name),* }
             $(pub const $name: Atom = Atom(Number::$name as u32);)*
             pub(super) const TEXTS: &[&str] = &[$($text),*];
-            /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as names of properties. Interned right after `TEXTS`: no `str`
-            /// holds their first byte.
+            /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as property names. Interned right
+            /// after `TEXTS`, because a `str` cannot contain their first byte.
             pub const sym_iterator: Atom = Atom(TEXTS.len() as u32);
             pub const sym_async_iterator: Atom = Atom(TEXTS.len() as u32 + 1);
             /// `InternalSymbolNameGlobal`
@@ -211,12 +214,12 @@ known_atoms! {
     tslib = "tslib",
 }
 
-/// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in
-/// it, so nothing that is written is such a name.
+/// Prefix of the name of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. No text
+/// contains the byte 0xFE, so no name in the source is such a name.
 pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 
-/// The names a thread has come upon lately, with what they are spelled like right there: a file says the same few names over and over, and
-/// finding one in what all threads share takes going to three places in memory that are far apart.
+/// Per-thread cache of recently seen names, with the spelling stored inline: a file repeats the
+/// same few names, and a lookup in the shared table touches three distant memory locations.
 struct Recent {
     /// `Interner::number`
     of: u64,
@@ -232,14 +235,14 @@ struct RecentEntry {
 }
 
 impl Recent {
-    /// Of no interner: numbers start at 1. The entries are allocated on first use.
+    /// Belongs to no interner: interner numbers start at 1. The entries are allocated on first use.
     const EMPTY: Recent = Recent {
         of: 0,
         entries: Vec::new(),
     };
     const LONGEST: usize = 27;
     const BITS: u32 = 11;
-    /// Nothing is this long.
+    /// No text has this length.
     const NOTHING: RecentEntry = RecentEntry {
         start: (0, 0, 0),
         end: u32::MAX,
@@ -247,7 +250,7 @@ impl Recent {
     };
 }
 
-/// Up to eight bytes of `text`, from `from` on, as a number. What is not there is zero.
+/// Up to eight bytes of `text`, starting at `from`, as an integer. Missing bytes are zero.
 #[inline]
 fn word(text: &[u8], from: usize) -> u64 {
     let Some(rest) = text.get(from..) else {
@@ -257,7 +260,7 @@ fn word(text: &[u8], from: usize) -> u64 {
     if len >= 8 {
         u64::from_le_bytes(rest[..8].try_into().unwrap())
     } else if len >= 4 {
-        // The two overlap, and agree where they do.
+        // The two reads overlap and agree on the shared bytes.
         let first = u32::from_le_bytes(rest[..4].try_into().unwrap());
         let last = u32::from_le_bytes(rest[len - 4..].try_into().unwrap());
         u64::from(first) | u64::from(last) << ((len - 4) * 8)
@@ -271,7 +274,8 @@ fn word(text: &[u8], from: usize) -> u64 {
     }
 }
 
-/// A text of at most `Recent::LONGEST` bytes as numbers: the bytes with zeros after them, and in the last byte of all how many there are.
+/// A text of at most `Recent::LONGEST` bytes as integers: the bytes padded with zeros, with the
+/// length in the very last byte.
 #[inline]
 fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
     (
@@ -280,7 +284,7 @@ fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
     )
 }
 
-/// What a text is found by.
+/// The lookup key of a text.
 #[inline]
 pub(crate) fn hash_of(text: &[u8]) -> u64 {
     if text.len() > Recent::LONGEST {
@@ -294,8 +298,8 @@ thread_local! {
     static RECENT: std::cell::UnsafeCell<Recent> = const { std::cell::UnsafeCell::new(Recent::EMPTY) };
 }
 
-/// The calling thread's cache of recently interned atoms. A thread of a pool outlives a check, so the cache is owned by the check: a
-/// thread has one for as long as it works for the check.
+/// The calling thread's cache of recently interned atoms. A pool thread outlives a check, so the
+/// check owns the cache: a thread holds one only while it works for the check.
 pub struct RecentAtoms(Recent);
 
 impl Default for RecentAtoms {
@@ -310,9 +314,9 @@ impl RecentAtoms {
         RecentAtoms::default().install()
     }
 
-    /// Gives the cache to the calling thread. Returns the one it had.
+    /// Installs the cache on the calling thread. Returns the previous one.
     pub fn install(self) -> RecentAtoms {
-        // SAFETY: it is the thread's own, and nothing in here gets back here.
+        // SAFETY: it is thread-local, and nothing in this scope re-enters it.
         RECENT.with(|recent| RecentAtoms(std::mem::replace(unsafe { &mut *recent.get() }, self.0)))
     }
 }
@@ -361,12 +365,13 @@ impl Interner {
         this
     }
 
-    /// For the link step.
+    /// For the merge at the barrier.
     pub(crate) fn halves(&self) -> (&[GrowingPlaces], &AppendVec<Box<[u8]>>) {
         (&self.shards, &self.texts)
     }
 
-    /// Which interner it is, of all there have been: what is remembered of one says nothing of another.
+    /// Sequence number of this interner among all that have been created: data cached for one
+    /// interner is invalid for another.
     #[inline]
     pub fn number(&self) -> u64 {
         self.number
@@ -379,7 +384,7 @@ impl Interner {
         let (start, end) = short(text);
         let spread = spread_hash(&(start, end));
         RECENT.with(|recent| {
-            // SAFETY: it is the thread's own, and nothing in here gets back here.
+            // SAFETY: it is thread-local, and nothing in this scope re-enters it.
             let recent = unsafe { &mut *recent.get() };
             if recent.of != self.number {
                 recent.of = self.number;
@@ -414,7 +419,7 @@ impl Interner {
         ))
     }
 
-    /// The atom of `text`, if anything interned it.
+    /// The atom of `text`, if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
         self.shards[shard_of(spread)]
@@ -428,8 +433,9 @@ impl Interner {
         self.texts.get(atom.0)
     }
 
-    /// The name of the property `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given `name@id`, that of the property a
-    /// `unique symbol` names (`getESSymbolLikeTypeForNode`).
+    /// The name of the property `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given
+    /// `name@id`, the name of the property keyed by a `unique symbol`
+    /// (`getESSymbolLikeTypeForNode`).
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
@@ -440,7 +446,7 @@ impl Interner {
         atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
     }
 
-    /// `EscapeInternalSymbolName`: the byte that no text has reads `__`.
+    /// `EscapeInternalSymbolName`: the byte that no text contains is printed as `__`.
     #[cfg(feature = "baselines")]
     pub fn text(&self, atom: Atom) -> std::borrow::Cow<'_, str> {
         if atom.is_none() {
@@ -460,7 +466,8 @@ fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// THE PUBLISHED ATOMS AND THE TASK'S OWN, which is all that a task sees. `Checker::atoms` makes one.
+/// The published atoms and the task-local ones, which is everything a task can see.
+/// `Checker::atoms` creates one.
 #[derive(Copy, Clone)]
 pub struct Atoms<'p> {
     published: &'p Interner,
@@ -528,12 +535,12 @@ impl<'p> Atoms<'p> {
     }
 }
 
-/// The number `text` is the decimal notation of.
+/// The number whose decimal notation is `text`.
 pub fn parse_number(text: &[u8]) -> Option<f64> {
     core::str::from_utf8(text).ok()?.parse().ok()
 }
 
-/// `String(n)`, which is the name a number goes by as a property.
+/// `String(n)`, which is the property name of a number.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     use std::io::Write;
     let mut text = Vec::new();

@@ -1,8 +1,10 @@
-//! Makes ordinary nodes of the tags of JSDoc comments, in JavaScript. A port of reparser.go of TypeScript 7.0.2's parser.
+//! Turns the tags of JSDoc comments into ordinary nodes, in JavaScript. A port of reparser.go of
+//! TypeScript 7.0.2's parser.
 //!
-//! The lowering calls [`Lower::with_jsdoc`] for every node TypeScript's parser calls `withJSDoc` for, once the node is lowered.
-//! Hosted tags change that node: they give it annotations, type parameters, modifiers, casts. Unhosted tags make statements of their
-//! own, which wait in `Lower::reparsed` for the list of statements they go into.
+//! The lowering pass calls [`Lower::with_jsdoc`] for every node TypeScript's parser calls
+//! `withJSDoc` for, once the node is lowered. Hosted tags modify that node: they add annotations,
+//! type parameters, modifiers, casts. Unhosted tags produce separate statements, which stay in
+//! `Lower::reparsed` until they are inserted into their statement list.
 
 use std::rc::Rc;
 
@@ -18,9 +20,9 @@ use super::jsdoc::{
 };
 use super::lower::Lower;
 
-/// The node a JSDoc comment belongs to, as far as hosted tags tell one kind from another.
+/// The node a JSDoc comment is attached to, to the extent that hosted tags distinguish node kinds.
 pub(super) enum Host {
-    /// Nothing is made of hosted tags on it.
+    /// Hosted tags on it are ignored.
     Other,
     VariableStatement(Span<VarDeclId>),
     VariableDeclaration(VarDeclId),
@@ -28,7 +30,7 @@ pub(super) enum Host {
     ExportAssignment(StmtId),
     ExpressionStatement(StmtId),
     ReturnStatement(StmtId),
-    /// What is in the parentheses.
+    /// The expression inside the parentheses.
     Parenthesized(ExprId),
     Parameter(ParamId),
     /// A function declaration, a function expression or an arrow function.
@@ -44,11 +46,11 @@ pub(super) enum Host {
 struct Attached {
     /// Those that have tags, as indices into `Comments::list`.
     docs: SmallVec<[u32; 2]>,
-    /// The last of `docs` is the last JSDoc comment there is.
+    /// The last of `docs` is the last of all the JSDoc comments.
     last_has_tags: bool,
 }
 
-/// The modifiers among `flags`, which an overload signature has in common with the implementation.
+/// The modifier flags in `flags`, which an overload signature shares with the implementation.
 fn modifiers_of(flags: Flags) -> Flags {
     flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::MISSING_BODY)
 }
@@ -62,10 +64,11 @@ fn is_valid_identifier(text: &[u8]) -> bool {
 }
 
 impl<'p, 'a> Lower<'p, 'a> {
-    // ───────────────────────────── which comments belong to a node ─────────────────────────────
+    // ───────────────────────────── attaching comments to nodes ─────────────────────────────
 
-    /// The JSDoc comments of the node whose first token is at `token` and fully starts at `full_start`. `with_trailing`: those on the
-    /// line of the token before count too, as they do for a parameter, a variable declaration, a parenthesized expression and a
+    /// The JSDoc comments of the node whose first token is at `token`, with full start
+    /// `full_start`. `with_trailing`: comments on the same line as the previous token are included,
+    /// as they are for a parameter, a variable declaration, a parenthesized expression and a
     /// function expression.
     fn jsdoc_before(&self, token: u32, full_start: u32, with_trailing: bool) -> Attached {
         let lexer = &self.p.lexer;
@@ -76,17 +79,18 @@ impl<'p, 'a> Lower<'p, 'a> {
             docs: SmallVec::new(),
             last_has_tags: false,
         };
-        // `GetLeadingCommentRanges`: what follows the first line break, or the start of the file.
+        // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of
+        // the file.
         let mut is_collecting = with_trailing || full_start == 0;
         let comments = lexer.all_comments[first..]
             .iter()
             .zip(&lexer.comment_flags[first..])
             .take_while(|(comment, _)| (comment.loc.start as u32) < token);
-        for (comment, &said) in comments {
-            is_collecting |= said & flags::LINE_BREAK_BEFORE != 0;
-            if !is_collecting || said & flags::JSDOC_LIKE == 0 {
+        for (comment, &reported) in comments {
+            is_collecting |= reported & flags::LINE_BREAK_BEFORE != 0;
+            if !is_collecting || reported & flags::JSDOC_LIKE == 0 {
                 // A line comment ends with its line.
-                is_collecting |= said & flags::SINGLE_LINE != 0;
+                is_collecting |= reported & flags::SINGLE_LINE != 0;
                 continue;
             }
             attached.last_has_tags = match self.jsdoc.at(comment.loc.start as u32) {
@@ -104,7 +108,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         attached
     }
 
-    /// `withJSDoc`, of the node `host` whose first token is at `token` and fully starts at `full_start`.
+    /// `withJSDoc` for the node `host` whose first token is at `token`, with full start
+    /// `full_start`.
     pub(super) fn with_jsdoc(
         &mut self,
         token: u32,
@@ -136,7 +141,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if self.member_modifiers.is_empty() {
             return member;
         }
-        // Those that are made of tags come after those that are written.
+        // Modifiers synthesized from tags come after those in the source.
         let mut all: Vec<(Flags, u32)> = self
             .b
             .file
@@ -152,7 +157,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         member
     }
 
-    /// Once everything is lowered: hands what is known of the comments over to the file.
+    /// Called once everything is lowered: stores the information collected about the comments in
+    /// the file.
     pub(super) fn finish_jsdoc(&mut self) {
         let file = &mut self.b.file;
         for (doc, &is_attached) in self.jsdoc.list.iter().zip(&self.jsdoc_is_attached) {
@@ -180,15 +186,15 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.atom(text)
     }
 
-    /// Where the parenthesis around `e` opens, if `e` is written in parentheses.
-    /// The outermost parentheses around `e`: where they open and where they end.
+    /// Position of the `(` around `e`, if `e` is parenthesized.
+    /// The outermost parentheses around `e`: their start and end.
     fn paren_of(&self, e: ExprId) -> Option<(u32, u32)> {
-        // In the order they were made, which is that of their ids.
+        // In creation order, which is id order.
         let outermost = parentheses_around(&self.b.file, e).last()?;
         Some((outermost.1, outermost.2))
     }
 
-    /// `IsPrivateIdentifier`, of the name of a property access.
+    /// `IsPrivateIdentifier` for the name of a property access.
     fn is_private_name(&self, name: Atom) -> bool {
         self.b.atoms.bytes(name).first() == Some(&b'#')
     }
@@ -217,7 +223,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `GetAssignmentDeclarationKind(e) != JSDeclarationKindNone`, of a binary expression in JavaScript.
+    /// `GetAssignmentDeclarationKind(e) != JSDeclarationKindNone` for a binary expression in
+    /// JavaScript.
     fn is_assignment_declaration(&self, e: ExprId) -> bool {
         let file = &self.b.file;
         let ExprKind::Assign {
@@ -262,7 +269,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// The function `e` is, under any `satisfies` (`skipSatisfiesExpressions`). `NONE` if it is none.
+    /// The function that `e` is after skipping any `satisfies` (`skipSatisfiesExpressions`). `NONE`
+    /// if it is not a function.
     fn function_expression(&self, mut e: ExprId) -> FnId {
         let file = &self.b.file;
         while e.is_some() && self.paren_of(e).is_none() {
@@ -320,7 +328,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.full_signatures.contains(&func.0)
     }
 
-    /// `checkNonIdentifierName`. The reparser's own errors are the parser's, not those of the comment.
+    /// `checkNonIdentifierName`. The reparser's own errors count as parser errors, not as errors of
+    /// the comment.
     fn check_non_identifier_name(&mut self, name: Name) {
         if !is_valid_identifier(name.text.slice()) {
             // A missing name is reported at the character before it.
@@ -335,7 +344,8 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// Reports what the checker objects to in the syntax of a comment from `start` to `end`, which is being reparsed.
+    /// Reports the checker errors in the comment syntax from `start` to `end`, which is being
+    /// reparsed.
     fn note_checker_errors(&mut self, start: u32, end: u32) {
         let list = &self.jsdoc.list;
         let after = list.partition_point(|doc| doc.start <= start);
@@ -354,7 +364,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `addDeepCloneReparse`, of the type of a type expression.
+    /// `addDeepCloneReparse` for the type of a type expression.
     fn reparse_type(&mut self, expr: TypeExpr) -> TypeNodeId {
         self.note_checker_errors(expr.pos, expr.end);
         let jsdoc = std::rc::Rc::clone(&self.jsdoc);
@@ -398,7 +408,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 continue;
             };
             let mut flags = Flags::REPARSED;
-            // What is no identifier is a name all the same, as a string.
+            // A name that is not an identifier is still a name, as a string.
             if !is_valid_identifier(name.text.slice()) {
                 flags |= Flags::STRING_NAME | Flags::LITERAL_NAME;
             }
@@ -451,7 +461,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         doc: &JsDoc,
         typedef_or_callback: bool,
     ) -> Span<TypeParamId> {
-        // In a comment with a `@typedef` or a `@callback` the `@template` tags are about the type that is defined.
+        // In a comment with a `@typedef` or a `@callback` the `@template` tags apply to the type
+        // being defined.
         if !typedef_or_callback
             && doc
                 .tags
@@ -544,7 +555,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// The type alias of a `@typedef` or a `@callback`, in the namespaces its name says (`wrapInJSDocNamespace`).
+    /// The type alias for a `@typedef` or a `@callback`, wrapped in the namespaces of its qualified
+    /// name (`wrapInJSDocNamespace`).
     fn reparse_alias(&mut self, name: &DeclaredName, ty: TypeNodeId, tag: &Tag, doc: &JsDoc) {
         let type_params = self.gather_type_parameters(doc, true);
         let mut flags = Flags::REPARSED;
@@ -565,7 +577,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             pos: tag.pos,
             end: tag.end,
         };
-        // The outermost is exported by the binder, from a module alone (`IsImplicitlyExportedJSDocDeclaration`).
+        // The binder exports the outermost one, only from a module
+        // (`IsImplicitlyExportedJSDocDeclaration`).
         for (depth, &namespace) in name.namespaces.iter().enumerate().rev() {
             let module = Module {
                 name: ModuleName::Ident(self.name_atom(namespace)),
@@ -659,7 +672,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         .map_or(Atom::NONE, |name| self.name_atom(name)),
                     namespace_pos: import.namespace.map_or(0, |name| name.start),
                     clause_start: import.clause_start,
-                    // Only what is said of `import defer` asks.
+                    // Only read by the diagnostics for `import defer`.
                     clause_end: import.clause_end,
                     namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
@@ -764,7 +777,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             };
             let mut flags = Flags::REPARSED;
             let ty = match property.ty {
-                // The type after the dots is that of the parameter as it stands.
+                // The type after the dots is used unchanged as the type of the parameter.
                 TagType::Expr(expr) if expr.is_variadic && !expr.is_optional => {
                     flags |= Flags::REST;
                     self.reparse_type(TypeExpr {
@@ -783,7 +796,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             } else if text.is_empty() {
                 self.b.atom(format!("_{index}").as_bytes())
             } else {
-                // What cannot be in an identifier is written `_`.
+                // Characters that are invalid in an identifier are replaced with `_`.
                 let is_start =
                     |c: u8| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80;
                 let spelled: Vec<u8> = text
@@ -895,7 +908,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     && Self::is_optional(property)
                 {
                     self.b.file[param].flags |= Flags::OPTIONAL | Flags::REPARSED;
-                    // `checkGrammarParameterList`, `checkGrammarAccessor`: the `?` is where the tag is.
+                    // `checkGrammarParameterList`, `checkGrammarAccessor`: the position of the `?`
+                    // is that of the tag.
                     let Func {
                         kind,
                         type_params,
@@ -938,7 +952,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     };
                     let this = self.b.file.add_param(this);
                     self.b.file[func].this_param = this;
-                    // `checkParameter`: the parameter is where the name of the tag is.
+                    // `checkParameter`: the position of the parameter is that of the tag's name.
                     let code = match self.b.file[func].kind {
                         FnKind::Arrow => Some(2730),
                         FnKind::Constructor => Some(2681),
@@ -964,7 +978,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             TagKind::Modifier(modifier) => self.reparse_modifier_tag(*modifier, tag, host),
             TagKind::Implements(class_name) => {
-                // A name that is missing is looked up by nobody.
+                // A missing name is never resolved.
                 if let Host::Class(class) = *host
                     && class_name
                         .name
@@ -1012,7 +1026,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.clone_type_list(&jsdoc.types, type_args)
     }
 
-    /// `@augments`, `@extends`: the type arguments go to the `extends` clause, if that names the same class.
+    /// `@augments`, `@extends`: the type arguments are added to the `extends` clause, if it names
+    /// the same class.
     fn reparse_augments_tag(&mut self, class_name: &ClassName, tag_name: &[u8], class: ClassId) {
         let Class {
             extends,
@@ -1041,7 +1056,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 _ => break false,
             }
         };
-        // `checkGrammarClassDeclarationHeritageClauses`, `getIdentifierFromEntityNameExpression`: the last names have to agree.
+        // `checkGrammarClassDeclarationHeritageClauses`, `getIdentifierFromEntityNameExpression`:
+        // the last names must match.
         if is_entity_name
             && let (Some(&target), Some(&source)) = (written.first(), class_name.name.last())
             && target != self.name_atom(source)
@@ -1241,7 +1257,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Host::ClassMember(member) => {
                 let is_modified = match member.kind {
-                    // In an object literal they are no modifiers, nor in what is written in one.
+                    // They are not modifiers in an object literal, nor in anything nested in one.
                     MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                         self.object_literals_around == 0
                     }
@@ -1293,8 +1309,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             .map(|(_, param)| param)
     }
 
-    /// `checkUnmatchedJSDocParameters`, as far as the syntax tells. `getAllJSDocTags`: the tags of the nearest comment count, which
-    /// is the first one that gets here.
+    /// `checkUnmatchedJSDocParameters`, to the extent that syntax alone determines it.
+    /// `getAllJSDocTags`: only the tags of the nearest comment are used, which is the first one to
+    /// reach this function.
     fn note_unmatched_parameters(&mut self, host: &Host, doc: &JsDoc) {
         let func = match *host {
             // `GetNextJSDocCommentLocation` does not go through an assignment.
@@ -1339,7 +1356,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 || matches!(property.name[..], [name] if names.contains(&this.name_atom(name)))
         };
         let mut errors: Vec<(&[Name], u32)> = Vec::new();
-        // If the function refers to `arguments`, the last tag can be about that.
+        // If the function refers to `arguments`, the last tag may describe it.
         if let [_] = last.name[..]
             && !is_matched(&*self, tags.len() - 1, last)
             && !matches!(last.ty, TagType::None)
@@ -1358,7 +1375,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         }
         for (name, code) in errors {
-            // `entityNameToString`, of the name and, of a qualified one, of what is left of its last dot.
+            // `entityNameToString` of the name and, for a qualified name, of the part before its
+            // last dot.
             let parts: Vec<&[u8]> = name.iter().map(|part| part.text.slice()).collect();
             let whole = jsdoc::unescaped_name(&parts.join(&b'.'));
             let left = jsdoc::unescaped_name(&parts[..parts.len() - 1].join(&b'.'));
@@ -1373,7 +1391,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `isArrayType`, of a type as it is written.
+    /// `isArrayType`, decided from the syntax of the type.
     fn is_array_type(&self, ty: &TagType) -> bool {
         match *ty {
             TagType::None => false,

@@ -1,18 +1,23 @@
-//! `*ast.Node`: one handle for every node of a file, whichever vector it is in, or in none.
+//! `*ast.Node`: one handle for every node of a file, whichever vector it is stored in, or none.
 //!
-//! ROWS. The vectors of [`File`] that hold nodes are laid end to end, so a handle is the base of a vector plus an index: a typed id
-//! becomes a handle, and a handle a typed id, by arithmetic. A node that takes two rows (`ExprKind::Fn` and its `Func`,
-//! `StmtKind::Class` and its `Class`, a method and the function that is its value) has ONE handle, that of the row tsgo's node is: the
-//! statement, the member, the property, the type node, else the expression.
+//! HIR nodes. The vectors of [`File`] that hold nodes are concatenated into one index space, so a
+//! handle is the base of a vector plus an index: a typed id converts to a handle, and a handle to a
+//! typed id, by arithmetic. A tsgo node that is split over two HIR nodes (`ExprKind::Fn` and its
+//! `Func`, `StmtKind::Class` and its `Class`, a method and the function that is its value) has one
+//! handle, that of the HIR node that corresponds to tsgo's node: the statement, the member, the
+//! property, the type node, else the expression.
 //!
-//! PARTS. A node of tsgo's that says nothing a row does not say has no row: its handle is the handle of that row and, in the top
-//! bits, which [`Part`] of it. So `parent` goes up level by level as `node.Parent` does, and the levels take no memory.
+//! Parts. A tsgo node that carries no information beyond that of a HIR node has no HIR node of its
+//! own: its handle is the handle of that HIR node and, in the top bits, which [`Part`] of it. So
+//! `parent` ascends level by level as `node.Parent` does, and the levels take no memory.
 //!
-//! Rows that are no node: the statement around what is in the head of a `for`, the `Pat` of an omitted element, the `TupleElem` of a
-//! plain element, the `Assign` of `{ a = 1 }`, what stands for the specifier of `import()` and for the empty `{}` of JSX. What a class
-//! extends after the first has no `ExpressionWithTypeArguments` around it. An import or export from what is no string is an
-//! `EmptyStatement`, a `WithStatement` a `Block` of two.
-//! tsgo's nodes that are not there yet, so `parent` goes past them: `ParenthesizedType`, tokens.
+//! HIR nodes that are not tsgo nodes: the statement that wraps the contents of the head of a `for`,
+//! the `Pat` of an omitted element, the `TupleElem` of a plain element, the `Assign` of `{ a = 1
+//! }`, the placeholders for the specifier of `import()` and for the empty `{}` of JSX. The heritage
+//! elements a class extends after the first have no `ExpressionWithTypeArguments` around them. An
+//! import or export whose specifier is not a string is an `EmptyStatement`, a `WithStatement` is a
+//! `Block` of two statements.
+//! tsgo nodes that are not represented yet, so `parent` skips them: `ParenthesizedType`, tokens.
 
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent};
@@ -149,18 +154,19 @@ impl Kind {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct Node(pub u32);
 
-/// How many bits of a handle say which row. The rest say which part of it.
+/// The number of bits of a handle that select the HIR node. The remaining bits select the part of
+/// it.
 const ROW_BITS: u32 = 26;
 
 macro_rules! parts {
     ($($(#[$doc:meta])* $name:ident = $bits:literal,)*) => {
-        /// A node that is told from the row it belongs to.
+        /// A node that is derived from the HIR node it belongs to.
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         #[repr(u8)]
         pub enum Part { $($(#[$doc])* $name = $bits,)* }
 
         impl Node {
-            /// `None`: it is a row.
+            /// `None`: it is a HIR node.
             #[inline]
             pub fn part(self) -> Option<Part> {
                 match self.0 >> ROW_BITS {
@@ -172,7 +178,8 @@ macro_rules! parts {
     };
 }
 parts! {
-    /// `node.Name()`, of what has no pattern for a name. Of an `ImportDeclaration`: that of its `ImportClause`.
+    /// `node.Name()` for a node whose name is not a pattern. For an `ImportDeclaration`: the name
+    /// of its `ImportClause`.
     Name = 1,
     /// `node.PropertyName()`
     PropertyName = 2,
@@ -181,13 +188,14 @@ parts! {
     /// The `Block` of a function-like, the `ModuleBlock`, the `CaseBlock`.
     Body = 4,
     CatchClause = 5,
-    /// The `HeritageClause` that says `extends`.
+    /// The `HeritageClause` with the `extends` keyword.
     Extends = 6,
-    /// The `HeritageClause` that says `implements`.
+    /// The `HeritageClause` with the `implements` keyword.
     Implements = 7,
     /// The `ExpressionWithTypeArguments` a class extends: `GetExtendsHeritageClauseElement`.
     Base = 8,
-    /// The `VariableDeclarationList`. In the head of a `for` the statement it belongs to is no node.
+    /// The `VariableDeclarationList`. In the head of a `for` the statement it belongs to is not a
+    /// tsgo node.
     DeclarationList = 9,
     ImportClause = 10,
     /// `NamespaceImport`, `NamedImports`
@@ -204,25 +212,27 @@ parts! {
     Closing = 16,
     /// `JsxAttributes`
     Attributes = 17,
-    /// The `TemplateSpan` around a substitution. It belongs to the row of the expression.
+    /// The `TemplateSpan` around a substitution. It belongs to the HIR node of the expression.
     Span = 18,
     /// The literal in the brackets of `["a"]` and `[0]`.
     NameLiteral = 19,
-    /// `Namespace` of a `JsxNamespacedName`. It belongs to the row of the name of the tag, or of the attribute.
+    /// `Namespace` of a `JsxNamespacedName`. It belongs to the HIR node of the tag name, or of the
+    /// attribute.
     Namespace = 20,
-    /// The `QualifiedName` that ends with a name, a `PropertyAccessExpression` in a heritage clause. It belongs to the row of that name.
+    /// The `QualifiedName` that ends with a name, a `PropertyAccessExpression` in a heritage
+    /// clause. It belongs to the HIR node of that name.
     Qualified = 21,
-    /// What a `LiteralType` is of; the `SymbolKeyword` of `unique symbol`.
+    /// The literal of a `LiteralType`; the `SymbolKeyword` of `unique symbol`.
     Literal = 22,
-    /// The number of the `-1` a `LiteralType` is of.
+    /// The numeric literal in the `-1` of a `LiteralType`.
     Operand = 23,
     /// `TemplateHead`
     Head = 24,
-    /// `TemplateMiddle`, `TemplateTail`. It belongs to the row of the substitution before it.
+    /// `TemplateMiddle`, `TemplateTail`. It belongs to the HIR node of the preceding substitution.
     Tail = 25,
-    /// The `TypeReference` that says `const` in `x as const` and `<const>x`.
+    /// The `TypeReference` for `const` in `x as const` and `<const>x`.
     ConstType = 26,
-    /// The `JsxExpression` around an expression. It belongs to the row of the expression.
+    /// The `JsxExpression` around an expression. It belongs to the HIR node of the expression.
     JsxExpression = 27,
     /// `node.ModuleSpecifier()` that is a string.
     Specifier = 28,
@@ -244,12 +254,12 @@ impl Node {
     pub fn is_some(self) -> bool {
         self.0 != u32::MAX
     }
-    /// The row it is, or is a part of.
+    /// The HIR node that it is, or is a part of.
     #[inline]
     pub fn row(self) -> Node {
         Node(self.0 & ((1 << ROW_BITS) - 1))
     }
-    /// That part of the row.
+    /// That part of the HIR node.
     #[inline]
     pub fn with(self, part: Part) -> Node {
         if self.is_none() {
@@ -265,21 +275,21 @@ impl Node {
 
 macro_rules! node_vectors {
     ($($index:literal $field:ident $id:ident $variant:ident;)*) => {
-        /// What a [`Node`] is.
+        /// What a [`Node`] refers to.
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         pub enum NodeData {
             /// `nil`
             None,
             File,
             $($variant($id),)*
-            /// That part of that row.
+            /// That part of that HIR node.
             Part(Part, Node),
         }
 
-        /// How many vectors hold nodes.
+        /// The number of vectors that hold nodes.
         const VECTORS: usize = [$($index),*].len();
 
-        /// Where the rows of each vector begin among the handles, and where the last ends.
+        /// The first handle of the HIR nodes of each vector, and the end of the last vector.
         #[derive(Copy, Clone, Default)]
         pub struct NodeBases([u32; VECTORS + 1]);
 
@@ -294,7 +304,7 @@ macro_rules! node_vectors {
             #[inline]
             pub fn data(&self, node: Node) -> NodeData {
                 let bases = &self.bases.0;
-                // Most of what is asked about is an expression or a statement.
+                // Most queried nodes are expressions or statements.
                 if node.0.wrapping_sub(bases[0]) < bases[1] - bases[0] {
                     return NodeData::Expr(ExprId(node.0 - bases[0]));
                 }
@@ -304,8 +314,10 @@ macro_rules! node_vectors {
                 self.data_of_the_rest(node)
             }
 
-            /// Hands `v` the children of every row, vector by vector: each loop is left with the arm of its own kind of row.
-            /// `at_hand`: whose children they are. `open`: where `v` puts the parts that have something in them.
+            /// Passes the children of every HIR node to `v`, vector by vector, so that each loop is
+            /// specialized to the match arm of its own kind.
+            /// `at_hand`: the node whose children they are. `open`: where `v` collects the parts
+            /// that have children.
             fn children_of_all_rows<V: FnMut(Node) -> bool>(
                 &self,
                 v: &mut Children<'_, V>,
@@ -352,7 +364,7 @@ macro_rules! node_vectors {
     };
 }
 
-/// The handle of the row itself, which not every row goes by.
+/// The handle of the HIR node itself, which not every HIR node uses as its node handle.
 trait Row: Copy {
     fn row(self, file: &File) -> Node;
 }
@@ -379,19 +391,21 @@ node_vectors! {
     18 parens ParenId Paren;
 }
 
-/// `node.Parent`, of every node of a file.
+/// `node.Parent` for every node of a file.
 pub struct Parents {
-    /// By row: one load.
+    /// Indexed by HIR node: one load.
     rows: Box<[Node]>,
-    /// Of the `TemplateSpan` and the `JsxExpression` around an expression and of the `QualifiedName` that ends with a name, which are
-    /// what `rows` has for it. Sorted.
+    /// The parents of the `TemplateSpan` and the `JsxExpression` around an expression and of the
+    /// `QualifiedName` that ends with a name, which are themselves the entry in `rows` for that
+    /// expression or name. Sorted.
     around: Box<[(Node, Node)]>,
 }
 
 /// A typed id that is, or belongs to, a node.
 pub trait ToNode: Copy {
     fn to_node(self, file: &File) -> Node;
-    /// What stands for it in its parent: an expression with the parentheses around it.
+    /// The node that represents it in its parent: an expression including its enclosing
+    /// parentheses.
     #[inline]
     fn to_child(self, file: &File) -> Node {
         self.to_node(file)
@@ -414,7 +428,7 @@ rows_are_nodes! {
 }
 
 impl ToNode for Span<NameId> {
-    /// `EntityName`: the one name, or the `QualifiedName` that ends with the last.
+    /// `EntityName`: the single name, or the `QualifiedName` that ends with the last name.
     fn to_node(self, file: &File) -> Node {
         match self.iter().next_back() {
             Some(last) if self.len() > 1 => last.row(file).with(Part::Qualified),
@@ -425,7 +439,7 @@ impl ToNode for Span<NameId> {
 }
 
 impl ToNode for TupleElemId {
-    /// An element without a name, `?` or `...` is its type.
+    /// An element without a name, `?` or `...` is represented by its type.
     fn to_node(self, file: &File) -> Node {
         match file.tuple_elems.get(self.idx()) {
             Some(element) if element.name.is_none() && !element.optional && !element.rest => {
@@ -454,7 +468,7 @@ impl ToNode for ExprId {
     }
 
     fn to_child(self, file: &File) -> Node {
-        // The outermost of the parentheses around it is the last.
+        // The outermost parentheses around it come last.
         let after = file.parens.partition_point(|p| p.0.0 <= self.0);
         match after.checked_sub(1) {
             Some(last) if file.parens[last].0 == self => ParenId(last as u32).row(file),
@@ -531,7 +545,8 @@ impl ToNode for Decl {
 }
 
 impl ToNode for Parent {
-    /// What an expression or a statement whose `Parent` it is lies directly in. For who still has a `Parent` in hand.
+    /// The node that directly contains an expression or a statement whose `Parent` this is. For
+    /// callers that still hold a `Parent`.
     fn to_node(self, file: &File) -> Node {
         match self {
             Parent::None => Node::NONE,
@@ -560,16 +575,18 @@ impl ToNode for Parent {
     }
 }
 
-/// `Visitor`, and the file whose ids it is handed.
+/// `Visitor`, and the file that the ids passed to it belong to.
 struct Children<'a, V: FnMut(Node) -> bool + ?Sized> {
     file: &'a File,
     visit: &'a mut V,
-    /// Whether an expression in parentheses is handed over as the `ParenthesizedExpression`, which takes a search.
+    /// Whether a parenthesized expression is visited as its `ParenthesizedExpression`, which
+    /// requires a search.
     with_parentheses: bool,
 }
 
 impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
-    /// `node.ForEachChild`. `data`: what `node` is. Who knows that beforehand is left with the one arm.
+    /// `node.ForEachChild`. `data`: what `node` refers to. A caller that knows it statically is
+    /// specialized to the one match arm.
     #[inline(always)]
     fn children(&mut self, data: NodeData, node: Node) -> bool {
         let file = self.file;
@@ -610,7 +627,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                 self.span(member.modifiers)
                     || self.one(file.name(node))
                     || member.func.is_some() && self.function(member.func, node)
-                    // Of an accessor and an index signature it is what the function returns, once more.
+                    // For an accessor and an index signature it duplicates the return type of the
+                    // function.
                     || member.func.is_none() && self.one(member.ty)
                     || self.one(member.init)
             }
@@ -649,7 +667,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         }
     }
 
-    /// `children`, of the parts in `open`, and of the parts in those.
+    /// `children` for the parts in `open`, and for the parts in those.
     #[inline]
     fn children_of_parts(&mut self, at_hand: &Cell<Node>, open: &RefCell<Vec<Node>>) {
         while let Some(part) = { open.borrow_mut().pop() } {
@@ -670,7 +688,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         node.is_some() && (self.visit)(node)
     }
 
-    /// `visit`, of a part that is only there if `exists`.
+    /// `visit` for a part that only exists if `exists`.
     fn part(&mut self, of: Node, part: Part, exists: bool) -> bool {
         exists && (self.visit)(of.with(part))
     }
@@ -686,13 +704,14 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         span.iter().any(|id| self.one(id))
     }
 
-    /// `visitNodeList`, of expressions or types that each have `part` around them.
+    /// `visitNodeList` for expressions or types that are each wrapped in `part`.
     fn wrapped<T: Row + From<u32>>(&mut self, list: IdList<T>, part: Part) -> bool {
         let file = self.file;
         file.ids(list).any(|e| self.one(e.row(file).with(part)))
     }
 
-    /// A child of a JSX element, or what an attribute is given: text, a string and an element stand for themselves.
+    /// A child of a JSX element, or the initializer of an attribute: text, a string and an element
+    /// represent themselves.
     fn jsx_child(&mut self, e: ExprId) -> bool {
         match self.file.exprs.get(e.idx()).map(|e| e.kind) {
             None => false,
@@ -704,26 +723,27 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         }
     }
 
-    /// What is written in the declaration `s` for a module specifier that is no string, and its `ImportAttributes`. Hardly a file
-    /// has either.
+    /// The expression in the declaration `s` in place of a module specifier that is not a string,
+    /// and its `ImportAttributes`. Few files have either.
     fn after_from(&mut self, s: StmtId) -> bool {
         let file = self.file;
         let (start, end) = (file[s].start, file[s].loc.end);
-        // One that the parser missed is where the next token is.
+        // A missing one is positioned at the next token.
         let mut specifiers = file.specifier_expressions.iter();
         specifiers
             .any(|&e| (start + 1..=file.token_after(end)).contains(&file[e].pos) && self.one(e))
             || self.import_attributes(start, end)
     }
 
-    /// The `ImportAttributes` of what goes from `start` to `end`: the first that are written in it.
+    /// The `ImportAttributes` of the node that spans `start` to `end`: the first ones inside that
+    /// span.
     fn import_attributes(&mut self, start: u32, end: u32) -> bool {
         let mut all = self.file.import_attributes.iter();
         all.find(|of| (start..end).contains(&of.0))
             .is_some_and(|of| self.one(of.1))
     }
 
-    /// What is in the head of a `for` statement, which has no statement around it.
+    /// The contents of the head of a `for` statement, which have no enclosing statement node.
     fn for_initializer(&mut self, init: StmtId) -> bool {
         match self.file.stmts.get(init.idx()).map(|s| s.kind) {
             Some(StmtKind::Expr(e)) => self.one(e),
@@ -732,7 +752,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         }
     }
 
-    /// All of the function-like `node` after its name.
+    /// The children of the function-like `node` after its name.
     fn function(&mut self, f: FnId, node: Node) -> bool {
         let func = &self.file[f];
         self.span(func.type_params)
@@ -747,7 +767,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             }
     }
 
-    /// All of the class `node` after its modifiers.
+    /// The children of the class `node` after its modifiers.
     fn class(&mut self, c: ClassId, node: Node) -> bool {
         let class = &self.file[c];
         let extends = class.extends.is_some() || !class.other_extends.is_empty();
@@ -841,7 +861,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             ExprKind::ImportCall { args } => {
                 self.one(node.with(Part::Keyword))
                     || self.list(file.type_args_of_import_call(args))
-                    // `import()`: what stands for the specifier is no node.
+                    // `import()`: the placeholder for the specifier is not a node.
                     || (file.ids(args))
                         .any(|arg| !matches!(file[arg].kind, ExprKind::Missing) && self.one(arg))
             }
@@ -852,7 +872,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         let file = self.file;
         match file[s].kind {
             StmtKind::Debugger => false,
-            // It also stands for an import or an export from what is no string.
+            // It also represents an import or an export whose specifier is not a string.
             StmtKind::Empty => self.after_from(s),
             StmtKind::Break(label) | StmtKind::Continue(label) => {
                 self.part(node, Part::Label, label.is_some())
@@ -899,7 +919,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             } => self.for_initializer(left) || self.one(expr) || self.one(body),
             StmtKind::While { test, body } => self.one(test) || self.one(body),
             StmtKind::DoWhile { body, test } => self.one(body) || self.one(test),
-            // The statement around the object of a `with` is no node.
+            // The statement that wraps the object of a `with` is not a node.
             StmtKind::Block(statements) if file.is_with_statement(s) => {
                 let (object, body) = (file.id_at(statements, 0), file.id_at(statements, 1));
                 matches!(file[object].kind, StmtKind::Expr(e) if self.one(e)) || self.one(body)
@@ -1035,7 +1055,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                     && self.one(row.with(Part::Operand))
             }
             Part::ConstType => self.one(row.with(Part::Name)),
-            // What stands for the empty `{}` is put where the brace is. The dots of `{...e}` are its own.
+            // The placeholder for the empty `{}` is positioned at the brace. The dots of `{...e}`
+            // belong to the `JsxExpression`.
             Part::JsxExpression => match file.data(row) {
                 NodeData::Expr(e) => match file[e].kind {
                     ExprKind::Missing if file.text.get(file[e].pos as usize) == Some(&b'{') => {
@@ -1154,7 +1175,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
 }
 
 impl File {
-    /// The handle of what `id` is, or is the second row of.
+    /// The handle of the node that `id` is, or is the second HIR node of.
     #[inline]
     pub fn node(&self, id: impl ToNode) -> Node {
         id.to_node(self)
@@ -1165,7 +1186,7 @@ impl File {
         self.parents.get_or_init(|| self.parents_of_all())
     }
 
-    /// `node.Parent`. `NONE` for the file, and for a row nothing in the file leads to.
+    /// `node.Parent`. `NONE` for the file, and for a HIR node that is unreachable from the file.
     #[inline]
     pub fn parent(&self, node: Node) -> Node {
         match self.parents().rows.get(node.idx()) {
@@ -1218,7 +1239,7 @@ impl File {
         }
     }
 
-    /// Whether the statement `row` is what is in the head of the `for` statement above it.
+    /// Whether the statement `row` is the contents of the head of its parent `for` statement.
     fn is_for_initializer(&self, row: Node) -> bool {
         match (self.data(row), self.data(self.parent(row))) {
             (NodeData::Stmt(s), NodeData::Stmt(above)) => matches!(
@@ -1231,7 +1252,7 @@ impl File {
         }
     }
 
-    /// Half of all nodes are leaves: the walk does not come back to them.
+    /// Half of all nodes are leaves: the traversal does not revisit them.
     #[inline]
     fn may_have_rows_under_it(&self, data: NodeData, node: Node) -> bool {
         match data {
@@ -1263,9 +1284,10 @@ impl File {
             ),
             NodeData::Modifier(m) => matches!(self[m].kind, ModifierKind::Decorator(_)),
             NodeData::Name(_) | NodeData::ImportSpec(_) | NodeData::ExportSpec(_) => false,
-            // They go between afterwards.
+            // They are inserted between child and parent afterwards.
             NodeData::Paren(_) => false,
-            // One that is only its type is no node, and comes after the tuple that holds the type.
+            // An element that is only its type is not a node, and comes after the tuple that holds
+            // the type.
             NodeData::TupleElem(e) => e.to_node(self) == node,
             NodeData::Part(
                 Part::Label
@@ -1289,15 +1311,17 @@ impl File {
         }
     }
 
-    /// When the first parent is asked for: most files of a program are never asked. Row by row, not from the file down: that takes no
-    /// stack, and no row is looked at twice. A row is made after what is in it, so of two rows that hold the same one (a row that is
-    /// no node, or that nothing leads to, holds what the node around it holds) the later is the node, and has the last word.
+    /// Computed when the first parent is requested: for most files of a program none ever is.
+    /// Iterates over the HIR nodes in order, not top-down from the file: that needs no stack, and
+    /// no HIR node is visited twice. A HIR node is created after its children, so of two HIR nodes
+    /// with the same child (a HIR node that is not a tsgo node, or that is unreachable, has the
+    /// children of the node around it) the later one is the tsgo node, and overwrites the earlier.
     #[cold]
     fn parents_of_all(&self) -> Parents {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
         let mut around = Vec::new();
-        // The row or part at hand, and the parts of that row that have something in them.
+        // The current HIR node or part, and the parts of that HIR node that have children.
         let (at_hand, open) = (Cell::new(Node::NONE), RefCell::new(Vec::new()));
         let mut visit = |child: Node| {
             let node = at_hand.get();
@@ -1309,7 +1333,7 @@ impl File {
                 Some(Part::Span | Part::Qualified | Part::JsxExpression) => {
                     around.push((child, node));
                 }
-                // In the head of a `for` it stands for its row, which is no node.
+                // In the head of a `for` it represents its HIR node, which is not a tsgo node.
                 Some(Part::DeclarationList) if child.row() != node.row() => {
                     rows[child.row().idx()] = node;
                     return false;
@@ -1330,7 +1354,7 @@ impl File {
                     | Part::Namespace
                     | Part::LocalName,
                 ) => return false,
-                // Told from the row.
+                // Derived from the HIR node.
                 Some(_) => {}
             }
             open.borrow_mut().push(child);
@@ -1342,7 +1366,8 @@ impl File {
             with_parentheses: false,
         };
         self.children_of_all_rows(&mut v, &at_hand, &open);
-        // The parentheses go between afterwards: the list of them is short, and to ask of every expression whether it is in it is not.
+        // The parentheses are inserted afterwards: their list is short, whereas a lookup in it for
+        // every expression is not cheap.
         for p in 0..self.parens.len() as u32 {
             let parentheses = ParenId(p).row(self);
             let inner = self.expression(parentheses).row();
@@ -1351,7 +1376,7 @@ impl File {
                 rows[inner.idx()] = parentheses;
             }
         }
-        // The last word here too.
+        // The later entry wins here too.
         around.sort_by_key(|&(inner, _)| inner);
         around.dedup_by(|later, kept| {
             let is_same = later.0 == kept.0;
@@ -1410,7 +1435,7 @@ impl File {
         }
     }
 
-    /// The function a method or an accessor of an object literal is.
+    /// The function of a method or an accessor of an object literal.
     fn method_of(&self, p: PropId) -> FnId {
         match (
             self[p].kind,
@@ -1426,21 +1451,23 @@ impl File {
         self[e].pos < open_parenthesis(self, operand).unwrap_or(self[operand].pos)
     }
 
-    /// A `with` statement is kept as a block of its object and its body, put where the keyword is.
+    /// A `with` statement is stored as a block of its object and its body, positioned at the
+    /// keyword.
     fn is_with_statement(&self, s: StmtId) -> bool {
         let written = self.text.get(self[s].start as usize..);
         matches!(self[s].kind, StmtKind::Block(list) if list.len() == 2)
             && written.is_some_and(|text| text.starts_with(b"with"))
     }
 
-    /// Where the `:` of the `JsxNamespacedName` is that starts at `pos`. `None`: the name there is an identifier.
+    /// The position of the `:` of the `JsxNamespacedName` that starts at `pos`. `None`: the name
+    /// there is an identifier.
     fn colon_of_jsx_name(&self, pos: u32) -> Option<u32> {
         let colon = skip_trivia(&self.text, jsx_identifier_end(&self.text, pos as usize));
         (self.text.get(colon) == Some(&b':')).then_some(colon as u32)
     }
 
-    /// Whether `e` is the name of a JSX tag that is written `a:b`. A string literal starts with its quote, and `JsxText` after a `>`
-    /// or a `}`.
+    /// Whether `e` is a JSX tag name of the form `a:b`. A string literal starts with its quote, and
+    /// `JsxText` after a `>` or a `}`.
     fn is_namespaced_tag_name(&self, e: ExprId) -> bool {
         let pos = self[e].pos as usize;
         !matches!(self.text.get(pos), None | Some(b'"' | b'\'' | b'`' | b'#'))
@@ -1451,7 +1478,8 @@ impl File {
             && self.colon_of_jsx_name(self[e].pos).is_some()
     }
 
-    /// The `import` of an `import.x` that is neither `import.meta` nor called: the keyword of a `MetaProperty` is no node.
+    /// The `import` of an `import.x` that is neither `import.meta` nor called: the keyword of a
+    /// `MetaProperty` is not a node.
     fn is_import_keyword(&self, e: ExprId) -> bool {
         matches!(self[e].kind, ExprKind::Missing)
             && (self.text.get(self[e].pos as usize..))
@@ -1478,7 +1506,8 @@ impl File {
         }
     }
 
-    /// The key of a member, a property, a binding element or a member of an enum, and how it is written.
+    /// The key of a member, a property, a binding element or a member of an enum, and its syntactic
+    /// form.
     fn key_of(&self, row: Node) -> (PropKey, NameKind) {
         match self.data(row) {
             NodeData::Member(m) => {
@@ -1504,7 +1533,8 @@ impl File {
         }
     }
 
-    /// `node.Text()`, of a name, an identifier or a string. `NONE`: it has none, or the tree does not keep it.
+    /// `node.Text()` for a name, an identifier or a string. `NONE`: it has none, or the HIR does
+    /// not store it.
     pub fn text(&self, node: Node) -> Atom {
         let statement = |row: Node| match self.data(row) {
             NodeData::Stmt(s) => Some(self[s].kind),
@@ -1675,7 +1705,7 @@ impl File {
         }
     }
 
-    /// `node.ForEachChild`: the children in the order they are written, until `visit` says true.
+    /// `node.ForEachChild`: the children in source order, until `visit` returns true.
     pub fn for_each_child(&self, node: Node, visit: &mut dyn FnMut(Node) -> bool) -> bool {
         self.for_each_child_with(node, true, visit)
     }
@@ -1694,7 +1724,7 @@ impl File {
         v.children(self.data(node), node)
     }
 
-    /// Sets what `node` and `data` answer from. No row is added afterwards.
+    /// Computes the data that `node` and `data` read. No HIR node is added afterwards.
     pub fn finish_nodes(&mut self) {
         self.bases = self.node_bases();
         let mut fn_nodes = vec![Node::NONE; self.fns.len()];
@@ -1955,7 +1985,7 @@ impl File {
                 }
                 (_, NameKind::StringLiteral) => Kind::StringLiteral,
                 (_, NameKind::NumericLiteral) => Kind::NumericLiteral,
-                // What names nothing (`getDeclarationName`) is kept as no name.
+                // A name that declares nothing (`getDeclarationName`) is stored as no name.
                 (_, NameKind::Identifier | NameKind::Jsx) => {
                     match self.text.get(self.start_of_part(part, row) as usize) {
                         Some(b'#') => Kind::PrivateIdentifier,
@@ -1976,7 +2006,7 @@ impl File {
             ExprKind::Missing if is_in(|parent| matches!(parent, ExprKind::Array(_))) => {
                 Kind::OmittedExpression
             }
-            // `parseDecoratedExpression`: decorators before what is no class.
+            // `parseDecoratedExpression`: decorators before something that is not a class.
             ExprKind::Missing if self.text.get(self[e].pos as usize) == Some(&b'@') => {
                 Kind::MissingDeclaration
             }
@@ -2119,7 +2149,7 @@ impl File {
                 Keyword::This => Kind::ThisType,
                 Keyword::Intrinsic => Kind::IntrinsicKeyword,
             },
-            // An element of a heritage clause is written like a type reference.
+            // An element of a heritage clause has the same syntax as a type reference.
             TypeNodeKind::Ref { .. }
                 if matches!(
                     self.parent(node).part(),
@@ -2157,7 +2187,7 @@ impl File {
         }
     }
 
-    /// `GetTokenPosOfNode`: where its first token is.
+    /// `GetTokenPosOfNode`: the position of its first token.
     pub fn start(&self, node: Node) -> u32 {
         match self.data(node) {
             NodeData::None | NodeData::File => 0,
@@ -2184,8 +2214,8 @@ impl File {
         }
     }
 
-    /// 0: the tree does not say.
-    /// `SkipTrivia`. 0 without the text.
+    /// 0: the HIR does not record it.
+    /// `SkipTrivia`. 0 without the source text.
     fn token_after(&self, end: u32) -> u32 {
         match self.text.is_empty() {
             true => 0,
@@ -2193,7 +2223,7 @@ impl File {
         }
     }
 
-    /// Where the name of a `MetaProperty` starts whose keyword ends at `end`. 0 if there is no dot.
+    /// The start of the name of a `MetaProperty` whose keyword ends at `end`. 0 if there is no dot.
     fn token_after_dot(&self, end: u32) -> u32 {
         let dot = self.token_after(end);
         match self.text.get(dot as usize) {
@@ -2202,8 +2232,8 @@ impl File {
         }
     }
 
-    /// Where a part starts that opens with a token the tree does not keep, which stands right before its first child. 0 if it has
-    /// none, or if something else stands there.
+    /// The start of a part that begins with a token the HIR does not store, which directly precedes
+    /// its first child. 0 if it has no child, or if something else precedes it.
     fn start_of_token_before_first_child(&self, node: Node, written: &[u8]) -> u32 {
         let mut first = Node::NONE;
         self.for_each_child(node, &mut |child| {
@@ -2364,7 +2394,7 @@ impl File {
 // ───────────────────────────── ast.go: accessors ─────────────────────────────
 
 impl File {
-    /// What stands for the expression `e` in its parent.
+    /// The node that represents the expression `e` in its parent.
     #[inline]
     pub fn child(&self, e: ExprId) -> Node {
         e.to_child(self)
@@ -2414,7 +2444,7 @@ impl File {
                 ModifierKind::Decorator(e) => self.child(e),
                 ModifierKind::Keyword(_) => Node::NONE,
             },
-            // What is in them: the next level, or the expression.
+            // Their content: the next level of parentheses, or the expression.
             NodeData::Paren(p) => match (self.parens[p.idx()].0, p.0.checked_sub(1)) {
                 (e, Some(inner)) if self.parens[inner as usize].0 == e => ParenId(inner).row(self),
                 (e, _) => self.node(e),
@@ -2499,7 +2529,7 @@ impl File {
         }
     }
 
-    /// `node.ModifierFlags()`, and what else [`Flags`] says of a declaration.
+    /// `node.ModifierFlags()`, plus the other [`Flags`] of a declaration.
     pub fn flags(&self, node: Node) -> Flags {
         match self.data(node) {
             NodeData::Expr(e) => match self[e].kind {
@@ -2534,11 +2564,12 @@ impl File {
     }
 }
 
-/// Stretches of a file, for telling by a position what would take a walk up the tree.
+/// Ranges of a file, for answering by position a question that would otherwise require walking up
+/// the parents.
 pub struct Places(Vec<TextRange>);
 
 impl Places {
-    /// What lies in another, or overlaps it, is one with it.
+    /// Nested or overlapping ranges are merged.
     pub fn new(ranges: impl Iterator<Item = TextRange>) -> Places {
         let mut ranges: Vec<TextRange> = ranges.collect();
         ranges.sort_unstable_by_key(|range| range.pos);
@@ -2610,13 +2641,14 @@ impl File {
         Node::NONE
     }
 
-    /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in the order of the file, but for those of which
-    /// `is_identifier_name` says yes, of which it has some.
+    /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in source order,
+    /// except those for which `is_identifier_name` is true, of which only some are included.
     pub fn keyword_identifiers(&self) -> &[Node] {
         self.keyword_identifiers.get_or_init(|| {
             let mut found = Vec::new();
             for &pos in self.keyword_identifier_positions.iter() {
-                // From the file down by the child that starts last of those that do not start after `pos`.
+                // Descends from the file, at each level into the last child that does not start
+                // after `pos`.
                 let mut node = Node::FILE;
                 while node.is_some() {
                     let (mut inside, mut starts) = (Node::NONE, 0);
@@ -2658,7 +2690,7 @@ impl File {
         StmtId::NONE
     }
 
-    /// `NodeIsMissing`: an identifier the parser made where it found none.
+    /// `NodeIsMissing`: an identifier the parser synthesized where it found none.
     pub fn is_missing(&self, node: Node) -> bool {
         self.kind(node) == Kind::Identifier
             && match self.data(node) {
@@ -2736,7 +2768,7 @@ impl File {
             | WithStatement | SwitchStatement | CaseClause | DefaultClause | ThrowStatement
             | TypeAssertionExpression | AsExpression | TemplateSpan | ComputedPropertyName
             | SatisfiesExpression => self.expression(parent) == node,
-            // All in the head but a `VariableDeclarationList`.
+            // Everything in the head except a `VariableDeclarationList`.
             ForStatement | ForInStatement | ForOfStatement => {
                 matches!(self.data(node), NodeData::Expr(_) | NodeData::Paren(_))
             }
@@ -2874,7 +2906,7 @@ impl File {
         )
     }
 
-    /// The same, of what is directly in `node`.
+    /// The same, for a direct child of `node`.
     pub fn this_container_from(
         &self,
         mut node: Node,
@@ -3013,8 +3045,9 @@ impl File {
         }
     }
 
-    /// `node.Flags&NodeFlagsAmbient != 0`. What is ambient makes all that is in it ambient, but for its own decorators and modifiers,
-    /// which the parser has read by the time it knows.
+    /// `node.Flags&NodeFlagsAmbient != 0`. An ambient node makes all its descendants ambient,
+    /// except its own decorators and modifiers, which the parser has already parsed by the time it
+    /// knows.
     pub fn is_ambient(&self, mut node: Node) -> bool {
         let mut is_modifier = false;
         while node.is_some() {
@@ -3027,8 +3060,8 @@ impl File {
         self.kind == FileKind::Declaration
     }
 
-    /// `node.Flags&NodeFlagsAwaitContext != 0`, as the parser has it the first time through. `Err`: as that statement of the file has it,
-    /// which `reparseTopLevelAwait` may parse again.
+    /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. `Err`: it is
+    /// that of the returned statement of the file, which `reparseTopLevelAwait` may parse again.
     pub fn await_context(&self, node: Node) -> Result<bool, Node> {
         self.context_of(node, Flags::ASYNC)
     }
@@ -3043,7 +3076,8 @@ impl File {
         self.is_in_with(self.start(node))
     }
 
-    /// What `setContextFlags` left of `NodeFlagsAwaitContext` (`ASYNC`) or `NodeFlagsYieldContext` (`GENERATOR`) where `node` was parsed.
+    /// The state of `NodeFlagsAwaitContext` (`ASYNC`) or `NodeFlagsYieldContext` (`GENERATOR`) that
+    /// `setContextFlags` had set where `node` was parsed.
     fn context_of(&self, node: Node, modifier: Flags) -> Result<bool, Node> {
         let is_await = modifier == Flags::ASYNC;
         let (mut below, mut above) = (node, self.parent(node));
@@ -3054,7 +3088,8 @@ impl File {
                 Kind::Unknown | Kind::EnumDeclaration | Kind::ModuleDeclaration => {
                     return Ok(false);
                 }
-                // `parseType` leaves both contexts. What a class implements is parsed as an expression.
+                // `parseType` exits both contexts. The types a class implements are parsed as
+                // expressions.
                 _ if matches!(self.data(above), NodeData::Type(_))
                     && kind != Kind::ExpressionWithTypeArguments =>
                 {
@@ -3071,7 +3106,7 @@ impl File {
                 {
                     above = self.parent(above);
                 }
-                // What follows the type parameters of an exported class.
+                // The part of an exported class after its type parameters.
                 Kind::ClassDeclaration | Kind::ClassExpression
                     if is_await
                         && self.flags(above).contains(Flags::EXPORT)
@@ -3080,7 +3115,8 @@ impl File {
                 {
                     return Ok(true);
                 }
-                // `parseFunctionExpression`: its name is read in its own context on top of the outer one.
+                // `parseFunctionExpression`: its name is parsed in its own context combined with
+                // the outer one.
                 Kind::FunctionExpression
                     if below == self.name(above) && self.flags(above).contains(modifier) =>
                 {
@@ -3098,7 +3134,8 @@ impl File {
         }
     }
 
-    /// What `isInAmbientOrTypeNode` says yes in: the interfaces, type aliases and type literals, and what says `declare`.
+    /// The ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type
+    /// literals, and the `declare` declarations.
     fn ambient_or_type_places(&self) -> &Places {
         self.ambient_or_type_places.get_or_init(|| {
             let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
@@ -3117,7 +3154,7 @@ impl File {
                 statements
                     .map(|(_, statement)| statement.loc)
                     .chain(members.map(|member| member.loc))
-                    // One whose end is not known goes on to the end.
+                    // One whose end is unknown extends to the end.
                     .chain(literals.map(|node| TextRange {
                         pos: node.pos,
                         end: if node.end == 0 { u32::MAX } else { node.end },
@@ -3126,7 +3163,8 @@ impl File {
         })
     }
 
-    /// `isInAmbientOrTypeNode`, in one walk. What starts in no such place takes none.
+    /// `isInAmbientOrTypeNode`, in one walk up the parents. A node that starts outside every such
+    /// range needs no walk.
     pub fn is_in_ambient_or_type_node(&self, mut node: Node) -> bool {
         if self.kind == FileKind::Declaration {
             return true;
@@ -3185,7 +3223,7 @@ impl File {
         found.is_some()
     }
 
-    /// `IsInTypeQuery`. The operand of a `typeof` in a type is kept as an expression.
+    /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
         loop {
             match self.data(node) {

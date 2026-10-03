@@ -1,4 +1,5 @@
-//! What the lowering builds the type checker's tree in: the tree itself, the names of the file, and what is still to be filled in.
+//! State the lowering pass builds the checker's HIR in: the HIR itself, the file's interned names,
+//! and the parts that are still pending.
 
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{self, *};
@@ -6,7 +7,8 @@ use bun_sema::hir::{self, *};
 pub(crate) struct Builder<'a> {
     pub(crate) file: hir::File,
     pub(crate) atoms: &'a Interner,
-    /// The short names this thread has interned, each at the place its spelling gives it. The last to come to a place has it.
+    /// Direct-mapped cache of the short names this thread has interned, indexed by a hash of the
+    /// spelling. A collision overwrites the entry.
     seen_names: Box<[std::cell::Cell<SeenName>]>,
     /// `File::keyword_identifier_positions`
     pub(crate) keyword_identifier_positions: std::cell::RefCell<Vec<u32>>,
@@ -17,20 +19,23 @@ pub(crate) struct Builder<'a> {
     pub(crate) pending: Vec<super::clone_types::PendingPart>,
     /// The modifiers of the statements being lowered, those of the innermost last.
     pub(crate) statement_modifiers: Vec<Modifier>,
-    /// How many classes what is being lowered is written in. While the file is parsed, whether what is being read is written in one.
+    /// Class nesting depth of the node being lowered. During parsing: nonzero if the current token
+    /// is inside a class.
     pub(crate) classes_around: u32,
     /// `IsInJSFile`
     pub(crate) is_js: bool,
-    /// Where the first token of the statement being made is: a decorator, a modifier or its keyword.
+    /// Position of the first token of the statement being built: a decorator, a modifier or its
+    /// keyword.
     pub(crate) statement_start: u32,
 }
 
-/// A name of at most 16 bytes and its atom. The first bytes, the last bytes and the length say all there is to say of its spelling.
+/// A name of at most 16 bytes and its atom. The leading bytes, the trailing bytes and the length
+/// determine the spelling.
 #[derive(Copy, Clone)]
 struct SeenName {
     head: u64,
     tail: u64,
-    /// 0 where there is no name.
+    /// 0 for an empty entry.
     len_plus_one: u32,
     atom: Atom,
 }
@@ -48,9 +53,9 @@ impl SeenName {
 const SEEN_NAMES_LEN: usize = 1 << 14;
 
 thread_local! {
-    /// The vectors the tree of the last file was made in, empty: they have about the room the next needs.
+    /// The emptied vectors of the previous file's HIR, reused for their capacity.
     static RECYCLED: std::cell::RefCell<hir::File> = Default::default();
-    /// `Builder::seen_names` between two files, and `Interner::number` of the interner they are of.
+    /// `Builder::seen_names` between two files, and the `Interner::number` it belongs to.
     static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
 }
 
@@ -58,7 +63,7 @@ thread_local! {
 #[derive(Default)]
 pub(crate) struct Recycled(hir::File, (u64, Box<[std::cell::Cell<SeenName>]>));
 
-/// Replaces what the last file of this thread left for the next.
+/// Swaps this thread's recycled buffers.
 pub(crate) fn replace_recycled(room: Recycled) -> Recycled {
     Recycled(RECYCLED.replace(room.0), SEEN_NAMES.replace(room.1))
 }
@@ -69,7 +74,7 @@ impl Drop for Builder<'_> {
     }
 }
 
-/// `file` is finished: it is fitted, and the vectors it was made in serve the next file of this thread.
+/// Shrinks the finished `file` to fit and recycles its build vectors for this thread's next file.
 pub(crate) fn recycle(file: &mut hir::File) {
     RECYCLED.with_borrow_mut(|room| file.shrink_to_fit_recycling(room));
 }
@@ -98,8 +103,8 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// `atom`, of the text of an `Identifier` that is at `pos`, or is a child of the node that starts there. Not needed for what
-    /// `IsIdentifierName` says yes to, nor in a JSDoc comment.
+    /// `atom` is the text of the `Identifier` at `pos`, or of a child of the node that starts
+    /// there. Not needed where `IsIdentifierName` is true, nor in a JSDoc comment.
     #[inline]
     pub(crate) fn identifier(&self, text: &[u8], pos: u32) -> Atom {
         let atom = self.atom(text);
@@ -111,7 +116,7 @@ impl<'a> Builder<'a> {
 
     pub(crate) fn atom(&self, text: &[u8]) -> Atom {
         let len = text.len();
-        // The first bytes and the last, which may overlap.
+        // The leading and the trailing bytes, which may overlap.
         let (head, tail) = match len {
             0 => (0, 0),
             1..=3 => (
@@ -155,7 +160,7 @@ impl<'a> Builder<'a> {
         atom
     }
 
-    /// What stands where a type was expected at `offset` and none could be made out.
+    /// Placeholder for a type that was expected at `offset` but could not be parsed.
     pub(crate) fn error_type(&mut self, offset: u32) -> TypeNodeId {
         if self.file.syntax_errors == 0 {
             self.file.error_pos = offset;
@@ -178,7 +183,8 @@ impl<'a> Builder<'a> {
     }
 
     /// `modifiers` as a `ModifierList`.
-    /// `jsErrorAtRange`. An end of 0: that of the token at the start. `what`: `{0}`, if the message has one.
+    /// `jsErrorAtRange`. An end of 0 means the end of the token at the start. `what`: the `{0}`
+    /// argument, if the message has one.
     pub(crate) fn js_error_at_range(&mut self, at: (u32, u32), code: u32, what: &'static [u8]) {
         if self.is_js {
             let args: &[&[u8]] = if what.is_empty() { &[] } else { &[what] };
@@ -198,7 +204,7 @@ impl<'a> Builder<'a> {
         Span::new(start, modifiers.len() as u32)
     }
 
-    /// `keywords` and `decorators`, each with where its `@` is, as one `ModifierList`.
+    /// `keywords` and `decorators`, each with the position of its `@`, as one `ModifierList`.
     pub(crate) fn modifiers_with_decorators(
         &mut self,
         keywords: Span<ModifierId>,
@@ -212,15 +218,17 @@ impl<'a> Builder<'a> {
             kind: ModifierKind::Decorator(decorator),
             pos,
         }));
-        // What a tag of a comment makes comes last.
+        // Modifiers synthesized from JSDoc tags come last.
         let is_reparsed = |it: &Modifier| matches!(it.kind, ModifierKind::Keyword(flag) if flag.contains(Flags::REPARSED));
         all.sort_by_key(|modifier| (is_reparsed(modifier), modifier.pos));
         self.file.add_modifiers(&all)
     }
 
-    /// `statement` has the modifiers that were come upon since there were `base` of them. Its own `export` and `default` are none.
+    /// Assigns `statement` the modifiers pushed since the stack had `base` entries. Its own
+    /// `export` and `default` are not modifiers.
     pub(crate) fn take_statement_modifiers(&mut self, statement: StmtId, base: usize) {
-        // The decorators of a class are lowered with the class (`Class::modifiers`). What was read of them here goes.
+        // The decorators of a class are lowered with the class (`Class::modifiers`). The copies
+        // collected here are dropped.
         let class = match self.file[statement].kind {
             StmtKind::Class(class) => Some(class),
             _ => None,

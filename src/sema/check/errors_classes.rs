@@ -1,27 +1,31 @@
-//! Classes and interfaces against what they extend, and what only the inside of a class can get wrong:
-//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2510 2545 2797
-//! 2675 (what a class extends); 2422 (what it implements); 2499 (what an interface extends); 2725 (a class called `Object`);
-//! 2376 2377 2401 17005 (where `super()` is called); 2715 (an abstract property read while the instance is set up).
+//! Classes and interfaces checked against their base types, and errors specific to class bodies:
+//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript
+//! file); 2510 2545 2797 2675 (the base type of a class); 2422 (the types it implements); 2499 (the
+//! base types of an interface); 2725 (a class named `Object`); 2376 2377 2401 17005 (the position
+//! of the `super()` call); 2715 (an abstract property read during instance initialization).
 //!
-//! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
-//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
-//! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
+//! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`,
+//! `checkMembersForOverrideModifier`, `checkMemberForOverrideModifier`, `isValidBaseType`,
+//! `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`, `checkConstructorDeclaration`
+//! and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::MemberOwner;
 
-/// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class with an `extends` clause.
+/// The results of `getBaseConstructorTypeOfClass` and `getBaseTypes` for a class with an `extends`
+/// clause.
 #[derive(Copy, Clone)]
 enum ClassBase {
-    /// It cannot be told.
+    /// Undetermined.
     Unknown,
     /// It has no `extends` clause, or no base types.
     Nothing,
-    /// `constructor`: the type of what is written after `extends`. `base`: the first of its base types.
+    /// `constructor`: the type of the expression after `extends`. `base`: the first of its base
+    /// types.
     Is { constructor: TypeId, base: TypeId },
 }
 
-/// What `checkMemberForOverrideModifier` is given: a member of a class, or a parameter that declares a property.
+/// The argument of `checkMemberForOverrideModifier`: a class member or a parameter property.
 #[derive(Copy, Clone)]
 struct Overrider {
     key: PropKey,
@@ -47,7 +51,7 @@ fn js_override_code(code: u32) -> u32 {
 }
 
 impl Checker<'_> {
-    // ───────────────────────────── what a class extends and implements ─────────────────────────────
+    // ───────────────────────────── heritage clauses of a class ─────────────────────────────
 
     /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
     pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
@@ -79,7 +83,8 @@ impl Checker<'_> {
                     ..
                 }
             ) {
-                // What is like a class without being one has to make the same thing whichever way it is called.
+                // A base constructor that is not a class must return the same type from every
+                // construct signature.
                 let mut returns = Vec::new();
                 for sig in self.super_constructor_sigs(sym) {
                     returns.push(self.sig_return(sig));
@@ -94,7 +99,7 @@ impl Checker<'_> {
         }
         self.check_members_for_override_modifier(file, c, sym, base);
         for node in hir.ids(class.implements) {
-            // The name of a primitive type is a name that nothing goes by here, which is said elsewhere.
+            // The name of a primitive type is an unresolved name here, which is reported elsewhere.
             if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
                 continue;
             }
@@ -107,7 +112,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]`, of the class `c` of `sym`.
+    /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]` for the class `c` of `sym`.
     fn base_of_class(&mut self, file: FileId, c: ClassId, sym: Sym) -> ClassBase {
         let class = &self.hir(file)[c];
         if class.extends.is_none() {
@@ -147,7 +152,7 @@ impl Checker<'_> {
             && !(self.enclosing_classes(file, hir[c].extends).into_iter())
                 .any(|around| self.class_sym(file, around) == class)
         {
-            let name = super::errors_modules::fully_qualified_name(self, class);
+            let name = super::errors_names_and_exports::fully_qualified_name(self, class);
             self.error(
                 file,
                 hir.node(c).with(Part::Base),
@@ -157,12 +162,14 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `ty` was worked out for good: all of it is known, and it does not wait for type parameters that are not there.
+    /// Whether the resolution of `ty` is final: all of it is known, and it is not deferred on type
+    /// parameters that do not exist.
     pub(super) fn is_settled_base(&self, ty: TypeId) -> bool {
         self.has_type_variables(ty) || !self.is_deferred(ty)
     }
 
-    /// `isValidBaseType`: `any`, an object type whose members can be told, or an intersection of such. What is not known passes.
+    /// `isValidBaseType`: `any`, an object type with statically known members, or an intersection
+    /// of such types. A type that could not be resolved is accepted.
     pub(super) fn is_valid_base_type(&mut self, ty: TypeId) -> bool {
         if matches!(
             self.data(ty),
@@ -182,7 +189,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `isGenericMappedType`: what it maps over is not known yet, or what it renames that to.
+    /// `isGenericMappedType`: its constraint type or its name type is generic.
     fn is_generic_mapped_base(&mut self, ty: TypeId) -> bool {
         if self.mapped_origin(ty).is_none() {
             return false;
@@ -199,8 +206,8 @@ impl Checker<'_> {
         self.is_generic(name) && !self.is_pattern_literal(name)
     }
 
-    /// `getReducedType`, with `isConflictingPrivateProperty` seen to: nothing can be an intersection in which a property is private
-    /// to one member and declared anew by another.
+    /// `getReducedType`, including `isConflictingPrivateProperty`: no value inhabits an
+    /// intersection in which a property is private in one member and redeclared by another.
     fn reduced_base_type(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced(ty);
         if self.is_intersection(ty)
@@ -220,7 +227,7 @@ impl Checker<'_> {
         ty
     }
 
-    // ───────────────────────────── what an interface extends ─────────────────────────────
+    // ───────────────────────────── base types of an interface ─────────────────────────────
 
     /// The end of `checkInterfaceDeclaration`: 2499.
     pub(super) fn check_bases_of_interface(&mut self, file: FileId, i: InterfaceId) {
@@ -251,7 +258,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let class = &hir[c];
-        // Otherwise only what says `override` is looked at.
+        // Otherwise only members with `override` are visited.
         let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
@@ -266,7 +273,8 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `HasAmbientModifier`: `declare` is written on the member itself. Every member of an ambient class has `Flags::AMBIENT`.
+            // `HasAmbientModifier`: the member itself has `declare`. Every member of an ambient
+            // class has `Flags::AMBIENT`.
             if hir
                 .find_modifier(member.modifiers, Flags::AMBIENT)
                 .is_some()
@@ -328,7 +336,7 @@ impl Checker<'_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        // A name that is only known when the program runs is the name of no property that could be looked up.
+        // A name that is only known at run time names no property that could be looked up.
         if let PropKey::Computed(name) = member.key {
             match self.is_bindable_computed_name(file, name) {
                 None => return,
@@ -358,7 +366,7 @@ impl Checker<'_> {
             return;
         }
         let base_type = if is_static { constructor } else { base };
-        // `#x` of a class is not the `#x` of the class it extends.
+        // `#x` of a class is not the `#x` of its base class.
         let base_prop = if matches!(member.key, PropKey::Private(_)) {
             None
         } else {
@@ -395,7 +403,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode`, of what `checkMemberForOverrideModifier` is given.
+    /// `GetErrorRangeForNode` for the argument of `checkMemberForOverrideModifier`.
     fn place_of_overrider(&self, file: FileId, member: Overrider) -> (FileId, u32, u32) {
         if member.param.is_some() {
             let start = self.hir(file)[member.param].pos;
@@ -405,8 +413,9 @@ impl Checker<'_> {
         (file, start, end)
     }
 
-    /// Whether the computed name `e` comes to a name that is known beforehand: not `isNonBindableDynamicName`.
-    /// `None`: it cannot be told.
+    /// Whether the computed name `e` evaluates to a statically known name: not
+    /// `isNonBindableDynamicName`.
+    /// `None`: undetermined.
     fn is_bindable_computed_name(&mut self, file: FileId, e: ExprId) -> Option<bool> {
         let hir = self.hir(file);
         if !is_dynamic_name(hir, e) {
@@ -417,7 +426,8 @@ impl Checker<'_> {
             return Some(false);
         }
         let ty = self.type_of_expr(file, e);
-        // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` holds a symbol of its own, where here it is any symbol.
+        // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` has a unique symbol type,
+        // whereas here it has the general symbol type.
         if ty == TypeId::SYMBOL
             && let ExprKind::Dot { obj, name, .. } = hir[e].kind
         {
@@ -447,11 +457,12 @@ impl Checker<'_> {
 
     /// `getSuggestedSymbolForNonexistentClassMember`
     fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
-        // `ast.SymbolName`: a private name is compared as written.
+        // `ast.SymbolName`: a private name is compared by its source text.
         let written = self.written_name(name);
-        // The name of a symbol-keyed member is compared like any other. In tsgo it is `\xFE@description@<symbol id>`
-        // (`getESSymbolLikeTypeForNode`). `GetSymbolId` numbers symbols in the order they are first asked for, which cannot be
-        // reproduced: the id is taken to have one digit, as it has early in a process.
+        // The name of a symbol-keyed member is compared like any other. In tsgo it is
+        // `\xFE@description@<symbol id>` (`getESSymbolLikeTypeForNode`). `GetSymbolId` numbers
+        // symbols in the order they are first requested, which cannot be reproduced: the id is
+        // assumed to have one digit, as it has early in a process.
         let late_bound = written
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
             .map(|described| {
@@ -474,12 +485,13 @@ impl Checker<'_> {
             name if name.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => &[][..],
             name => name,
         };
-        // Of two that are as close, the first.
+        // Of two equally close candidates, the first wins.
         let compare = |_, _| std::cmp::Ordering::Equal;
         get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare).cloned()
     }
 
-    /// Whether `prop` has declarations at all, and whether one of them says `abstract`. `None`: where it comes from is not kept.
+    /// Whether `prop` has any declarations, and whether one of them is `abstract`. `None`: its
+    /// origin is not recorded.
     fn declarations_of_base_property(&self, prop: &Prop) -> Option<(bool, bool)> {
         match &prop.source {
             PropSource::Symbol(sym) => {
@@ -508,18 +520,18 @@ impl Checker<'_> {
                 }
                 Some((is_declared, is_abstract))
             }
-            // The `prototype` of a class is made up.
+            // The `prototype` of a class is synthesized.
             PropSource::Type(_) if prop.name == known::prototype => Some((false, false)),
             _ => None,
         }
     }
 
-    // ───────────────────────────── where `super()` is called ─────────────────────────────
+    // ───────────────────────────── position of the `super()` call ─────────────────────────────
 
     /// The end of `checkConstructorDeclaration`: 2377 17005 2401 2376.
-    /// Where fields are set up by assignments put in the constructor, they
-    /// go right after the call of `super`, which therefore has to be a statement of the constructor itself, and the first
-    /// that has to do with `this`.
+    /// When fields are initialized by assignments emitted into the constructor, the assignments go
+    /// directly after the `super` call, which must therefore be a top-level statement of the
+    /// constructor, and the first that relates to `this`.
     pub(super) fn check_super_call_in_constructor(&mut self, file: FileId, m: MemberId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));
@@ -545,7 +557,7 @@ impl Checker<'_> {
         if self.p.files.options.emit_standard_class_fields {
             return;
         }
-        // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter that declares a property.
+        // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter property.
         let has_to_be_at_root_level = hir[c].members.iter().any(|x| {
             let member = &hir[x];
             match member.kind {

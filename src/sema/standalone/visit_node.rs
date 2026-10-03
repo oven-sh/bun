@@ -1,13 +1,14 @@
-//! The nodes TypeScript's test harness writes a line for in `.types` and `.symbols` baselines (`typeWriterWalker.visitNode`).
+//! The nodes TypeScript's test harness writes a line for in `.types` and `.symbols` baselines
+//! (`typeWriterWalker.visitNode`).
 //!
-//! A [`VisitedNode`] says where such a node is written and what it is in the lowered tree.
+//! A [`VisitedNode`] holds the source position of such a node and its counterpart in the HIR.
 
 use super::enclosing_declaration::or_file_scope;
 use super::*;
 use crate::bind::{Decl, ScopeId, SymbolId};
 use crate::node::{Kind, Node, NodeData, Part};
 
-/// A node `visitNode` takes.
+/// A node that `visitNode` accepts.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct VisitedNode {
     /// `SkipTrivia(text, node.Pos())`
@@ -18,23 +19,24 @@ pub(super) struct VisitedNode {
     pub(super) kind: VisitedKind,
 }
 
-/// What a visited node is in the lowered tree.
+/// The HIR counterpart of a visited node.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum VisitedKind {
-    /// An expression of the lowered tree, without the parentheses around it.
+    /// A HIR expression, without the enclosing parentheses.
     Expression(ExprId),
-    /// A `ParenthesizedExpression` around it: which one, counted from the outermost.
+    /// A `ParenthesizedExpression` enclosing it, with its index counted from the outermost.
     Parenthesized(ExprId, u32),
     /// The `b` of `a.b`, the `target` of `new.target`, the `meta` of `import.meta`.
     AccessName(ExprId),
-    /// An identifier where the string of `import a = require("m")` or `export * from "m"` must be, which is in no expression
-    /// context.
+    /// An identifier in place of the required string of `import a = require("m")` or `export * from
+    /// "m"`, which is not in an expression context.
     ModuleSpecifier(ExprId),
     /// The `defer` of `import.defer("m")`.
     ImportDeferName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
     ConstOfAsConst(ExprId),
-    /// The name of an intrinsic element in a tag of the JSX element, and the string the lowered tree keeps for it.
+    /// The name of an intrinsic element in a tag of the JSX element, and the string the HIR stores
+    /// for it.
     JsxIntrinsicTagName(ExprId, ExprId),
     /// One of the two identifiers of a `JsxNamespacedName`.
     JsxNamespacedNamePart,
@@ -68,8 +70,9 @@ pub enum VisitedKind {
     Label(StmtId),
     /// The identifier at an index in the `A.B.C` of a type reference.
     TypeReferenceName(TypeNodeId, u32),
-    /// The identifier at an index in the `A.B.C` of `implements A.B.C`, or of the `extends A.B.C` of an interface. The lowered tree
-    /// keeps a type reference there. It is an `ExpressionWithTypeArguments` (`parseHeritageClause`).
+    /// The identifier at an index in the `A.B.C` of `implements A.B.C`, or of the `extends A.B.C`
+    /// of an interface. The HIR stores a type reference there. It is an
+    /// `ExpressionWithTypeArguments` (`parseHeritageClause`).
     HeritageClauseName(TypeNodeId, u32),
     /// The property access in it that ends with the identifier at an index: `A.B`, `A.B.C`.
     HeritageClausePropertyAccess(TypeNodeId, u32),
@@ -85,10 +88,12 @@ impl Checker<'_> {
     /// `typeWriterWalker.visitNode` over `forEachASTNode`.
     pub(super) fn visited_nodes(&self, file: FileId) -> Vec<VisitedNode> {
         let hir = self.hir(file);
-        // `declareSymbolEx`: `Symbol::decls` also lists the declarations the symbol refused. Each has a symbol of its own, made later.
+        // `declareSymbolEx`: `Symbol::decls` also lists the declarations the symbol rejected. Each
+        // has its own symbol, created later.
         let mut symbols: FxHashMap<Decl, SymbolId> = FxHashMap::default();
         for (index, symbol) in self.bound(file).symbols.iter().enumerate() {
-            // `cloneSymbol` copies the declarations, whose `Symbol` is still what the binder made.
+            // `cloneSymbol` copies the declarations, whose `Symbol` is still the one the binder
+            // created.
             if !symbol.flags.contains(SymFlags::TRANSIENT) {
                 let id = SymbolId(index as u32);
                 symbols.extend(symbol.decls.iter().map(|&decl| (decl, id)));
@@ -98,7 +103,8 @@ impl Checker<'_> {
         let (mut work, mut children) = (vec![Node::FILE], Vec::new());
         while let Some(node) = work.pop() {
             let start = hir.start(node);
-            // What is reparsed from a JSDoc comment is left out, and a comment is no child of a node.
+            // Nodes reparsed from a JSDoc comment are omitted, and a comment is not a child of a
+            // node.
             if node != Node::FILE && hir.is_in_jsdoc(start) {
                 continue;
             }
@@ -108,7 +114,8 @@ impl Checker<'_> {
                 && let Some(kind) = self.visited_kind(file, node, &symbols)
             {
                 if !hir.is_missing(node) {
-                    // `GetSourceTextOfNodeFromSourceFile`: what starts with an identifier the parser missed starts at the next token.
+                    // `GetSourceTextOfNodeFromSourceFile`: a node that starts with a missing
+                    // identifier starts at the next token.
                     let start = match hir.has_parse_diagnostics {
                         true => self.skip_trivia_from(file, start),
                         false => start,
@@ -122,8 +129,9 @@ impl Checker<'_> {
                             kind,
                         });
                     }
-                // `createMissingNode`: it is a node without text, where the token before it ends. The harness puts it on the line of
-                // the token after it (`SkipTrivia`). `parseThrowStatement` alone reports nothing for the identifier it misses.
+                // `createMissingNode`: a node without text, at the end of the previous token. The
+                // harness places it on the line of the next token (`SkipTrivia`). Only
+                // `parseThrowStatement` reports nothing for its missing identifier.
                 } else if hir.has_parse_diagnostics
                     || hir.kind(hir.parent(node)) == Kind::ThrowStatement
                 {
@@ -145,7 +153,8 @@ impl Checker<'_> {
         nodes
     }
 
-    /// What the visited `node` is in the lowered tree. `None`: neither a type nor a symbol is written for it.
+    /// The HIR counterpart of the visited `node`. `None`: neither a type nor a symbol is printed
+    /// for it.
     fn visited_kind(
         &self,
         file: FileId,
@@ -248,7 +257,8 @@ impl Checker<'_> {
                         StmtKind::Module(m) => name_of(Decl::Module(m)),
                         StmtKind::ImportEquals(i) => name_of(Decl::ImportEquals(i)),
                         StmtKind::Import(i) => name_of(Decl::ImportDefault(i)),
-                        // `bindNamespaceExportDeclaration` gives it a symbol only at the top of a module.
+                        // `bindNamespaceExportDeclaration` declares a symbol for it only at the top
+                        // level of a module.
                         StmtKind::ExportAsNamespace(_) => {
                             let decl = Decl::UmdGlobal(s);
                             let symbol = symbol_of(decl).unwrap_or(SymbolId::NONE);
@@ -290,7 +300,7 @@ impl Checker<'_> {
                 (Part::NameLiteral, NodeData::EnumMember(m)) => {
                     VisitedKind::LiteralInEnumMemberName(m)
                 }
-                // `IsPartOfTypeNode` takes the keyword `null` for a type wherever it is written.
+                // `IsPartOfTypeNode` treats the keyword `null` as a type wherever it appears.
                 (Part::Literal, NodeData::Type(t)) if hir.kind(node) != Kind::NullKeyword => {
                     VisitedKind::LiteralType(t)
                 }
@@ -303,7 +313,8 @@ impl Checker<'_> {
         })
     }
 
-    /// `node.Parent`, as the scope names are looked up from when a type or a symbol is written for the node.
+    /// `node.Parent`, as the scope from which names are resolved when a type or a symbol is printed
+    /// for the node.
     pub(super) fn enclosing_scope_of_visited_node(
         &self,
         file: FileId,

@@ -15,13 +15,13 @@ struct Options {
     project: Option<Vec<u8>>,
     paths: Vec<Vec<u8>>,
     threads: usize,
-    /// `--pretty`, `--no-pretty`. Not said: by where the output goes.
+    /// `--pretty`, `--no-pretty`. If neither is given, it depends on the output destination.
     pretty: Option<bool>,
     /// `--all`: never group identical errors.
     all: bool,
     /// `--strict`, `--target es2022` and so on.
     compiler_options: Vec<CompilerOption>,
-    /// `-b`, `--build`: what is named is a project, as for `tsc -b`.
+    /// `-b`, `--build`: the arguments name projects, as for `tsc -b`.
     build: bool,
     timing: bool,
 }
@@ -177,7 +177,7 @@ fn working_directory() -> Vec<u8> {
     }
 }
 
-/// Where `bun add -g` puts packages.
+/// The directory where `bun add -g` installs packages.
 fn global_node_modules() -> Option<Vec<u8>> {
     if let Some(dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return Some([dir, b"/node_modules"].concat());
@@ -190,7 +190,8 @@ fn global_node_modules() -> Option<Vec<u8>> {
         .map(|home| [home, b"/.bun/install/global/node_modules"].concat())
 }
 
-/// Shows how far `progress` has got on stderr until `is_done`, once it has taken long enough for somebody to wonder.
+/// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
+/// user to notice.
 fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread is not from Bun's pool.
@@ -226,7 +227,7 @@ fn run(
     threads: usize,
     then: impl FnOnce(Report) -> Report,
 ) -> Report {
-    // For a person who is watching.
+    // Only for an interactive user.
     if !Output::is_stderr_tty() || Output::is_ai_agent() {
         return run_quietly(cwd, project, paths, compiler_options, threads, None, then);
     }
@@ -252,7 +253,7 @@ fn run(
             |report| {
                 is_done.store(true, Ordering::Release);
                 shown.thread().unpark();
-                // The line is gone before anything else is said.
+                // The progress line is cleared before anything else is printed.
                 let _ = shown.join();
                 then(report)
             },
@@ -294,8 +295,9 @@ fn run_quietly(
     bun_sema_driver::check_then(&request, then)
 }
 
-/// A person at a terminal gets the source around each error, and so does an agent, in tags and without colors, which spares it opening
-/// the files. A pipe or continuous integration gets a line an error.
+/// A terminal user gets a source excerpt around each error, and so does an agent, in tags and
+/// without colors, which saves it from opening the files. A pipe or continuous integration gets one
+/// line per error.
 fn style_for(
     cwd: &[u8],
     pretty: Option<bool>,
@@ -337,7 +339,8 @@ impl CheckCommand {
             &options.paths,
             &options.compiler_options,
             options.threads,
-            // The process ends while all that was loaded is still there. Where leaks are looked for, all is given back first.
+            // The process exits without freeing what was loaded. Under leak detection, everything
+            // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
                 true => report,
                 false => report_and_exit(&report, &options, &cwd),
@@ -347,10 +350,10 @@ impl CheckCommand {
     }
 }
 
-/// Shows what was found and ends the process.
+/// Prints the report and exits the process.
 fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     let shown_from = bun_sema_driver::host::from_native(cwd);
-    // The errors are the output, as they are of `tsc`. How it went is said on the side.
+    // The errors are the output, as with `tsc`. The summary is printed separately.
     let mut out = Vec::new();
     format::write_diagnostics(
         &mut out,
@@ -398,10 +401,11 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     Global::exit(u32::from(!report.is_ok()));
 }
 
-/// Type checks `entry_points` and everything they import before they are run or bundled. Says what is wrong on stderr, which leaves
-/// stdout to the program. Whether there is nothing wrong.
+/// Type checks `entry_points` and everything they import before they are run or bundled. Reports
+/// the errors on stderr, which leaves stdout to the program. Returns whether there are no errors.
 pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
-    // What is no TypeScript or JavaScript has no types to check: `[eval]`, a stylesheet, a page.
+    // An entry point that is neither TypeScript nor JavaScript has no types to check: `[eval]`, a
+    // stylesheet, a page.
     const CHECKED: [&[u8]; 8] = [
         b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
     ];
@@ -418,7 +422,8 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     if paths.is_empty() {
         return true;
     }
-    // A JavaScript entry point is read for what it imports, whatever `allowJs` says. Only `checkJs` has its own errors reported.
+    // A JavaScript entry point is loaded for its imports, regardless of `allowJs`. Its own errors
+    // are reported only under `checkJs`.
     let allow_js: Vec<CompilerOption> = paths
         .iter()
         .any(|path| !path.ends_with(b"ts") && !path.ends_with(b".tsx"))
@@ -449,7 +454,8 @@ fn imports_of_page(page: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// Type checks the project around the working directory, as `bun check` does, before one of its scripts is run.
+/// Type checks the project that contains the working directory, as `bun check` does, before one of
+/// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
     check_and_report(&[], &[])
 }

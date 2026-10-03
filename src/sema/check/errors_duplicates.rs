@@ -1,10 +1,11 @@
-//! One name declared twice in ways that do not go together: 2300 2451 2528 2567 2649 2699. And what goes together in some ways only:
-//! 2323 2433 2434.
+//! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. And declarations that merge
+//! only under conditions: 2323 2433 2434.
 //!
-//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of binder.go, which refuse a declaration that
-//! what is in the table excludes, `mergeSymbol` of checker.go, which does the same between files,
-//! `checkObjectTypeForDuplicateDeclarations` and `checkTypeParameters`. What the binder refused is on record
-//! (`Bound::redeclarations`) and is reported here.
+//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of
+//! binder.go, which reject a declaration excluded by the symbol already in the table, `mergeSymbol`
+//! of checker.go, which does the same across files, `checkObjectTypeForDuplicateDeclarations` and
+//! `checkTypeParameters`. The declarations the binder rejected are recorded
+//! (`Bound::redeclarations`) and are reported here.
 
 use super::explain::NO_LENGTH;
 use super::late_bound::LateBoundConflict;
@@ -14,8 +15,10 @@ use crate::bind::{
 };
 use smallvec::SmallVec;
 
-/// A declaration of a symbol as TypeScript has them: where it is, and whether that symbol is the one it goes by and gives its flags to.
-/// The local symbol of a name in a module or a namespace also lists what is exported under the name, which goes by another symbol.
+/// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the
+/// declaration's own symbol, to which it contributes its flags.
+/// The local symbol of a name in a module or a namespace also lists the declarations exported under
+/// the name, whose own symbol is a different one.
 type Declaration = (FileId, Decl, bool);
 
 impl Checker<'_> {
@@ -31,7 +34,7 @@ impl Checker<'_> {
                 continue;
             }
             let sym = self.files().sym(file, SymbolId(i as u32));
-            // Once for each symbol, whichever of its parts leads here.
+            // Once per symbol, whichever of its parts reaches this point.
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
@@ -218,11 +221,11 @@ impl Checker<'_> {
         Some((start, self.end_of_token_at(file, start)))
     }
 
-    /// Whether the name of `decl` is an identifier that is not there.
+    /// Whether the name of `decl` is a missing identifier.
     pub(super) fn is_declaration_name_missing(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
         let name = match decl {
-            // Nothing is written where the name would be, not even `""` or `[""]`.
+            // The source has nothing at the position of the name, not even `""` or `[""]`.
             Decl::Member(m) => {
                 return hir[m].key == PropKey::Name(known::empty)
                     && !matches!(
@@ -350,9 +353,9 @@ impl Checker<'_> {
         if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}')) {
             return None;
         }
-        let meant = [b"export type { ", self.atoms().bytes(alias.name), b" }"].concat();
+        let suggestion = [b"export type { ", self.atoms().bytes(alias.name), b" }"].concat();
         let at = self.place_of_token(file, alias.name_pos);
-        Some(self.new_diagnostic(at, 1369, &[Arg::Bytes(&meant)]))
+        Some(self.new_diagnostic(at, 1369, &[Arg::Bytes(&suggestion)]))
     }
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge.
@@ -418,7 +421,8 @@ impl Checker<'_> {
         }
     }
 
-    /// From `checkModuleDeclaration`: 2433 2434, a namespace comes after the class or function it adds to, in the same file.
+    /// From `checkModuleDeclaration`: 2433 2434, a namespace must follow the class or function it
+    /// merges with, in the same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
@@ -477,9 +481,11 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate entries.
-    /// (TS Exceptions: namespaces, function overloads, enums, and interfaces)". tsgo reports wherever a declaration is. Here a file
-    /// asks about each module it has a declaration of, and keeps what is said about itself.
+    /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of
+    /// ModuleItemList contains any duplicate entries. (TS Exceptions: namespaces, function
+    /// overloads, enums, and interfaces)". tsgo reports at every declaration, in any file. Here a
+    /// file checks each module it has a declaration of, and keeps only the diagnostics located in
+    /// itself.
     fn check_external_module_exports(&mut self, file: FileId) {
         let (files, bound) = (self.files(), self.bound(file));
         let own = files.module(file).is_module();
@@ -519,7 +525,8 @@ impl Checker<'_> {
             if count < 2 || flags.contains(SymFlags::TYPE_ALIAS) && count == 2 {
                 continue;
             }
-            // `exports.a = 1` as often as one likes, but not next to `Object.defineProperty(exports, "a", ..)`.
+            // `exports.a = 1` may be repeated any number of times, but not combined with
+            // `Object.defineProperty(exports, "a", ..)`.
             let is_exports_property = |c: &Self, &(of, decl): &(FileId, Decl)| {
                 matches!(decl, Decl::ExportsProperty(e) if matches!(
                     assignment_declaration_kind(c.hir(of), e),
@@ -545,8 +552,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for the module a file is, or by
-    /// `checkExportAssignment`, for the module it is written in.
+    /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for a
+    /// file that is a module, or by `checkExportAssignment`, for the module that contains it.
     fn are_module_exports_checked(&self, module: Sym) -> bool {
         let files = self.files();
         let assigned = [known::export_equals, known::default].into_iter();
@@ -558,7 +565,7 @@ impl Checker<'_> {
         })
     }
 
-    /// Of the members of each class, interface and type literal.
+    /// For the members of each class, interface and type literal.
     fn check_duplicate_members(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_declaration_file = hir.kind == FileKind::Declaration;
@@ -572,7 +579,8 @@ impl Checker<'_> {
             _ => None,
         });
         for (members, is_ambient, is_class) in classes.chain(interfaces).chain(literals) {
-            // One member has nothing to clash with, unless it declares more than itself, or is static as the `prototype` of every class is.
+            // A single member has nothing to conflict with, unless it declares more than itself, or
+            // is static like the `prototype` of every class.
             if members.len() > 1
                 || members.iter().any(|m| {
                     hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
@@ -597,7 +605,8 @@ impl Checker<'_> {
         }
     }
 
-    /// What `lateBindMember` and `combineSymbolTables` report of one side of `container`, as far as it is in `file`.
+    /// The errors `lateBindMember` and `combineSymbolTables` report for one side of `container`,
+    /// restricted to `file`.
     pub(super) fn report_conflicts_of_late_bound_members(
         &mut self,
         file: FileId,
@@ -647,7 +656,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
         let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
-        // 1 for what is not static, 2 for what is.
+        // 1 for an instance member, 2 for a static member.
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
             let member = &hir[m];
@@ -733,7 +742,7 @@ impl Checker<'_> {
                 let Some(place) = self.place_of_declaration(file, declaration) else {
                     continue;
                 };
-                // `symbolToString(symbol)`: as its first declaration writes it.
+                // `symbolToString(symbol)`: the source text of the name in its first declaration.
                 let declarations = self.declarations_of_member(file, declaration);
                 let first = declarations.first().copied();
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));

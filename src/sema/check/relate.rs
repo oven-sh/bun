@@ -1,8 +1,9 @@
-//! Whether a value of one type can be used where another is expected.
+//! Type relations: whether a value of one type can be used where another type is expected.
 //!
-//! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
-//! a function are the ones there. `REPORT` is `reportErrors`. What only serves error messages is in `explain_relation.rs`. Left out:
-//! `isEmptyArrayLiteralType` (the type of `[]` is not told from a `never[]` that is written).
+//! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in
+//! `backticks` at the head of a function are the names used there. `REPORT` is `reportErrors`. Code
+//! that only serves error elaboration is in `explain_relation.rs`. Omitted:
+//! `isEmptyArrayLiteralType` (the type of `[]` is not distinguished from an annotated `never[]`).
 
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
@@ -17,9 +18,9 @@ use std::ops::{BitAnd, BitAndAssign};
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Relation {
     Assignable = 0,
-    /// A subtype, and no less specific: what unions are reduced with.
+    /// A subtype that is also no less specific. Used for union subtype reduction.
     StrictSubtype = 1,
-    /// Might be the same value: what `===` and casts allow.
+    /// The two types may share a value. Used for `===` and type assertions.
     Comparable = 2,
     Subtype = 4,
     Identity = 5,
@@ -36,7 +37,8 @@ impl Relation {
     }
 }
 
-/// `Maybe`: on the assumption that a comparison under way comes out true. `Unknown`: while a variance is being measured.
+/// `Maybe`: true assuming that a comparison in progress succeeds. `Unknown`: during a variance
+/// computation.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct Ternary(u8);
 
@@ -74,11 +76,11 @@ impl BitAndAssign for Ternary {
 
 // IntersectionState
 pub(super) const STATE_NONE: u8 = 0;
-/// The source is a part of an intersection.
+/// The source is a constituent of an intersection.
 pub(super) const STATE_SOURCE: u8 = 1;
-/// The target is a part of an intersection.
+/// The target is a constituent of an intersection.
 pub(super) const STATE_TARGET: u8 = 2;
-/// The source is an object literal that has been looked over for properties nobody asked for.
+/// The source is an object literal that has already been checked for excess properties.
 pub(super) const STATE_REGULAR: u8 = 4;
 
 // RecursionFlags and ExpandingFlags
@@ -121,12 +123,13 @@ const CONSTRUCT_SIGNATURE: u8 = 32;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) struct Key(TypeId, TypeId, u8);
 
-/// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a hash. `LOCAL` in the first half: the
-/// hash took in an own id.
+/// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a
+/// hash. `LOCAL` in the first half: the hash includes a task-local id.
 const GENERIC_KEY: u8 = 0x80;
 
 impl Key {
-    /// After the link step the same two references have another hash, so the entry is of no use to another task.
+    /// After the merge at the barrier the same two references hash differently, so the entry is
+    /// useless to other tasks.
     #[inline]
     fn is_hash_of_own_ids(self) -> bool {
         self.2 & GENERIC_KEY != 0 && self.0.is_local()
@@ -140,7 +143,7 @@ impl MaybeLocal for Key {
     }
 }
 
-/// Not the tuple's: the halves of a hash are no ids.
+/// Not the tuple's implementation: the halves of a hash are not ids.
 impl Follow for Key {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         let Key(source, target, flags) = *self;
@@ -196,8 +199,8 @@ impl GenericKeyBuilder {
     }
 }
 
-/// The variables that `structuredTypeRelatedToWorker` shares with its closure `relateVariances`. The last two are looked at with
-/// `reportErrors` only.
+/// The variables that `structuredTypeRelatedToWorker` shares with its closure `relateVariances`.
+/// The last two are read only under `reportErrors`.
 #[derive(Default)]
 struct WorkerState {
     variance_check_failed: bool,
@@ -205,13 +208,13 @@ struct WorkerState {
     save_error_state: ErrorState,
 }
 
-/// What one question, with all the questions it leads to, keeps track of.
+/// State of one top-level relation check and all the comparisons nested in it.
 pub(super) struct Relater {
     pub(super) relation: Relation,
     /// The two types `check_type_related_to` was called with. `NEVER` in a relater created elsewhere.
     top_source: TypeId,
     top_target: TypeId,
-    /// The comparisons under way and those that came out true on the assumption that they do.
+    /// The comparisons in progress and those that succeeded assuming the ones in progress succeed.
     pub(super) maybe_keys: Vec<Key>,
     /// `maybeKeysSet`: the keys in `maybe_keys`.
     pub(super) maybe_keys_set: FxHashSet<Key>,
@@ -224,24 +227,27 @@ pub(super) struct Relater {
     pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
     hit_cached_overflow: bool,
-    /// `len(r.sourceStack)` or `len(r.targetStack)` has come to 100: that is why `overflow` is set.
+    /// `len(r.sourceStack)` or `len(r.targetStack)` reached 100, which is why `overflow` is set.
     is_too_deep: bool,
-    /// `related` has been through its own rules with `top_source` and `top_target`: no simple rule relates them, and they are
-    /// not an object type and a primitive. The first comparison takes it.
+    /// `related` has already applied its own rules to `top_source` and `top_target`: no simple rule
+    /// relates them, and they are not an object type and a primitive. Consumed by the first
+    /// comparison.
     is_from_related: bool,
-    /// The key under which `related` has found nothing kept of `top_source` and `top_target`, with its `constrained`. The
-    /// first comparison that needs a key takes it.
+    /// The key with which `related` missed the cache for `top_source` and `top_target`, with its
+    /// `constrained`. Consumed by the first comparison that needs a key.
     top_key: Option<(Key, bool)>,
     relation_count: i32,
-    /// `Checker::cycles` when the question was asked. Once it has moved, nothing found out holds for others.
+    /// `Checker::cycles` at the start of the check. Once it has changed, no result is cacheable.
     cycles: u64,
-    /// What fails is remembered in `failed` and not in the table: in a run with reports (P2), and in the run without reports that goes
-    /// before one where tsgo makes none (`check_type_related_to_ex`), which is to leave the table as tsgo's run finds it.
+    /// Failures are recorded in `failed` instead of the relation cache: in a reporting run (P2),
+    /// and in the non-reporting run that precedes one where tsgo has no such run
+    /// (`check_type_related_to_ex`), which must leave the cache as tsgo's run would find it.
     pub(super) caches_failures: bool,
     failed: FxHashSet<Key>,
-    /// `errorNode`. An end of `0`: with the token there. It and what follows are looked at with `reportErrors` only.
+    /// `errorNode`. An end of `0` means the end of the token at the start. This field and the
+    /// following ones are read only under `reportErrors`.
     pub(super) error_node: Place,
-    /// `headMessage` of the first comparison, which takes it.
+    /// `headMessage` of the first comparison, which consumes it.
     pub(super) head_message: Option<u32>,
     /// `errorChain`
     pub(super) error_chain: Chain,
@@ -279,23 +285,24 @@ impl Relater {
     }
 }
 
-/// Where `getPropertyOfType` looks for what a type does not have itself: the global types that every function and every object is
-/// one of.
+/// Where `getPropertyOfType` falls back for properties a type does not have itself: the global
+/// types that every function and every object is an instance of.
 pub(super) struct Inherited<'p> {
     globals: [Atom; 3],
     count: usize,
-    /// What the first `asked` of `globals` have.
+    /// The members of the first `requested` entries of `globals`.
     members: [Option<Members<'p>>; 3],
-    asked: usize,
+    requested: usize,
 }
 
-/// What instantiations of one declaration have in common.
+/// Identity shared by all instantiations of one declaration.
 pub(super) type RecursionId = (u8, u32, u32);
 
-/// In place of a `RecursionId`: whether the type has a given one takes more than a comparison to tell.
+/// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
+/// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
 
-// The kinds of types, for whoever has the `TypeData` at hand.
+// Type kind predicates for callers that already have the `TypeData`.
 
 /// `Checker::is_object_type`
 #[inline]
@@ -435,7 +442,7 @@ fn is_fresh_object_literal_kind(data: &TypeData) -> bool {
     }
 }
 
-/// `normalized` gives a type of this kind back as it is.
+/// `normalized` returns a type of this kind unchanged.
 #[inline]
 fn is_normalized_kind(data: &TypeData) -> bool {
     match data {
@@ -478,7 +485,8 @@ impl<'p> Checker<'p> {
         self.related(a, b, Relation::Identity)
     }
 
-    // ───────────────────────────── kinds of types, as the relation sees them ─────────────────────────────
+    // ───────────────────────────── type kinds, as the relation classifies them
+    // ─────────────────────────────
 
     #[inline]
     pub(super) fn is_type_param(&self, ty: TypeId) -> bool {
@@ -522,7 +530,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `TypeId::plain`, and what the result is. `data`: what `ty` is.
+    /// `TypeId::plain`, with the `TypeData` of the result. `data`: the `TypeData` of `ty`.
     #[inline]
     fn plain_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
         let plain = ty.plain();
@@ -533,7 +541,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// A literal type as an annotation would name it, and what the result is. `data`: what `ty` is.
+    /// A literal type as an annotation would denote it, with the `TypeData` of the result. `data`:
+    /// the `TypeData` of `ty`.
     #[inline]
     fn regular_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
         if is_fresh_literal_kind(data) {
@@ -543,7 +552,7 @@ impl<'p> Checker<'p> {
         (ty, data)
     }
 
-    /// `normalized`, and what the result is. `data`: what `ty` is.
+    /// `normalized`, with the `TypeData` of the result. `data`: the `TypeData` of `ty`.
     #[inline]
     fn normalized_as(
         &mut self,
@@ -551,7 +560,8 @@ impl<'p> Checker<'p> {
         data: &'p TypeData,
         writing: bool,
     ) -> (TypeId, &'p TypeData) {
-        // FOR SPEED: `len(getMembersOfSymbol(t.symbol)) != 0` first. The binder makes the table with the first member (`GetMembers`).
+        // FOR SPEED: `len(getMembersOfSymbol(t.symbol)) != 0` first. The binder creates the table
+        // with the first member (`GetMembers`).
         if is_normalized_kind(data)
             && !matches!(data, TypeData::Ref { target, .. } if self.files().symbol(*target).members.is_none())
         {
@@ -567,7 +577,7 @@ impl<'p> Checker<'p> {
         (normalized, self.data(normalized))
     }
 
-    /// The enum a member belongs to; an enum is its own.
+    /// The enum that a member belongs to. An enum maps to itself.
     fn enum_of(&self, symbol: Sym) -> Sym {
         if self.files().flags(symbol).contains(SymFlags::ENUM_MEMBER) {
             self.files()
@@ -662,7 +672,7 @@ impl<'p> Checker<'p> {
             && shape.index.is_empty()
     }
 
-    /// `isEmptyResolvedType` of what `ty` has.
+    /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
             && self.members(ty).is_some_and(|m| {
@@ -731,8 +741,9 @@ impl<'p> Checker<'p> {
             .is_some_and(|m| !(m.shape().call.is_empty() && m.shape().construct.is_empty()))
     }
 
-    /// `getNonMissingTypeOfSymbol`: the type of a property as it is compared. `undefined` is in it when it can be left out, unless
-    /// exactOptionalPropertyTypes tells the two apart.
+    /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. It includes
+    /// `undefined` when the property is optional, unless exactOptionalPropertyTypes distinguishes
+    /// the two.
     pub(super) fn type_of_prop_as_read(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
         if !prop.flags.contains(PropFlags::OPTIONAL) {
@@ -744,7 +755,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeOfSymbol` of a property: with what stands for its being left out.
+    /// `getTypeOfSymbol` of a property: with the missing type, the placeholder for an omitted
+    /// property.
     pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
         if prop.flags.contains(PropFlags::OPTIONAL) {
@@ -754,7 +766,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getPropertyOfType`: what every function and every object has counts.
+    /// `getPropertyOfType`: includes the properties that every function and every object has.
     pub(super) fn property_of_type(
         &mut self,
         members: &Members,
@@ -781,7 +793,8 @@ impl<'p> Checker<'p> {
         self.inherited_property(&mut inherited, name)
     }
 
-    /// `property_in`, for one name after the other. `inherited`: `inherited_of` the shape of `members`.
+    /// `property_in`, for looking up several names in sequence. `inherited`: `inherited_of` the
+    /// shape of `members`.
     #[inline]
     pub(super) fn property_among(
         &mut self,
@@ -818,7 +831,7 @@ impl<'p> Checker<'p> {
             globals,
             count: count + 1,
             members: [None; 3],
-            asked: 0,
+            requested: 0,
         }
     }
 
@@ -836,7 +849,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `Checker::inherited_names`. They stay as they are if one of the four is not there, or not yet.
+    /// `Checker::inherited_names`. Left unchanged if one of the four does not exist, or not yet.
     #[cold]
     fn note_inherited_names(&mut self) {
         let before = self.non_cacheable_mark();
@@ -873,10 +886,10 @@ impl<'p> Checker<'p> {
             return None;
         }
         for i in 0..from.count {
-            if i == from.asked {
+            if i == from.requested {
                 let global = self.plain_global_ref(from.globals[i]);
                 from.members[i] = self.members(global);
-                from.asked += 1;
+                from.requested += 1;
             }
             if let Some(members) = from.members[i]
                 && let Some(prop) = members.resolved.prop(name)
@@ -896,13 +909,13 @@ impl<'p> Checker<'p> {
         if source == target {
             return true;
         }
-        // A question asked while a type is being simplified passes no `enter`.
+        // A relation check made while a type is being simplified does not go through `enter`.
         if self.is_stack_low() {
-            self.gave_up();
+            self.bailed_out();
             return false;
         }
         let (sd, td) = (self.data(source), self.data(target));
-        // Every rule goes by the flags, which the kinds of `undefined` and of `null` share.
+        // Every rule uses the flags, which all variants of `undefined` and of `null` share.
         let ((source, sd), (target, td)) = (self.plain_as(source, sd), self.plain_as(target, td));
         let ((source, sd), (target, td)) =
             (self.regular_as(source, sd), self.regular_as(target, td));
@@ -921,7 +934,7 @@ impl<'p> Checker<'p> {
             & (tf::UNION_OR_INTERSECTION | tf::INDEXED_ACCESS | tf::CONDITIONAL | tf::SUBSTITUTION)
             == 0
         {
-            // What may simplify to another form is left out, so the flags are the same.
+            // Types that may simplify to another form are excluded, so the flags are the same.
             if self.flags(source) != self.flags(target) {
                 return false;
             }
@@ -945,7 +958,7 @@ impl<'p> Checker<'p> {
                 if is_marker_comparison {
                     self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
                 }
-                // The comparison of these two types was cut short when it was made.
+                // The comparison of these two types was aborted when it ran.
                 if entry & COMPLEXITY_OVERFLOW != 0 {
                     self.relation_too_complex = true;
                 }
@@ -959,8 +972,10 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `checkTypeRelatedToEx`, without the errors. `relation_too_complex` tells the caller to report 2859.
-    /// `related` has found no simple rule for the two. `missed`: the key under which it has found nothing kept, if it looked.
+    /// `checkTypeRelatedToEx`, without error reporting. `relation_too_complex` tells the caller to
+    /// report 2859.
+    /// `related` has found no simple rule for the two types. `missed`: the key of its cache miss,
+    /// if it did a lookup.
     /// `is_trial`: see `Relater::caches_failures`.
     fn check_type_related_to(
         &mut self,
@@ -992,7 +1007,7 @@ impl<'p> Checker<'p> {
         r.top_target = target;
         r.relation_count = 2_000_000;
         r.cycles = self.cycles;
-        // Under the identity relation `related` goes by other rules.
+        // Under the identity relation `related` uses other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
         r.caches_failures = is_trial;
@@ -1055,7 +1070,7 @@ impl<'p> Checker<'p> {
         is_related
     }
 
-    /// `isSimpleTypeRelatedTo`. `sd`, `td`: what `s` and `t` are.
+    /// `isSimpleTypeRelatedTo`. `sd`, `td`: the `TypeData` of `s` and `t`.
     #[inline]
     fn is_simple_type_related_to(
         &mut self,
@@ -1120,7 +1135,8 @@ impl<'p> Checker<'p> {
         {
             return true;
         }
-        // Without strictNullChecks they go into anything but `never`, which a union or an intersection may come to.
+        // Without strictNullChecks they are assignable to anything but `never`, which a union or an
+        // intersection may reduce to.
         let is_lax = !self.p.files.options.strict_null_checks && t & tf::UNION_OR_INTERSECTION == 0;
         if s & tf::UNDEFINED != 0 && (is_lax || t & (tf::UNDEFINED | tf::VOID) != 0)
             || s & tf::NULL != 0 && (is_lax || t & tf::NULL != 0)
@@ -1191,7 +1207,7 @@ impl<'p> Checker<'p> {
         }
         let theirs = self.exports_in_order(target);
         for (name, member) in self.exports_in_order(source) {
-            // What a namespace merged with the enum exports is no member of it.
+            // An export of a namespace merged with the enum is not an enum member.
             if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
                 continue;
             }
@@ -1217,8 +1233,8 @@ impl<'p> Checker<'p> {
             // `NaN` differs from itself.
             let is_nan = |value: EnumValue| matches!(value, EnumValue::Number(bits) if f64::from_bits(bits).is_nan());
             let (code, values) = match (value(self, a), value(self, b)) {
-                (Some(given), Some(wanted)) if given != wanted || is_nan(given) => {
-                    (4125, [Some(wanted), Some(given)])
+                (Some(actual), Some(expected)) if actual != expected || is_nan(actual) => {
+                    (4125, [Some(expected), Some(actual)])
                 }
                 (Some(known @ EnumValue::String(_)), None)
                 | (None, Some(known @ EnumValue::String(_))) => (4126, [Some(known), None]),
@@ -1246,7 +1262,7 @@ impl<'p> Checker<'p> {
         let mut t = ty;
         loop {
             let n = match self.data(t) {
-                // Only an intersection among its members makes another type of a union.
+                // A union only changes if one of its members is an intersection.
                 TypeData::Union(_) if !self.may_be_reduced(t) => return t,
                 TypeData::Union(_) | TypeData::Intersection(_) => {
                     self.normalized_union_or_intersection(t, writing)
@@ -1329,7 +1345,7 @@ impl<'p> Checker<'p> {
         if result != t {
             result = self.filter(result, |_, m| m != t);
         }
-        // What is found out while the resolver runs into itself holds for nobody else.
+        // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles != cycles_before {
             self.simplified.remove(&(t, writing));
         } else if result != t {
@@ -1345,7 +1361,7 @@ impl<'p> Checker<'p> {
         let object = obj;
         let object = self.simplified(object, writing);
         let index_ty = self.simplified(index, writing);
-        // T[A | B] is T[A] | T[B] to read, T[A] & T[B] to write.
+        // T[A | B] is T[A] | T[B] for reading, T[A] & T[B] for writing.
         if let TypeData::Union(parts) = self.data(index_ty) {
             let types: Vec<TypeId> = parts
                 .iter()
@@ -1361,7 +1377,8 @@ impl<'p> Checker<'p> {
             };
         }
         if !self.is_instantiable(index_ty) {
-            // (T | U)[K] is T[K] | U[K] to read, T[K] & U[K] to write. (T & U)[K] is T[K] & U[K].
+            // (T | U)[K] is T[K] | U[K] for reading, T[K] & U[K] for writing. (T & U)[K] is T[K] &
+            // U[K].
             let parts = match self.data(object) {
                 TypeData::Union(parts) => Some((parts, false)),
                 TypeData::Intersection(parts)
@@ -1389,8 +1406,9 @@ impl<'p> Checker<'p> {
                 };
             }
         }
-        // A tuple with `...T` in it, at a place that is none of the fixed ones: any of its elements for `number`, else any from the
-        // first that is not fixed on. `getElementTypeOfSliceOfTupleType`
+        // A tuple with a `...T` element, at an index that is not one of the fixed elements: the
+        // union of all its element types for `number`, otherwise of those from the first non-fixed
+        // element on. `getElementTypeOfSliceOfTupleType`
         if let TypeData::Tuple { flags, .. } = self.data(object)
             && self.is_generic_tuple_type(object)
             && self.is_number_like(index_ty)
@@ -1427,7 +1445,8 @@ impl<'p> Checker<'p> {
         t
     }
 
-    /// `distributeIndexOverObjectType`: (T | U)[K] is T[K] | U[K] to read, T[K] & U[K] to write. (T & U)[K] is T[K] & U[K].
+    /// `distributeIndexOverObjectType`: (T | U)[K] is T[K] | U[K] for reading, T[K] & U[K] for
+    /// writing. (T & U)[K] is T[K] & U[K].
     pub(super) fn distribute_index_over_object_type(
         &mut self,
         object: TypeId,
@@ -1460,8 +1479,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `substituteIndexedMappedType`, for a mapped type whose keys are not known yet. `None`: its `as` clause renames them
-    /// (`MappedTypeNameTypeKindRemapping`).
+    /// `substituteIndexedMappedType`, for a mapped type whose keys are not resolved yet. `None`:
+    /// its `as` clause renames them (`MappedTypeNameTypeKindRemapping`).
     pub(super) fn substitute_indexed_generic_mapped(
         &mut self,
         object: TypeId,
@@ -1469,7 +1488,8 @@ impl<'p> Checker<'p> {
     ) -> Option<TypeId> {
         let (file, node, mapper) = self.mapped_origin(object)?;
         let mapped = self.mapped_decl(file, node);
-        // `getMappedTypeNameTypeKind`: a name that is always the key itself, or nothing, only leaves keys out.
+        // `getMappedTypeNameTypeKind`: a name type that always yields the key itself, or no key,
+        // only filters keys.
         if let Some(name) = self.mapped_name_type(object) {
             let key = self.mapped_type_param(object);
             if !self.is_assignable(name, key) {
@@ -1485,7 +1505,8 @@ impl<'p> Checker<'p> {
         let with_key = self.types().mapper(pairs);
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
-        // Unless it says `?` itself, what it takes its modifiers from says, `-?` or not.
+        // Unless it declares `?` itself, the optionality comes from its modifiers type, with or
+        // without `-?`.
         let optional = mapped.optional == MappedModifier::Add || {
             let modifiers = self.mapped_modifiers_type(object);
             modifiers.is_some_and(|m| self.combined_mapped_optionality(m) > 0)
@@ -1504,7 +1525,7 @@ impl<'p> Checker<'p> {
         }
         let cycles_before = self.cycles;
         let result = self.simplified_conditional_worker(t, writing);
-        // What is found out while the resolver runs into itself holds for nobody else.
+        // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles == cycles_before {
             self.simplified.insert((t, writing), result);
         }
@@ -1577,7 +1598,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getConstraintFromIndexedAccess`. `undefined`: what the access has kept of how it was made (`accessFlags`).
+    /// `getConstraintFromIndexedAccess`. `undefined`: the part of `accessFlags` that the indexed
+    /// access type stores.
     fn constraint_of_indexed_access(
         &mut self,
         obj: TypeId,
@@ -1604,8 +1626,9 @@ impl<'p> Checker<'p> {
     /// `hasNonCircularBaseConstraint`
     pub(super) fn has_non_circular_base_constraint(&mut self, t: TypeId) -> bool {
         self.base_constraint(t);
-        // `circularConstraintType`: marked while the frame is in flight, stored with the value afterwards. The read is a hit: every caller
-        // passes a type of a kind that has an entry.
+        // `circularConstraintType`: marked while the computation is in progress, stored with the
+        // value afterwards. The read always hits: every caller passes a type of a kind that has an
+        // entry.
         !self.constraints_marked_circular.contains(&t)
             && !(self.p.constraints.get(&mut self.task, &t))
                 .is_some_and(|(_, is_circular)| is_circular)
@@ -1616,7 +1639,8 @@ impl<'p> Checker<'p> {
         self.base_constraint_of_as(t, false)
     }
 
-    /// `nested`: it is `computeBaseConstraint` that asks, which hands its stack on (`getNextBaseConstraint`).
+    /// `nested`: the caller is `computeBaseConstraint`, which passes its stack on
+    /// (`getNextBaseConstraint`).
     pub(super) fn base_constraint_of_as(&mut self, t: TypeId, nested: bool) -> Option<TypeId> {
         match self.data(t) {
             TypeData::Template { texts, types } => {
@@ -1624,7 +1648,8 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|&ty| self.base_constraint_of_as(ty, nested).unwrap_or(ty))
                     .collect();
-                // Any string, if there is no telling what some placeholder can be. One that waits for nothing is what it is.
+                // Any string, if some placeholder has no known constraint. A placeholder that is
+                // not generic is used as is.
                 if constraints
                     .iter()
                     .any(|&c| c == TypeId::UNKNOWN || self.is_deferred(c))
@@ -1644,8 +1669,8 @@ impl<'p> Checker<'p> {
                     TypeId::STRING
                 })
             }
-            // `noConstraintType`, `circularConstraintType`: none. A union has none if some member has none, an intersection if no
-            // member has one.
+            // `noConstraintType`, `circularConstraintType`: no constraint. A union has no
+            // constraint if some member has none, an intersection if no member has one.
             data if is_union_or_intersection_kind(data)
                 || is_instantiable_kind(data)
                 || is_generic_tuple_kind(data) =>
@@ -1679,7 +1704,7 @@ impl<'p> Checker<'p> {
         };
         for &t in types {
             if self.is_instantiable(t) {
-                // As long as it is known not to go round in circles, hence not through `T[K]`.
+                // Only while it is known not to be circular, hence not through `T[K]`.
                 let mut constraint = self.constraint_of(t);
                 let mut steps = 0;
                 while let Some(c) = constraint
@@ -1769,16 +1794,18 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
-    /// The type parameter that is checked, if it is one on its own: the test then goes member by member.
+    /// The check type, if it is a naked type parameter: the conditional type then distributes over
+    /// union members.
     fn cond_distributes_over(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let declared = self.type_from_node(file, nodes[0]);
         matches!(self.data(declared), TypeData::TypeParam(..)).then_some(declared)
     }
 
-    /// `getInferredTrueTypeFromConditionalType`: the true branch under `combinedMapper`, that is with what `getConditionalType`
-    /// inferred before it put the test off. From what waits itself nothing is inferred: what is to be inferred is then as wide
-    /// as it can be.
+    /// `getInferredTrueTypeFromConditionalType`: the true branch instantiated with
+    /// `combinedMapper`, that is with the inferences `getConditionalType` made before it deferred
+    /// the conditional type. Nothing is inferred from a type that is itself deferred: the inferred
+    /// type parameters are then as wide as possible.
     fn cond_inferred_true(&mut self, t: TypeId) -> TypeId {
         let params = self.cond_infer_params(t);
         let (file, _, mapper, nodes) = self.cond_origin(t);
@@ -1839,7 +1866,8 @@ impl<'p> Checker<'p> {
 
     /// `getConstraintOfDistributiveConditionalType`, computed once (`resolvedConstraintOfDistributive`).
     pub(super) fn constraint_of_distributive_conditional(&mut self, t: TypeId) -> Option<TypeId> {
-        // A type that `getRestrictiveInstantiation` returned has none. A conditional type INSIDE one has.
+        // A type that `getRestrictiveInstantiation` returned has none. A conditional type inside
+        // one has.
         if self
             .restrictive_operands
             .last()
@@ -1903,7 +1931,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTemplateTypeFromMappedType`: with what stands for a property left out when the mapping makes properties optional.
+    /// `getTemplateTypeFromMappedType`: with the missing type added when the mapped type makes
+    /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, _)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
@@ -1922,8 +1951,8 @@ impl<'p> Checker<'p> {
         self.instantiate(declared, mapper)
     }
 
-    /// `getTypeParameterFromMappedType`. That of an instantiated mapped type is a fresh one, which ranges over the keys as they
-    /// are there (`instantiateAnonymousType`).
+    /// `getTypeParameterFromMappedType`. An instantiated mapped type has a fresh type parameter,
+    /// which ranges over the instantiated keys (`instantiateAnonymousType`).
     pub(super) fn mapped_type_param(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
@@ -1932,7 +1961,8 @@ impl<'p> Checker<'p> {
         self.cloned_type_param(file, param, mapper)
     }
 
-    /// `MappedType.mapper`: what stands for the type parameters around the mapped type `t`, and its own for the one declared.
+    /// `MappedType.mapper`: maps the outer type parameters of the mapped type `t`, and the declared
+    /// type parameter to the one of `t`.
     fn mapped_mapper(&mut self, t: TypeId) -> MapperId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return MapperId::IDENTITY;
@@ -1981,8 +2011,10 @@ impl<'p> Checker<'p> {
         Some(self.instantiate(declared, mapper))
     }
 
-    /// `getApparentMappedTypeKeys`, of `{ [P in keyof X as N]: .. }`: what `N` (`name`) makes of the keys `X` is known to have.
-    /// `None`: it is not written with `keyof` (`isMappedTypeWithKeyofConstraintDeclaration`).
+    /// `getApparentMappedTypeKeys` for `{ [P in keyof X as N]: .. }`: `N` (`name`) applied to the
+    /// known keys of `X`.
+    /// `None`: the constraint is not declared with `keyof`
+    /// (`isMappedTypeWithKeyofConstraintDeclaration`).
     pub(super) fn apparent_mapped_type_keys(
         &mut self,
         name: TypeId,
@@ -1995,7 +2027,8 @@ impl<'p> Checker<'p> {
         let modifiers = self.instantiate(declared, mapper);
         let apparent = self.apparent_type(modifiers);
         let param = self.mapped_type_param(mapped);
-        // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. A property that is not public goes by `never`.
+        // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. A non-public property has the
+        // key type `never`.
         let mut key_types: Vec<TypeId> = Vec::new();
         if self.is_any(apparent) {
             key_types.push(TypeId::STRING);
@@ -2063,7 +2096,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── variance ─────────────────────────────
 
-    /// A type parameter that stands in for another while a variance is measured was looked at in a way that the variance
+    /// A marker type parameter of a variance computation was inspected in a way that the variance
     /// does not account for. `instantiateType(t, reportUnreliableMapper)`
     fn report_unreliable(&mut self, t: TypeId) {
         if self
@@ -2085,7 +2118,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isMarkerType`, of a reference to a class or an interface.
+    /// `isMarkerType` for a reference to a class or an interface.
     pub(super) fn is_marker_type(&mut self, t: TypeId) -> bool {
         // `getVariances`: arrays are never measured.
         if !self
@@ -2104,9 +2137,11 @@ impl<'p> Checker<'p> {
         self.are_marker_arguments(*target, &params, args)
     }
 
-    /// Whether `createMarkerType` has made the instantiation of `sym`, whose type parameters are `params`, with `args`: each
-    /// parameter for itself, but for one that a marker stands for. `variances_of` makes them once it has set about `sym`. Until
-    /// then such an instantiation goes by the variances of `sym` like any other, which is what sets about it.
+    /// Whether the instantiation of `sym`, whose type parameters are `params`, with `args` was
+    /// created by `createMarkerType`: each parameter maps to itself, except one that is replaced by
+    /// a marker. `variances_of` creates these once it has started on `sym`. Until then such an
+    /// instantiation uses the variances of `sym` like any other, which is what starts the
+    /// computation.
     pub(super) fn are_marker_arguments(
         &mut self,
         sym: Sym,
@@ -2147,7 +2182,8 @@ impl<'p> Checker<'p> {
             || self.p.variances.get(&mut self.task, &sym).is_some()
     }
 
-    /// `getTypeParameterModifiers`: what any of the declarations of `sym` says of its type parameter `param`.
+    /// `getTypeParameterModifiers`: the modifiers that any declaration of `sym` has on its type
+    /// parameter `param`.
     pub(super) fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
         let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
             return Flags::empty();
@@ -2164,7 +2200,7 @@ impl<'p> Checker<'p> {
                 _ => None,
             })
             .collect();
-        // One that is declared around `sym` is declared once.
+        // An outer type parameter of `sym` has a single declaration.
         if !lists
             .iter()
             .any(|&(file, params)| file == of && params.range().contains(&id.idx()))
@@ -2183,7 +2219,8 @@ impl<'p> Checker<'p> {
         modifiers
     }
 
-    /// `createMarkerType`: `sym` of its type parameters `params`, with `marker` in the place of the one at `index`.
+    /// `createMarkerType`: `sym` instantiated with its type parameters `params`, with `marker`
+    /// substituted for the one at `index`.
     pub(super) fn create_marker_type(
         &mut self,
         sym: Sym,
@@ -2206,8 +2243,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getVariances`, `getAliasVariances`: how instantiations of `sym` compare, going by how their type arguments do. Empty while
-    /// it is measured.
+    /// `getVariances`, `getAliasVariances`: how instantiations of `sym` relate, given how their
+    /// type arguments relate. Empty while the computation is in progress.
     pub(super) fn variances_of(&mut self, sym: Sym) -> Arc<[u8]> {
         if let Some(known) = self.p.variances.get(&mut self.task, &sym) {
             return known;
@@ -2215,7 +2252,7 @@ impl<'p> Checker<'p> {
         self.variances_worker(sym)
     }
 
-    /// `getVariancesWorker`. The caller has looked `sym` up and missed.
+    /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> Arc<[u8]> {
         if Some(sym) == self.global_type_symbol(known::Array)
             || Some(sym) == self.global_type_symbol(known::ReadonlyArray)
@@ -2264,8 +2301,9 @@ impl<'p> Checker<'p> {
         if !was_computing {
             self.variances_measured.clear();
         }
-        // `resolutionStart`: what was under way when the outermost measurement began is asked afresh if it is needed, with the
-        // measurement under way to stop it from going round for ever.
+        // `resolutionStart`: resolutions in progress when the outermost variance computation began
+        // are restarted if needed, and the computation in progress stops them from recursing
+        // forever.
         let resolution_start = self.resolution_start;
         if !was_computing {
             self.resolution_start = self.stack.len();
@@ -2274,7 +2312,8 @@ impl<'p> Checker<'p> {
         let flags = self.files().flags(sym);
         let is_alias = flags.contains(SymFlags::TYPE_ALIAS)
             && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-        // `getAliasVariances`: those the alias declares. `getVariances`: those around the declaration count too.
+        // `getAliasVariances`: the type parameters the alias declares. `getVariances`: the outer
+        // type parameters of the declaration are included.
         let params = if is_alias {
             self.type_params_of_symbol(sym)
         } else {
@@ -2303,7 +2342,7 @@ impl<'p> Checker<'p> {
                 if self.is_marker_assignable(with_super, with_sub) {
                     variance |= CONTRAVARIANT;
                 }
-                // Either way: perhaps because it is nowhere to be seen.
+                // Related both ways: possibly because the type parameter is not used at all.
                 if variance == BIVARIANT {
                     let with_other = self.create_marker_type(sym, &params, i, TypeId::MARKER_OTHER);
                     if self.is_marker_assignable(with_other, with_super) {
@@ -2447,7 +2486,7 @@ impl<'p> Checker<'p> {
         self.is_related_to_ex::<false>(r, source, target, recursion, STATE_NONE)
     }
 
-    /// `isRelatedToEx`. `REPORT` is `reportErrors`, here and in all that takes it.
+    /// `isRelatedToEx`. `REPORT` is `reportErrors`, here and in every function that has it.
     pub(super) fn is_related_to_ex<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -2499,7 +2538,7 @@ impl<'p> Checker<'p> {
             }
             return Ternary::of(is_related);
         }
-        // It goes no further.
+        // The recursion stops here.
         if REPORT && self.is_stack_low() {
             self.report_error_results(
                 r,
@@ -2513,7 +2552,8 @@ impl<'p> Checker<'p> {
         }
         let (source, sd) = self.normalized_as(original_source, original_sd, false);
         let (mut target, mut td) = self.normalized_as(original_target, original_td, true);
-        // `getRegularTypeOfObjectLiteral` goes into the properties that are object literals themselves and no further.
+        // `getRegularTypeOfObjectLiteral` recurses only into properties that are object literals
+        // themselves.
         let state = if state & STATE_REGULAR != 0 && !is_object_literal_kind(sd) {
             state & !STATE_REGULAR
         } else {
@@ -2533,16 +2573,17 @@ impl<'p> Checker<'p> {
                 r, source, sd, target, td, STATE_NONE, recursion,
             );
         }
-        // A type parameter against exactly what it extends: very common.
+        // A type parameter compared with exactly its constraint: very common.
         if is_type_param_kind(sd) && self.constraint_of_type_param(source) == Some(target) {
             return Ternary::TRUE;
         }
-        // Something that is never null or undefined against `X | null | undefined`: against `X`.
+        // A source that is never null or undefined, compared with `X | null | undefined`, is
+        // compared with `X`.
         if let TypeData::Union(types) = td
             && matches!(types.len(), 2 | 3)
             && self.is_definitely_non_nullable_as(source, sd)
         {
-            // There `undefined` and `null` come first in a union. Here `void` comes before them.
+            // In tsgo `undefined` and `null` come first in a union. Here `void` comes before them.
             let mut others = types
                 .iter()
                 .copied()
@@ -2623,8 +2664,9 @@ impl<'p> Checker<'p> {
                 }
                 return Ternary::FALSE;
             }
-            // `typeRelatedToSomeType`: a union has room for each of its members. An object literal is looked for as what it is
-            // once it is no longer fresh. Where `recursive_type_related_to` might say something else it is left to say it.
+            // `typeRelatedToSomeType`: each member of a union is related to the union. An object
+            // literal is searched for by its regular (non-fresh) type. Cases where
+            // `recursive_type_related_to` might give a different result are left to it.
             if let TypeData::Union(types) = td
                 && !matches!(sd, TypeData::Union(_))
                 && !is_object_literal_kind(sd)
@@ -2661,7 +2703,7 @@ impl<'p> Checker<'p> {
         Ternary::FALSE
     }
 
-    // ───────────────────────────── object literals and types that ask for nothing ─────────────────────────────
+    // ───────────────────────────── object literals and weak types ─────────────────────────────
 
     /// `isImplementationCompatibleWithOverload`
     pub(super) fn is_implementation_compatible_with_overload(
@@ -2671,7 +2713,7 @@ impl<'p> Checker<'p> {
     ) -> bool {
         let (source, target) = (self.erased_sig(implementation), self.erased_sig(overload));
         let (source_return, target_return) = (self.sig_return(source), self.sig_return(target));
-        // What they return has to do with each other, one way or the other.
+        // Their return types must be related in one direction or the other.
         if target_return != TypeId::VOID
             && !self.is_assignable(target_return, source_return)
             && !self.is_assignable(source_return, target_return)
@@ -2690,7 +2732,7 @@ impl<'p> Checker<'p> {
         .holds()
     }
 
-    /// `findMatchingDiscriminantType`, asked from outside a relation.
+    /// `findMatchingDiscriminantType`, called from outside a relation check.
     pub(super) fn matching_discriminant_type(
         &mut self,
         source: TypeId,
@@ -2715,7 +2757,7 @@ impl<'p> Checker<'p> {
         if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
             return false;
         }
-        // What takes anything takes any object literal, but not any attribute.
+        // A target that accepts anything accepts any object literal, but not any JSX attribute.
         let is_jsx =
             matches!(sd, TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         if r.relation.is_lenient()
@@ -2751,16 +2793,17 @@ impl<'p> Checker<'p> {
             if is_jsx && self.atoms().bytes(prop.name).contains(&b'-') {
                 continue;
             }
-            // `shouldCheckAsExcessProperty`: what a spread brought along is nobody's mistake.
+            // `shouldCheckAsExcessProperty`: properties copied by a spread are not checked.
             let written_here = match (&prop.source, literal) {
                 (PropSource::Literal(file, p), Some((of, e))) => {
                     *file == of && self.bound(of).prop_owner[p.idx()] == e
                 }
                 (PropSource::Literal(..), None) => true,
-                // The synthesized children property is declared in the attributes node, so it is checked like a written attribute.
-                // Children alone do not make the attributes type fresh (`createJsxAttributesTypeFromAttributesProperty`), so a
-                // written attribute is required. A property copied by a spread is declared elsewhere.
-                // A `Partial` shape holds only properties written in the literal.
+                // The synthesized children property is declared in the attributes node, so it is
+                // checked like an explicit attribute. Children alone do not make the attributes
+                // type fresh (`createJsxAttributesTypeFromAttributesProperty`), so an explicit
+                // attribute is required. A property copied by a spread is declared elsewhere.
+                // A `Partial` shape holds only properties declared in the literal.
                 (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
                         || prop.flags.contains(PropFlags::WRITTEN)
@@ -2791,7 +2834,8 @@ impl<'p> Checker<'p> {
                         self.report_unknown_jsx_attribute(r, prop, error_target);
                         return true;
                     }
-                    // Only a name written as an identifier in the file at hand is taken for a slip of the pen.
+                    // Only a name that is an identifier in the current file is treated as a
+                    // possible misspelling.
                     // `prop.ValueDeclaration`
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
@@ -2821,15 +2865,15 @@ impl<'p> Checker<'p> {
                 return true;
             }
             if is_union {
-                let given = self.type_of_prop(prop, sm.mapper);
-                let wanted: SmallVec<[TypeId; 8]> = self
+                let actual = self.type_of_prop(prop, sm.mapper);
+                let expected: SmallVec<[TypeId; 8]> = self
                     .parts(reduced_target)
                     .iter()
                     .map(|&t| self.type_of_property_in_type(t, prop.name))
                     .collect();
-                let wanted = self.union(&wanted);
+                let expected = self.union(&expected);
                 if !self
-                    .is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, STATE_NONE)
+                    .is_related_to_ex::<REPORT>(r, actual, expected, REC_BOTH, STATE_NONE)
                     .holds()
                 {
                     if REPORT {
@@ -2873,7 +2917,8 @@ impl<'p> Checker<'p> {
                 .iter()
                 .all(|&p| self.is_excess_property_check_target(p)),
             TypeData::Substitution { base, .. } => self.is_excess_property_check_target(*base),
-            // `ObjectFlagsObjectLiteralPatternWithComputedProperties`: there is no telling what else it takes.
+            // `ObjectFlagsObjectLiteralPatternWithComputedProperties`: its other properties are
+            // unknown.
             TypeData::Synth(shape) => shape.literal != Literalness::PatternWithComputedNames,
             data => t == TypeId::OBJECT || is_object_kind(data),
         }
@@ -2902,7 +2947,7 @@ impl<'p> Checker<'p> {
                 {
                     return true;
                 }
-                // A name made from a symbol is let through by an index signature for strings.
+                // A name derived from a symbol is accepted by a string index signature.
                 self.atoms().is_symbol_name(name)
                     && members
                         .shape()
@@ -2943,7 +2988,7 @@ impl<'p> Checker<'p> {
         let Some(sm) = self.members(apparent) else {
             return false;
         };
-        // An attribute with a hyphen in its name is taken to be known.
+        // An attribute with a hyphen in its name is treated as known.
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         sm.shape().props.iter().any(|p| {
             is_jsx && self.atoms().bytes(p.name).contains(&b'-')
@@ -2993,20 +3038,21 @@ impl<'p> Checker<'p> {
             .map(|&t| Ternary::of(!self.has_primitive_flag(t) && !self.reduced(t).is_never()))
             .collect();
         for prop in telling {
-            let given = self.type_of_prop(prop, sm.mapper);
-            // Those that do not match go only if some do: a discriminant that is wrong rules nothing out.
+            let actual = self.type_of_prop(prop, sm.mapper);
+            // Non-matching members are removed only if some member matches: a discriminant that
+            // matches nothing excludes nothing.
             let mut matched = false;
             for (i, &t) in types.iter().enumerate() {
                 if !include[i].holds() {
                     continue;
                 }
-                let Some(wanted) = self.property_or_index_signature_type(t, prop.name) else {
+                let Some(expected) = self.property_or_index_signature_type(t, prop.name) else {
                     continue;
                 };
                 if self
-                    .parts(given)
+                    .parts(actual)
                     .iter()
-                    .any(|&s| self.is_related_to(r, s, wanted, REC_BOTH).holds())
+                    .any(|&s| self.is_related_to(r, s, expected, REC_BOTH).holds())
                 {
                     matched = true;
                 } else {
@@ -3039,7 +3085,7 @@ impl<'p> Checker<'p> {
         if let Some((prop, mapper)) = self.property_in(&members, name) {
             return Some(self.type_of_prop_with_missing(prop, mapper));
         }
-        // There may be nothing under the name.
+        // The property may not exist.
         let value = self
             .applicable_index_info_for_name(&members, name)
             .map(|info| info.value)?;
@@ -3048,8 +3094,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── unions and intersections ─────────────────────────────
 
-    /// `unionOrIntersectionRelatedTo`. The order matters: unions before intersections, "each" before "some". `sd`, `td`: what `source`
-    /// and `target` are.
+    /// `unionOrIntersectionRelatedTo`. The order matters: unions before intersections, "each"
+    /// before "some". `sd`, `td`: the `TypeData` of `source` and `target`.
     fn union_or_intersection_related_to_as<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -3069,7 +3115,8 @@ impl<'p> Checker<'p> {
             {
                 return Ternary::TRUE;
             }
-            // `A` is related to `A | B`: the list of unions the target was made of is often much shorter than what it comes to.
+            // `A` is related to `A | B`: the list of unions the target was built from is often much
+            // shorter than its resolved member list.
             if target_is_union
                 && let UnionOrigin::Union(origin) = self.origin(target)
                 && self.stored_alias(source).is_some()
@@ -3092,9 +3139,10 @@ impl<'p> Checker<'p> {
             };
         }
         if target_is_union {
-            // `getRegularTypeOfObjectLiteral`: no longer fresh, it is an object literal still, which is what a subtype may leave
-            // optional properties out for, and the attributes of a JSX element still, where a name with a hyphen is always known.
-            // Nothing in it is widened: alternatives do not get each other's properties.
+            // `getRegularTypeOfObjectLiteral`: the regular type is no longer fresh but is still an
+            // object literal type, which is what allows a subtype to omit optional properties, and
+            // still a JSX attributes type, where a name with a hyphen is always known. Nothing in
+            // it is widened: alternatives do not get each other's properties.
             let state = if is_object_literal_kind(sd) {
                 state | STATE_REGULAR
             } else {
@@ -3108,7 +3156,8 @@ impl<'p> Checker<'p> {
         if matches!(td, TypeData::Intersection(_)) {
             return self.type_related_to_each_type::<REPORT>(r, source, target, STATE_TARGET);
         }
-        // The source is an intersection. `T & 1` with `T extends 1 | 2` is not to seem comparable to `2`.
+        // The source is an intersection. `T & 1` with `T extends 1 | 2` must not be comparable to
+        // `2`.
         let mut source = source;
         if r.relation == Relation::Comparable && self.has_primitive_flag_as(target, td) {
             let types = self.parts_of_intersection(source);
@@ -3136,7 +3185,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // Whether some member of it is related says nothing worth telling.
+        // Not reported: whether some member of it is related gives no useful elaboration.
         self.some_type_related_to_type::<false>(r, source, target, STATE_SOURCE)
     }
 
@@ -3164,7 +3213,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `someTypeRelatedToType`: what is wrong with the last member is said.
+    /// `someTypeRelatedToType`: the failure of the last member is reported.
     fn some_type_related_to_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -3189,7 +3238,7 @@ impl<'p> Checker<'p> {
         Ternary::FALSE
     }
 
-    /// `eachTypeRelatedToType`: what is wrong with the first member that is not related is said.
+    /// `eachTypeRelatedToType`: the failure of the first unrelated member is reported.
     fn each_type_related_to_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -3203,8 +3252,9 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) => parts,
             _ => &[],
         };
-        // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would spoil the correspondence. Its position in a
-        // union: the constituents are in the order of `CompareTypes`, which starts with the flags.
+        // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would break
+        // the positional correspondence. Its position in a union: the constituents are in the order
+        // of `CompareTypes`, which starts with the flags.
         let undefined_in = |types: &[TypeId]| {
             let is_before = |t: &&TypeId| self.flags(**t) < tf::UNDEFINED;
             let from = types.iter().take_while(is_before).count();
@@ -3223,7 +3273,7 @@ impl<'p> Checker<'p> {
         let corresponds =
             count > 1 && sources.len() >= count && sources.len().is_multiple_of(count);
         for (i, &t) in sources.iter().enumerate() {
-            // Many unions are mappings of one another: the members at the same place fit.
+            // Many unions are mappings of one another: the members at the same index are related.
             if corresponds {
                 let at = i % count;
                 let at = if at < skipped.start {
@@ -3272,7 +3322,8 @@ impl<'p> Checker<'p> {
             if self.contains_type(types, source) {
                 return Ternary::TRUE;
             }
-            // A literal is in a union of primitives, in one form or the other, or its primitive is; or it does not fit.
+            // A literal is related to a union of primitives only if the union contains it, in its
+            // fresh or its regular form, or contains its primitive type.
             let sd = self.data(source);
             let is_such_a_literal = match sd {
                 TypeData::StringLit { .. }
@@ -3292,7 +3343,7 @@ impl<'p> Checker<'p> {
                     TypeData::BigIntLit { .. } => Some(TypeId::BIGINT),
                     _ => None,
                 };
-                // Patterns of strings are primitives too, and take looking into.
+                // Pattern literal types are primitives too, and need a full comparison.
                 if !types.iter().any(|&t| {
                     matches!(
                         self.data(t),
@@ -3319,7 +3370,7 @@ impl<'p> Checker<'p> {
                 return related;
             }
         }
-        // Only against the member it is most likely meant for.
+        // Elaborates only against the best matching member.
         if REPORT && let Some(best) = self.best_matching_type(source, target) {
             self.is_related_to_ex::<true>(r, source, best, REC_TARGET, state);
         }
@@ -3363,7 +3414,7 @@ impl<'p> Checker<'p> {
         result
     }
 
-    // ───────────────────────────── types that lead back to themselves ─────────────────────────────
+    // ───────────────────────────── recursive types ─────────────────────────────
 
     /// `isTypeReferenceWithGenericArguments`. A tuple is a reference to its tuple target. A marker does not count as a type
     /// parameter: the reliability flags cached with a comparison depend on its markers, so it must not share a key with a
@@ -3394,8 +3445,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getTupleKey`: the element flags, the labels and `readonly` identify a tuple target. A label is written as its text: the number of
-    /// an atom of a syntax tree depends on which parser thread came first.
+    /// `getTupleKey`: the element flags, the labels and `readonly` identify a tuple target. A label
+    /// is hashed by its text: the id of an atom of a HIR depends on which parser thread came first.
     fn write_tuple_target(&self, hasher: &mut FxHasher, flags: &[ElemFlags], readonly: bool) {
         hasher.write_u8(if readonly { b'!' } else { b't' });
         hasher.write_usize(flags.len());
@@ -3485,7 +3536,8 @@ impl<'p> Checker<'p> {
         self.generic_relation_key(source, target, flags, ignore_constraints)
     }
 
-    /// `relation_key` that heeds constraints. `sd`, `td`: what `source` and `target` are.
+    /// `relation_key` that does not ignore constraints. `sd`, `td`: the `TypeData` of `source` and
+    /// `target`.
     #[inline]
     fn relation_key_as(
         &mut self,
@@ -3549,8 +3601,9 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `recursiveTypeRelatedTo`: the answer if it is known; yes, for now, if it is being worked out, or if both types go on
-    /// unfolding for ever; otherwise a look at what is in them. `sd`, `td`: what `source` and `target` are.
+    /// `recursiveTypeRelatedTo`: the cached result if there is one; `Maybe` if the comparison is in
+    /// progress or if both types expand infinitely; otherwise a structural comparison. `sd`, `td`:
+    /// the `TypeData` of `source` and `target`.
     #[allow(clippy::too_many_arguments)]
     fn recursive_type_related_to<const REPORT: bool>(
         &mut self,
@@ -3565,7 +3618,7 @@ impl<'p> Checker<'p> {
         if r.overflow {
             return Ternary::FALSE;
         }
-        // `related` has looked already.
+        // `related` has already done the cache lookup.
         let missed = r
             .top_key
             .take()
@@ -3576,7 +3629,7 @@ impl<'p> Checker<'p> {
         };
         if missed.is_none()
             && let Some(entry) = self.p.relations.get(&mut self.task, &key)
-            // A failure that is remembered is gone through again for what there is to say about it.
+            // A cached failure is recomputed to produce its error elaboration.
             && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
@@ -3589,7 +3642,7 @@ impl<'p> Checker<'p> {
                 self.report_error(r, code, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
-                // The comparison was cut short when it was made.
+                // The comparison was aborted when it ran.
                 r.hit_cached_overflow = true;
             }
             return Ternary::of(entry & SUCCEEDED != 0);
@@ -3601,7 +3654,8 @@ impl<'p> Checker<'p> {
             r.overflow = true;
             return Ternary::FALSE;
         }
-        // The key goes into the set here, and out again wherever the comparison is not begun after all.
+        // The key is inserted into the set here, and removed on every path that does not start the
+        // comparison after all.
         if !r.maybe_keys_set.insert(key) {
             return Ternary::MAYBE;
         }
@@ -3651,7 +3705,7 @@ impl<'p> Checker<'p> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
-        // With reports the answer can be another (`relate_variances`): it is nobody else's.
+        // With reporting the result can differ (`relate_variances`), so it is not cached.
         let stored = self.end_scope(scope).ok().filter(|_| !REPORT);
         let propagating = self.reliability;
         self.reliability |= save_reliability;
@@ -3664,7 +3718,8 @@ impl<'p> Checker<'p> {
         r.expanding = save_expanding;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
-                // What held on assumptions holds now that there are none left. What is not known stays so.
+                // Results that were true under assumptions are definite now that no assumption is
+                // left. Unknown results stay unknown.
                 self.reset_maybe_stack(
                     r,
                     maybe_start,
@@ -3674,7 +3729,8 @@ impl<'p> Checker<'p> {
                 );
             }
         } else {
-            // What is false on assumptions is false without. A failure that follows from a comparison that was cut short is not kept.
+            // A result that is false under assumptions is false without them. A failure caused by
+            // an aborted comparison is not cached.
             let is_cut_short = r.overflow || r.hit_cached_overflow;
             if r.caches_failures {
                 if !is_cut_short {
@@ -3720,8 +3776,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isDeeplyNestedType`: `stack` has been through `max_depth` instantiations of what `t` is an instantiation of, each made
-    /// later than the one before. A homomorphic mapped type is as deeply nested as what it is applied to.
+    /// `isDeeplyNestedType`: `stack` contains `max_depth` instantiations of the declaration that
+    /// `t` is an instantiation of, each created later than the previous one. A homomorphic mapped
+    /// type is as deeply nested as the type it is applied to.
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
@@ -3757,8 +3814,8 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `is_deeply_nested_type` of the last of `stack`. `identities`: for the first so many of what was on the stack when it was
-    /// last looked at, the type and its `plain_recursion_identity`.
+    /// `is_deeply_nested_type` of the last entry of `stack`. `identities`: for a prefix of the
+    /// stack as of the previous call, the type and its `plain_recursion_identity`.
     fn is_last_deeply_nested(
         &mut self,
         stack: &[TypeId],
@@ -3805,8 +3862,8 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `recursion_identity`. `NOT_PLAIN` for a mapped type, which goes by what it is applied to, and for an intersection, which
-    /// goes by its members.
+    /// `recursion_identity`. `NOT_PLAIN` for a mapped type, which uses the type it is applied to,
+    /// and for an intersection, which uses its members.
     fn plain_recursion_identity(&self, t: TypeId) -> RecursionId {
         let data = self.data(t);
         if is_mapped_kind(data) || matches!(data, TypeData::Intersection(_)) {
@@ -3827,8 +3884,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getMappedTargetWithSymbol`: what a homomorphic mapped type is applied to, through as many of them as there are, as long as
-    /// that is something declared. `Id<{ x: .. }>` is then told apart by the type literal it is applied to. With it, what it is.
+    /// `getMappedTargetWithSymbol`: the type a homomorphic mapped type is applied to, through any
+    /// number of nested ones, provided that type has a symbol. `Id<{ x: .. }>` is then
+    /// distinguished by the type literal it is applied to. Returned with its `TypeData`.
     #[inline]
     fn mapped_target_with_symbol(&mut self, t: TypeId) -> (TypeId, &'p TypeData) {
         let data = self.data(t);
@@ -3856,7 +3914,7 @@ impl<'p> Checker<'p> {
                     | TypeData::ThisParam(_)
             ) || matches!(
                 c.data(ty),
-                // That of an object literal.
+                // The symbol of an object literal.
                 TypeData::Synth(shape) if shape.symbol_declared_at.is_some()
                     || matches!(
                         shape.literal,
@@ -3867,12 +3925,12 @@ impl<'p> Checker<'p> {
                     )
             )
         };
-        // Aliases that go round in a circle are an error somewhere else. Here they have to end.
+        // Circular aliases are reported elsewhere. Here the loop must terminate.
         for _ in 0..64 {
             let Some((_, _, mapper)) = self.mapped_origin(t) else {
                 break;
             };
-            // `ObjectFlagsInstantiatedMapped`: not the mapped type as it is declared.
+            // `ObjectFlagsInstantiatedMapped`: not the declared mapped type.
             if self.types().mapping(mapper).iter().all(|p| p.0 == p.1) {
                 break;
             }
@@ -3911,12 +3969,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The type of an array literal with object literals in it, as it stands or widened. What is in an object literal is worked
-    /// out when it is asked for here, and beforehand there, where `isDeeplyNestedType` therefore never takes the list inside for
-    /// newer than the one around it. `data`: what `t` is.
+    /// The type of an array literal that contains object literals, unwidened or widened. Here the
+    /// members of an object literal are resolved lazily, in tsgo eagerly, where
+    /// `isDeeplyNestedType` therefore never treats the inner array type as newer than the enclosing
+    /// one. `data`: the `TypeData` of `t`.
     fn holds_object_literals(&self, t: TypeId, data: &TypeData) -> bool {
         let inside: &[TypeId] = match data {
-            // What is written as a type is no array literal.
+            // A type declared by a type node is not the type of an array literal.
             TypeData::Tuple {
                 elems: TypeArguments::Given(elems),
                 ..
@@ -3988,7 +4047,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `structuredTypeRelatedTo`. `sd`, `td`: what `source` and `target` are.
+    /// `structuredTypeRelatedTo`. `sd`, `td`: the `TypeData` of `source` and `target`.
     fn structured_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -4006,8 +4065,9 @@ impl<'p> Checker<'p> {
         }
         let source_is_intersection = matches!(sd, TypeData::Intersection(_));
         let target_is_union = matches!(td, TypeData::Union(_));
-        // The constraint of an intersection is the intersection of the constraints of its parts, and may come to something
-        // that none of them does: `T & U`, each extending `string | number`; `V & number`.
+        // The constraint of an intersection is the intersection of the constraints of its
+        // constituents, and may resolve to a type that none of them resolves to: `T & U`, each
+        // extending `string | number`; `V & number`.
         if !result.holds() && (source_is_intersection || is_type_param_kind(sd) && target_is_union)
         {
             let one = [source];
@@ -4028,8 +4088,9 @@ impl<'p> Checker<'p> {
             && !self.is_generic_object_type(target)
             && (is_object_kind(sd) || source_is_intersection)
         {
-            // Part by part, nothing sees what is too much, or too little, further in. What is in a literal that is no longer fresh
-            // is not fresh either (`getRegularTypeOfObjectLiteral`).
+            // A constituent-by-constituent comparison does not detect excess or missing properties
+            // in nested types. The properties of a literal that is no longer fresh are not fresh
+            // either (`getRegularTypeOfObjectLiteral`).
             result &= self.properties_of_apparent_type_related_to::<REPORT>(
                 r,
                 source,
@@ -4051,7 +4112,7 @@ impl<'p> Checker<'p> {
             && !self.is_array_or_tuple(target)
             && self.is_source_intersection_needing_extra_check(source, target)
         {
-            // `T & { a: boolean }` fits `{ a?: string }` by its first part.
+            // `T & { a: boolean }` is related to `{ a?: string }` through its first constituent.
             result &= self
                 .properties_of_apparent_type_related_to::<REPORT>(r, source, target, true, state);
         }
@@ -4094,7 +4155,8 @@ impl<'p> Checker<'p> {
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let apparent = members.first().copied().unwrap_or(source);
-            // `getPropertyOfType` finds nothing in what is no object type: `any`, which `T & U` comes to where `U` extends `any`.
+            // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
+            // `T & U` resolves to where `U` extends `any`.
             if self.members(apparent).is_none() {
                 let none = self.synth(Shape::default());
                 return self.properties_related_to_noting::<REPORT>(
@@ -4171,7 +4233,7 @@ impl<'p> Checker<'p> {
                 .any(|&t| t == target || matches!(self.data(t), TypeData::Synth(shape) if shape.literal == Literalness::Partial))
     }
 
-    /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: that settles it.
+    /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: the final result.
     fn relate_variances<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -4186,23 +4248,25 @@ impl<'p> Checker<'p> {
         if result.holds() {
             return Some(result);
         }
-        // It did not work out on the assumption that the arguments are all there is to it, and they may not be.
+        // The comparison failed assuming that the type arguments fully determine the relation,
+        // which may not be true.
         if variances
             .iter()
             .any(|v| v & ALLOWS_STRUCTURAL_FALLBACK != 0)
         {
-            // What the type arguments had to say may not help: the type parameter was taken to be the same on both sides.
+            // The errors from the type arguments may be unhelpful: the type parameter was assumed
+            // to be the same on both sides.
             if REPORT {
                 shared.original_error_chain = None;
                 r.restore_error_state(&shared.save_error_state);
             }
             return None;
         }
-        // A `void` argument for something that is only ever given back lets anything through.
+        // A `void` type argument in a covariant position accepts anything.
         let allow_structural_fallback = self.has_covariant_void_argument(targets, variances);
         shared.variance_check_failed = !allow_structural_fallback;
         if !variances.is_empty() && !allow_structural_fallback {
-            // With an invariant type parameter what is in the two types shows why it is one.
+            // With an invariant type parameter the structural comparison shows why it is invariant.
             if !(REPORT && variances.iter().any(|v| v & VARIANCE_MASK == INVARIANT)) {
                 return Some(Ternary::FALSE);
             }
@@ -4212,7 +4276,7 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// `structuredTypeRelatedToWorker`. `sd`, `td`: what `source` and `target` are.
+    /// `structuredTypeRelatedToWorker`. `sd`, `td`: the `TypeData` of `source` and `target`.
     pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -4333,9 +4397,9 @@ impl<'p> Checker<'p> {
             if result.holds() {
                 return result;
             }
-            // Taking them apart in order does not cover: a source that waits for type parameters; an object against a union
-            // (`{ a, b: boolean }` and `{ a, b: true } | { a, b: false }`); an intersection against an object, a union, or
-            // something that waits.
+            // Decomposing unions and intersections in order does not cover: a generic source; an
+            // object type compared with a union (`{ a, b: boolean }` and `{ a, b: true } | { a, b:
+            // false }`); an intersection compared with an object type, a union, or a generic type.
             let target_is_union = matches!(td, TypeData::Union(_));
             if !(is_instantiable_kind(sd)
                 || is_object_kind(sd) && target_is_union
@@ -4345,8 +4409,9 @@ impl<'p> Checker<'p> {
                 return Ternary::FALSE;
             }
         }
-        // Two instantiations of the same generic alias: relate the type arguments by variance. tsgo limits alias variance probing to
-        // object and conditional SOURCE types; the target can be any type with that alias, including a union.
+        // Two instantiations of the same generic alias: relate the type arguments by variance. tsgo
+        // limits alias variance probing to object and conditional source types; the target can be
+        // any type with that alias, including a union.
         if self.flags(source) & (tf::OBJECT | tf::CONDITIONAL) != 0
             && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
             && {
@@ -4374,7 +4439,8 @@ impl<'p> Checker<'p> {
                 return result;
             }
         }
-        // `[...U]` fits `T` if `U` does; `U` fits `readonly [...T]`, and `[...T]` if `U` is a mutable array or tuple.
+        // `[...U]` is related to `T` if `U` is; `U` is related to `readonly [...T]`, and to
+        // `[...T]` if `U` is a mutable array or tuple.
         if let TypeData::Tuple {
             flags, readonly, ..
         } = sd
@@ -4405,10 +4471,11 @@ impl<'p> Checker<'p> {
             }
         }
 
-        // ── by what the target is ──
+        // ── by kind of target ──
         match *td {
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
-                // `{ [P in Q]: X }` fits `T` if `keyof T` fits `Q` and `X` fits `T[Q]`.
+                // `{ [P in Q]: X }` is related to `T` if `keyof T` is related to `Q` and `X` is
+                // related to `T[Q]`.
                 if is_mapped_kind(sd) && self.mapped_name_type(source).is_none() {
                     let (keys, covered) = (self.keyof(target), self.mapped_keys(source));
                     if self.is_related_to(r, keys, covered, REC_BOTH).holds()
@@ -4416,16 +4483,17 @@ impl<'p> Checker<'p> {
                     {
                         let template = self.mapped_template(source);
                         let param = self.mapped_type_param(source);
-                        let wanted = self.indexed_access(target, param);
-                        let result = self
-                            .is_related_to_ex::<REPORT>(r, template, wanted, REC_BOTH, STATE_NONE);
+                        let expected = self.indexed_access(target, param);
+                        let result = self.is_related_to_ex::<REPORT>(
+                            r, template, expected, REC_BOTH, STATE_NONE,
+                        );
                         if result.holds() {
                             return result;
                         }
                     }
                 }
                 if relation == Relation::Comparable && self.is_type_param(source) {
-                    // Two type parameters may be the same value only if one extends the other.
+                    // Two type parameters are comparable only if one is constrained to the other.
                     if let Some(constraint) = self.constraint_of_type_param(source)
                         && self.some_type(constraint, |c, m| c.is_type_param(m))
                     {
@@ -4441,7 +4509,8 @@ impl<'p> Checker<'p> {
                     obj: so, index: si, ..
                 } = *self.data(source)
                 {
-                    // `S[K]` fits `T[J]` if `S` fits `T` and `K` fits `J`.
+                    // `S[K]` is related to `T[J]` if `S` is related to `T` and `K` is related to
+                    // `J`.
                     let mut result =
                         self.is_related_to_ex::<REPORT>(r, so, object, REC_BOTH, STATE_NONE);
                     if result.holds() {
@@ -4455,7 +4524,8 @@ impl<'p> Checker<'p> {
                         shared.original_error_chain = r.error_chain.clone();
                     }
                 }
-                // `S` fits `T[K]` if it fits what can be written to it whatever `T` and `K` are. That goes by what they extend.
+                // `S` is related to `T[K]` if it is related to the type that can be written to
+                // `T[K]` for any `T` and `K`. That type is computed from their constraints.
                 if relation.is_lenient() {
                     let (base_object, base_index) = (
                         self.base_constraint_or_type(object),
@@ -4481,7 +4551,7 @@ impl<'p> Checker<'p> {
                         if result.holds() {
                             return result;
                         }
-                        // Of the two chains the shorter.
+                        // The shorter of the two error chains.
                         if REPORT
                             && shared.original_error_chain.is_some()
                             && r.error_chain.is_some()
@@ -4497,7 +4567,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Keyof(of) => {
-                // `keyof S` fits `keyof T` if `T` fits `S`.
+                // `keyof S` is related to `keyof T` if `T` is related to `S`.
                 if let TypeData::Keyof(s) = *self.data(source) {
                     let result = self.is_related_to(r, of, s, REC_BOTH);
                     if result.holds() {
@@ -4517,8 +4587,10 @@ impl<'p> Checker<'p> {
                     }
                 } else {
                     if let Some(constraint) = self.simplified_or_constraint(of) {
-                        // For certain, or `T extends { [K in keyof T]: string }` would let anything through.
-                        // `IndexFlagsNoReducibleCheck`: a union is its own constraint, and its `keyof` must not be deferred again.
+                        // Only a definite result counts, or `T extends { [K in keyof T]: string }`
+                        // would accept anything.
+                        // `IndexFlagsNoReducibleCheck`: a union is its own constraint, and its
+                        // `keyof` must not be deferred again.
                         let keys =
                             self.get_index_type_ex(constraint, IndexFlags::NO_REDUCIBLE_CHECK);
                         if self.is_related_to_ex::<REPORT>(r, source, keys, REC_TARGET, STATE_NONE)
@@ -4528,7 +4600,7 @@ impl<'p> Checker<'p> {
                         }
                     } else if self.is_generic_mapped_type(of) {
                         let keys = match self.mapped_name_type(of) {
-                            // The keys it is sure to have, and those that wait.
+                            // The known keys, and the keys that are still generic.
                             Some(name) => match self.apparent_mapped_type_keys(name, of) {
                                 Some(known) => self.union(&[known, name]),
                                 None => name,
@@ -4547,15 +4619,15 @@ impl<'p> Checker<'p> {
                 if self.is_deeply_nested_type(target, &r.target_stack, 10) {
                     return Ternary::MAYBE;
                 }
-                // Only without `infer`, when the results do not depend on going member by member, and when the source is not
-                // made from the same conditional type.
+                // Only without `infer`, when the result does not depend on distribution, and when
+                // the source is not instantiated from the same conditional type.
                 let same_root = matches!(*self.data(source), TypeData::Cond { file: sf, node: sn, .. } if (sf, sn) == (file, node));
                 if self.cond_infer_params(target).is_empty()
                     && !self.is_distribution_dependent(target)
                     && !same_root
                 {
                     let (check, extends) = (self.cond_check(target), self.cond_extends(target));
-                    // It may always go one way, and wait all the same.
+                    // It may always take one branch and be deferred anyway.
                     let skip_true = !self.is_assignable_permissive(check, extends);
                     let skip_false = !skip_true && self.is_assignable_restrictive(check, extends);
                     let mut result = if skip_true {
@@ -4584,7 +4656,8 @@ impl<'p> Checker<'p> {
                     if relation == Relation::Comparable {
                         return Ternary::of(!self.templates_definitely_unrelated(st, texts));
                     }
-                    // `foo-${number}` fits `foo-${string}` though `number` does not fit `string`.
+                    // `foo-${number}` is related to `foo-${string}` though `number` is not related
+                    // to `string`.
                     self.report_unreliable(source);
                 }
                 if self.is_type_matched_by_template_literal_type(source, texts, types) {
@@ -4640,7 +4713,8 @@ impl<'p> Checker<'p> {
                                 .holds(),
                         };
                         if keys_do {
-                            // `Obj[P]`: `S` against `Obj` will do, and makes no new types.
+                            // `Obj[P]`: comparing `S` with `Obj` suffices, and creates no new
+                            // types.
                             let non_null =
                                 self.filter(template, |_, m| !m.is_null() && !m.is_undefined());
                             if !keys_remapped
@@ -4682,13 +4756,13 @@ impl<'p> Checker<'p> {
             _ => {}
         }
 
-        // ── by what the source is ──
+        // ── by kind of source ──
         match *sd {
             TypeData::TypeParam(..)
             | TypeData::ThisParam(_)
             | TypeData::Marker(_)
             | TypeData::IndexedAccess { .. } => {
-                // `S[K]` against `T[J]` was seen to above.
+                // `S[K]` against `T[J]` was handled above.
                 if !(matches!(self.data(source), TypeData::IndexedAccess { .. })
                     && matches!(self.data(target), TypeData::IndexedAccess { .. }))
                 {
@@ -4698,7 +4772,8 @@ impl<'p> Checker<'p> {
                     if result.holds() {
                         return result;
                     }
-                    // `getTypeWithThisArgument`: in what it has through what it extends, `this` is the type variable itself.
+                    // `getTypeWithThisArgument`: in the members it has through its constraint,
+                    // `this` is the type variable itself.
                     let with_this = self.type_with_this_argument(constraint, source);
                     if REPORT
                         && constraint != TypeId::UNKNOWN
@@ -4720,7 +4795,8 @@ impl<'p> Checker<'p> {
                         && let TypeData::IndexedAccess { obj, index, .. } = *self.data(source)
                         && let Some(index_constraint) = self.constraint_of(index)
                     {
-                        // `{ [P in K]: E }[X]`: `E` with `X` for `P` was tried; now with what `X` extends.
+                        // `{ [P in K]: E }[X]`: `E` with `X` substituted for `P` was tried; now
+                        // with the constraint of `X`.
                         let access = self.indexed_access(obj, index_constraint);
                         let result = self
                             .is_related_to_ex::<REPORT>(r, access, target, REC_SOURCE, STATE_NONE);
@@ -4742,7 +4818,8 @@ impl<'p> Checker<'p> {
                 }
                 if self.is_generic_mapped_type(of) {
                     let keys = match self.mapped_name_type(of) {
-                        // Without the keys that wait: they are in terms of a type parameter nobody outside knows.
+                        // Without the generic keys: they refer to a type parameter that is not in
+                        // scope outside the mapped type.
                         Some(name) => self.apparent_mapped_type_keys(name, of).unwrap_or(name),
                         None => self.mapped_keys(of),
                     };
@@ -4758,13 +4835,15 @@ impl<'p> Checker<'p> {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {
-                    // `T1 extends U1 ? X1 : Y1` fits `T2 extends U2 ? X2 : Y2` if `T1` and `T2` have to do with each other, `U1`
-                    // and `U2` are the same, `X1` fits `X2` and `Y1` fits `Y2`.
+                    // `T1 extends U1 ? X1 : Y1` is related to `T2 extends U2 ? X2 : Y2` if one of
+                    // `T1` and `T2` is related to the other, `U1` and `U2` are identical, `X1` is
+                    // related to `X2` and `Y1` is related to `Y2`.
                     let source_params = self.cond_infer_params(source);
                     let mut source_extends = self.cond_extends(source);
                     let target_extends = self.cond_extends(target);
                     let mut mapper = MapperId::IDENTITY;
-                    // Made from one declaration, what is to be inferred is the same on both sides: it stands for itself.
+                    // Instantiated from one declaration, both sides have the same `infer` type
+                    // parameters: each maps to itself.
                     if !source_params.is_empty() && source_extends != target_extends {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types(
@@ -4808,7 +4887,8 @@ impl<'p> Checker<'p> {
                 if result.holds() {
                     return result;
                 }
-                // Not against another conditional type: what is checked is replaced by what it extends, and too much fits.
+                // Not against another conditional type: the check type is replaced by its
+                // constraint, and too much would be related.
                 if !matches!(self.data(target), TypeData::Cond { .. })
                     && self.has_non_circular_base_constraint(source)
                 {
@@ -4874,7 +4954,8 @@ impl<'p> Checker<'p> {
         Ternary::FALSE
     }
 
-    /// The `default` case of the second `switch` of `structuredTypeRelatedToWorker`. `sd`, `td`: what `source` and `target` are.
+    /// The `default` case of the second `switch` of `structuredTypeRelatedToWorker`. `sd`, `td`:
+    /// the `TypeData` of `source` and `target`.
     #[allow(clippy::too_many_arguments)]
     fn objects_related_to<const REPORT: bool>(
         &mut self,
@@ -4906,7 +4987,8 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         let source_is_primitive = self.has_primitive_flag_as(source, sd);
-        // What stands for `object` is nobody's declaration: it is not known to have nothing else in it.
+        // The type that represents `object` has no declaration: it is not known to have no other
+        // members.
         let source_is_object_keyword = !is_object_kind(sd) && self.is_object_keyword_like(source);
         let (mut source, mut sd) = (source, sd);
         if relation != Relation::Identity {
@@ -4926,9 +5008,10 @@ impl<'p> Checker<'p> {
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
                 if st == tt && !self.is_marker_type(source) && !self.is_marker_type(target) =>
             {
-                // Two instantiations of one generic type: go by how it varies with its type parameters.
+                // Two instantiations of one generic type: relate the type arguments by variance.
                 let variances = self.variances_list(*st);
-                // Being measured. So only occurrences that are not inside instantiations of the type itself count.
+                // The variance computation is in progress. So only occurrences that are not inside
+                // instantiations of the type itself count.
                 if variances.is_empty() {
                     return Ternary::UNKNOWN;
                 }
@@ -4983,11 +5066,12 @@ impl<'p> Checker<'p> {
             }
             _ => {}
         }
-        // Whatever unions, intersections and type arguments said, what is in them may do. An intersection counts as one object.
+        // Regardless of the union, intersection and type argument comparisons, a structural
+        // comparison may succeed. An intersection counts as one object type.
         let source_is_object_or_intersection =
             is_object_kind(sd) || matches!(sd, TypeData::Intersection(_));
         if source_is_object_or_intersection && is_object_kind(td) {
-            // `reportStructuralErrors`: only if nothing has been said yet.
+            // `reportStructuralErrors`: only if nothing has been reported yet.
             let primitive_or_keyword = (source_is_primitive, source_is_object_keyword);
             let result = if REPORT
                 && is_same_chain(&r.error_chain, &shared.save_error_state.chain)
@@ -5017,7 +5101,8 @@ impl<'p> Checker<'p> {
                 if !shared.variance_check_failed {
                     return result;
                 }
-                // There is nothing to say of what is in them: what the type arguments had to say stands.
+                // The structural comparison has nothing to report: the errors from the type
+                // arguments stand.
                 if REPORT {
                     if shared.original_error_chain.is_some() {
                         r.error_chain = shared.original_error_chain.clone();
@@ -5027,7 +5112,8 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // An object fits a union told apart by some properties if every way it can be is some member's.
+        // An object type is related to a discriminated union if every combination of its
+        // discriminant values matches some member.
         if source_is_object_or_intersection && matches!(td, TypeData::Union(_)) {
             let object_only = self.filter(target, |c, m| {
                 c.is_object_type(m)
@@ -5051,8 +5137,9 @@ impl<'p> Checker<'p> {
         Ternary::FALSE
     }
 
-    /// The four comparisons of `structuredTypeRelatedToWorker` under `reportStructuralErrors`, which is `REPORT` here.
-    /// `primitive_or_keyword`: `sourceIsPrimitive`, and whether `source` stands for `object`.
+    /// The four comparisons of `structuredTypeRelatedToWorker` under `reportStructuralErrors`,
+    /// which is `REPORT` here.
+    /// `primitive_or_keyword`: `sourceIsPrimitive`, and whether `source` represents `object`.
     #[allow(clippy::too_many_arguments)]
     #[inline]
     fn object_members_related_to<const REPORT: bool>(
@@ -5086,7 +5173,7 @@ impl<'p> Checker<'p> {
                     r, source, sd, target, td, true, state, both,
                 );
                 if result.holds() {
-                    // tsgo compares, and names, `{}`.
+                    // tsgo compares, and prints, `{}`.
                     if REPORT && source_is_object_keyword {
                         return result
                             & self.report_index_signature_missing_in_object(r, source, target);
@@ -5110,7 +5197,7 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `getApparentType`, where nothing to go by is `unknown` and not `{}`.
+    /// `getApparentType`, except that a missing constraint yields `unknown` and not `{}`.
     pub(super) fn apparent_type_for_relation(&mut self, t: TypeId) -> TypeId {
         if self.is_deferred(t) {
             return match self.base_constraint_of(t) {
@@ -5121,8 +5208,9 @@ impl<'p> Checker<'p> {
         self.apparent_type(t)
     }
 
-    /// What `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` go by: `getReducedApparentType(ty)`, and of a union what
-    /// all its members have (`getPropertiesOfUnionOrIntersectionType`).
+    /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
+    /// `getReducedApparentType(ty)`, and for a union the properties common to all its members
+    /// (`getPropertiesOfUnionOrIntersectionType`).
     pub(super) fn reduced_apparent_type_as_object(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced_apparent_type(ty);
         if self.is_union(ty) {
@@ -5158,16 +5246,18 @@ impl<'p> Checker<'p> {
         }
         let mut result = Ternary::TRUE;
         for i in 0..sources.len().min(targets.len()) {
-            // Covariant when nothing is known: while the variance of a recursive type is measured.
+            // Covariant when the variance is unknown: while the variance of a recursive type is
+            // being computed.
             let flags = variances.get(i).copied().unwrap_or(COVARIANT);
             let variance = flags & VARIANCE_MASK;
-            // Nobody ever sees what an independent type parameter stands for.
+            // The type argument of an independent type parameter is never observed.
             if variance == INDEPENDENT {
                 continue;
             }
             let (s, t) = (sources[i], targets[i]);
             let related = if flags & UNMEASURABLE != 0 {
-                // Not simply invariant: with `-?` in a mapped type, however the inputs compare, the outputs may not.
+                // Not just invariant: with `-?` in a mapped type the outputs may be unrelated
+                // however the inputs relate.
                 if r.relation == Relation::Identity {
                     self.is_related_to(r, s, t, REC_BOTH)
                 } else {
@@ -5206,7 +5296,8 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `mappedTypeRelatedTo`: `[P in S]: X` fits `[Q in T]: Y` if `T` fits `S` and `X`, with `Q` for `P`, fits `Y`.
+    /// `mappedTypeRelatedTo`: `[P in S]: X` is related to `[Q in T]: Y` if `T` is related to `S`
+    /// and `X`, with `Q` substituted for `P`, is related to `Y`.
     pub(super) fn mapped_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -5268,7 +5359,7 @@ impl<'p> Checker<'p> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        // The properties that tell the members of the union apart, and what each can be in the source.
+        // The discriminant properties of the union, each with its type in the source.
         let mut telling: Vec<(&Prop, TypeId)> = Vec::new();
         let mut combinations = 1usize;
         for prop in &sm.shape().props {
@@ -5286,13 +5377,13 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         let excluded: Vec<Atom> = telling.iter().map(|(p, _)| p.name).collect();
-        // All that is asked of a member goes by `getReducedApparentType`.
+        // Every query on a member uses `getReducedApparentType`.
         let types: SmallVec<[TypeId; 8]> = self
             .parts(target)
             .iter()
             .map(|&t| self.reduced_apparent_type_as_object(t))
             .collect();
-        // Every combination has to be some member's.
+        // Every combination must match some member.
         let mut matching = vec![false; types.len()];
         let skip_optional =
             self.p.files.options.strict_null_checks || r.relation == Relation::Comparable;
@@ -5332,7 +5423,7 @@ impl<'p> Checker<'p> {
                 return Ternary::FALSE;
             }
         }
-        // The rest has to fit each of the members that came up.
+        // The remaining properties must be related to each of the matched members.
         let mut result = Ternary::TRUE;
         for (m, &t) in types.iter().enumerate() {
             if !matching[m] {
@@ -5380,8 +5471,10 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `properties`: an object type that has what `getPropertiesOfType(source)` returns, where `members(source)` has not.
-    /// `both`: left with what `members` says of `source` and of `target`, if it was asked and will say the same from now on.
+    /// `properties`: an object type with the properties `getPropertiesOfType(source)` returns,
+    /// where `members(source)` lacks them.
+    /// `both`: set to the `members` of `source` and of `target`, if they were requested and are
+    /// final.
     #[allow(clippy::too_many_arguments)]
     fn properties_related_to_noting<const REPORT: bool>(
         &mut self,
@@ -5523,7 +5616,7 @@ impl<'p> Checker<'p> {
                             continue;
                         }
                     }
-                    // An element that can be left out holds what stands for that (`tuple`).
+                    // An optional element includes the missing type (`tuple`).
                     let source_type = self.remove_missing_type(
                         source_elems[source_position],
                         (source_flag & target_flag).contains(ElemFlags::OPTIONAL),
@@ -5582,7 +5675,7 @@ impl<'p> Checker<'p> {
         ) else {
             return Ternary::FALSE;
         };
-        // A shape that is kept stays as it is.
+        // A cached shape does not change.
         if self.provisional_shapes.len() == provisional {
             *both = Some((sm, tm));
         }
@@ -5601,7 +5694,8 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if self.inherited_property(&mut inherited, tp.name).is_none() {
-                // `shouldReportUnmatchedPropertyError`: a function that lacks what an object has is not that kind of thing.
+                // `shouldReportUnmatchedPropertyError`: a function type that lacks the properties
+                // of an object type is a mismatch of kind, not a missing property.
                 let (s, t) = (sm.shape(), tm.shape());
                 if REPORT
                     && (s.call.is_empty() && s.construct.is_empty()
@@ -5635,7 +5729,8 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // `SymbolFlagsPrototype`: what a class makes is seen to by its construct signatures.
+        // `SymbolFlagsPrototype`: the instance type of a class is compared through its construct
+        // signatures.
         let target_is_class = matches!(
             td,
             TypeData::Anon {
@@ -5643,8 +5738,8 @@ impl<'p> Checker<'p> {
                 ..
             }
         );
-        // `getNamedMembers`: what nothing declares, the elements and the length of a tuple, comes last, by name. It decides which one
-        // is reported.
+        // `getNamedMembers`: members without a declaration, the elements and the length of a tuple,
+        // come last, sorted by name. The order decides which one is reported.
         let mut in_order: Vec<&Prop> = Vec::new();
         if REPORT && matches!(td, TypeData::Tuple { .. }) {
             in_order.extend(&tm.shape().props);
@@ -5677,7 +5772,7 @@ impl<'p> Checker<'p> {
                 }
                 let a = self.compose(sp.mapper, source_mapper);
                 let b = self.compose(tp.mapper, tm.mapper);
-                // `H.this -> H.this` is kept in a mapper, and moves nothing.
+                // A mapper stores `H.this -> H.this`, which maps nothing.
                 let types = &self.types();
                 let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
                 if a == b || moved(a).eq(moved(b)) {
@@ -5702,7 +5797,7 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `propertyRelatedTo`. `of`: `source` and `target`, the two types the properties are of.
+    /// `propertyRelatedTo`. `of`: `source` and `target`, the two types that own the properties.
     #[allow(clippy::too_many_arguments)]
     fn property_related_to<const REPORT: bool>(
         &mut self,
@@ -5759,7 +5854,8 @@ impl<'p> Checker<'p> {
             }
             return Ternary::FALSE;
         }
-        // So that which of `{ readonly a }` and `{ a }` stays in a union does not depend on the order they are written in.
+        // So that which of `{ readonly a }` and `{ a }` stays in a union does not depend on their
+        // source order.
         if r.relation == Relation::StrictSubtype
             && sf.contains(PropFlags::READONLY)
             && !tf.contains(PropFlags::READONLY)
@@ -5767,15 +5863,15 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         // `isPropertySymbolTypeRelated`
-        let wanted = self.type_of_prop_as_read(target_prop, target_mapper);
-        let related = if self.has_any_flag(wanted)
-            || wanted == TypeId::UNRESOLVED
-            || wanted == TypeId::UNKNOWN && r.relation != Relation::StrictSubtype
+        let expected = self.type_of_prop_as_read(target_prop, target_mapper);
+        let related = if self.has_any_flag(expected)
+            || expected == TypeId::UNRESOLVED
+            || expected == TypeId::UNKNOWN && r.relation != Relation::StrictSubtype
         {
             Ternary::TRUE
         } else {
-            let given = get_type_of_source_property(self);
-            self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state)
+            let actual = get_type_of_source_property(self);
+            self.is_related_to_ex::<REPORT>(r, actual, expected, REC_BOTH, state)
         };
         if !related.holds() {
             if REPORT {
@@ -5783,7 +5879,7 @@ impl<'p> Checker<'p> {
             }
             return Ternary::FALSE;
         }
-        // `SymbolFlagsClassMember`: what a module, a namespace or an enum exports is no member.
+        // `SymbolFlagsClassMember`: an export of a module, a namespace or an enum is not a member.
         if !skip_optional
             && sf.contains(PropFlags::OPTIONAL)
             && !tf.contains(PropFlags::OPTIONAL)
@@ -5909,7 +6005,8 @@ impl<'p> Checker<'p> {
     /// `SignatureFlagsAbstract`
     pub(super) fn is_abstract_signature(&self, sig: SigId) -> bool {
         match *self.types().sig(sig) {
-            // `getDefaultConstructSignatures`, `getSignatureFromDeclaration`: of several classes of one name the first is the class.
+            // `getDefaultConstructSignatures`, `getSignatureFromDeclaration`: of several class
+            // declarations with one name the first is used.
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => self
                 .files()
                 .decls(class)
@@ -5924,16 +6021,17 @@ impl<'p> Checker<'p> {
             SigData::Decl { file, func, .. } => {
                 self.hir(file)[func].flags.contains(Flags::ABSTRACT)
             }
-            // `someSignature`: that of a union is if that of some member is.
+            // `someSignature`: a union signature is abstract if the signature of some member is.
             SigData::Synth { ref of, .. } => {
                 of.iter().any(|&part| self.is_abstract_signature(part))
             }
-            // `cloneSignature` keeps the flags.
+            // `cloneSignature` preserves the flags.
             SigData::WithReturn { sig, .. } => self.is_abstract_signature(sig),
         }
     }
 
-    /// `private`, `protected` or neither, of the constructor `sig` is declared as. `None`: it has no declaration.
+    /// The `private` or `protected` modifier, or neither, of the constructor declaration of `sig`.
+    /// `None`: it has no declaration.
     pub(super) fn constructor_accessibility(&mut self, sig: SigId) -> Option<Flags> {
         let mut sig = sig;
         for _ in 0..64 {
@@ -5941,7 +6039,8 @@ impl<'p> Checker<'p> {
                 SigData::Construct { file, func, .. } | SigData::Decl { file, func, .. } => {
                     return Some(self.hir(file)[func].flags & (Flags::PRIVATE | Flags::PROTECTED));
                 }
-                // `getDefaultConstructSignatures`: a clone of one of the base class, declared where that one is.
+                // `getDefaultConstructSignatures`: a clone of a signature of the base class, with
+                // the same declaration.
                 SigData::DefaultConstruct { base, .. } => sig = base?,
                 _ => return None,
             }
@@ -5964,7 +6063,7 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `sd`, `td`: what `source` and `target` are. `both`: what `members` says of them, if that is known.
+    /// `sd`, `td`: the `TypeData` of `source` and `target`. `both`: their `members`, if known.
     #[allow(clippy::too_many_arguments)]
     fn signatures_related_to_among<const REPORT: bool>(
         &mut self,
@@ -6076,7 +6175,7 @@ impl<'p> Checker<'p> {
             }
         }
         let mut result = Ternary::TRUE;
-        // `ObjectFlagsInstantiated`: not the type as it is declared.
+        // `ObjectFlagsInstantiated`: not the declared type.
         let is_instantiated =
             |c: &Self, mapper: MapperId| c.types().mapping(mapper).iter().any(|p| p.0 != p.1);
         let same_origin = match (sd, td) {
@@ -6125,7 +6224,7 @@ impl<'p> Checker<'p> {
         } else {
             'targets: for &t in &target_sigs {
                 let saved = REPORT.then(|| r.get_error_state());
-                // Only what is wrong with the first is said.
+                // Only the failure of the first is elaborated.
                 let mut should_elaborate = REPORT;
                 for &s in &source_sigs {
                     let related = if REPORT && should_elaborate {
@@ -6151,7 +6250,7 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `signatureRelatedTo`. `construct`: which `incompatibleReporter` it is given.
+    /// `signatureRelatedTo`. `construct`: selects the `incompatibleReporter` passed to it.
     fn signature_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -6171,7 +6270,7 @@ impl<'p> Checker<'p> {
         } else {
             check_mode
         };
-        let (given, wanted) = (source, target);
+        let (actual, expected) = (source, target);
         let (source, target) = if erase {
             (self.erased_sig(source), self.erased_sig(target))
         } else {
@@ -6181,7 +6280,7 @@ impl<'p> Checker<'p> {
             r,
             source,
             target,
-            (given, wanted),
+            (actual, expected),
             check_mode,
             state,
         )
@@ -6197,8 +6296,9 @@ impl<'p> Checker<'p> {
         self.with_own_type_params(sig, &params, &anys)
     }
 
-    /// `sig` with its own type parameters `params` replaced by `values`, and nothing else: what has been filled in for the
-    /// type parameters around it may mention the same declarations (`then` of what `then` returns), and means others.
+    /// `sig` with its own type parameters `params` replaced by `values`, and nothing else: the type
+    /// arguments already substituted for its outer type parameters may mention the same
+    /// declarations (`then` of the return type of `then`), but refer to other instances.
     pub(super) fn with_own_type_params(
         &mut self,
         sig: SigId,
@@ -6208,8 +6308,9 @@ impl<'p> Checker<'p> {
         let extended = |c: &mut Self, own: MapperId| {
             let mut pairs = c.types().mapping(own).to_vec();
             for (&param, &value) in params.iter().zip(values) {
-                // In something instantiated it is a clone, which the declared one stands for (`cloneTypeParameter`). A mapper has one
-                // pair for a parameter, so the order of the pairs does not matter.
+                // In an instantiation it is a clone, represented by the declared one
+                // (`cloneTypeParameter`). A mapper has one pair for a parameter, so the order of
+                // the pairs does not matter.
                 let declared = match *c.data(param) {
                     TypeData::TypeParam(file, tp, around) if around != MapperId::IDENTITY => {
                         let declared = c.type_param(file, tp);
@@ -6241,7 +6342,7 @@ impl<'p> Checker<'p> {
                 func,
                 mapper: extended(self, mapper),
             },
-            // `cloneSignature`: the same signature, and what it returns goes along.
+            // `cloneSignature`: the same signature, with its return type carried over.
             SigData::WithReturn { sig: inner, ret } => {
                 let inner = self.with_own_type_params(inner, params, values);
                 let mapper = self.mapper_from(params, values);
@@ -6258,7 +6359,8 @@ impl<'p> Checker<'p> {
         self.types().intern_sig(data)
     }
 
-    /// `isTopSignature`: `(...args: any[]) => any`, `(...args: never) => unknown`: what every function is.
+    /// `isTopSignature`: `(...args: any[]) => any`, `(...args: never) => unknown`: signatures that
+    /// every function matches.
     pub(super) fn is_top_signature(&mut self, sig: SigId) -> bool {
         if !self.sig_type_params(sig).is_empty()
             || self.sig_this_type(sig).is_some_and(|t| !self.is_any(t))
@@ -6278,7 +6380,8 @@ impl<'p> Checker<'p> {
         self.has_any_flag(ret) || ret == TypeId::UNKNOWN
     }
 
-    /// `isInstantiatedGenericParameter`. `target`: `Signature.target` of `sig`, once it has been asked for.
+    /// `isInstantiatedGenericParameter`. `target`: `Signature.target` of `sig`, once it has been
+    /// requested.
     fn is_instantiated_generic_parameter_of(
         &mut self,
         target: &mut Option<Option<SigId>>,
@@ -6301,16 +6404,16 @@ impl<'p> Checker<'p> {
             .is_some_and(|ty| self.is_generic(ty))
     }
 
-    /// The signature as declared that `sig` is an instantiation of.
+    /// The declared signature that `sig` is an instantiation of.
     fn sig_instantiated_from(&mut self, sig: SigId) -> Option<SigId> {
-        // `cloneSignature` keeps the target.
+        // `cloneSignature` preserves the target.
         let sig = self.types().sig_origin(sig);
         let (file, func, _) = self.sig_decl(sig)?;
         let declared = self.sig_of_fn(file, func);
         (declared != sig).then_some(declared)
     }
 
-    /// `elementInfos` of the tuple a rest parameter is declared as, if it is one.
+    /// `elementInfos` of the tuple type of the rest parameter, if it has one.
     fn rest_tuple(&self, params: &[SigParam]) -> Option<&'p [ElemFlags]> {
         let last = params.last().filter(|p| p.rest)?;
         match self.data(last.ty) {
@@ -6326,7 +6429,8 @@ impl<'p> Checker<'p> {
             .unwrap_or(flags.len())
     }
 
-    /// `getParameterCount`: a rest parameter counts as one, a tuple for what is in it.
+    /// `getParameterCount`: a rest parameter counts as one, a rest parameter of tuple type as its
+    /// number of elements.
     pub(super) fn parameter_count(&self, params: &[SigParam]) -> usize {
         match self.rest_tuple(params) {
             Some(flags) => {
@@ -6360,7 +6464,7 @@ impl<'p> Checker<'p> {
             }
         }
         let mut count = count.unwrap_or_else(|| Self::min_args(params));
-        // What takes `void` last can go without.
+        // Trailing parameters that accept `void` are optional.
         while count > 0 {
             let ty = match params.get(count - 1) {
                 Some(param) if !param.rest => param.ty,
@@ -6407,13 +6511,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `compareSignaturesRelated`. `as_given`: the two before their type parameters were erased.
+    /// `compareSignaturesRelated`. `as_passed`: the two signatures before type parameter erasure.
     pub(super) fn compare_signatures_related<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: SigId,
         target: SigId,
-        as_given: (SigId, SigId),
+        as_passed: (SigId, SigId),
         check_mode: u8,
         state: u8,
     ) -> Ternary {
@@ -6462,7 +6566,7 @@ impl<'p> Checker<'p> {
         if let Some(rest) = source_rest.or(target_rest) {
             self.report_unreliable(rest);
         }
-        // What a method takes may be more or less than what is asked for; anything else has to take all of it.
+        // Method parameters are compared bivariantly, all other parameters contravariantly.
         let is_method = match self.sig_decl(target) {
             Some((file, func, _)) => matches!(
                 self.hir(file)[func].kind,
@@ -6505,7 +6609,7 @@ impl<'p> Checker<'p> {
         } else {
             None
         };
-        let mut given_from = (None, None);
+        let mut actual_from = (None, None);
         for i in 0..param_count {
             let (source_type, target_type) = if Some(i) == rest_index {
                 (
@@ -6521,13 +6625,14 @@ impl<'p> Checker<'p> {
             if source_type == target_type && check_mode & STRICT_ARITY == 0 {
                 continue;
             }
-            // Parameters are compared both ways, so that `Foo<T>` is at least covariant in `T` however it uses it. Two callbacks
-            // are compared signature to signature the other way round: what a callback takes is given, like a result. That
-            // keeps `Promise<T>` covariant and not bivariant.
+            // Parameters are compared bivariantly, so that `Foo<T>` is at least covariant in `T`
+            // however it uses it. Two callback parameters are compared signature to signature in
+            // the reverse direction: the parameters of a callback are outputs, like a return value.
+            // That keeps `Promise<T>` covariant and not bivariant.
             let mut callbacks = None;
             if check_mode & CALLBACK == 0
-                && !self.is_instantiated_generic_parameter_of(&mut given_from.0, as_given.0, i)
-                && !self.is_instantiated_generic_parameter_of(&mut given_from.1, as_given.1, i)
+                && !self.is_instantiated_generic_parameter_of(&mut actual_from.0, as_passed.0, i)
+                && !self.is_instantiated_generic_parameter_of(&mut actual_from.1, as_passed.1, i)
             {
                 let nullish = |c: &Self, ty: TypeId| {
                     (
@@ -6611,7 +6716,8 @@ impl<'p> Checker<'p> {
         if check_mode & IGNORE_RETURN_TYPES != 0 {
             return result;
         }
-        // What is being worked out is anything for now, and that is nobody's error.
+        // A return type whose resolution is in progress is provisionally `any`, and no error is
+        // reported for that.
         let target_return = if self.is_resolving_return_type(target) {
             TypeId::ANY
         } else {
@@ -6625,18 +6731,18 @@ impl<'p> Checker<'p> {
         } else {
             self.sig_return(source)
         };
-        if let Some(wanted) = self.sig_predicate(target) {
+        if let Some(expected) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
-                Some(given) => {
+                Some(actual) => {
                     result &= self.compare_type_predicate_related_to::<REPORT>(
                         r,
-                        (&given, &sp[..]),
-                        (&wanted, &tp[..]),
+                        (&actual, &sp[..]),
+                        (&expected, &tp[..]),
                         state,
                     );
                 }
-                // Only a type guard does where one is asked for.
-                None if !wanted.asserts => {
+                // Only a type predicate is related to a target that has a type predicate.
+                None if !expected.asserts => {
                     if REPORT {
                         self.report_error(r, 1224, &[Arg::Sig(source)]);
                     }
@@ -6645,8 +6751,8 @@ impl<'p> Checker<'p> {
                 None => {}
             }
         } else {
-            // What callbacks return is compared both ways too, or `interface Foo<T> { add(cb: () => T): void }` would not be
-            // covariant in `T`.
+            // The return types of callbacks are compared bivariantly too, or `interface Foo<T> {
+            // add(cb: () => T): void }` would not be covariant in `T`.
             let mut related = if check_mode & BIVARIANT_CALLBACK != 0 {
                 self.is_related_to_ex::<false>(r, target_return, source_return, REC_BOTH, state)
             } else {
@@ -6685,31 +6791,34 @@ impl<'p> Checker<'p> {
         target: (&super::decl::Predicate, &[SigParam]),
         state: u8,
     ) -> Ternary {
-        let (given, wanted) = (source.0, target.0);
+        let (actual, expected) = (source.0, target.0);
         let mut related = Ternary::FALSE;
-        if (given.asserts, given.param.is_none()) != (wanted.asserts, wanted.param.is_none()) {
+        if (actual.asserts, actual.param.is_none()) != (expected.asserts, expected.param.is_none())
+        {
             if REPORT {
                 self.report_error(r, 2518, &[]);
             }
-        } else if given.param != wanted.param {
+        } else if actual.param != expected.param {
             if REPORT {
                 let names = [
-                    Arg::Atom(self.parameter_name_at_position(source.1, given.param.unwrap_or(0))),
-                    Arg::Atom(self.parameter_name_at_position(target.1, wanted.param.unwrap_or(0))),
+                    Arg::Atom(self.parameter_name_at_position(source.1, actual.param.unwrap_or(0))),
+                    Arg::Atom(
+                        self.parameter_name_at_position(target.1, expected.param.unwrap_or(0)),
+                    ),
                 ];
                 self.report_error(r, 1227, &names);
             }
         } else {
-            related = match (given.ty, wanted.ty) {
+            related = match (actual.ty, expected.ty) {
                 (a, b) if a == b => Ternary::TRUE,
                 (Some(a), Some(b)) => self.is_related_to_ex::<REPORT>(r, a, b, REC_BOTH, state),
                 _ => Ternary::FALSE,
             };
         }
         if REPORT && !related.holds() {
-            let given = self.type_predicate_text(given, source.1);
-            let wanted = self.type_predicate_text(wanted, target.1);
-            self.report_error(r, 1226, &[Arg::Bytes(&given), Arg::Bytes(&wanted)]);
+            let actual = self.type_predicate_text(actual, source.1);
+            let expected = self.type_predicate_text(expected, target.1);
+            self.report_error(r, 1226, &[Arg::Bytes(&actual), Arg::Bytes(&expected)]);
         }
         related
     }
@@ -6735,7 +6844,7 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `both`: what `members` says of `source` and of `target`, if that is known.
+    /// `both`: the `members` of `source` and of `target`, if known.
     fn index_signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -6781,18 +6890,18 @@ impl<'p> Checker<'p> {
         let target_has_string_index = tm.shape().index.iter().any(|i| i.key == TypeId::STRING);
         let mut result = Ternary::TRUE;
         for info in &tm.shape().index {
-            let wanted = self.instantiate(info.value, tm.mapper);
+            let expected = self.instantiate(info.value, tm.mapper);
             let related = if r.relation != Relation::StrictSubtype
                 && !source_is_primitive
                 && target_has_string_index
-                && self.is_any(wanted)
+                && self.is_any(expected)
             {
                 Ternary::TRUE
             } else if target_has_string_index && self.is_generic_mapped_type(source) {
                 let template = self.mapped_template(source);
-                self.is_related_to_ex::<REPORT>(r, template, wanted, REC_BOTH, STATE_NONE)
+                self.is_related_to_ex::<REPORT>(r, template, expected, REC_BOTH, STATE_NONE)
             } else {
-                self.type_related_to_index_info::<REPORT>(r, source, info.key, wanted, state)
+                self.type_related_to_index_info::<REPORT>(r, source, info.key, expected, state)
             };
             if !related.holds() {
                 return Ternary::FALSE;
@@ -6808,30 +6917,32 @@ impl<'p> Checker<'p> {
         r: &mut Relater,
         source: TypeId,
         key: TypeId,
-        wanted: TypeId,
+        expected: TypeId,
         state: u8,
     ) -> Ternary {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        if let Some(given) = self.applicable_index_info(&sm, key).map(|info| info.value) {
-            // `getApplicableIndexInfo`: the signature for the same keys, or else the one for strings.
+        if let Some(actual) = self.applicable_index_info(&sm, key).map(|info| info.value) {
+            // `getApplicableIndexInfo`: the index signature with the same key type, or else the
+            // string index signature.
             let source_key = if !REPORT || sm.shape().index.iter().any(|i| i.key == key) {
                 key
             } else {
                 TypeId::STRING
             };
-            let (source, target) = ((source_key, given), (key, wanted));
+            let (source, target) = ((source_key, actual), (key, expected));
             return self.index_info_related_to::<REPORT>(r, source, target, state);
         }
-        // A part of an intersection is never taken to have an index signature for what it has. For a strict subtype only an
-        // object literal as written is, so that `{ [x: string]: X }` is one of `{}` and not the other way round as well.
+        // A constituent of an intersection never gets an implicit index signature from its
+        // properties. Under the strict subtype relation only a fresh object literal does, so that
+        // `{ [x: string]: X }` is a strict subtype of `{}` and not also the reverse.
         if state & STATE_SOURCE == 0
             && (r.relation != Relation::StrictSubtype || self.is_fresh_object_literal_type(source))
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {
-                return self.members_related_to_index_info::<REPORT>(r, &sm, key, wanted, state);
+                return self.members_related_to_index_info::<REPORT>(r, &sm, key, expected, state);
             }
         }
         if REPORT {
@@ -6848,7 +6959,7 @@ impl<'p> Checker<'p> {
         target: (TypeId, TypeId),
         state: u8,
     ) -> Ternary {
-        // `getRegularTypeOfObjectLiteral` leaves the index signatures as they are.
+        // `getRegularTypeOfObjectLiteral` leaves the index signatures unchanged.
         let state = state & !STATE_REGULAR;
         let related = self.is_related_to_ex::<REPORT>(r, source.1, target.1, REC_BOTH, state);
         if REPORT && !related.holds() {
@@ -6861,8 +6972,9 @@ impl<'p> Checker<'p> {
         related
     }
 
-    /// `getApparentTypeOfIntersectionType`: the intersection of what the members of `ty` look like. `apparent_type` leaves an
-    /// intersection whose members all look like objects as it is, and `members` puts its shape together from what they look like.
+    /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members
+    /// of `ty`. `apparent_type` returns an intersection whose members all have object apparent
+    /// types unchanged, and `members` builds its shape from those apparent types.
     pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return ty;
@@ -6886,14 +6998,14 @@ impl<'p> Checker<'p> {
         self.intersection(&looks)
     }
 
-    /// Whether `apparent_type_of_intersection` puts something else for the member `p`.
+    /// Whether `apparent_type_of_intersection` replaces the member `p` by another type.
     fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
     }
 
-    /// Whether `getApparentType(ty)` is `emptyObjectType`, which is what `object` looks like. It has no symbol, unlike a `{}` that
-    /// is written, and here the two are one type. Of what counts as `{}` in an intersection `addTypeToIntersection` takes the
-    /// first.
+    /// Whether `getApparentType(ty)` is `emptyObjectType`, which is the apparent type of `object`.
+    /// It has no symbol, unlike a `{}` in the source, and here the two are one type. Of the types
+    /// that count as `{}` in an intersection `addTypeToIntersection` keeps the first.
     pub(super) fn is_object_keyword_like(&mut self, ty: TypeId) -> bool {
         let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
@@ -6920,7 +7032,7 @@ impl<'p> Checker<'p> {
         first.is_some_and(|p| self.is_object_keyword_like(p))
     }
 
-    /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.
+    /// `isObjectTypeWithInferableIndex`: known to have no properties other than the visible ones.
     pub(super) fn is_object_type_with_inferable_index(&mut self, t: TypeId) -> bool {
         match self.data(t) {
             // It has no symbol.
@@ -6935,7 +7047,8 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .all(|&p| self.is_object_type_with_inferable_index(p)),
-            // `cloneTypeAsModuleType`: its symbol has the flags of what is imported, and no signatures are left.
+            // `cloneTypeAsModuleType`: its symbol has the flags of the imported symbol, and the
+            // signatures are dropped.
             TypeData::Anon {
                 origin: Origin::Namespace { module, .. },
                 ..
@@ -6944,7 +7057,7 @@ impl<'p> Checker<'p> {
                 flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE)
                     && !flags.contains(SymFlags::CLASS)
             }
-            // What it was made from says.
+            // Determined by its source type.
             TypeData::ReverseMapped { source, .. } => {
                 self.is_object_type_with_inferable_index(*source)
             }
@@ -6988,7 +7101,7 @@ impl<'p> Checker<'p> {
         r: &mut Relater,
         sm: &Members,
         key: TypeId,
-        wanted: TypeId,
+        expected: TypeId,
         state: u8,
     ) -> Ternary {
         let mut result = Ternary::TRUE;
@@ -7001,9 +7114,9 @@ impl<'p> Checker<'p> {
             if !self.is_name_applicable_to_index(prop.name, key) {
                 continue;
             }
-            // A property that can be left out is held to the index signature for what it is when it is there.
+            // An optional property is compared with the index signature by its type when present.
             let declared = self.type_of_prop_as_read(prop, sm.mapper);
-            let given = if self.p.files.options.exact_optional_property_types
+            let actual = if self.p.files.options.exact_optional_property_types
                 || declared.is_undefined()
                 || key == TypeId::NUMBER
                 || !prop.flags.contains(PropFlags::OPTIONAL)
@@ -7012,7 +7125,7 @@ impl<'p> Checker<'p> {
             } else {
                 self.without_undefined(declared)
             };
-            let related = self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state);
+            let related = self.is_related_to_ex::<REPORT>(r, actual, expected, REC_BOTH, state);
             if !related.holds() {
                 if REPORT {
                     self.report_error(r, 2530, &[Arg::Prop(prop)]);
@@ -7028,8 +7141,8 @@ impl<'p> Checker<'p> {
                 || key == TypeId::NUMBER && self.is_numeric_string_type(info.key)
                 || self.is_assignable(info.key, key);
             if applies {
-                let given = self.instantiate(info.value, sm.mapper);
-                let (source, target) = ((info.key, given), (key, wanted));
+                let actual = self.instantiate(info.value, sm.mapper);
+                let (source, target) = ((info.key, actual), (key, expected));
                 let related = self.index_info_related_to::<REPORT>(r, source, target, state);
                 if !related.holds() {
                     return Ternary::FALSE;
@@ -7040,7 +7153,7 @@ impl<'p> Checker<'p> {
         result
     }
 
-    // ───────────────────────────── patterns of strings ─────────────────────────────
+    // ───────────────────────────── pattern literal types ─────────────────────────────
 
     /// `templateLiteralTypesDefinitelyUnrelated`: they start or end differently.
     fn templates_definitely_unrelated(&self, source: &[Atom], target: &[Atom]) -> bool {
@@ -7078,7 +7191,7 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
     ) -> Option<Vec<TypeId>> {
         match self.data(source) {
-            // `TypeFlagsStringLiteral`, which a member of an enum that is a string has too.
+            // `TypeFlagsStringLiteral`, which a string enum member has too.
             TypeData::StringLit { value, .. }
             | TypeData::EnumLit {
                 value: EnumValue::String(value),
@@ -7091,7 +7204,8 @@ impl<'p> Checker<'p> {
                 let mut pieces = Vec::with_capacity(sy.len());
                 for (&s, &t) in sy.iter().zip(types) {
                     let (sb, tb) = (self.constraint_or_self(s), self.constraint_or_self(t));
-                    // An `infer` in a template stands for a piece of a string, though it does not say so.
+                    // An `infer` in a template represents a substring, though it declares no such
+                    // constraint.
                     let tb = if tb == TypeId::UNKNOWN {
                         TypeId::STRING
                     } else {
@@ -7127,7 +7241,8 @@ impl<'p> Checker<'p> {
                 self.is_assignable(source, target)
             }
             TypeData::StringMapping { .. } => {
-                // The same mappings leave it as it is, and it fits what is mapped.
+                // Applying the same string mappings leaves it unchanged, and it is related to the
+                // type that is mapped.
                 let (mapped, inner) = self.apply_target_string_mapping_to_source(source, target);
                 mapped == source && self.is_member_of_string_mapping(source, inner)
             }
@@ -7268,7 +7383,8 @@ impl<'p> Checker<'p> {
                     }
                     _ if hole.is_undefined() => text == b"undefined",
                     _ if hole.is_null() => text == b"null",
-                    // A string mapping or a template it is a member of takes it as it is, which was asked above.
+                    // A string mapping or a template literal type that it is a member of accepts it
+                    // as is, which was checked above.
                     _ => false,
                 }
             }
@@ -7282,7 +7398,8 @@ impl<'p> Checker<'p> {
     }
 }
 
-/// `forEachProperty`: a property of an intersection stands for the properties of the constituents, any other for itself.
+/// `forEachProperty`: a property of an intersection represents the properties of the constituents,
+/// any other property itself.
 pub(super) fn for_each_property<'a>(prop: &'a Prop, callback: &mut impl FnMut(&'a Prop)) {
     match &prop.source {
         PropSource::Intersected(_, parts) => parts

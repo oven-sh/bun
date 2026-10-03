@@ -12,7 +12,7 @@ const NEVER: u8 = 2;
 const SOMETIMES: u8 = ALWAYS | NEVER;
 
 impl Checker<'_> {
-    /// `checkNullishCoalesceOperands`, of `e`, which is `left ?? right`.
+    /// `checkNullishCoalesceOperands` for `e`, which is `left ?? right`.
     pub(super) fn check_nullish_coalesce_operands(
         &mut self,
         file: FileId,
@@ -68,10 +68,10 @@ impl Checker<'_> {
         };
     }
 
-    /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
+    /// `checkSwitchStatement` for one `case test:` of a `switch (expr)`: 2678.
     pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
         let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
-        // `isTypeEqualityComparableTo`, then the other way round.
+        // `isTypeEqualityComparableTo`, then in the reverse direction.
         let is_nullable = case.is_null() || case.is_undefined();
         if !is_nullable && !self.is_comparable(subject, case) {
             let at = self.span_of_parenthesized_expr(file, test);
@@ -79,7 +79,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkAccessorDeclaration`: 2378, of a getter that gets to its end and never says `return`.
+    /// `checkAccessorDeclaration`: 2378 for a getter whose end is reachable and that has no
+    /// `return` statement.
     pub(super) fn check_getter_returns_a_value(&mut self, file: FileId, f: FnId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = &hir[f];
@@ -138,8 +139,8 @@ impl Checker<'_> {
         self.error_at(self.span_of_parenthesized_expr(file, node), code, &[]);
     }
 
-    /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is
-    /// the parentheses that are pointed at.
+    /// `GetErrorRangeForNode` for an expression as it appears in the source: the start of an error
+    /// about the whole of `e`. If `e` is parenthesized, the error points at the parentheses.
     pub(super) fn error_start_of(&self, file: FileId, e: ExprId) -> u32 {
         if is_parenthesized(self.hir(file), e) {
             self.start_of(file, e)
@@ -148,8 +149,9 @@ impl Checker<'_> {
         }
     }
 
-    /// The same, of `e` itself, whatever parentheses it is in. A function expression is pointed at by its name, or else by the name
-    /// of what it is given to, a class expression by its own name, `x satisfies T` by the keyword.
+    /// The same for `e` itself, ignoring enclosing parentheses. The error points at the name of a
+    /// function expression, or else at the name of what it is assigned to, at the own name of a
+    /// class expression, and at the keyword of `x satisfies T`.
     pub(super) fn error_start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         let hir = self.hir(file);
         let elsewhere = match hir[e].kind {
@@ -160,8 +162,9 @@ impl Checker<'_> {
                 self.bound(file).get_assigned_name(hir, e)
             }
             ExprKind::Class(c) if hir[c].name.is_some() => Some(hir[c].name_pos),
-            // The last word before the type, and before the `(`, `|` or `&` it may be written after, which are not kept, or the
-            // `{` of `@satisfies {T}` (`findOriginatingJSDocSatisfiesTag`: the name of the tag).
+            // The last word before the type and before a leading `(`, `|` or `&`, which are not
+            // stored, or the `{` of `@satisfies {T}` (`findOriginatingJSDocSatisfiesTag`: the name
+            // of the tag).
             ExprKind::Satisfies { ty, .. } => {
                 let mut before =
                     trim_trivia_end(hir.text.get(..hir[ty].pos as usize).unwrap_or_default());
@@ -238,7 +241,7 @@ impl Checker<'_> {
                 op: Some(BinOp::Or | BinOp::And),
                 ..
             } => SOMETIMES,
-            // What is on the right decides.
+            // The right operand decides.
             ExprKind::Binary {
                 op: BinOp::Comma | BinOp::Nullish,
                 right,
@@ -268,7 +271,7 @@ impl Checker<'_> {
     pub(super) fn check_delete_expression(&mut self, file: FileId, e: ExprId, operand: ExprId) {
         let hir = self.hir(file);
         let start = match hir[operand].kind {
-            // `createMissingNode`: a missing operand starts where the token before it ends.
+            // `createMissingNode`: a missing operand starts at the end of the previous token.
             ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => {
                 hir[e].pos + b"delete".len() as u32
             }
@@ -281,12 +284,14 @@ impl Checker<'_> {
         };
         let (obj, name) = match hir[operand].kind {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-            // `getPropertyNameFromIndex`: the one name that the type of what is in the brackets stands for.
+            // `getPropertyNameFromIndex`: the single property name that the type of the index
+            // expression represents.
             ExprKind::Index { obj, index, .. } => {
                 let key = self.type_of_expr(file, index);
                 (obj, self.property_name_of_type(key))
             }
-            // A missing operand is an identifier without text, which is no access expression either.
+            // A missing operand is an identifier with empty text, which is not an access expression
+            // either.
             _ => {
                 self.error_at((file, start, end), 2703, &[]);
                 return;
@@ -301,7 +306,8 @@ impl Checker<'_> {
             return;
         }
         let object = self.non_nullable(object);
-        // `getIndexedAccessTypeOrUndefined`: whatever is in the brackets then stands for any string, and no property is looked for.
+        // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and
+        // no property is looked up.
         if matches!(hir[operand].kind, ExprKind::Index { .. })
             && self.is_string_index_signature_only(object)
         {
@@ -334,7 +340,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `isReadonlySymbol`: of what a namespace or a module exports, constants and the members of enums.
+    /// `isReadonlySymbol`: among the exports of a namespace or a module, constants and enum
+    /// members.
     fn is_read_only(&self, prop: &Prop) -> bool {
         match prop.source {
             PropSource::Symbol(export) if !self.is_member_symbol(export) => {

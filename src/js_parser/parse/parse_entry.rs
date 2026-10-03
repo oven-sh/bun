@@ -158,7 +158,8 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
-    /// Report syntax errors the way TypeScript's parser does and keep going. Only the type checker turns this on.
+    /// Reports syntax errors the way TypeScript's parser does and recovers. Only the type checker
+    /// enables this.
     pub tolerant: bool,
 }
 
@@ -471,10 +472,13 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// Parses a TypeScript module, visits nothing, and returns what `bun_sema` resolves types from.
-    /// A file the parser cannot recover from, or rejects with an error that has no TypeScript equivalent, is marked `has_errors` and
-    /// gets at least one parse error. A file too deep for the stack is marked `ran_out_of_stack`.
-    /// `await_is_a_name`: the top level has no await context, as in a script (`parseSourceFileWorker`).
+    /// Parses a TypeScript module without running the visit pass, and returns the data `bun_sema`
+    /// resolves types from.
+    /// A file the parser cannot recover from, or rejects with an error that has no TypeScript
+    /// equivalent, is marked `has_errors` and gets at least one parse error. A file nested too
+    /// deeply for the stack is marked `ran_out_of_stack`.
+    /// `await_is_a_name`: the top level has no await context, as in a script
+    /// (`parseSourceFileWorker`).
     /// Also returns whether `await` was parsed as a keyword at the top level.
     #[cold]
     pub(crate) fn parse_for_sema(
@@ -529,7 +533,8 @@ impl<'a> Parser<'a> {
         type_syntax.save_types |= is_declaration_file;
         type_syntax.has_jsdoc = p.lexer.is_javascript_file();
         p.type_syntax = Some(type_syntax);
-        // `parseSourceFileWorker`: nor is a declaration file ever read again for its top-level `await`.
+        // `parseSourceFileWorker`: a declaration file is never reparsed for its top-level `await`
+        // either.
         if await_is_a_name || is_declaration_file {
             p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
         }
@@ -540,7 +545,7 @@ impl<'a> Parser<'a> {
             // `Scan`: a shebang is trivia.
             p.lexer.token_full_start = 0;
         }
-        // The parser stands on the first token: these are the comments `getCommentPragmas` goes through.
+        // The parser is at the first token: these are the comments `getCommentPragmas` processes.
         let leading_comments = p.lexer.all_comments.len();
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
@@ -550,7 +555,7 @@ impl<'a> Parser<'a> {
         };
         let began = std::time::Instant::now();
         let stmts = if is_json {
-            // `bindSourceFileIfExternalModule`: a JSON file is `export =` what it says.
+            // `bindSourceFileIfExternalModule`: a JSON file is an `export =` of its value.
             p.parse_json_text().map(|value| {
                 let mut stmts = crate::parser::StmtList::new_in(p.arena);
                 stmts.push(p.s(S::ExportEquals { value }, bun_ast::Loc { start: 0 }));
@@ -561,7 +566,7 @@ impl<'a> Parser<'a> {
         };
         parsing.set(parsing.get() + began.elapsed());
         let awaited = p.top_level_await_keyword.len > 0;
-        // Before `jsdoc::read_comments` sends the lexer through the comments again.
+        // Taken before `jsdoc::read_comments` makes the lexer rescan the comments.
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
         // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
         let mut logged = Vec::new();

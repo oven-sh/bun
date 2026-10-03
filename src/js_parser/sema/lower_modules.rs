@@ -1,4 +1,5 @@
-//! Import and export declarations: from the nodes that `parse_declarations` kept to `bun_sema::hir`.
+//! Lowers import and export declarations from the nodes that `parse_declarations` saved to
+//! `bun_sema::hir`.
 
 use super::lower::Lower;
 use crate::sema::ts_syntax as ts;
@@ -7,7 +8,7 @@ use bun_sema::hir::*;
 
 #[inline]
 fn pos(loc: bun_ast::Loc) -> u32 {
-    // Nothing is noted of a node of `ts_syntax`.
+    // The locations of `ts_syntax` nodes are plain offsets, never note indexes.
     debug_assert!(!loc.is_index());
     loc.start.max(0) as u32
 }
@@ -22,7 +23,8 @@ impl Lower<'_, '_> {
             .push((pos(attributes.keyword_loc), object));
     }
 
-    /// What is written for a module specifier that is no string, and the import attributes after it.
+    /// The expression in place of a module specifier that is not a string, and the import
+    /// attributes after it.
     pub(super) fn unchecked_parts_of_module_specifier(&mut self, module: ts::ModuleSpecifier) {
         if let Some(expression) = module.expression {
             let expression = self.expr(&expression);
@@ -33,9 +35,10 @@ impl Lower<'_, '_> {
         }
     }
 
-    /// The module specifier of an import or export declaration, which is noted as a use of that module. `NONE` if it is no string.
-    /// `is_type_only`: after `import type` or `export type`, the only declarations whose `resolution-mode` counts
-    /// (`getModeForUsageLocation`).
+    /// The module specifier of an import or export declaration, which is recorded as a reference to
+    /// that module. `NONE` if it is not a string.
+    /// `is_type_only`: after `import type` or `export type`, the only declarations whose
+    /// `resolution-mode` is honored (`getModeForUsageLocation`).
     fn module_specifier(
         &mut self,
         module: ts::ModuleSpecifier,
@@ -64,7 +67,8 @@ impl Lower<'_, '_> {
     /// `ImportDeclaration`
     pub(super) fn import_declaration(&mut self, id: ts::Id<ts::Import>, at: u32) -> StmtId {
         let import = self.b.ts[id];
-        // `isAnExternalModuleIndicatorNode`. `stmts` takes it back for what is not at the top level.
+        // `isAnExternalModuleIndicatorNode`. `stmts` reverts it for statements that are not at the
+        // top level.
         self.b.file.has_module_syntax = true;
         let has_clause = import.default_name.is_some()
             || import.namespace.is_some()
@@ -76,7 +80,7 @@ impl Lower<'_, '_> {
         };
         let (spec, mode) = self.module_specifier(import.module, kind, import.is_type_only);
         if spec.is_none() && import.is_in_ambient_module {
-            // The checker reads the text of a specifier that is written in `declare module "m" { }`.
+            // The checker reads the source text of a specifier inside `declare module "m" { }`.
             return self.b.file.stmt(StmtKind::Empty, at);
         }
         let declaration = ImportId(self.b.file.imports.len() as u32);
@@ -141,7 +145,8 @@ impl Lower<'_, '_> {
         self.b.file.stmt(StmtKind::Import(declaration), at)
     }
 
-    /// `ImportEqualsDeclaration`. `flags`: what its modifiers and the context say (`EXPORT`, `AMBIENT`).
+    /// `ImportEqualsDeclaration`. `flags`: the flags from its modifiers and the context (`EXPORT`,
+    /// `AMBIENT`).
     pub(super) fn import_equals_declaration(
         &mut self,
         id: ts::Id<ts::ImportEquals>,
@@ -175,7 +180,8 @@ impl Lower<'_, '_> {
                 ..
             } => {
                 if import.is_in_ambient_module {
-                    // The checker reads the text of a specifier that is written in `declare module "m" { }`.
+                    // The checker reads the source text of a specifier inside `declare module "m" {
+                    // }`.
                     return self.b.file.stmt(StmtKind::Empty, at);
                 }
                 if let Some(argument) = argument {
@@ -198,7 +204,8 @@ impl Lower<'_, '_> {
     /// `ExportDeclaration`
     pub(super) fn export_declaration(&mut self, id: ts::Id<ts::Export>, at: u32) -> StmtId {
         let export = self.b.ts[id];
-        // `isAnExternalModuleIndicatorNode`. `stmts` takes it back for what is not at the top level.
+        // `isAnExternalModuleIndicatorNode`. `stmts` reverts it for statements that are not at the
+        // top level.
         self.b.file.has_module_syntax = true;
         let (spec, mode) = match export.module {
             Some(module) => {
@@ -207,7 +214,7 @@ impl Lower<'_, '_> {
             None => (Atom::NONE, ResolutionMode::None),
         };
         let specifiers = match export.clause {
-            // `checkExportDeclaration` looks no further than a specifier that is no string.
+            // `checkExportDeclaration` stops at a specifier that is not a string.
             ts::ExportClause::Star { .. } if spec.is_none() => {
                 return self.b.file.stmt(StmtKind::Empty, at);
             }
@@ -270,7 +277,7 @@ impl Lower<'_, '_> {
         self.b.file.stmt(StmtKind::ExportNamed(declaration), at)
     }
 
-    /// `NamespaceExportDeclaration`, which makes no module of the file.
+    /// `NamespaceExportDeclaration`, which does not make the file a module.
     pub(super) fn namespace_export_declaration(&mut self, name: ts::Name, at: u32) -> StmtId {
         let name = self.b.identifier(&name.text, pos(name.loc));
         self.b.file.stmt(StmtKind::ExportAsNamespace(name), at)

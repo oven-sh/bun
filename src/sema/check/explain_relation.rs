@@ -1,10 +1,12 @@
-//! Why one type is not related to another: the lines under "Type 'A' is not assignable to type 'B'."
+//! Elaboration of a failed type relation: the lines under "Type 'A' is not assignable to type 'B'."
 //!
-//! The relation is in `relate.rs`, where `REPORT` is the `reportErrors` of `relater.go`. Here is what only serves errors: the entry points
-//! (`checkTypeRelatedToEx`), the error chain (`reportError`), and the functions that say something (`reportErrorResults`,
-//! `reportRelationError`, `reportUnmatchedProperty`). A pair that the run without reports has said no to is gone over once more with
-//! reports. What that comes to is the error: its code, its node, its text (`relation_diagnostic`). It can come to a yes, and then there
-//! is no error. Nothing it finds out goes into the cache of relations.
+//! The relation is in `relate.rs`, where `REPORT` is the `reportErrors` of `relater.go`. This file
+//! holds the error-only code: the entry points (`checkTypeRelatedToEx`), the error chain
+//! (`reportError`), and the reporting functions (`reportErrorResults`, `reportRelationError`,
+//! `reportUnmatchedProperty`). A pair that fails the non-reporting run is compared again with
+//! reporting. The result of that run is the error: its code, its node, its text
+//! (`relation_diagnostic`). That run can succeed, and then there is no error. None of its results
+//! enter the relation cache.
 
 use super::explain::Line;
 use super::explain::NOWHERE;
@@ -20,14 +22,14 @@ pub(super) struct ErrorChain {
     args: Box<[Box<[u8]>]>,
 }
 
-/// The line reported last comes first: it is the outermost.
+/// The most recently reported line comes first: it is the outermost.
 pub(super) type Chain = Option<Rc<ErrorChain>>;
 
 /// `errorState`
 #[derive(Default)]
 pub(super) struct ErrorState {
     pub(super) chain: Chain,
-    /// How much `relatedInfo` there is.
+    /// The number of `relatedInfo` entries.
     related: usize,
 }
 
@@ -66,7 +68,7 @@ impl Relater {
             return false;
         };
         args.iter().enumerate().all(|(i, arg)| match *arg {
-            Some(arg) => first.args.get(i).is_some_and(|said| **said == *arg),
+            Some(arg) => first.args.get(i).is_some_and(|reported| **reported == *arg),
             None => true,
         })
     }
@@ -137,8 +139,8 @@ pub(super) fn chain_depth(chain: &Chain) -> usize {
     depth
 }
 
-/// `createDiagnosticChainFromErrorChain`: the first line at `level`, each of the others one further in. The return type markers are
-/// `ElidedInCompatibilityPyramid`.
+/// `createDiagnosticChainFromErrorChain`: the first line at `level`, each following line one level
+/// deeper. The return type markers are `ElidedInCompatibilityPyramid`.
 fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut at = chain.as_ref();
@@ -201,7 +203,7 @@ pub(super) fn visibility_to_string(flags: Flags) -> &'static [u8] {
     }
 }
 
-// ───────────────────────────── what is asked from outside ─────────────────────────────
+// ───────────────────────────── entry points ─────────────────────────────
 
 /// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
 pub(super) struct RelationDiagnostic {
@@ -272,8 +274,9 @@ impl<'p> Checker<'p> {
         self.check_type_related_to_ex(source, target, relation, error_node, head_message, None)
     }
 
-    /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink. A run without reports comes first: most
-    /// are related. tsgo makes none, so it leaves no failure behind. What cannot be told counts as related, and nothing is reported.
+    /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink.
+    /// A non-reporting run comes first, because most pairs are related. tsgo has no such run, so it
+    /// caches no failure. An undetermined result counts as related, and nothing is reported.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
@@ -357,8 +360,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and what is reported if they are not. `head`:
-    /// the code of `headMessage`.
+    /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and the
+    /// diagnostic if they are not. `head`: the code of `headMessage`.
     pub(super) fn relation_diagnostic(
         &mut self,
         source: TypeId,
@@ -370,15 +373,17 @@ impl<'p> Checker<'p> {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
         r.caches_failures = true;
-        // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
+        // These two are never a `headMessage`: they are the defaults `reportRelationError` reports
+        // without one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
-        // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
+        // State left behind by nested comparisons is for the caller of a query, and there is none
+        // here.
         let too_complex = self.relation_too_complex;
         let reliability = self.reliability;
         r.head_message = head;
         let mut result =
             self.is_related_to_ex::<true>(&mut r, source, target, REC_BOTH, STATE_NONE);
-        // Cut short on the way to the reasons: no reasons.
+        // The comparison overflowed during elaboration: no elaboration.
         if r.overflow {
             result = Ternary::FALSE;
             (r.error_node, r.error_chain) = (error_node, None);
@@ -396,7 +401,7 @@ impl<'p> Checker<'p> {
         (result.holds(), diagnostic)
     }
 
-    /// What `reportErrorResults` says of the two by itself.
+    /// The message `reportErrorResults` reports for the pair itself, without elaboration.
     pub(super) fn relation_error_without_reasons(
         &mut self,
         source: TypeId,
@@ -429,8 +434,9 @@ impl<'p> Checker<'p> {
         self.report_error_results(r, original_source, original_target, source, target, head);
     }
 
-    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)` reports, the first at `level`, and its
-    /// `relatedInfo`. `head`: the code of `headMessage`. Nothing if the two are related, or if the comparison is cut short.
+    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)`
+    /// reports, the first at `level`, and its `relatedInfo`. `head`: the code of `headMessage`.
+    /// Nothing if the two are related, or if the comparison overflows.
     pub(super) fn relation_lines_with_related(
         &mut self,
         source: TypeId,
@@ -439,7 +445,7 @@ impl<'p> Checker<'p> {
         head: Option<u32>,
         level: u32,
     ) -> (Vec<Line>, Vec<Reported>) {
-        // No node: only the lines are asked for.
+        // No node: only the lines are requested.
         let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
         match self.relation_diagnostic(source, target, relation, nowhere, head) {
             (_, Some(mut diagnostic)) => {
@@ -456,8 +462,8 @@ impl<'p> Checker<'p> {
 // ───────────────────────────── names ─────────────────────────────
 
 impl<'p> Checker<'p> {
-    /// `getParameterNameAtPosition`. An element of a rest parameter that has no label goes by the name of the parameter and its
-    /// place (`getTupleElementLabel`).
+    /// `getParameterNameAtPosition`. An unlabeled element of a rest parameter is named after the
+    /// parameter and its index (`getTupleElementLabel`).
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
         let atoms = &self.atoms();
         let numbered = |name: &[u8], index: usize| {
@@ -487,7 +493,8 @@ impl<'p> Checker<'p> {
                 let is_variable = flags
                     .get(index)
                     .is_some_and(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC));
-                // `getTupleElementLabelFromBindingElement`, which takes a rest parameter that has a declaration.
+                // `getTupleElementLabelFromBindingElement`, which accepts a rest parameter that has
+                // a declaration.
                 if is_variable && params[fixed].has_declaration {
                     rest
                 } else {
@@ -498,8 +505,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `parameter_name_at_position`, of the signature `sig`, whose parameters are `params`. The label of an element of a rest
-    /// parameter is read off the type of the parameter, if that is written as a tuple of as many elements.
+    /// `parameter_name_at_position` for the signature `sig`, whose parameters are `params`. The
+    /// label of a rest parameter element is read from the parameter's type annotation, if that is a
+    /// tuple type node with the same number of elements.
     pub(super) fn labeled_parameter_name_at_position(
         &self,
         sig: SigId,
@@ -564,7 +572,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getPropertiesOfType`: of a union, the properties that all its members have.
+    /// `getPropertiesOfType`: for a union, the properties that all its members have.
     pub(super) fn properties_of_type(&mut self, ty: TypeId) -> Vec<Prop> {
         let ty = self.reduced_apparent_type_as_object(ty);
         match self.members(ty) {
@@ -711,21 +719,24 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `hasNonCircularBaseConstraint` of the `syntheticParam` of `reportErrorResults`: a copy of the type parameter `source`, which
-    /// is declared as `declared`, that extends `target` with the copy for `source` in it.
+    /// `hasNonCircularBaseConstraint` of the `syntheticParam` of `reportErrorResults`: a clone of
+    /// the type parameter `source`, declared as `declared`, whose constraint is `target` with
+    /// `source` replaced by the clone.
     fn copy_may_extend(
         &mut self,
         source: TypeId,
         declared: (FileId, TypeParamId),
         target: TypeId,
     ) -> bool {
-        // `cloneTypeParameter`. What is found out about a copy is kept, so each target has a copy of its own.
+        // `cloneTypeParameter`. Results computed for a clone are cached, so each target has its own
+        // clone.
         let around = self.mapper_from(&[source], &[target]);
         let copy = self.cloned_type_param(declared.0, declared.1, around);
         let to_copy = self.mapper_from(&[source], &[copy]);
-        // A circle the copy is in says nothing about what is being worked out around.
+        // A cycle through the clone says nothing about the enclosing resolutions in progress.
         let cycles = (self.cycles, self.cycle_at);
-        // `getIntersectionTypeEx` asks what the copy in `T & {}` extends, which is nothing yet. That answer is kept, there as here.
+        // `getIntersectionTypeEx` requests the constraint of the clone in `T & {}`, which has none
+        // yet. That result is cached, in tsgo as here.
         let scope = self.begin_scope();
         let constraint = self.instantiate(target, to_copy);
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -739,8 +750,8 @@ impl<'p> Checker<'p> {
         may_extend
     }
 
-    /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: all of the declaration, from `const`,
-    /// `in` or `out` on.
+    /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: the
+    /// whole declaration, starting at `const`, `in` or `out`.
     pub(super) fn place_of_type_parameter_declaration(
         &self,
         file: FileId,
@@ -748,7 +759,7 @@ impl<'p> Checker<'p> {
     ) -> (FileId, u32, u32) {
         const MODIFIERS: [&[u8]; 3] = [b"const", b"in", b"out"];
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `infer U` written twice is one parameter.
+        // Two occurrences of `infer U` declare one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
         let first = if symbol.is_some() {
             bound.symbols[symbol.idx()]
@@ -778,7 +789,8 @@ impl<'p> Checker<'p> {
         (file, start as u32, self.end_of_type_param(file, tp))
     }
 
-    /// The property that makes the intersection `ty` one that nothing can be, and which of 18031 and 18032 says so.
+    /// The property that makes the intersection `ty` uninhabited, and which of 18031 and 18032
+    /// reports it.
     pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, Prop)> {
         let members = self.members(ty)?;
         // `isDiscriminantWithNeverType`
@@ -864,7 +876,7 @@ impl<'p> Checker<'p> {
         }
         let [source_name, generalized_source_name, target_name] =
             [&source_type, &generalized_source_type, &target_type].map(|name| Arg::Bytes(name));
-        // Of `T[K]`, unless the source is an indexed access too, it is `T` that counts.
+        // For `T[K]`, unless the source is an indexed access too, `T` is the type tested.
         let is_type_parameter = match (self.data(target), self.data(source)) {
             (TypeData::IndexedAccess { obj, .. }, s)
                 if !matches!(s, TypeData::IndexedAccess { .. }) =>
@@ -877,7 +889,8 @@ impl<'p> Checker<'p> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            // `unknown` is a constraint like another where it is written: `T extends unknown`, `T extends any`.
+            // `unknown` is an ordinary constraint when it is declared: `T extends unknown`, `T
+            // extends any`.
             let base_constraint = match self.base_constraint_of(target) {
                 None if self.constraint_of_type_param(target) == Some(TypeId::UNKNOWN) => {
                     Some(TypeId::UNKNOWN)
@@ -893,7 +906,7 @@ impl<'p> Checker<'p> {
                     self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
                 }
                 _ => {
-                    // Only this is said.
+                    // Only this is reported.
                     r.error_chain = None;
                     self.report_error(r, 5082, &[target_name, generalized_source_name]);
                 }
@@ -1006,11 +1019,11 @@ impl<'p> Checker<'p> {
     }
 }
 
-// ───────────────────────────── types that lead back to themselves ─────────────────────────────
+// ───────────────────────────── recursive types ─────────────────────────────
 
 impl<'p> Checker<'p> {
-    /// `indexSignaturesRelatedTo`, of `source`, the apparent type of `object`. It is nobody's declaration: it is not known to have nothing
-    /// else in it.
+    /// `indexSignaturesRelatedTo` for `source`, the apparent type of `object`. It comes from no
+    /// declaration, so it is not known to have no other properties.
     pub(super) fn report_index_signature_missing_in_object(
         &mut self,
         r: &mut Relater,
@@ -1021,12 +1034,13 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         };
         let index = &m.shape().index;
-        // Next to an index signature for strings, anything fits one of `any`.
+        // When there is also a string index signature, anything is related to an index signature of
+        // type `any`.
         let any_takes_all =
             r.relation != Relation::StrictSubtype && index.iter().any(|i| i.key == TypeId::STRING);
         let missing = index.iter().find(|i| {
-            let wanted = self.instantiate(i.value, m.mapper);
-            !(any_takes_all && self.is_any(wanted))
+            let expected = self.instantiate(i.value, m.mapper);
+            !(any_takes_all && self.is_any(expected))
         });
         let Some(missing) = missing else {
             return Ternary::TRUE;
@@ -1049,7 +1063,7 @@ impl<'p> Checker<'p> {
         unmatched: &[&Prop],
     ) {
         let first = unmatched[0];
-        // Two `#x` that are written alike are two members.
+        // Two `#x` with the same spelling are distinct members.
         if self.is_private_name(first.name)
             && let TypeData::Ref { target: class, .. } = *self.data(source)
             && self.files().flags(class).contains(SymFlags::CLASS)

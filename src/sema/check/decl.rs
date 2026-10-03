@@ -1,7 +1,7 @@
-//! From declarations and type syntax to types.
+//! Resolves declarations and type nodes to types.
 
-use super::errors_modules::fully_qualified_name_of;
-use super::errors_x_enums_names::{Location, is_ambient_enum, is_declared_before_use};
+use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_use};
+use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
 use smallvec::SmallVec;
@@ -15,17 +15,20 @@ pub struct Predicate {
     pub asserts: bool,
 }
 
-/// What a piece of type syntax may refer to, of the type parameters around it.
+/// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
 struct Mentioned {
-    /// The names of the type parameters around it. A type reference by another name is not resolved.
+    /// The names of the enclosing type parameters. A type reference with any other name is not
+    /// resolved.
     candidates: SmallVec<[Atom; 8]>,
-    /// What the type references by those names resolve to, and what the `infer`s declare.
+    /// The symbols that the type references with those names resolve to, and the type parameters
+    /// declared by `infer`.
     type_params: SmallVec<[Sym; 8]>,
     this: bool,
-    /// The scopes that declare the values asked about with `typeof`: their types can involve the type parameters seen from there.
+    /// The scopes that declare the values queried with `typeof`: their types can involve the type
+    /// parameters visible from there.
     values_in: Vec<(FileId, ScopeId)>,
-    /// There is no telling.
+    /// The references cannot be determined.
     everything: bool,
 }
 
@@ -89,11 +92,12 @@ impl Evaluated {
 }
 
 impl<'p> Checker<'p> {
-    /// `evaluate`. `location`: what `e` is evaluated for, the member of an enum or the constant that it is (part of) the initializer of,
-    /// or else the expression asked about. Parentheses are not kept, and nothing else is looked through.
+    /// `evaluate`. `location`: the declaration `e` is evaluated for, the enum member or constant
+    /// whose initializer it is (part of), or else the queried expression. Parentheses are not in
+    /// the HIR, and nothing else is skipped.
     pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         if self.is_stack_low() {
-            self.gave_up();
+            self.bailed_out();
             return Evaluated::default();
         }
         let hir = self.hir(file);
@@ -127,7 +131,7 @@ impl<'p> Checker<'p> {
             ExprKind::Binary { op, left, right } => {
                 self.evaluate_binary(file, Some(op), left, right, location)
             }
-            // An assignment is a `BinaryExpression` with an operator that gives nothing.
+            // An assignment is a `BinaryExpression` with an operator that yields no value.
             ExprKind::Assign { target, value, .. } => {
                 self.evaluate_binary(file, None, target, value, location)
             }
@@ -201,7 +205,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `evaluateEntity`: by what the names mean, never by the type of the expression.
+    /// `evaluateEntity`: by the symbols the names resolve to, never by the type of the expression.
     fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         let (hir, files) = (self.hir(file), self.files());
         if let ExprKind::Index { obj, index, .. } = hir[e].kind {
@@ -228,7 +232,7 @@ impl<'p> Checker<'p> {
         let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE) else {
             return Evaluated::default();
         };
-        // `Infinity` and `NaN`, unless they are somebody's own.
+        // `Infinity` and `NaN`, unless they are shadowed.
         if let ExprKind::Ident(name) = hir[e].kind
             && let Some(n) = match self.atoms().bytes(name) {
                 b"Infinity" => Some(f64::INFINITY),
@@ -242,7 +246,8 @@ impl<'p> Checker<'p> {
         if files.flags(symbol).contains(SymFlags::ENUM_MEMBER) {
             return self.evaluate_enum_member(file, e, symbol, location);
         }
-        // Between files there is no before and after: constants of two files may be declared as each other.
+        // There is no declaration order between files: constants of two files may be initialized
+        // with each other.
         if self.constant_depth <= 16
             && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
         {
@@ -305,8 +310,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `computeEnumMemberValues` goes through a declaration in order: where before and after do not count, in what is only declared, a
-    /// later member of the declaration being gone through has no value yet.
+    /// `computeEnumMemberValues` processes a declaration in order: in an ambient context, where
+    /// declaration order is not enforced, a later member of the declaration in progress has no
+    /// value yet.
     fn enum_member_value_at(
         &mut self,
         file: FileId,
@@ -325,7 +331,8 @@ impl<'p> Checker<'p> {
     }
 }
 
-/// `EnumLiteralKey`: what two values of members of an enum are the same by. `0` and `-0` are, and there is one `NaN`.
+/// `EnumLiteralKey`: the key by which two enum member values are compared. `0` and `-0` are equal,
+/// and there is one `NaN`.
 fn enum_value_key(value: EnumValue) -> EnumValue {
     match value {
         EnumValue::Number(bits) if f64::from_bits(bits) == 0.0 => EnumValue::Number(0f64.to_bits()),
@@ -336,7 +343,7 @@ fn enum_value_key(value: EnumValue) -> EnumValue {
     }
 }
 
-/// `isVariadicTupleElement`: `...T` where `T` is not written as an array type.
+/// `isVariadicTupleElement`: `...T` where `T` is not an array type node.
 pub(super) fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bool {
     elem.rest && elem.ty.is_some() && array_element_type_node(hir, elem.ty).is_none()
 }
@@ -372,7 +379,7 @@ pub(super) fn declarations_of(
 impl<'p> Checker<'p> {
     // ───────────────────────────── type parameters in scope ─────────────────────────────
 
-    /// The type parameters that can be mentioned in `scope`, outermost first.
+    /// The type parameters that can be referenced in `scope`, outermost first.
     pub fn outer_type_params(&mut self, file: FileId, scope: ScopeId) -> Arc<[TypeId]> {
         if scope.is_none() {
             return Arc::from([]);
@@ -380,7 +387,7 @@ impl<'p> Checker<'p> {
         Arc::clone(self.cached_outer_type_params(file, scope))
     }
 
-    /// The same, for whoever only looks at them.
+    /// The same, for callers that only read them.
     pub(super) fn type_params_in_scope(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
         if scope.is_none() || self.declares_no_type_params(file) {
             return &[];
@@ -388,7 +395,8 @@ impl<'p> Checker<'p> {
         self.cached_outer_type_params(file, scope)
     }
 
-    /// Whether no scope of `file` sees a type parameter, the `this` types of classes and interfaces included.
+    /// Whether no type parameter is visible in any scope of `file`, including the `this` types of
+    /// classes and interfaces.
     #[inline]
     fn declares_no_type_params(&self, file: FileId) -> bool {
         let hir = self.hir(file);
@@ -446,7 +454,7 @@ impl<'p> Checker<'p> {
             .insert_ref(&mut self.task, (file, scope), result, Stored::new())
     }
 
-    /// Every type parameter in scope, standing for itself.
+    /// Maps every type parameter in scope to itself.
     pub fn identity_mapper(&mut self, file: FileId, scope: ScopeId) -> MapperId {
         if scope.is_none() || self.declares_no_type_params(file) {
             return MapperId::IDENTITY;
@@ -464,7 +472,8 @@ impl<'p> Checker<'p> {
         (self.p.identity_mappers).insert(&mut self.task, (file, scope), mapper, Stored::new())
     }
 
-    /// `getOuterTypeParameters`: those too that a context sensitive function around `scope` has adopted.
+    /// `getOuterTypeParameters`: also those that a context sensitive function enclosing `scope` has
+    /// adopted.
     pub(super) fn identity_mapper_with_adopted(
         &mut self,
         file: FileId,
@@ -472,7 +481,7 @@ impl<'p> Checker<'p> {
     ) -> MapperId {
         let declared = self.identity_mapper(file, scope);
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // For speed: only a function that something is expected of adopts anything.
+        // For speed: only a function with a contextual type adopts anything.
         let mut at = scope;
         loop {
             if at.is_none() {
@@ -511,9 +520,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isTypeParameterPossiblyReferenced`: the type parameters in scope that `mentioned` has, or that count as mentioned for where
-    /// they are declared, standing for themselves. A type that is written inside a generic declaration without referring to its
-    /// parameters is not generic. `pos`: where it is written.
+    /// `isTypeParameterPossiblyReferenced`: an identity mapper for the type parameters in scope
+    /// that are in `mentioned`, or that count as referenced because of where they are declared. A
+    /// type inside a generic declaration that does not reference its parameters is not generic.
+    /// `pos`: its position.
     fn identity_mapper_of_mentioned(
         &mut self,
         file: FileId,
@@ -525,11 +535,13 @@ impl<'p> Checker<'p> {
             return self.identity_mapper(file, scope);
         }
         let params = self.type_params_in_scope(file, scope);
-        // The outermost come first, so those that count for where they are declared are the first so many.
+        // The outermost come first, so those that count because of where they are declared form a
+        // prefix.
         let mut taken = self.params_beyond_a_block(file, scope, pos);
         for &(of, declared_in) in &mentioned.values_in {
             let seen = self.type_params_in_scope(of, declared_in).len();
-            // A declaration of the method in another file: what is seen from there is not what is seen from `scope`.
+            // A declaration of the method in another file: what is visible from there is not what
+            // is visible from `scope`.
             if of != file && seen > 0 {
                 return self.identity_mapper(file, scope);
             }
@@ -547,7 +559,8 @@ impl<'p> Checker<'p> {
                             mentioned.type_params.contains(&Sym { file: f, id })
                                 || !self.type_param_has_one_declaration(f, tp)
                         }
-                        // `getDeclaredTypeOfClassOrInterface`: a class, and what is generic, has a `this` type.
+                        // `getDeclaredTypeOfClassOrInterface`: a class, and anything generic, has a
+                        // `this` type.
                         TypeData::ThisParam(owner) => {
                             mentioned.this
                                 || self.files().decls_of(owner).len() != 1
@@ -568,8 +581,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `len(tp.symbol.Declarations) == 1`. `infer U` written twice is one symbol of its scope. The type parameters of a class or an
-    /// interface are among its members.
+    /// `len(tp.symbol.Declarations) == 1`. `infer U` occurring twice is one symbol of its scope.
+    /// The type parameters of a class or an interface are among its members.
     fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
         let bound = self.bound(file);
         let symbol = bound.type_param_symbol[tp.idx()];
@@ -585,8 +598,9 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
-    /// How many of `outer_type_params(file, scope)`, which has the outermost first, have a statement block between where they are
-    /// declared and `pos`: `isTypeParameterPossiblyReferenced` takes those to be referred to.
+    /// The number of `outer_type_params(file, scope)`, outermost first, that have a statement block
+    /// between their declaration and `pos`: `isTypeParameterPossiblyReferenced` treats those as
+    /// referenced.
     fn params_beyond_a_block(&mut self, file: FileId, mut scope: ScopeId, pos: u32) -> usize {
         let (hir, bound) = (self.hir(file), self.bound(file));
         while scope.is_some() {
@@ -594,7 +608,8 @@ impl<'p> Checker<'p> {
             match s.kind {
                 ScopeKind::Block => return self.type_params_in_scope(file, scope).len(),
                 ScopeKind::Fn(f) => {
-                    // The body of a function shares its scope with the signature: told apart by where it starts.
+                    // The body of a function shares its scope with the signature: distinguished by
+                    // its start position.
                     if let FnBody::Block(stmts) = hir[f].body
                         && hir
                             .ids(stmts)
@@ -603,7 +618,7 @@ impl<'p> Checker<'p> {
                     {
                         return self.type_params_in_scope(file, scope).len();
                     }
-                    // The scope that the name of a function expression has to itself is no block.
+                    // The separate scope for the name of a function expression is not a block.
                     if hir[f].kind == FnKind::Expr && hir[f].name.is_some() {
                         scope = bound.scopes[s.parent.idx()].parent;
                         continue;
@@ -616,8 +631,8 @@ impl<'p> Checker<'p> {
         0
     }
 
-    /// `getAliasSymbolForTypeNode`: the type alias declaration whose body is `node`, which is written in `scope`. A `readonly`
-    /// operator around `node` is skipped.
+    /// `getAliasSymbolForTypeNode`: the type alias declaration whose body is `node`, which is in
+    /// `scope`. A `readonly` operator around `node` is skipped.
     pub(super) fn alias_with_body(
         &self,
         file: FileId,
@@ -640,14 +655,14 @@ impl<'p> Checker<'p> {
         (body == node).then_some(alias)
     }
 
-    /// Whether `node`, written in `scope`, is the body of a type alias that has type parameters.
+    /// Whether `node`, in `scope`, is the body of a type alias that has type parameters.
     fn is_body_of_generic_alias(&self, file: FileId, scope: ScopeId, node: TypeNodeId) -> bool {
         self.alias_with_body(file, scope, node)
             .is_some_and(|alias| !self.hir(file)[alias].type_params.is_empty())
     }
 
-    /// The body of the type alias whose type parameters `scope` declares, if that is an intersection type node and `node` is the
-    /// first of its members that keeps a mapper.
+    /// The body of the type alias whose type parameters `scope` declares, if that is an
+    /// intersection type node and `node` is the first of its members that stores a mapper.
     fn intersection_alias_body_pinned_by(
         &self,
         file: FileId,
@@ -689,10 +704,11 @@ impl<'p> Checker<'p> {
         self.types().mapper(pairs)
     }
 
-    /// `getOuterTypeParameters`: a context sensitive function expression, arrow function or object literal method has the type
-    /// parameters of the signature expected of it (`assignContextualParameterTypes`). Those of the functions in whose bodies `pos`,
-    /// in `scope`, is. `isTypeParameterPossiblyReferenced` says yes to all of them: on the way up from a node it never comes to
-    /// where they are declared.
+    /// `getOuterTypeParameters`: a context sensitive function expression, arrow function or object
+    /// literal method has the type parameters of its contextual signature
+    /// (`assignContextualParameterTypes`). Returns those of the functions whose bodies contain
+    /// `pos`, in `scope`. `isTypeParameterPossiblyReferenced` is true for all of them: walking up
+    /// from a node it never reaches their declaration.
     fn adopted_type_params_in_scope(
         &mut self,
         file: FileId,
@@ -732,8 +748,8 @@ impl<'p> Checker<'p> {
         if self.type_params_in_scope(file, scope).is_empty() {
             return MapperId::IDENTITY;
         }
-        // `getObjectTypeInstantiation`, `getTypeFromConditionalTypeNode`: what a generic alias stands for depends on all of them,
-        // mentioned or not.
+        // `getObjectTypeInstantiation`, `getTypeFromConditionalTypeNode`: the type a generic alias
+        // refers to depends on all of them, referenced or not.
         if self.is_body_of_generic_alias(file, scope, node) {
             return self.identity_mapper(file, scope);
         }
@@ -745,8 +761,9 @@ impl<'p> Checker<'p> {
         self.collect_mentions_of_extends_types_around(file, node, &mut mentioned);
         let mapper =
             self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned);
-        // `getIntersectionType`: the alias and all its type arguments are part of the identity of the type (`getAliasKey`). Where the
-        // body leaves out a type parameter, one member stands in for that.
+        // `getIntersectionType`: the alias and all its type arguments are part of the identity of
+        // the type (`getAliasKey`). Where the body omits a type parameter, one member carries it
+        // instead.
         if let Some(body) = self.intersection_alias_body_pinned_by(file, scope, node) {
             self.collect_mentions(file, body, &mut mentioned);
             let all = self.identity_mapper(file, scope);
@@ -758,7 +775,8 @@ impl<'p> Checker<'p> {
         mapper
     }
 
-    /// The same for the declarations of a method. What a body returns can involve anything in scope.
+    /// The same for the declarations of a method. The inferred return type of a body can involve
+    /// anything in scope.
     pub(super) fn identity_mapper_for_fns(
         &mut self,
         file: FileId,
@@ -789,8 +807,9 @@ impl<'p> Checker<'p> {
         self.identity_mapper_of_mentioned(file, scope, pos, &mentioned)
     }
 
-    /// `isTypeParameterPossiblyReferenced`, `IsConditionalTypeNode(n) && ForEachChild(n.ExtendsType, containsReference)` on the way
-    /// up from `node`: what a conditional type checks against is in the substitution types below it.
+    /// `isTypeParameterPossiblyReferenced`, `IsConditionalTypeNode(n) &&
+    /// ForEachChild(n.ExtendsType, containsReference)` walking up from `node`: the `extends` type
+    /// of a conditional type appears in the substitution types below it.
     fn collect_mentions_of_extends_types_around(
         &self,
         file: FileId,
@@ -820,7 +839,7 @@ impl<'p> Checker<'p> {
             self.collect_mentions(file, hir[tp].default, out);
         }
         for p in f.params.iter() {
-            // Without an annotation, what it is comes from a default or from the context.
+            // Without an annotation, its type comes from a default or from the contextual type.
             if hir[p].ty.is_none() && !matches!(f.body, FnBody::None) {
                 out.everything = true;
                 return;
@@ -853,7 +872,8 @@ impl<'p> Checker<'p> {
             TypeNodeKind::Ref { name, args } => {
                 if name.len() == 1 {
                     let name = hir.texts(name).next().unwrap();
-                    // `getSymbolFromTypeReference`: a type parameter declared further in can have the name of one further out.
+                    // `getSymbolFromTypeReference`: an inner type parameter can shadow an outer one
+                    // of the same name.
                     if out.candidates.contains(&name) {
                         let bound = self.bound(file);
                         let scope = bound.type_scope[node.idx()];
@@ -918,7 +938,8 @@ impl<'p> Checker<'p> {
                 self.collect_mentions(file, obj, out);
                 self.collect_mentions(file, index, out);
             }
-            // `isTypeParameterPossiblyReferenced`: the type of a value can involve the type parameters around its declaration.
+            // `isTypeParameterPossiblyReferenced`: the type of a value can involve the type
+            // parameters that enclose its declaration.
             TypeNodeKind::Typeof { args, expr, .. } => {
                 list(self, args, out);
                 if expr.is_none() {
@@ -933,7 +954,7 @@ impl<'p> Checker<'p> {
                 };
                 let bound = self.bound(file);
                 let symbol = bound.expr_symbol[root.idx()];
-                // Nothing in the file declares it: no type parameter is around what does.
+                // Nothing in the file declares it: its declaration has no enclosing type parameter.
                 if symbol.is_none() {
                     return;
                 }
@@ -999,13 +1020,14 @@ impl<'p> Checker<'p> {
                 .any(|earlier| hir[earlier].name == name)
     }
 
-    /// `getLocalTypeParametersOfClassOrInterfaceOrTypeAlias`: the type parameters of all the declarations of a class, an interface
-    /// or an alias, in the order they are first met. Those of one name are one.
+    /// `getLocalTypeParametersOfClassOrInterfaceOrTypeAlias`: the type parameters of all the
+    /// declarations of a class, an interface or an alias, in order of first occurrence. Those with
+    /// the same name are one type parameter.
     pub fn type_params_of_symbol(&self, sym: Sym) -> Arc<[TypeId]> {
         Arc::from(&self.local_type_params_of_symbol(sym)[..])
     }
 
-    /// The same, for whoever only looks at them.
+    /// The same, for callers that only read them.
     pub(super) fn local_type_params_of_symbol(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         if let Some((file, params)) = self.files().only_type_param_list(sym) {
             return params
@@ -1022,9 +1044,10 @@ impl<'p> Checker<'p> {
                 .map(|tp| self.type_param(file, tp))
                 .collect();
         }
-        // Each declaration has parameters of its own here. They are taken from one declaration as far as it has them, so that
-        // what a constraint or a default mentions is among them: the one that has most, and of those the first that says what
-        // the defaults are.
+        // Each declaration has its own type parameters here. They are taken from a single
+        // declaration as far as it has them, so that whatever a constraint or a default references
+        // is among them: the declaration with the most, and among those the first that specifies
+        // defaults.
         let mut best: Option<(FileId, Span<TypeParamId>, bool)> = None;
         for &(file, params) in &lists {
             let hir = self.hir(file);
@@ -1056,11 +1079,11 @@ impl<'p> Checker<'p> {
         all.into_iter().map(|known| known.1).collect()
     }
 
-    /// The scope the declaration `i` of an interface opens.
+    /// The scope that the declaration `i` of an interface creates.
     fn interface_scope(&self, file: FileId, i: InterfaceId) -> ScopeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let decl = &hir[i];
-        // What is written in it knows where it is.
+        // A node inside it has its scope recorded.
         let mut scope = if let Some(tp) = decl.type_params.iter().next() {
             bound.type_param_scope[tp.idx()]
         } else if let Some(base) = hir.ids(decl.extends).next() {
@@ -1089,11 +1112,12 @@ impl<'p> Checker<'p> {
         bound.interface_scope[i.idx()]
     }
 
-    /// `getOuterTypeParametersOfClassOrInterface`: the type parameters of what `sym` is declared inside of, outermost first, without
-    /// the `this` types.
+    /// `getOuterTypeParametersOfClassOrInterface`: the type parameters of the declarations that
+    /// enclose `sym`, outermost first, without the `this` types.
     pub fn outer_type_params_of_symbol(&mut self, sym: Sym) -> Arc<[TypeId]> {
         let symbol = self.files().symbol(sym);
-        // What is put together from several places is at the top of a file or of a namespace in each.
+        // A merged symbol is declared at the top level of a file or of a namespace in each of its
+        // declarations.
         if symbol.flags.contains(SymFlags::MERGED) {
             return Arc::from([]);
         }
@@ -1125,19 +1149,20 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
-    /// The type parameters that the `args` of a `TypeData::Ref` to `sym` go with: those around the declaration, then its own.
+    /// The type parameters that the `args` of a `TypeData::Ref` to `sym` correspond to: the outer
+    /// ones of the declaration, then its own.
     pub fn all_type_params_of_symbol(&mut self, sym: Sym) -> Arc<[TypeId]> {
         Arc::from(&self.listed_type_params_of_symbol(sym)[..])
     }
 
-    /// The same, for whoever only looks at them.
+    /// The same, for callers that only read them.
     pub(super) fn listed_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
         if self
             .files()
             .flags(sym)
             .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
         {
-            // The declared type has them for arguments.
+            // The declared type has them as its type arguments.
             let declared = self.declared_type(sym);
             if matches!(self.data(declared), TypeData::Ref { .. }) {
                 return List::Kept(self.type_arguments(declared));
@@ -1200,8 +1225,9 @@ impl<'p> Checker<'p> {
         if self.has_circular_base_constraint(param, constraint) {
             return None;
         }
-        // `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the mapped type is made, so a cycle can
-        // go through the key of a mapped type written in the constraint.
+        // `getTypeFromMappedTypeNode` resolves the constraint of its key eagerly when the mapped
+        // type is created, so a cycle can pass through the key of a mapped type inside the
+        // constraint.
         if around == MapperId::IDENTITY
             && !self.hir(file).mapped.is_empty()
             && self.has_type_variables(constraint)
@@ -1212,12 +1238,13 @@ impl<'p> Checker<'p> {
         Some(constraint)
     }
 
-    /// `getConstraintFromTypeParameter`: the same, whether or not it goes round in a circle.
+    /// `getConstraintFromTypeParameter`: the same, whether or not it is circular.
     pub(super) fn constraint_from_type_param(&mut self, param: TypeId) -> Option<TypeId> {
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
             return None;
         };
-        // A fresh one extends what the declared one does, with what is around it filled in.
+        // The constraint of a cloned type parameter is the declared constraint instantiated with
+        // the mapper of the clone.
         if around != MapperId::IDENTITY {
             let declared = self.type_param(file, tp);
             let constraint = self.constraint_of_type_param(declared)?;
@@ -1234,7 +1261,8 @@ impl<'p> Checker<'p> {
             return self.inferred_type_param_constraint(param, file, tp, false);
         }
         let mut constraint = self.type_from_node(of, node);
-        // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
+        // A constraint of `any` is no constraint. The key type of a mapped type is still
+        // constrained to keys.
         if self.has_any_flag(constraint) && !self.is_error_type(constraint) {
             constraint = if self.hir(of).mapped.iter().any(|m| m.param == written) {
                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL])
@@ -1250,7 +1278,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `hasNonCircularBaseConstraint`, the other way round, as far as type parameters, unions and intersections lead.
+    /// `hasNonCircularBaseConstraint`, negated, following only type parameters, unions and
+    /// intersections.
     pub(super) fn has_circular_base_constraint(
         &mut self,
         param: TypeId,
@@ -1279,7 +1308,8 @@ impl<'p> Checker<'p> {
                 ),
                 TypeData::TypeParam(..) if !seen.contains(&t) => {
                     seen.push(t);
-                    // What the others extend is only looked at to see where it leads.
+                    // The constraints of the other type parameters are only inspected to follow the
+                    // chain.
                     self.eager.push(self.stack.len());
                     let next = self.constraint_from_type_param(t);
                     self.eager.pop();
@@ -1291,9 +1321,11 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `getConstraintDeclaration`, `getResolvedTypeParameterDefault`: of all the declarations of the type parameter the first that
-    /// has the `part` asked for, or else its own. Those of one name in the declarations of a class or an interface are one
-    /// parameter: with one from another declaration come the type parameters of that declaration and of this one.
+    /// `getConstraintDeclaration`, `getResolvedTypeParameterDefault`: the first of all the
+    /// declarations of the type parameter that has the requested `part`, or else its own
+    /// declaration. Those with the same name in the declarations of a class or an interface are one
+    /// type parameter: a result from another declaration is returned with the type parameters of
+    /// that declaration and of this one.
     fn type_param_declaration_with(
         &self,
         file: FileId,
@@ -1305,7 +1337,7 @@ impl<'p> Checker<'p> {
         Option<(Span<TypeParamId>, Span<TypeParamId>)>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `infer U` written twice is one parameter.
+        // `infer U` occurring twice is one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
         if symbol.is_some() && bound.symbols[symbol.idx()].decls.len() > 1 {
             for &decl in &bound.symbols[symbol.idx()].decls {
@@ -1354,8 +1386,8 @@ impl<'p> Checker<'p> {
         (file, tp, None)
     }
 
-    /// What one declaration of a class or an interface says of `theirs`, its type parameters, said of `own`, those of another:
-    /// they are the same by name.
+    /// Rewrites a type that one declaration of a class or an interface expresses in `theirs`, its
+    /// type parameters, in terms of `own`, those of another declaration: they correspond by name.
     fn in_terms_of_own_type_params(
         &mut self,
         ty: TypeId,
@@ -1376,8 +1408,8 @@ impl<'p> Checker<'p> {
         self.instantiate(ty, mapper)
     }
 
-    /// `instantiateSignatureEx`, the mapper a fresh type parameter is given: what `around` says, and for the type parameters
-    /// declared along with `tp` the fresh ones.
+    /// `instantiateSignatureEx`, the mapper assigned to a cloned type parameter: the mappings of
+    /// `around`, plus the clones for the type parameters declared in the same list as `tp`.
     fn clone_mapper(&self, file: FileId, tp: TypeParamId, around: MapperId) -> MapperId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let scope = bound.type_param_scope[tp.idx()];
@@ -1404,7 +1436,7 @@ impl<'p> Checker<'p> {
         self.types().mapper(pairs)
     }
 
-    /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
+    /// `getInferredTypeParameterConstraint`: the constraint implied for `infer T` by its position.
     #[inline(never)]
     pub(super) fn inferred_type_param_constraint(
         &mut self,
@@ -1477,10 +1509,11 @@ impl<'p> Checker<'p> {
                     let Some(declared) = self.constraint_of_type_param(target) else {
                         continue;
                     };
-                    // `newDeferredTypeMapper`: the type arguments are not looked at unless the constraint mentions a type parameter.
+                    // `newDeferredTypeMapper`: the type arguments are not resolved unless the
+                    // constraint references a type parameter.
                     let constraint = if self.has_type_variables(declared) {
-                        let given = self.types_from_nodes(file, args);
-                        let filled = self.fill_type_args(&params, &given);
+                        let actual = self.types_from_nodes(file, args);
+                        let filled = self.fill_type_args(&params, &actual);
                         let mapper = self.mapper_from(&params, &filled);
                         self.instantiate(declared, mapper)
                     } else {
@@ -1496,7 +1529,8 @@ impl<'p> Checker<'p> {
                 Some(InferPosition::MappedKey) => {
                     inferences.push(self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]))
                 }
-                // `{ [K in X]: E } extends { [_ in Y]: infer T } ? ..`: `E`, with all that `K` ranges over in the place of `K`.
+                // `{ [K in X]: E } extends { [_ in Y]: infer T } ? ..`: `E`, with the constraint of
+                // `K` substituted for `K`.
                 Some(InferPosition::MappedTemplate(checked)) => {
                     let mapped = self.hir(file)[checked];
                     let template = self.type_from_node(file, mapped.ty);
@@ -1582,7 +1616,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The same for the type parameters of `sig`, whose defaults may mention those of what it was found in.
+    /// The same for the type parameters of `sig`, whose defaults may reference those of the type it
+    /// was found in.
     pub fn fill_sig_type_args(
         &mut self,
         sig: SigId,
@@ -1603,7 +1638,7 @@ impl<'p> Checker<'p> {
         let mut filled = self.fill_type_args_as(params, args, is_js);
         if let Some((_, _, outer)) = self.sig_decl(sig) {
             for (ty, &param) in filled.iter_mut().zip(params).skip(args.len()) {
-                // The default of a fresh parameter has them filled in already.
+                // The default of a cloned type parameter is already instantiated with them.
                 if matches!(*self.data(param), TypeData::TypeParam(_, _, around) if around == MapperId::IDENTITY)
                 {
                     *ty = self.instantiate(*ty, outer);
@@ -1626,12 +1661,12 @@ impl<'p> Checker<'p> {
         args: &[TypeId],
         is_js: bool,
     ) -> Vec<TypeId> {
-        let given = args.len().min(params.len());
+        let actual = args.len().min(params.len());
         let mut filled: Vec<TypeId> = Vec::with_capacity(params.len());
-        filled.extend_from_slice(&args[..given]);
+        filled.extend_from_slice(&args[..actual]);
         // Invalid forward references in default types are mapped to the error type.
         filled.resize(params.len(), TypeId::ERROR);
-        for i in given..params.len() {
+        for i in actual..params.len() {
             filled[i] = match self.default_of_type_param(params[i]) {
                 Some(default)
                     if is_js
@@ -1653,7 +1688,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── declared types of symbols ─────────────────────────────
 
-    /// What `sym` means where a type is expected.
+    /// The type that `sym` denotes in a type position.
     #[inline]
     pub fn declared_type(&mut self, sym: Sym) -> TypeId {
         if let Some((known, _)) = self.p.declared_types.get(&mut self.task, &sym) {
@@ -1677,7 +1712,7 @@ impl<'p> Checker<'p> {
         let ty = self.declared_type_uncached(sym);
         let left = self.leave(Query::Declared(sym));
         // `getDeclaredTypeOfTypeAlias`: `popTypeResolution` fails.
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let stored = self.cycle_result();
             if let Some((file, alias)) = self.alias_declaration(sym) {
                 let start = self.hir(file)[alias].name_pos;
@@ -1709,7 +1744,8 @@ impl<'p> Checker<'p> {
     fn declared_type_uncached(&mut self, sym: Sym) -> TypeId {
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
-            // `getDeclaredTypeOfClassOrInterface`: a reference to itself, with the type parameters around it and its own for arguments.
+            // `getDeclaredTypeOfClassOrInterface`: a reference to itself whose type arguments are
+            // its outer type parameters and its own.
             let outer = self.outer_type_params_of_symbol(sym);
             let local = self.local_type_params_of_symbol(sym);
             let args: Box<[TypeId]> = outer.iter().chain(local.iter()).copied().collect();
@@ -1750,7 +1786,8 @@ impl<'p> Checker<'p> {
         TypeId::UNRESOLVED
     }
 
-    /// `getDeclaredTypeOfEnum`: the union of the types of its members. An enum without members is a type of its own.
+    /// `getDeclaredTypeOfEnum`: the union of its member types. An enum without members gets a
+    /// distinct type.
     pub fn enum_type(&mut self, sym: Sym) -> TypeId {
         let mut members = Vec::new();
         let mut values = crate::util::FxHashSet::default();
@@ -1765,7 +1802,8 @@ impl<'p> Checker<'p> {
                     .files()
                     .sym(file, self.bound(file).enum_member_symbol[m.idx()]);
                 match self.enum_member_value(file, m) {
-                    // `getEnumLiteralType`: the members that have one value are one type, which goes by the first of them.
+                    // `getEnumLiteralType`: members with the same value share one type, which is
+                    // named after the first of them.
                     Some(value) => {
                         if values.insert(enum_value_key(value)) {
                             members.push(self.intern(TypeData::EnumLit {
@@ -1797,14 +1835,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getBaseTypeOfEnumLikeType`: the enum `member` is a member of.
+    /// `getBaseTypeOfEnumLikeType`: the enum type that `member` belongs to.
     pub fn enum_type_of_member(&mut self, member: Sym) -> TypeId {
         let parent = self.files().symbol(member).parent;
         if parent.is_none() {
             return TypeId::NUMBER;
         }
         let parent = self.files().sym(member.file, parent);
-        // Whichever has the name, a class, an interface or an alias declared under it comes first in `declared_type`.
+        // A class, interface or alias declared under the same name takes precedence in
+        // `declared_type`.
         if self
             .files()
             .flags(parent)
@@ -1819,12 +1858,12 @@ impl<'p> Checker<'p> {
     pub fn enum_member_type(&mut self, member: Sym) -> TypeId {
         for (file, decl) in declarations_of(self.files(), member) {
             if let Decl::EnumMember(m) = decl {
-                // `getDeclaredTypeOfEnum` passes over a member without a bindable name (`hasBindableName`), which is left with the
-                // type of the enum.
+                // `getDeclaredTypeOfEnum` skips a member without a bindable name
+                // (`hasBindableName`), which gets the type of the enum.
                 if self.hir(file)[m].name.is_none() {
                     return self.enum_type_of_member(member);
                 }
-                // `createComputedEnumType`: what has no value is a type of its own.
+                // `createComputedEnumType`: a member without a value gets a distinct type.
                 let Some(value) = self.enum_member_value(file, m) else {
                     return self.intern(TypeData::Enum {
                         symbol: member,
@@ -1879,7 +1918,7 @@ impl<'p> Checker<'p> {
         value
     }
 
-    /// `computeEnumMemberValue`. `autoValue` and `previous` are asked for, not handed down.
+    /// `computeEnumMemberValue`. `autoValue` and `previous` are computed on demand, not passed in.
     fn compute_enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Evaluated {
         let hir = self.hir(file);
         let (name, pos) = (hir[member].name, hir[member].pos);
@@ -1974,7 +2013,8 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `evaluate(e, e)`: what `e` comes to, if it is made of nothing but literals, enum members and constants that are.
+    /// `evaluate(e, e)`: the value `e` evaluates to, if it consists only of literals, enum members
+    /// and constants that themselves do.
     pub(super) fn constant_value(&mut self, file: FileId, e: ExprId) -> Option<EnumValue> {
         self.evaluate(file, e, Location::Expr(file, e)).value
     }
@@ -1987,8 +2027,9 @@ impl<'p> Checker<'p> {
         self.atoms().bytes(atom)
     }
 
-    /// `isConstantVariable(symbol)` and what `evaluateEntity` asks of its `ValueDeclaration`: a constant declared by name, its type left to
-    /// its initializer, before `location`.
+    /// `isConstantVariable(symbol)` and the conditions `evaluateEntity` checks on its
+    /// `ValueDeclaration`: a constant declared by an identifier, whose type is inferred from its
+    /// initializer, declared before `location`.
     fn constant_variable_declaration(
         &mut self,
         symbol: Sym,
@@ -2016,8 +2057,9 @@ impl<'p> Checker<'p> {
         .then_some((of, d))
     }
 
-    /// `resolveEntityName(e, meaning, ignoreErrors)`, of `e` without the parentheses around it: namespaces up to the last name. `None`
-    /// too if that is no `IsEntityNameExpression`, as `(a).b` is none.
+    /// `resolveEntityName(e, meaning, ignoreErrors)` for `e` with its enclosing parentheses
+    /// stripped: every name but the last resolves as a namespace. Also `None` if that is not an
+    /// `IsEntityNameExpression`, as `(a).b` is not.
     pub(super) fn resolve_entity_name_expression(
         &self,
         file: FileId,
@@ -2026,7 +2068,8 @@ impl<'p> Checker<'p> {
     ) -> Option<Sym> {
         let hir = self.hir(file);
         let found = match hir[e].kind {
-            // `resolveName(e, name, meaning)`. The binder has what an identifier means as a value.
+            // `resolveName(e, name, meaning)`. The binder has already resolved the value meaning of
+            // an identifier.
             ExprKind::Ident(name) if meaning == SymFlags::VALUE => {
                 self.symbol_of_identifier(file, e, name)?
             }
@@ -2054,7 +2097,7 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
-    /// The type `node` denotes, with the type parameters in scope standing for themselves.
+    /// The type `node` denotes, with the type parameters in scope left uninstantiated.
     #[inline]
     pub fn type_from_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         if node.is_none() {
@@ -2156,7 +2199,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|e| tuple_element_info(hir, &hir[e]))
                     .collect();
-                // What `...X` spreads may be an array for all that is written.
+                // `X` in `...X` may resolve to an array type regardless of its syntax.
                 for (ty, flag) in types.iter_mut().zip(&mut flags) {
                     if flag.contains(ElemFlags::VARIADIC)
                         && let Some(element) = self.array_element(*ty)
@@ -2183,7 +2226,8 @@ impl<'p> Checker<'p> {
         TypeArguments::deferred(file, node, mapper)
     }
 
-    /// `createDeferredTypeReference(target, node, nil, nil)`. `reference`: it, with what `deferred_type_arguments_of_node` gives.
+    /// `createDeferredTypeReference(target, node, nil, nil)`. `reference`: the same reference with
+    /// the result of `deferred_type_arguments_of_node`.
     fn deferred_type_reference_of_node(
         &mut self,
         file: FileId,
@@ -2201,7 +2245,7 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `core.Map(node.Elements(), c.getTypeFromTypeNode)`, of a tuple type node.
+    /// `core.Map(node.Elements(), c.getTypeFromTypeNode)` for a tuple type node.
     fn tuple_element_types_from_nodes(
         &mut self,
         file: FileId,
@@ -2211,7 +2255,7 @@ impl<'p> Checker<'p> {
         let mut types = Vec::with_capacity(elems.len());
         for e in elems.iter() {
             let elem = &hir[e];
-            // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved.
+            // `getTypeFromRestTypeNode`: for `...X[]`, `X` is resolved.
             let written = match array_element_type_node(hir, elem.ty) {
                 Some(element) if elem.rest => element,
                 _ => elem.ty,
@@ -2237,7 +2281,7 @@ impl<'p> Checker<'p> {
                 Keyword::Unknown => TypeId::UNKNOWN,
                 Keyword::Never => TypeId::NEVER,
                 Keyword::Void => TypeId::VOID,
-                // `undefinedType`, `nullType`: written as a type they are never widened.
+                // `undefinedType`, `nullType`: as type nodes they are never widened.
                 Keyword::Undefined => self.undefined_as_declared(),
                 Keyword::Null => self.null_as_declared(),
                 Keyword::String => TypeId::STRING,
@@ -2303,9 +2347,11 @@ impl<'p> Checker<'p> {
             }
             TypeNodeKind::Intersection(nodes) => {
                 let members = self.types_from_nodes(file, nodes);
-                // `getTypeFromIntersectionTypeNode`: `string & {}` stays as it is: `"a" | "b" | (string & {})` is to keep its literals.
-                // The same of `number`, `bigint` and a template with nothing generic in it. `types.indexOf(emptyTypeLiteralType)`:
-                // by the type, so `string & NonNullable<unknown>` is one and `string & E` with `type E = {}` is not.
+                // `getTypeFromIntersectionTypeNode`: `string & {}` is not reduced, so that `"a" |
+                // "b" | (string & {})` preserves its literals. The same applies to `number`,
+                // `bigint` and a non-generic template literal type.
+                // `types.indexOf(emptyTypeLiteralType)` compares by type identity, so `string &
+                // NonNullable<unknown>` qualifies and `string & E` with `type E = {}` does not.
                 if let [a, b] = members[..]
                     && let Some(empty) = members.iter().position(|&m| m == TypeId::EMPTY_OBJECT)
                 {
@@ -2353,8 +2399,9 @@ impl<'p> Checker<'p> {
                 })
             }
             TypeNodeKind::Mapped(m) => {
-                // `getTypeFromMappedTypeNode`: the constraint of the key is resolved at once, through its base constraint
-                // (`hasNonCircularBaseConstraint`), which detects a cycle through a type alias.
+                // `getTypeFromMappedTypeNode`: the constraint of the key is resolved eagerly,
+                // through its base constraint (`hasNonCircularBaseConstraint`), which detects a
+                // cycle through a type alias.
                 let key = self.type_param(file, hir[m].param);
                 self.base_constraint(key);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
@@ -2377,7 +2424,8 @@ impl<'p> Checker<'p> {
                 let ty = self
                     .indexed_access_of_type_node(obj, index, (file, node), alias)
                     .unwrap_or(TypeId::ERROR);
-                // `getPropertyTypeForIndexType`: written as `T["p"]`, what may be missing reads as `undefined`.
+                // `getPropertyTypeForIndexType`: in the indexed access type `T["p"]`, the missing
+                // type becomes `undefined`.
                 if self.contains_missing_type(ty) {
                     self.union(&[ty, TypeId::UNDEFINED])
                 } else {
@@ -2407,8 +2455,8 @@ impl<'p> Checker<'p> {
                 expr,
             } => {
                 let narrowed = self.type_of_expr(file, expr);
-                // `getTypeFromTypeQueryNode`, `getWidenedType`: the value `undefined` says nothing without strictNullChecks. What is
-                // declared `undefined` stays so.
+                // `getTypeFromTypeQueryNode`, `getWidenedType`: the type of the value `undefined`
+                // widens without strictNullChecks. A declared `undefined` is preserved.
                 if !self.p.files.options.strict_null_checks && narrowed == TypeId::UNDEFINED {
                     let is_global = |e: ExprId| self.bound(file).expr_symbol[e.idx()].is_none();
                     let is_the_value = match hir[expr].kind {
@@ -2427,7 +2475,8 @@ impl<'p> Checker<'p> {
                         return TypeId::ANY;
                     }
                 }
-                // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.` finds no property: the error type.
+                // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.`
+                // resolves to no property, so the result is the error type.
                 if narrowed == TypeId::UNRESOLVED
                     && hir.texts(name).next_back() == Some(known::empty)
                 {
@@ -2646,7 +2695,7 @@ impl<'p> Checker<'p> {
             return self.deferred_type_reference_of_node(file, scope, node, reference);
         }
         let mut args = self.types_from_nodes(file, args);
-        // In a JavaScript file a generic class or interface takes any number of type arguments.
+        // In a JavaScript file a generic class or interface accepts any number of type arguments.
         if hir.is_js && is_class_or_interface && most != 0 {
             let params = self.local_type_params_of_symbol(sym);
             args = self.fill_type_args_as(&params, &args, true);
@@ -2658,30 +2707,32 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference` and `checkNoTypeArguments`, as far as they count: how many
-    /// type parameters `sym` has. `None`: `given` is no number of type arguments it takes, and the reference is the error type.
-    /// `node`: the reference, or the class in `file` that has it after `extends`.
+    /// The type argument count checks of `getTypeFromClassOrInterfaceReference`,
+    /// `getTypeFromTypeAliasReference` and `checkNoTypeArguments`. Returns the number of type
+    /// parameters of `sym`. `None`: `actual` is not a valid number of type arguments, and the
+    /// reference is the error type.
+    /// `node`: the reference, or the class in `file` whose `extends` clause has it.
     pub(super) fn check_type_argument_count(
         &mut self,
         sym: Sym,
-        given: usize,
+        actual: usize,
         file: FileId,
         node: Result<TypeNodeId, ClassId>,
     ) -> Option<usize> {
         let flags = self.files().flags(sym);
         let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-        // `getDeclaredTypeOfTypeAlias`: an alias that is a circle (2456) never gets its type parameters.
-        let is_circle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
+        // `getDeclaredTypeOfTypeAlias`: a circular alias (2456) never gets its type parameters.
+        let is_cycle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
             self.declared_type(sym);
             let declared = self.p.declared_types.get(&mut self.task, &sym);
             declared.is_some_and(|(_, is_circular)| is_circular)
         };
-        let (least, most) = if is_circle {
+        let (least, most) = if is_cycle {
             (0, 0)
         } else {
             self.type_argument_arity(sym)
         };
-        if (least..=most).contains(&given) {
+        if (least..=most).contains(&actual) {
             return Some(most);
         }
         let hir = self.hir(file);
@@ -2692,7 +2743,7 @@ impl<'p> Checker<'p> {
         }
         let at = match node {
             Ok(node) => (file, hir[node].pos, self.end_of_type_node(file, node)),
-            // Type arguments that `@extends` gives are written somewhere else.
+            // Type arguments from an `@extends` tag are located elsewhere in the source.
             Err(class) => {
                 let start = self.start_of(file, hir[class].extends);
                 let end = super::errors::end_of_extends(self, file, &hir[class]);
@@ -2829,8 +2880,8 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `getThisType`: `this` as a type, written at `node` in `scope`. Where there is no such thing it is in error, and what is in
-    /// error has the error type.
+    /// `getThisType`: the `this` type node `node` in `scope`. Where no `this` type is available an
+    /// error is reported and the result is the error type.
     pub(super) fn this_type_at(
         &mut self,
         file: FileId,
@@ -2839,7 +2890,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         use crate::bind::{FnOwner, MemberOwner};
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `GetThisContainer`: a member of a type literal is as far as it gets.
+        // `GetThisContainer`: the walk stops at a member of a type literal.
         if bound.this_in_type_literal.contains(&node) {
             return TypeId::ERROR;
         }
@@ -2851,11 +2902,12 @@ impl<'p> Checker<'p> {
                     FnKind::Arrow | FnKind::FunctionType | FnKind::ConstructorType => {}
                     FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return TypeId::ERROR,
                     kind => {
-                        // A method or an accessor of an object literal is no member.
+                        // A method or an accessor of an object literal is not a member.
                         let FnOwner::Member(m) = bound.fns[f.idx()].owner else {
                             return TypeId::ERROR;
                         };
-                        // Of a constructor only the body will do. Parameters and body share the one scope.
+                        // For a constructor only the body qualifies. Its parameters and body share
+                        // one scope.
                         let is_in_body = matches!(hir[f].body, FnBody::Block(body) if hir.ids(body).next().is_some_and(|first| hir[first].start <= pos));
                         if hir[m].flags.contains(Flags::STATIC)
                             || !matches!(
@@ -2896,7 +2948,7 @@ impl<'p> Checker<'p> {
         TypeId::ERROR
     }
 
-    /// The `this` type of the class or the interface around `scope`.
+    /// The `this` type of the class or interface enclosing `scope`.
     pub fn this_type_in_scope(&mut self, file: FileId, mut scope: ScopeId) -> TypeId {
         let bound = self.bound(file);
         while scope.is_some() {
@@ -2916,8 +2968,8 @@ impl<'p> Checker<'p> {
         TypeId::UNRESOLVED
     }
 
-    /// `getTypeFromTypeAliasReference`, of the generic alias `sym`, past the count of the type arguments. `args`: those written at
-    /// `node`.
+    /// `getTypeFromTypeAliasReference` for the generic alias `sym`, after the type argument count
+    /// check. `args`: the type arguments at `node`.
     fn type_from_type_alias_reference(
         &mut self,
         file: FileId,
@@ -2944,8 +2996,9 @@ impl<'p> Checker<'p> {
         self.type_reference_type(sym, args, new_alias)
     }
 
-    /// `resolveTypeReferenceName(node, SymbolFlagsAlias, ignoreErrors)`, if `IsTypeReferenceType(node)`. It is `Resolve` with `isUse`: what is
-    /// found counts as read, whatever it stands for.
+    /// `resolveTypeReferenceName(node, SymbolFlagsAlias, ignoreErrors)`, if
+    /// `IsTypeReferenceType(node)`. It is `Resolve` with `isUse`: the symbol found is marked as
+    /// referenced, whatever it aliases.
     fn resolve_type_reference_name_as_alias(
         &self,
         file: FileId,
@@ -2959,10 +3012,11 @@ impl<'p> Checker<'p> {
         let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
         let files = self.files();
         let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
-        // Of `a.b` the first name is looked up as a namespace, as it was before.
+        // In `a.b` the first name is resolved as a namespace, as it was before.
         if names.len() == 1 {
-            // In the buffer that gets `type_node_types[(file, node)]`, so both are published at one barrier: a task that hits that entry
-            // sees the mark, and a task that misses it gets here itself.
+            // Written to the same buffer as `type_node_types[(file, node)]`, so both are published
+            // at the same barrier: a task that hits that entry sees the mark, and a task that
+            // misses it reaches this code itself.
             for &part in files.parts(alias).iter() {
                 (self.p.symbol_reference_links).insert(&self.task, part, (), Stored::new());
             }
@@ -2988,8 +3042,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `isDeferredTypeReferenceNode`, for `node` written in `scope`: an array type, a tuple type or a reference to a generic class
-    /// or interface.
+    /// `isDeferredTypeReferenceNode` for `node` in `scope`: an array type, a tuple type or a
+    /// reference to a generic class or interface.
     fn is_deferred_type_reference_node(
         &self,
         file: FileId,
@@ -3085,8 +3139,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `typeArguments` in `getTypeArguments`: what `node`, the node of the deferred type reference `ty`, says they are, before
-    /// `d.mapper`.
+    /// `typeArguments` in `getTypeArguments`: the type arguments resolved from `node`, the node of
+    /// the deferred type reference `ty`, before `d.mapper` is applied.
     pub(super) fn type_arguments_from_node(
         &mut self,
         ty: TypeId,
@@ -3116,12 +3170,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `sym<args>`, where `sym` is not an alias for something imported.
+    /// `sym<args>`, where `sym` is not an import alias.
     pub fn type_reference(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         self.type_reference_type(sym, args, None)
     }
 
-    /// `getTypeReferenceType`. `alias`: what `getTypeAliasInstantiation` is handed, where `sym` is a generic type alias.
+    /// `getTypeReferenceType`. `alias`: the alias passed to `getTypeAliasInstantiation`, where
+    /// `sym` is a generic type alias.
     pub(super) fn type_reference_type(
         &mut self,
         sym: Sym,
@@ -3136,7 +3191,8 @@ impl<'p> Checker<'p> {
                 return declared;
             }
             let filled = self.fill_type_args(&params, args);
-            // `getTypeFromClassOrInterfaceReference`: only its own are given. Those around the declaration are passed on as they are.
+            // `getTypeFromClassOrInterfaceReference`: only its own type parameters get type
+            // arguments. The outer type parameters of the declaration are passed through unchanged.
             let all = self.type_arguments(declared);
             let outer = &all[..all.len().saturating_sub(params.len())];
             let args: Box<[TypeId]> = if outer.is_empty() {
@@ -3263,8 +3319,8 @@ impl<'p> Checker<'p> {
             .intern_sig(SigData::Decl { file, func, mapper })
     }
 
-    /// `getSignatureFromDeclaration`, of the constructor `func` in the declaration `class` of `sym`: its type parameters are those
-    /// of the class, and it returns the class.
+    /// `getSignatureFromDeclaration` for the constructor `func` in the declaration `class` of
+    /// `sym`: its type parameters are those of the class, and its return type is the class type.
     pub(super) fn sig_of_constructor(
         &mut self,
         sym: Sym,
@@ -3272,8 +3328,9 @@ impl<'p> Checker<'p> {
         class: ClassId,
         func: FnId,
     ) -> SigId {
-        // `resolveAnonymousTypeMembers` instantiates the signatures with what the type parameters around the class stand for too,
-        // and `instantiate_sig` only carries on what the mapper of a signature is about.
+        // `resolveAnonymousTypeMembers` also instantiates the signatures with the mappings of the
+        // class's outer type parameters, and `instantiate_sig` only instantiates the type
+        // parameters that the signature's mapper covers.
         let scope = self.bound(file).class_scope[class.idx()];
         let mapper = if scope.is_some() {
             let parent = self.bound(file).scopes[scope.idx()].parent;
@@ -3289,7 +3346,8 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getSignatureOfFullSignatureType`: the signature a JSDoc `@type` tag gives `func` as a whole.
+    /// `getSignatureOfFullSignatureType`: the signature that a JSDoc `@type` tag declares for the
+    /// whole of `func`.
     pub(super) fn full_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
         let hir = self.hir(file);
         let node = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
@@ -3313,7 +3371,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getParameterTypeOfFullSignature`, of the parameter of `func` at `index`.
+    /// `getParameterTypeOfFullSignature` for the parameter of `func` at `index`.
     pub(super) fn param_type_of_full_signature(
         &mut self,
         file: FileId,
@@ -3339,7 +3397,7 @@ impl<'p> Checker<'p> {
         Some(self.sig_return(sig))
     }
 
-    /// The type parameters that are still to be given.
+    /// The type parameters that have not been instantiated yet.
     #[inline]
     pub fn sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         let recent = self.recent_sig_type_params[sig.0 as usize % RECENT_SIGS];
@@ -3354,7 +3412,7 @@ impl<'p> Checker<'p> {
         params
     }
 
-    /// `sig_type_params`, of a signature that was not asked about lately.
+    /// `sig_type_params` for a signature that was not queried recently.
     fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
             SigData::Synth { type_params, .. } => return List::Kept(type_params),
@@ -3362,7 +3420,7 @@ impl<'p> Checker<'p> {
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
                 // `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
-                // Not final until the function is checked, so it is not kept.
+                // Not final until the function is checked, so it is not cached.
                 return match self.takes_context(*file, *func) {
                     Some(owner) if self.is_context_sensitive(*file, owner) => {
                         List::Own(self.adopted_type_params(sig))
@@ -3400,13 +3458,13 @@ impl<'p> Checker<'p> {
                         let declared = self.type_param(file, tp);
                         match self.types().map(mapper, declared) {
                             None => Some(declared),
-                            // `instantiateSignatureEx`: its own fresh parameter. The declared one is a type argument like any
-                            // other: `f<T>(x)` inside `f`.
-                            Some(given) => match *self.data(given) {
+                            // `instantiateSignatureEx`: its own fresh type parameter. The declared
+                            // one is an ordinary type argument: `f<T>(x)` inside `f`.
+                            Some(actual) => match *self.data(actual) {
                                 TypeData::TypeParam(f, t, around)
                                     if f == file && t == tp && around != MapperId::IDENTITY =>
                                 {
-                                    Some(given)
+                                    Some(actual)
                                 }
                                 _ => None,
                             },
@@ -3468,8 +3526,9 @@ impl<'p> Checker<'p> {
         self.sig_params_not_recent(sig)
     }
 
-    /// `sig_params`, for a caller that stands where tsgo asks for the types of the first `count` parameters (`getTypeAtPosition`): a
-    /// circle through one of them is a circle, and `sig_params_of_declaration` would take it for its own doing.
+    /// `sig_params` for a caller at a point where tsgo requests the types of the first `count`
+    /// parameters (`getTypeAtPosition`): a cycle through one of them is a real cycle, and
+    /// `sig_params_of_declaration` would treat it as caused by itself.
     pub(super) fn sig_params_up_to(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         if self.recent_sig_params[sig.0 as usize % RECENT_SIGS].0 != sig
             && let SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } =
@@ -3489,12 +3548,12 @@ impl<'p> Checker<'p> {
         List::Kept(kept)
     }
 
-    /// `sig_params`, of a signature that was not asked about lately.
+    /// `sig_params` for a signature that was not queried recently.
     fn sig_params_not_recent(&mut self, sig: SigId) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
             SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
-            // Nothing is kept for one of these.
+            // Nothing is cached for these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
                     Some(base) => self.sig_params(base),
@@ -3527,15 +3586,16 @@ impl<'p> Checker<'p> {
     ) -> Vec<SigParam> {
         let hir = self.hir(file);
         let mut out = Vec::with_capacity(hir[func].params.len());
-        // `getImmediatelyInvokedFunctionExpression`: how many arguments a function that is called where it is written is called with.
+        // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
+        // immediately invoked function expression.
         let bound = self.bound(file);
-        let given = bound
+        let actual = bound
             .get_immediately_invoked_function_expression(hir, func)
             .map(|call| hir[call].args.len());
-        // `SignatureFlagsIsUntypedSignatureInJSFile`, `getMinArgumentCount`: JavaScript that says nothing of its parameters, and of which
-        // nothing is expected, can be called with as few arguments as one likes.
+        // `SignatureFlagsIsUntypedSignatureInJSFile`, `getMinArgumentCount`: a JavaScript function
+        // with untyped parameters and no contextual type has no minimum argument count.
         let is_untyped_in_js = hir.is_js
-            && given.is_none()
+            && actual.is_none()
             && matches!(
                 hir[func].kind,
                 FnKind::Decl
@@ -3559,17 +3619,19 @@ impl<'p> Checker<'p> {
                 PatKind::Ident(name) => name,
                 _ => Atom::NONE,
             };
-            // TypeScript looks at the type of a parameter when there is an argument to hold against it.
+            // TypeScript resolves the type of a parameter when there is an argument to check
+            // against it.
             self.eager.push(self.stack.len());
             let declared = self.type_of_param(file, p);
             self.eager.pop();
-            // `isOptionalParameter`: nobody else calls it, so what it is not given it does not need.
-            let is_omitted = given.is_some_and(|given| i >= given)
+            // `isOptionalParameter`: it has no other caller, so a parameter that gets no argument
+            // is optional.
+            let is_omitted = actual.is_some_and(|actual| i >= actual)
                 && param.ty.is_none()
                 && !param.flags.contains(Flags::REST);
             let optional =
                 param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
-            // Seen from outside, what may be left out may as well be given as `undefined`.
+            // For callers, an optional parameter also accepts `undefined`.
             let declared = if optional {
                 self.optional(declared)
             } else {
@@ -3621,8 +3683,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getReturnTypeOfSignature` of a signature that is not the one of a declaration as written: `sig.resolvedReturnType`, or what
-    /// `resolve` gives between `pushTypeResolution` and `popTypeResolution`.
+    /// `getReturnTypeOfSignature` for a signature that is not the declared signature of a
+    /// declaration: `sig.resolvedReturnType`, or the result of `resolve` between
+    /// `pushTypeResolution` and `popTypeResolution`.
     fn resolve_return_type(
         &mut self,
         sig: SigId,
@@ -3643,7 +3706,7 @@ impl<'p> Checker<'p> {
         }
         let ty = resolve(self);
         let left = self.leave(Query::ReturnOfSignature(sig));
-        if self.left_a_circle {
+        if self.left_a_cycle {
             let stored = self.cycle_result();
             if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
                 self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
@@ -3667,8 +3730,8 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// Whether `mapper` maps any type parameter to another type. A declared type or signature has no mapper in tsgo. Ours has a
-    /// mapper of identity pairs.
+    /// Whether `mapper` maps any type parameter to another type. A declared type or signature has
+    /// no mapper in tsgo. Here it has a mapper of identity pairs.
     pub(super) fn is_instantiating(&self, mapper: MapperId) -> bool {
         self.types()
             .mapping(mapper)
@@ -3761,7 +3824,8 @@ impl<'p> Checker<'p> {
         let mut types = Vec::with_capacity(sigs.len());
         for &sig in sigs {
             match self.sig_predicate(sig) {
-                // All have to be about the same thing, and nothing is made of assertions.
+                // All predicates must have the same target, and assertion predicates are not
+                // combined.
                 Some(predicate) => {
                     let differs = last.is_some_and(|last| last.param != predicate.param);
                     if predicate.asserts || differs {
@@ -3770,7 +3834,7 @@ impl<'p> Checker<'p> {
                     types.push(predicate.ty?);
                     last = Some(predicate);
                 }
-                // In a union, one that returns `false` is passed over.
+                // In a union, a signature that returns `false` is skipped.
                 None => {
                     if !is_union
                         || !matches!(self.sig_return(sig), TypeId::FALSE | TypeId::FRESH_FALSE)
@@ -3799,7 +3863,8 @@ impl<'p> Checker<'p> {
             .map_or(0, |i| i + 1)
     }
 
-    /// The type of the argument at `index`, going into a rest parameter if it gets that far.
+    /// The parameter type for the argument at `index`, indexing into the rest parameter if `index`
+    /// reaches it.
     pub fn param_type_at(&mut self, params: &[SigParam], index: usize) -> Option<TypeId> {
         let last = params.last()?;
         if index < params.len() - usize::from(last.rest) {
@@ -3822,7 +3887,7 @@ impl<'p> Checker<'p> {
         Some(self.rest_element_type(last.ty, offset))
     }
 
-    /// What element `offset` of the array or tuple a rest parameter is declared as holds.
+    /// The type of element `offset` of the array or tuple type a rest parameter is declared with.
     pub fn rest_element_type(&mut self, rest: TypeId, offset: usize) -> TypeId {
         if let Some(element) = self.array_element(rest) {
             return element;
@@ -3846,8 +3911,8 @@ impl<'p> Checker<'p> {
                     .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
                 {
                     Some(first) => {
-                        // `shouldDeferIndexedAccessType`: with a `...T` in it, only what is within the fixed elements of both ends
-                        // can be told.
+                        // `shouldDeferIndexedAccessType`: in a tuple with a variadic `...T`, only
+                        // indexes within the fixed elements at either end can be resolved.
                         let fixed_at_end = flags
                             .iter()
                             .rev()
@@ -3858,7 +3923,8 @@ impl<'p> Checker<'p> {
                         {
                             return TypeId::UNRESOLVED;
                         }
-                        // `getRestTypeOfTupleType`: from the first element that stands for any number on, it can be any of them.
+                        // `getRestTypeOfTupleType`: from the first variable-length element on, the
+                        // type is the union of the remaining elements.
                         self.tuple_element_union(&elems[first..], &flags[first..])
                     }
                     None => TypeId::UNRESOLVED,

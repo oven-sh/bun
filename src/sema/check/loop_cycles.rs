@@ -1,21 +1,22 @@
-//! Which circles through the back edge of a loop are TypeScript's own.
+//! Which cycles through the back edge of a loop also occur in TypeScript.
 
 use super::*;
 use crate::bind::PatParent;
 
 impl<'p> Checker<'p> {
-    /// Whether every question from `stack[i]` up is one TypeScript asks as well, whoever asks first: the type of a variable, or of an
-    /// element of its pattern, that is inferred from an initializer (`checkDeclarationInitializer`, which goes through
-    /// `checkExpressionCached`), or of an expression whose operands `checkExpression` always looks at, what a function returns, or a
-    /// call that is being resolved. Of a call that is only here for `getQuickTypeOfExpression`, what is called is looked at with the
-    /// loop in sight.
-    pub(super) fn is_circle_of_initializers(&self, i: usize) -> bool {
-        let questions = &self.stack[i..];
-        questions.iter().enumerate().all(|(at, &q)| match q {
+    /// Whether every query from `stack[i]` up is one TypeScript also makes, regardless of query
+    /// order: the type of a variable, or of an element of its pattern, that is inferred from an
+    /// initializer (`checkDeclarationInitializer`, which goes through `checkExpressionCached`), or
+    /// of an expression whose operands `checkExpression` always checks, the return type of a
+    /// function, or a call that is being resolved. For a call that is only on the stack for
+    /// `getQuickTypeOfExpression`, the callee is checked with the loop visible.
+    pub(super) fn is_cycle_of_initializers(&self, i: usize) -> bool {
+        let queries = &self.stack[i..];
+        queries.iter().enumerate().all(|(at, &q)| match q {
             Query::Expr(file, e) if matches!(self.hir(file)[e].kind, ExprKind::Call(_)) => {
-                // `getReturnTypeOfSingleNonGenericCallSignature` is a resolution like any other. After the last question comes the
-                // one that is come back to.
-                let next = *questions.get(at + 1).unwrap_or(&questions[0]);
+                // `getReturnTypeOfSingleNonGenericCallSignature` is an ordinary resolution. The
+                // last query is followed by the one the cycle re-enters.
+                let next = *queries.get(at + 1).unwrap_or(&queries[0]);
                 next == Query::Call(file, e) || matches!(next, Query::Return(..))
             }
             Query::Call(..) | Query::Return(..) => true,

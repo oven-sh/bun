@@ -1,11 +1,13 @@
-//! What is gone through or taken apart: 2488 2504 2493, 2405 2407, 2339 2537 2538 and 2341 2445 2446 of what an assignment takes out of
-//! an object, 2531 2532 2533 2571 where nothing is taken out, and 2322 where what comes out is assigned.
+//! Iteration and destructuring: 2488 2504 2493, 2405 2407, 2339 2537 2538 and 2341 2445 2446 for
+//! the properties a destructuring assignment reads, 2531 2532 2533 2571 for a pattern that
+//! destructures nothing, and 2322 where the destructured value is assigned.
 //!
-//! Follows `checkForOfStatement`, `checkForInStatement`, `getIteratedTypeOrElementType`, `checkDestructuringAssignment` with what it
-//! calls, `checkVariableLikeDeclaration` as far as patterns go, `checkYieldExpression`, and `checkSignatureDeclaration` for what a
-//! generator says it returns, of TypeScript 7.0.2's checker.go.
+//! Follows `checkForOfStatement`, `checkForInStatement`, `getIteratedTypeOrElementType`,
+//! `checkDestructuringAssignment` with its callees, `checkVariableLikeDeclaration` for binding
+//! patterns, `checkYieldExpression`, and `checkSignatureDeclaration` for the return type annotation
+//! of a generator, of TypeScript 7.0.2's checker.go.
 
-use super::errors_x_operators::{start_of_dots_before, start_of_equals_before, why_no_reference};
+use super::errors_operators::{start_of_dots_before, start_of_equals_before, why_no_reference};
 use super::mapped::AccessNode;
 use super::symbols::IterationUse;
 use super::*;
@@ -30,14 +32,14 @@ impl Checker<'_> {
         if self.is_any(input_type) {
             return input_type;
         }
-        // An array or a tuple can be gone through: where it is written is not looked for.
+        // An array or a tuple is iterable: the error position is not computed.
         let error_node = (!self.is_array_or_tuple(input_type))
             .then(|| self.span_of_parenthesized_expr(file, expr));
         self.iterated_type_or_element_type(usage, input_type, TypeId::UNDEFINED, error_node)
             .unwrap_or(TypeId::ANY)
     }
 
-    /// `checkForOfStatement`, where `var_expr` is written in the place of a declaration.
+    /// `checkForOfStatement`, where the expression `var_expr` takes the place of a declaration.
     pub(super) fn check_for_of_initializer(
         &mut self,
         file: FileId,
@@ -63,11 +65,11 @@ impl Checker<'_> {
         );
     }
 
-    /// `checkForInStatement`: 2405 2406 2780 2407. `left`: what is written before `in`.
+    /// `checkForInStatement`: 2405 2406 2780 2407. `left`: the initializer before `in`.
     pub(super) fn check_for_in_statement(&mut self, file: FileId, left: StmtId, expr: ExprId) {
         let right_type = self.type_of_expr(file, expr);
         let right_type = self.non_nullable_type_if_needed(right_type);
-        // A literal as it stands is a pattern, which is another matter: 2491.
+        // An unparenthesized literal is a pattern, which is a different error: 2491.
         if let StmtKind::Expr(var_expr) = self.hir(file)[left].kind
             && !self.is_assignment_pattern(file, var_expr)
         {
@@ -106,15 +108,20 @@ impl Checker<'_> {
             if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_)))
                 && !self.is_definite_assignment_target(file, e)
             {
-                let given = self.type_of_expr(file, inner);
-                if !self.is_only_nullish(given) && !self.is_spread_of_array_like(file, e, given) {
+                let actual = self.type_of_expr(file, inner);
+                if !self.is_only_nullish(actual) && !self.is_spread_of_array_like(file, e, actual) {
                     let error_node = self.span_of_parenthesized_expr(file, inner);
-                    self.check_iterated(IterationUse::Spread, given, TypeId::UNDEFINED, error_node);
+                    self.check_iterated(
+                        IterationUse::Spread,
+                        actual,
+                        TypeId::UNDEFINED,
+                        error_node,
+                    );
                 }
             }
         }
-        // `createGeneratorType`, which a generator that does not say what it returns is always asked for: that there is neither a `Generator`
-        // nor an `IterableIterator` is said, of no file.
+        // `createGeneratorType`, which is always evaluated for a generator without a return type
+        // annotation: a missing `Generator` and `IterableIterator` is reported, without a file.
         for i in 0..hir.fns.len() {
             let f = &hir.fns[i];
             if !f.flags.contains(Flags::GENERATOR)
@@ -160,8 +167,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `e`, which is assigned to, is a pattern: an array or object literal as it stands. In parentheses it is an expression
-    /// like any other.
+    /// Whether the assignment target `e` is a pattern: an unparenthesized array or object literal.
+    /// Parenthesized, it is an ordinary expression.
     fn is_assignment_pattern(&self, file: FileId, e: ExprId) -> bool {
         matches!(
             self.hir(file)[e].kind,
@@ -169,37 +176,40 @@ impl Checker<'_> {
         ) && !is_parenthesized(self.hir(file), e)
     }
 
-    /// `checkSpreadExpression`, as far as the type goes. `given`: the type of what is spread. `never` where it is not asked:
-    /// `checkArrayLiteral` and `getSpreadArgumentType` look at what is spread instead.
+    /// The type computation of `checkSpreadExpression`. `actual`: the type of the spread operand.
+    /// `never` where it is not requested: `checkArrayLiteral` and `getSpreadArgumentType` check the
+    /// operand instead.
     pub(super) fn type_of_spread_expression(
         &mut self,
         file: FileId,
         spread: ExprId,
-        given: TypeId,
+        actual: TypeId,
     ) -> TypeId {
-        if self.is_only_nullish(given) || self.is_spread_of_array_like(file, spread, given) {
+        if self.is_only_nullish(actual) || self.is_spread_of_array_like(file, spread, actual) {
             return TypeId::NEVER;
         }
-        self.iterated_type_or_element_type(IterationUse::Spread, given, TypeId::UNDEFINED, None)
+        self.iterated_type_or_element_type(IterationUse::Spread, actual, TypeId::UNDEFINED, None)
             .unwrap_or(TypeId::ERROR)
     }
 
-    /// Whether `isArrayLikeType` keeps `spread`, which spreads a `given`, from `checkIteratedTypeOrElementType`: what is like an array
-    /// is taken as it is. `never` is like one, and cannot be gone through.
-    /// `said`: the errors of the file so far.
-    fn is_spread_of_array_like(&mut self, file: FileId, spread: ExprId, given: TypeId) -> bool {
+    /// Whether `isArrayLikeType` exempts `spread`, whose operand has type `actual`, from
+    /// `checkIteratedTypeOrElementType`: an array-like type is used as is. `never` is array-like,
+    /// and is not iterable.
+    /// `reported`: the errors of the file so far.
+    fn is_spread_of_array_like(&mut self, file: FileId, spread: ExprId, actual: TypeId) -> bool {
         let Parent::Expr(parent) = self.bound(file).expr_parent[spread.idx()] else {
             return false;
         };
         // `checkArrayLiteral`, `getSpreadArgumentType`
         let asks = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
-            || !self.is_array_or_tuple(given)
+            || !self.is_array_or_tuple(actual)
                 && self.is_spread_left_to_rest_parameter(file, parent, spread);
-        asks && self.is_array_like(given)
+        asks && self.is_array_like(actual)
     }
 
-    /// `getSignatureApplicabilityError`, `inferTypeArguments`: whether the argument `spread` of `call` is one of those that are not
-    /// looked at by themselves, since a rest parameter that is no plain array collects them.
+    /// `getSignatureApplicabilityError`, `inferTypeArguments`: whether the argument `spread` of
+    /// `call` is one of those that are not checked individually, because a rest parameter that is
+    /// not a plain array collects them.
     fn is_spread_left_to_rest_parameter(
         &mut self,
         file: FileId,
@@ -217,7 +227,7 @@ impl Checker<'_> {
         if self.non_array_rest_type(&params).is_none() {
             return false;
         }
-        // `getEffectiveCallArguments`: a tuple that is spread counts for what is in it.
+        // `getEffectiveCallArguments`: a spread tuple counts as its elements.
         let mut before = 0;
         for a in hir.ids(hir[id].args) {
             if a == spread {
@@ -228,8 +238,9 @@ impl Checker<'_> {
         if before + 1 < self.parameter_count(&params) {
             return false;
         }
-        // `getCandidateForOverloadFailure`, `resolveUntypedCall`: in a call that does not go through every argument is looked at by
-        // itself after all. What is wrong with the call has been out.
+        // `getCandidateForOverloadFailure`, `resolveUntypedCall`: in a call that fails to resolve
+        // every argument is checked individually after all. The errors of the call have already
+        // been reported.
         let (start, end) = (self.start_of(file, call), self.end_of_expr(file, call));
         !self
             .reported
@@ -237,19 +248,19 @@ impl Checker<'_> {
             .any(|d| (start..end).contains(&d.start))
     }
 
-    /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told.
+    /// `checkIteratedTypeOrElementType`. `None`: it is not iterable, or unknown.
     fn check_iterated(
         &mut self,
         usage: IterationUse,
-        given: TypeId,
+        actual: TypeId,
         sent: TypeId,
         error_node: (FileId, u32, u32),
     ) -> Option<TypeId> {
-        if self.is_any(given) {
-            return Some(given);
+        if self.is_any(actual) {
+            return Some(actual);
         }
-        let iterated = self.iterated_type_or_element_type(usage, given, sent, Some(error_node))?;
-        // Without `Iterable` what comes out is not looked into.
+        let iterated = self.iterated_type_or_element_type(usage, actual, sent, Some(error_node))?;
+        // Without `Iterable` the iterated type is not inspected.
         (self.global_type_of_arity(known::Iterable, 3).is_some()).then_some(iterated)
     }
 
@@ -262,7 +273,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let mut target = node;
-        // A default. In parentheses it is none.
+        // A default. Parenthesized, it is not one.
         if let ExprKind::Assign {
             op: None,
             target: left,
@@ -270,7 +281,8 @@ impl Checker<'_> {
         } = hir[node].kind
             && !is_parenthesized(hir, node)
         {
-            // `checkBinaryExpression`. What is wrong with `left` as a reference is said with the operators.
+            // `checkBinaryExpression`. Errors in `left` as a reference are reported with the
+            // operators.
             let initializer = self.type_of_expr(file, value);
             if self.is_assignment_pattern(file, left) {
                 self.check_destructuring_assignment(file, left, initializer);
@@ -288,7 +300,8 @@ impl Checker<'_> {
                     None,
                 );
             }
-            // That of `{ a = d }` sees to it that nothing is missing only if it cannot be `undefined` itself.
+            // The default of `{ a = d }` removes `undefined` from the source type only if it cannot
+            // be `undefined` itself.
             let is_shorthand = matches!(self.bound(file).expr_parent[node.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
             if self.p.files.options.strict_null_checks
                 && !(is_shorthand && self.is_possibly_undefined(initializer))
@@ -357,7 +370,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkObjectLiteralDestructuringPropertyAssignment`. 1136, of what is no property assignment, is said with the grammar.
+    /// `checkObjectLiteralDestructuringPropertyAssignment`. 1136, for a member that is not a
+    /// property assignment, is reported with the grammar checks.
     fn check_object_literal_destructuring_property_assignment(
         &mut self,
         file: FileId,
@@ -416,7 +430,8 @@ impl Checker<'_> {
                 Some(&|_| name),
             );
         }
-        // `getIndexNodeForAccessExpression`: of `[k]`, what is in the brackets. `["a"]` is kept as the name `a`.
+        // `getIndexNodeForAccessExpression`: for `[k]`, the expression in the brackets. `["a"]` is
+        // stored as the name `a`.
         let name = match property.key {
             PropKey::Computed(k) => (file, self.start_of(file, k), self.end_of_expr(file, k)),
             _ => {
@@ -563,8 +578,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkVariableLikeDeclaration`, "For a binding pattern, validate the initializer and exit", where `needCheckWidenedType`: nothing in
-    /// `pat` has a name, so no element asks what is taken apart.
+    /// `checkVariableLikeDeclaration`, "For a binding pattern, validate the initializer and exit",
+    /// where `needCheckWidenedType`: no element of `pat` has a name, so no element requests the
+    /// destructured type.
     pub(super) fn check_empty_binding_pattern(&mut self, file: FileId, pat: PatId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !Self::is_pattern_without_names(hir, pat) {
@@ -578,7 +594,7 @@ impl Checker<'_> {
             PatParent::Elem(_, elem) => (hir.node(elem), hir[elem].default),
         };
         let root = bound.pat_parent[root_pattern(bound, pat).idx()];
-        // An initializer where there is no body is 2371, and no more is said.
+        // An initializer in a function without a body is 2371, and nothing else is reported.
         if let PatParent::Param(q) = root
             && initializer.is_some()
             && matches!(hir[bound.param_fn[q.idx()]].body, FnBody::None)
@@ -599,8 +615,9 @@ impl Checker<'_> {
             let initializer_type = self.type_of_expr(file, initializer);
             self.check_non_null_non_void_type(initializer_type, error_node);
         }
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` looks at the parameters of an argument while the call is being
-        // resolved, when what is expected is still in terms of the type parameters of what is called.
+        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters of a
+        // function argument while the call is being resolved, when the contextual type still refers
+        // to the type parameters of the callee.
         if let PatParent::Param(q) = bound.pat_parent[pat.idx()] {
             let func = bound.param_fn[q.idx()];
             let index = (q.0 - hir[func].params.start) as usize;
@@ -611,7 +628,7 @@ impl Checker<'_> {
                 return;
             }
         }
-        // `getWidenedTypeForVariableLikeDeclaration`. What is written out is not widened.
+        // `getWidenedTypeForVariableLikeDeclaration`. An annotated type is not widened.
         let mut widened_type = self.type_of_pat(file, pat);
         let is_annotated = match root {
             PatParent::Var(d) => hir[d].ty.is_some(),
@@ -629,7 +646,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkNonNullNonVoidType`, of a declaration, which is no entity name.
+    /// `checkNonNullNonVoidType` for a declaration, which is not an entity name.
     fn check_non_null_non_void_type(&mut self, ty: TypeId, error_node: (FileId, u32, u32)) {
         use super::flow::NonNullError;
         let non_null_type = self.check_non_null_type_with_reporter(ty, |c, error| {

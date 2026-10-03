@@ -1,19 +1,20 @@
-//! What is left of the operators, assertions, templates and `yield`: 1186 1355 1360, 2412 2462 2566 2701 2731 2737, 2778 2779, 2796,
-//! 2860 2861, 7057, and 2364 of `=`.
+//! The remaining checks of operators, assertions, templates and `yield`: 1186 1355 1360, 2412 2462
+//! 2566 2701 2731 2737, 2778 2779, 2796, 2860 2861, 7057, and 2364 for `=`.
 //!
-//! Follows `checkAssignmentOperator` for `=`, `checkDestructuringAssignment` as far as the grammar of a pattern goes, `checkAssertion`,
-//! `checkSatisfiesExpression`, `checkTemplateExpression`, `resolveTaggedTemplateExpression`, `checkInstanceOfExpression`,
-//! `resolveInstanceofExpression` and `checkYieldExpression` of TypeScript 7.0.2's checker.go, and `checkGrammarBigIntLiteral` and
-//! `checkGrammarBindingElement` of its grammarchecks.go.
+//! Follows `checkAssignmentOperator` for `=`, the pattern grammar part of
+//! `checkDestructuringAssignment`, `checkAssertion`, `checkSatisfiesExpression`,
+//! `checkTemplateExpression`, `resolveTaggedTemplateExpression`, `checkInstanceOfExpression`,
+//! `resolveInstanceofExpression` and `checkYieldExpression` of TypeScript 7.0.2's checker.go, and
+//! `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` of its grammarchecks.go.
 //!
-//! To be called after `check_assignments`: 2412 takes the place of the 2322 that is said there.
+//! Must be called after `check_assignments`: 2412 replaces the 2322 reported there.
 
 use super::*;
 use crate::bind::Parent;
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_> {
-    /// `a = b`. After `check_assignments`, whose words it puts others in the place of.
+    /// `a = b`. Runs after `check_assignments`, whose diagnostics it replaces.
     pub(super) fn check_x_operators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
@@ -42,7 +43,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkGrammarBigIntLiteral`: 2737. One that is a type is not an expression here.
+    /// `checkGrammarBigIntLiteral`: 2737. A bigint literal type is not an expression here.
     pub(super) fn check_grammar_big_int_literal(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         if language_version(self) < ScriptTarget::ES2020 && !hir.is_ambient(hir.node(e)) {
@@ -71,17 +72,18 @@ pub(super) fn check_grammar_rest_element(
     }
 }
 
-// ───────────────────────────── how it is written ─────────────────────────────
+// ───────────────────────────── source text ─────────────────────────────
 
-/// `GetEmitScriptTarget`: unsaid, it is the latest standard.
+/// `GetEmitScriptTarget`: defaults to the latest standard.
 pub(super) fn language_version(c: &Checker<'_>) -> ScriptTarget {
     match c.p.files.options.target {
         ScriptTarget::None => ScriptTarget::ES2025,
-        said => said,
+        reported => reported,
     }
 }
 
-/// The end of `GetErrorRangeForNode` of `e` as it is written. 0 if nobody is going to read it.
+/// The end of `GetErrorRangeForNode` of `e` as it appears in the source. 0 if no caller will read
+/// it.
 fn error_end(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
     c.error_end_of(file, e)
 }
@@ -98,7 +100,7 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
     e
 }
 
-/// Where the `=` right before `value` is.
+/// Position of the `=` directly before `value`.
 pub(super) fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, value) as usize).min(text.len());
@@ -106,7 +108,7 @@ pub(super) fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprI
     (end > 0 && text[end - 1] == b'=').then(|| end as u32 - 1)
 }
 
-/// Where the `...` right before `operand` is.
+/// Position of the `...` directly before `operand`.
 pub(super) fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, operand) as usize).min(text.len());
@@ -121,7 +123,7 @@ fn is_undefined(_: &Checker<'_>, ty: TypeId) -> bool {
     ty.is_undefined()
 }
 
-/// The types of two operands, if both were found out for sure.
+/// The types of two operands, if both were fully resolved.
 fn operand_types(
     c: &mut Checker<'_>,
     file: FileId,
@@ -144,7 +146,7 @@ pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     is_literal && !is_parenthesized(hir, e)
 }
 
-// ───────────────────────────── what is assigned to ─────────────────────────────
+// ───────────────────────────── assignment targets ─────────────────────────────
 
 /// `checkReferenceExpression`
 fn check_reference_expression(
@@ -162,7 +164,8 @@ fn check_reference_expression(
     false
 }
 
-/// `checkReferenceExpression`: which of the two codes `e` gets, if it is no reference.
+/// `checkReferenceExpression`: which of the two codes is reported for `e`, if it is not a
+/// reference.
 pub(super) fn why_no_reference(
     hir: &File,
     e: ExprId,
@@ -183,7 +186,8 @@ pub(super) fn why_no_reference(
     }
 }
 
-/// `a = b`, as `checkBinaryLikeExpression` has it. A pattern is `checkDestructuringAssignment`'s.
+/// `a = b`, as in `checkBinaryLikeExpression`. A pattern is handled by
+/// `checkDestructuringAssignment`.
 fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId, value: ExprId) {
     let hir = c.hir(file);
     if !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
@@ -193,7 +197,8 @@ fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId, val
     }
 }
 
-/// `checkAssignmentOperator`. `value`: what is assigned, or `NONE` where the operator makes something else of it first.
+/// `checkAssignmentOperator`. `value`: the assigned expression, or `NONE` where the operator
+/// transforms it first.
 fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, value: ExprId) {
     if !check_reference_expression(c, file, target, 2364, 2779)
         || value.is_none()
@@ -201,7 +206,7 @@ fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, 
     {
         return;
     }
-    // What may be left out is not for that reason allowed to be `undefined`.
+    // An optional property does not thereby accept `undefined`.
     let hir = c.hir(file);
     let ExprKind::Dot { obj, name, .. } = hir[target].kind else {
         return;
@@ -212,13 +217,13 @@ fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, 
     if c.is_any(object) {
         return;
     }
-    // What cannot be written to has the error type, and anything goes into that.
+    // A target that cannot be assigned has the error type, to which anything is assignable.
     let left = c.type_of_expr(file, target);
     if c.is_error_type(left) {
         return;
     }
     let there = c.non_nullable(object);
-    let Some(wanted) = exact_optional_write_type(c, there, name) else {
+    let Some(expected) = exact_optional_write_type(c, there, name) else {
         return;
     };
     // `isExactOptionalPropertyMismatch`. Only an unparenthesized property access changes the head message. The property is looked
@@ -231,7 +236,7 @@ fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, 
     if !c.check_assignable_with_end(
         file,
         source,
-        wanted,
+        expected,
         at,
         error_end(c, file, target),
         value,
@@ -298,7 +303,7 @@ pub(super) fn check_satisfies(
 
 // ───────────────────────────── templates ─────────────────────────────
 
-/// `checkTemplateExpression`, of what is substituted.
+/// `checkTemplateExpression` for the substitutions.
 pub(super) fn check_template_spans(c: &mut Checker<'_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
@@ -308,7 +313,7 @@ pub(super) fn check_template_spans(c: &mut Checker<'_>, file: FileId, spans: IdL
     }
 }
 
-/// `resolveTaggedTemplateExpression`, where it does not come to `resolveCall`.
+/// `resolveTaggedTemplateExpression`, the paths that do not reach `resolveCall`.
 pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId, call: CallId) {
     let hir = c.hir(file);
     let data = hir[call];
@@ -336,14 +341,14 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId
             c.error(file, c.hir(file).child(data.callee), 2796, &[]);
         }
     }
-    // `resolveUntypedCall`: the template is looked at like one without a tag.
+    // `resolveUntypedCall`: the template is checked like an untagged one.
     check_template_spans(c, file, data.args);
 }
 
 // ───────────────────────────── `instanceof` and `in` ─────────────────────────────
 
-/// `checkInstanceOfExpression`, `resolveInstanceofExpression`, of `e`, which is `left instanceof right`: 2358 2359, and 2860 2861 for
-/// what the signature it resolves to makes of it.
+/// `checkInstanceOfExpression`, `resolveInstanceofExpression` for `e`, which is `left instanceof
+/// right`: 2358 2359, and 2860 2861 from checking against the signature it resolves to.
 pub(super) fn check_instance_of_expression(
     c: &mut Checker<'_>,
     file: FileId,
@@ -368,7 +373,7 @@ pub(super) fn check_instance_of_expression(
         }
         return;
     };
-    // What a type parameter extends may not have been found out.
+    // The constraint of a type parameter may not have been resolved.
     let apparent_right = c.apparent_type(r);
     if c.is_any(apparent_right) {
         return;
@@ -396,7 +401,8 @@ pub(super) fn check_instance_of_expression(
 /// `hasEmptyObjectIntersection`
 pub(super) fn has_empty_object_intersection(c: &mut Checker<'_>, ty: TypeId) -> bool {
     for &part in c.parts(ty) {
-        // The `{}` that is left of `unknown`, as opposed to one that is written or stands for instances nothing is known of.
+        // The `{}` that remains of `unknown`, as opposed to one that is declared or that represents
+        // instances of unknown shape.
         if part == TypeId::UNKNOWN_EMPTY_OBJECT {
             return true;
         }
@@ -452,7 +458,8 @@ fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
     }
 }
 
-/// The end of `checkYieldExpression`: 7057, nothing says what `yield` gives, and it is not all the same.
+/// The end of `checkYieldExpression`: 7057, nothing specifies the type `yield` evaluates to, and
+/// that type matters.
 pub(super) fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId) {
     if !c.p.files.options.no_implicit_any {
         return;
@@ -476,7 +483,8 @@ pub(super) fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId) {
     if is_result_unused(hir, bound, e) {
         return;
     }
-    // `getContextualTypeForArgumentAtIndex`: what `import()` is given is expected to be a string.
+    // `getContextualTypeForArgumentAtIndex`: the argument of `import()` has the contextual type
+    // string.
     if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
     {
         return;

@@ -1,21 +1,27 @@
 //! Signatures.
 //!
-//! * Type parameters: 2368 2716 2706 2744 2636 2637, and 2344 (or what says more) for a default that is not what the parameter extends.
-//! * Parameter lists: 1098, 1014 1013 1047 1048 1015 1016, 1346 1347, 7060 1200; parameters: 2398 2681 2784.
-//! * Accessors, methods, constructors, properties: 1005 1318, 1221 1222, 1092 1093, 1245 1267, 2676 2808.
+//! * Type parameters: 2368 2716 2706 2744 2636 2637, and 2344 (or a more specific error) for a
+//!   default that does not satisfy the constraint of the parameter.
+//! * Parameter lists: 1098, 1014 1013 1047 1048 1015 1016, 1346 1347, 7060 1200; parameters: 2398
+//!   2681 2784.
+//! * Accessors, methods, constructors, properties: 1005 1318, 1221 1222, 1092 1093, 1245 1267, 2676
+//!   2808.
 //! * Return types: 2505 1064 1058 1062, 2705 2712, 1228 1229 2677 1230 1225.
 //! * `erasableSyntaxOnly`: 1294.
 //!
-//! Follows `checkTypeParameter`, `checkTypeParameterDeferred`, `checkTypeParameters`, `checkTypeParametersNotReferenced`, `checkParameter`,
-//! `checkPropertyDeclaration`, `checkSignatureDeclaration`, `checkAsyncFunctionReturnType`, `checkMethodDeclaration`,
-//! `checkAccessorDeclaration`, `checkTypePredicate`,
-//! `createPromiseReturnType`, `getAwaitedTypeNoAliasEx` and `checkAssertion` of TypeScript 7.0.2's checker.go,
-//! `checkGrammarTypeParameterList`, `checkGrammarParameterList`, `checkGrammarForUseStrictSimpleParameterList`,
-//! `checkGrammarArrowFunction`, `checkGrammarForGenerator`, `checkGrammarAccessor`, `checkGrammarMethod` and
+//! Follows `checkTypeParameter`, `checkTypeParameterDeferred`, `checkTypeParameters`,
+//! `checkTypeParametersNotReferenced`, `checkParameter`, `checkPropertyDeclaration`,
+//! `checkSignatureDeclaration`, `checkAsyncFunctionReturnType`, `checkMethodDeclaration`,
+//! `checkAccessorDeclaration`, `checkTypePredicate`, `createPromiseReturnType`,
+//! `getAwaitedTypeNoAliasEx` and `checkAssertion` of TypeScript 7.0.2's checker.go,
+//! `checkGrammarTypeParameterList`, `checkGrammarParameterList`,
+//! `checkGrammarForUseStrictSimpleParameterList`, `checkGrammarArrowFunction`,
+//! `checkGrammarForGenerator`, `checkGrammarAccessor`, `checkGrammarMethod` and
 //! `checkGrammarConstructorTypeParameters` of its grammarchecks.go.
 //!
-//! The summary of a file does not keep everything these ask about: a body where none belongs, a `this` parameter, `"use strict"`, where a
-//! `?` or a modifier is. That is read from the text, from a place the summary does have.
+//! The HIR of a file does not store everything these checks need: a body where none is allowed, a
+//! `this` parameter, `"use strict"`, the position of a `?` or a modifier. That is read from the
+//! source text, starting at a position the HIR does have.
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
@@ -23,8 +29,9 @@ use crate::util::FxHashSet;
 
 // ───────────────────────────── the text ─────────────────────────────
 
-/// Where the type the summary has at `pos` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&`
-/// before its only member. Only for a type that follows a `:`, a `=`, an `is` or a `<`, which none of these can be mistaken for.
+/// The start in the source of the type the HIR has at `pos`. The HIR stores neither the parentheses
+/// around a type nor a `|` or a `&` before its only member. Only for a type that follows a `:`, a
+/// `=`, an `is` or a `<`, which cannot be confused with any of these.
 pub(super) fn start_of_type_in_source(text: &[u8], pos: u32) -> u32 {
     let mut start = pos as usize;
     if start > text.len() {
@@ -39,7 +46,8 @@ pub(super) fn start_of_type_in_source(text: &[u8], pos: u32) -> u32 {
     }
 }
 
-/// Where the type alias, class, interface or function declaration that has the type parameter `tp` is named.
+/// Position of the name of the type alias, class, interface or function declaration that owns the
+/// type parameter `tp`.
 fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32> {
     let has = |list: Span<TypeParamId>| list.range().contains(&tp.idx());
     let alias = hir.aliases.iter().find(|a| has(a.type_params));
@@ -75,7 +83,8 @@ impl Checker<'_> {
         if !hir.type_params.iter().any(|p| p.default.is_some()) {
             return;
         }
-        // In the order they are written: which parameter of a circle is the one to blame depends on where the circle is entered.
+        // In source order: which parameter of a cycle gets the error depends on where the cycle is
+        // entered.
         let mut order: Vec<usize> = (0..hir.type_params.len())
             .filter(|&i| bound.type_param_symbol[i].is_some())
             .collect();
@@ -95,7 +104,8 @@ impl Checker<'_> {
                         self.error_at((file, start, end), 2716, &[Arg::Type(param)]);
                     }
                 } else {
-                    // `getConstraintOfTypeParameter`: another declaration of a merged class or interface may write the constraint.
+                    // `getConstraintOfTypeParameter`: another declaration of a merged class or
+                    // interface may declare the constraint.
                     let param = self.type_param(file, tp);
                     if let (Some(constraint), Some(default)) = (
                         self.constraint_of_type_param(param),
@@ -119,7 +129,7 @@ impl Checker<'_> {
                                 self.error_at(at, 2321, &[Arg::Type(source), Arg::Type(target)]);
                             }
                         }
-                        // Printing compares too.
+                        // Printing a type also runs comparisons.
                         self.relations_too_deep.clear();
                     }
                 }
@@ -127,7 +137,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getResolvedTypeParameterDefault`: one that is asked for while it is being worked out is circular.
+    /// `getResolvedTypeParameterDefault`: a default requested while its resolution is in progress
+    /// is circular.
     fn resolve_type_parameter_default(
         &mut self,
         param: (FileId, TypeParamId),
@@ -150,9 +161,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeFromTypeNode`, for the defaults of type parameters it asks for: those a generic type is named without arguments for
-    /// (`fillMissingTypeArguments`). Only what is looked into at once counts: not what is in an object type or a function type, nor
-    /// what a type alias stands for, where such a reference waits until it is needed.
+    /// `getTypeFromTypeNode`, restricted to the type parameter defaults it requests: those of a
+    /// generic type referenced without type arguments (`fillMissingTypeArguments`). Only eagerly
+    /// resolved nodes count: not the contents of an object type or a function type, nor the target
+    /// of a type alias, where such a reference is deferred until it is needed.
     fn resolve_type_node_eagerly(
         &mut self,
         file: FileId,
@@ -217,8 +229,8 @@ impl Checker<'_> {
         resolution.done.insert((file, node));
     }
 
-    /// `checkTypeParameterDeferred`, of the type parameters `params` of a declaration of the class, interface or type alias `symbol`:
-    /// 2637, 2636.
+    /// `checkTypeParameterDeferred` for the type parameters `params` of a declaration of the class,
+    /// interface or type alias `symbol`: 2637, 2636.
     pub(super) fn check_type_parameters_deferred(
         &mut self,
         file: FileId,
@@ -228,7 +240,7 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_annotated = |tp: TypeParamId| hir[tp].flags.intersects(Flags::IN | Flags::OUT);
-        // Where the only declaration annotates nothing, nothing is annotated.
+        // If the only declaration has no annotations, there are none.
         if symbol.is_none()
             || !params.iter().any(is_annotated)
                 && bound.symbols[symbol.idx()].decls.len() == 1
@@ -238,7 +250,7 @@ impl Checker<'_> {
         }
         let sym = self.files().sym(file, symbol);
         let declared = self.declared_type(sym);
-        // A reference to a class or an interface takes the outer type parameters first.
+        // A reference to a class or an interface lists the outer type parameters first.
         let all = if is_alias {
             self.type_params_of_symbol(sym)
         } else {
@@ -265,7 +277,7 @@ impl Checker<'_> {
                     TypeData::Anon { .. } | TypeData::Fns { .. } | TypeData::Synth(_)
                 )
             {
-                // A name that is missing takes no room, and is where the token before it ends.
+                // A missing name has an empty span at the end of the previous token.
                 let is_nameless = (decl.name == known::empty || decl.name.is_none())
                     && decl.constraint.is_none()
                     && decl.default.is_none();
@@ -292,7 +304,8 @@ impl Checker<'_> {
             };
             // `reportUnreliableWorker` ignores these markers. `report_unreliable` fires on every marker, so its flags are dropped.
             let reliability = self.reliability;
-            // `c.varianceTypeParameter`: the markers go by its name for as long as this is put into words.
+            // `c.varianceTypeParameter`: the markers are printed with its name while this
+            // diagnostic is formatted.
             self.set_variance_type_parameter(Some(own));
             let at = (file, start, self.end_of_type_param(file, tp));
             self.check_type_assignable_to(source, target, Some(at), Some(2636));
@@ -313,7 +326,7 @@ impl Checker<'_> {
         }
     }
 
-    // ───────────────────────────── what is returned ─────────────────────────────
+    // ───────────────────────────── return types ─────────────────────────────
 
     /// `checkTypePredicate`: 1228, 1229, 2677, 1230, 1225.
     pub(super) fn check_type_predicate(&mut self, file: FileId, node: TypeNodeId) {
@@ -442,7 +455,8 @@ impl Checker<'_> {
         );
     }
 
-    /// `createPromiseReturnType`, where there is a `Promise` to name as a type but none to make one with: 2712, 2705.
+    /// `createPromiseReturnType`, where `Promise` exists as a type but not as a constructor value:
+    /// 2712, 2705.
     fn check_promise_constructor_exists(&mut self, file: FileId) {
         if self.global_type_symbol(known::Promise).is_none()
             || self
@@ -463,7 +477,8 @@ impl Checker<'_> {
                 self.report_global_error(2468, vec![b"Promise".to_vec()]);
             }
         }
-        // `getReturnTypeFromBody` only gets there for a function that returns nothing, calls of itself aside.
+        // `getReturnTypeFromBody` only reaches that point for a function that returns nothing,
+        // apart from recursive calls.
         for i in 0..hir.fns.len() {
             let (f, func) = (FnId(i as u32), &hir.fns[i]);
             let info = &bound.fns[i];
@@ -481,8 +496,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // What it returns has to be asked for: it always is of an expression, by a `return`, and by a call.
-            let is_asked = match (func.kind, info.owner) {
+            // Its return type must be requested: that always happens for a function expression,
+            // through a `return`, and through a call.
+            let is_requested = match (func.kind, info.owner) {
                 (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(_)) => true,
                 (FnKind::Decl | FnKind::Method, FnOwner::Stmt(_) | FnOwner::Member(_))
                     if !info.returns.is_empty() =>
@@ -499,7 +515,7 @@ impl Checker<'_> {
                 }
                 _ => false,
             };
-            if is_asked {
+            if is_requested {
                 let (start, end) = self.error_range_of_fn(file, f);
                 self.error_at((file, start, end), 2705, &[]);
                 self.report_global_error(2468, vec![b"Promise".to_vec()]);
@@ -508,7 +524,8 @@ impl Checker<'_> {
     }
 }
 
-/// Whether `e` calls the function `f` by its own name, which says nothing about what `f` returns.
+/// Whether `e` calls the function `f` by its own name, which contributes nothing to the return type
+/// of `f`.
 fn is_call_of_itself(hir: &hir::File, bound: &Bound, f: FnId, e: ExprId) -> bool {
     let symbol = bound.fn_symbol[f.idx()];
     symbol.is_some()
@@ -522,8 +539,8 @@ enum DefaultState {
     Circular,
 }
 
-/// How far `getResolvedTypeParameterDefault` has got with each type parameter it was asked about, and the types written whose
-/// working out is over and done with.
+/// The resolution state of `getResolvedTypeParameterDefault` for each type parameter requested, and
+/// the type nodes whose resolution has completed.
 #[derive(Default)]
 struct DefaultResolution {
     states: FxHashMap<(FileId, TypeParamId), DefaultState>,

@@ -82,8 +82,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.parse_typescript_enum_stmt(loc, opts)
     }
 
-    /// An error TypeScript's parser knows nothing of: its checker says it of the tree (`grammarErrorOnNode` and the like).
-    /// It is no part of what the parser objects to, so it hides nothing that is said of the same place afterwards.
+    /// An error that TypeScript's parser does not report: its checker reports it on the tree
+    /// (`grammarErrorOnNode` and the like).
+    /// It is not a parse error, so it does not suppress later errors at the same position.
     #[cold]
     #[inline(never)]
     fn grammar_error(p: &mut Self, r: bun_ast::Range, code: u32) {
@@ -172,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return p.parse_stmt(opts);
             }
         }
-        // `parseDeclarationWorker` decides by the kind of the token.
+        // `parseDeclarationWorker` dispatches on the token kind.
         let is_declaration = match p.lexer.token {
             T::TVar | T::TConst | T::TFunction | T::TEnum | T::TImport | T::TExport => true,
             T::TIdentifier => {
@@ -204,7 +205,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before
             })
         {
-            // `parseVariableStatement`: after modifiers, `using` starts a declaration list whatever follows it.
+            // `parseVariableStatement`: after modifiers, `using` starts a declaration list
+            // regardless of the next token.
             let loc = p.lexer.loc();
             p.lexer.next()?;
             opts.is_using_statement = true;
@@ -255,8 +257,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `parseModifiersEx`: decorators are modifiers, and may come after `export` or `export default` as well as before.
-    /// They all decorate the class. What `checkGrammarModifiers` has against where they are is said here.
+    /// `parseModifiersEx`: decorators are modifiers, and may come after `export` or `export
+    /// default` as well as before.
+    /// They all decorate the class. The errors of `checkGrammarModifiers` about their position are
+    /// reported here.
     #[cold]
     #[inline(never)]
     fn more_decorators(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
@@ -445,7 +449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root_if.unwrap());
             }
 
-            // Continue with else if. It ends where the whole does.
+            // Continue with else if. It ends at the end of the whole statement.
             current_loc = p.lexer.loc();
             let full_start = p.lexer.full_start();
             p.note_range(&mut current_loc, full_start, bun_ast::Loc::EMPTY);
@@ -507,7 +511,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
         p.pop_scope();
 
-        // What is in the parentheses is a statement to the type checker. This is its range.
+        // The type checker treats the contents of the parentheses as a statement. This is its span.
         let mut body_loc = body_loc;
         p.note_range(&mut body_loc, test_full_start, test_end);
         Ok(p.s(
@@ -520,16 +524,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// What is neither a clause of a `switch` (`code` 1130) nor a statement of one (1129). `abortParsingListOrMoveToNextToken`,
-    /// as far as it goes without knowing which lists are open: what can start no statement is skipped, and the list ends at
-    /// anything else. `true`: it ends here, and the token stays.
+    /// Error recovery at a token that is neither a clause of a `switch` (`code` 1130) nor a
+    /// statement of one (1129). `abortParsingListOrMoveToNextToken`, as far as possible without
+    /// tracking the open parsing contexts: a token that cannot start a statement is skipped, and
+    /// the list ends at any other token. `true`: the list ends here, and the token is not consumed.
     #[cold]
     #[inline(never)]
     fn stray_in_switch(p: &mut Self, code: u32) -> Result<bool> {
         match p.lexer.token {
-            // `isListTerminator`: every list ends where the file does.
+            // `isListTerminator`: the end of the file terminates every list.
             T::TEndOfFile => return Ok(true),
-            // A clause starts with the word, however it is written.
+            // The word starts a clause, escaped or not.
             T::TEscapedKeyword if matches!(p.lexer.identifier, b"case" | b"default") => {
                 p.lexer.unescape_keyword();
                 return Ok(false);
@@ -540,7 +545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.ts_error(range, code);
         if matches!(
             p.lexer.token,
-            // `isListElement`: while recovering, `;` is no statement.
+            // `isListElement`: during error recovery, `;` is not a statement.
             T::TSemicolon
                 | T::TCloseParen
                 | T::TCloseBracket
@@ -597,7 +602,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     p.lexer.next()?;
                     p.lexer.expect(T::TColon)?;
-                    // `checkSwitchStatement` objects to the second one, once for each `switch`. `GetErrorRangeForNode`: up to its `:`.
+                    // `checkSwitchStatement` reports the second one, once for each `switch`.
+                    // `GetErrorRangeForNode`: up to its `:`.
                     if found_default && !said_default {
                         said_default = true;
                         let range = p.lexer.range_from(clause_start);
@@ -622,7 +628,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TCloseBrace | T::TCase | T::TDefault => {
                             break 'case_body;
                         }
-                        // They end the statements of a clause, however they are written.
+                        // They terminate the statement list of a clause, escaped or not.
                         T::TEscapedKeyword
                             if p.lexer.tolerant
                                 && !p.lexer.is_log_disabled
@@ -678,8 +684,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    /// The `{` of `parseBlock`. `false`, in tolerant mode only: it is not there. That has been said, the token stays, the
-    /// block is empty and no `}` is looked for.
+    /// The `{` of `parseBlock`. `false`, in tolerant mode only: it is missing. The error has been
+    /// reported, the token is not consumed, the block is empty and no `}` is expected.
     #[inline]
     fn open_block(p: &mut Self) -> Result<bool> {
         let exists = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
@@ -689,7 +695,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline(never)]
     fn t_try(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
-        // `parseStatement` sends `catch` and `finally` here as well: `try` is missed then, and nothing is taken for it.
+        // `parseStatement` dispatches `catch` and `finally` here as well: the missing `try` is then
+        // reported, and no token is consumed for it.
         p.lexer.expect(T::TTry)?;
         let body_loc = p.lexer.loc();
         let body_full_start = p.lexer.full_start();
@@ -723,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (p.lexer.token == T::TOpenParen || !p.lexer.tolerant)
             {
                 p.lexer.expect(T::TOpenParen)?;
-                // `parseVariableDeclaration`: what is caught is a variable like any other.
+                // `parseVariableDeclaration`: the catch variable is parsed like any other variable.
                 let value_full_start = p.lexer.full_start();
                 let mut value = p.parse_binding(crate::parser::ParseBindingOptions {
                     private_name_code: 18029,
@@ -738,7 +745,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.note_type(&mut value.loc, crate::sema::Mark::Annotation);
                 }
 
-                // It may have an initializer, then. `checkCatchClause` objects to it, unless there is a type to look at.
+                // So it may have an initializer. `checkCatchClause` reports it, unless there is a
+                // type annotation to check.
                 if p.lexer.token == T::TEquals && p.lexer.tolerant {
                     p.lexer.next()?;
                     let at = p.lexer.range();
@@ -791,7 +799,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             if p.lexer.token != T::TFinally && p.lexer.tolerant && !p.lexer.is_log_disabled {
-                // `parseTryStatement`: 'catch' or 'finally' expected, and nothing is taken for it.
+                // `parseTryStatement`: 'catch' or 'finally' expected, and no token is consumed for
+                // it.
                 let (before, range) = (p.lexer.prev_error_loc, p.lexer.range());
                 p.lexer.ts_error(range, 1472);
                 p.lexer.put_up_with(before)?;
@@ -831,13 +840,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `parseVariableDeclarationList` in the head of a `for`, the lexer past `var`, `let` or `const`: whether the list of
-    /// declarations is empty.
+    /// `parseVariableDeclarationList` in the head of a `for`, with the lexer past `var`, `let` or
+    /// `const`: whether the declaration list is empty.
     #[cold]
     #[inline(never)]
     fn no_declaration_follows(p: &mut Self) -> bool {
         if p.lexer.is_contextual_keyword(b"of") {
-            // `nextIsIdentifierAndCloseParen`: "for (var of x)", where `of` is the keyword of the loop and no variable.
+            // `nextIsIdentifierAndCloseParen`: "for (var of x)", where `of` is the keyword of the
+            // loop and not a variable.
             let old_lexer = p.lexer.snapshot();
             p.lexer.is_log_disabled = true;
             let is_keyword = p.lexer.next().is_ok()
@@ -847,7 +857,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.restore(&old_lexer);
             return is_keyword;
         }
-        // What starts no declaration (`isBindingIdentifierOrPrivateIdentifierOrPattern`) and ends the list (`isListTerminator`).
+        // Tokens that cannot start a declaration
+        // (`isBindingIdentifierOrPrivateIdentifierOrPattern`) and that terminate the list
+        // (`isListTerminator`).
         match p.lexer.token {
             T::TIdentifier | T::TOpenBrace | T::TOpenBracket | T::TPrivateIdentifier => false,
             T::TIn | T::TSemicolon | T::TEqualsGreaterThan | T::TCloseBrace | T::TEndOfFile => true,
@@ -855,7 +867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The same, the lexer at the keyword, where it stays.
+    /// The same, with the lexer at the keyword. Consumes nothing.
     #[cold]
     #[inline(never)]
     fn no_declaration_follows_keyword(p: &mut Self) -> bool {
@@ -866,8 +878,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    /// The declarations of a list that has none. `checkGrammarVariableDeclarationList` objects where they would start, right
-    /// after `keyword`.
+    /// The declarations of an empty declaration list. `checkGrammarVariableDeclarationList` reports
+    /// it at the position where they would start, right after `keyword`.
     #[cold]
     #[inline(never)]
     fn no_declarations(p: &mut Self, keyword: bun_ast::Range) -> G::DeclList {
@@ -942,7 +954,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let init_loc = p.lexer.loc();
             let init_full_start = p.lexer.full_start();
             let mut is_var = false;
-            // `parseForOrForInOrForOfStatement`: `let` here always starts a list of declarations, be it an empty one.
+            // `parseForOrForInOrForOfStatement`: `let` here always starts a declaration list,
+            // possibly an empty one.
             let is_empty_let_list = bad_let_range.is_some()
                 && p.lexer.tolerant
                 && Self::no_declaration_follows_keyword(p);
@@ -1044,8 +1057,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.finish_node(&mut init.loc, init_full_start);
             }
 
-            // `parseForOrForInOrForOfStatement`: after `await`, wherever the loop stands, `of` is expected, and nothing is taken
-            // for it. Failing that the loop is what it looks like without.
+            // `parseForOrForInOrForOfStatement`: after `await`, regardless of the enclosing
+            // context, `of` is expected, and no token is consumed for it. If it is missing, the
+            // kind of the loop is determined as without `await`.
             if wrote_await
                 && !p.lexer.is_contextual_keyword(b"of")
                 && p.lexer.tolerant
@@ -1099,7 +1113,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForOf {
-                        // `parseForOrForInOrForOfStatement`: `await` after `for` makes it one wherever the loop stands.
+                        // `parseForOrForInOrForOfStatement`: `await` after `for` sets it regardless
+                        // of the enclosing context.
                         is_await: is_for_await || wrote_await && p.lexer.tolerant,
                         init: init_.unwrap(),
                         value,
@@ -1140,7 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.lexer.expect(T::TSemicolon)?;
-            // `parseForOrForInOrForOfStatement`: no condition is looked for before a `)` either.
+            // `parseForOrForInOrForOfStatement`: no condition is parsed before a `)` either.
             if p.lexer.token != T::TSemicolon
                 && !(p.lexer.token == T::TCloseParen && p.lexer.tolerant)
             {
@@ -1232,8 +1247,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             start: loc.start + 5,
         };
         if p.lexer.tolerant {
-            // `parseThrowStatement`: nothing of the next line is taken, and what is thrown is missing. `checkThrowStatement`
-            // objects, right after the keyword.
+            // `parseThrowStatement`: nothing on the next line is consumed, and the thrown
+            // expression is missing. `checkThrowStatement` reports it right after the keyword.
             Self::grammar_error(p, bun_ast::Range { loc: after, len: 0 }, 1142);
             let value = p.new_expr(js_ast::E::Missing {}, after);
             p.lexer.expect_or_insert_semicolon()?;
@@ -1303,7 +1318,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StatementScope::Module => p.esm_export_keyword = p.lexer.range(),
             StatementScope::Namespace => {}
             StatementScope::Nested => {
-                // `parseStatement` takes `export` anywhere. The checker reports 1184, 1231, 1233 or 1258.
+                // `parseStatement` accepts `export` anywhere. The checker reports 1184, 1231, 1233
+                // or 1258.
                 if !p.lexer.tolerant {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
@@ -1329,7 +1345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.lexer.token != T::TDefault
             && !p.lexer.is_contextual_keyword(b"abstract")
             && !p.lexer.is_contextual_keyword(b"declare")
-            // One more modifier, which is objected to as such.
+            // Another modifier, which is reported as such.
             && !(p.lexer.token == T::TExport && p.lexer.tolerant)
         {
             Self::decorators_without_class(p, opts)?;
@@ -1462,7 +1478,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // "export public class Foo {}", "export global {}": `parseModifiersEx` takes any modifiers.
+                    // "export public class Foo {}", "export global {}": `parseModifiersEx` accepts
+                    // any modifiers.
                     // `parse_declaration_after_modifiers` reports the misplaced ones.
                     if p.lexer.tolerant
                         && !p.lexer.is_contextual_keyword(b"defer")
@@ -1656,8 +1673,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_name_optional: true,
                         ..Default::default()
                     };
-                    // Scopes are pushed in the order of the places they are given, and decorators that come after `default` may
-                    // have pushed some.
+                    // Scopes are pushed in order of their positions, and decorators after `default`
+                    // may have pushed some.
                     let class_loc = if p.lexer.tolerant { abstract_loc } else { loc };
                     let stmt: Stmt = p.parse_class_stmt(class_loc, &mut stmt_opts)?;
 
@@ -1819,7 +1836,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let export_clause = p.parse_export_clause()?;
                 if p.lexer.is_contextual_keyword(b"from")
-                    // `parseExportDeclaration`: a string on the same line is the specifier after a forgotten "from" (1005).
+                    // `parseExportDeclaration`: a string on the same line is the specifier after a
+                    // missing "from" (1005).
                     || (p.lexer.token == T::TStringLiteral
                         && p.lexer.tolerant
                         && !p.lexer.has_newline_before)
@@ -1916,7 +1934,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                 if Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.next()?;
-                    // `parseExportAssignment`: an assignment expression, which a comma ends.
+                    // `parseExportAssignment`: an assignment expression, which ends at a comma.
                     let value = p.parse_expr(if p.lexer.tolerant {
                         Level::Comma
                     } else {
@@ -1928,7 +1946,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.unexpected()?;
                 Err(crate::Error::SyntaxError)
             }
-            // `parseModifiersEx`: `export` is a modifier as often as it is written.
+            // `parseModifiersEx`: `export` is a modifier each time it occurs.
             T::TExport if p.lexer.tolerant && !p.lexer.is_log_disabled => {
                 if Self::export_is_modifier(p) {
                     opts.is_export = true;
@@ -1959,15 +1977,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let at = p.lexer.full_start();
             p.lexer.ts_error(bun_ast::Range { loc: at, len: 0 }, 1146);
         } else {
-            // A list of statements has skipped such an `export` already (1128). Where a single statement is parsed,
-            // `parseStatement` looks for an expression.
+            // A statement list has already skipped such an `export` (1128). Where a single
+            // statement is parsed, `parseStatement` expects an expression.
             p.lexer.ts_error(bun_ast::Range { loc, len: 6 }, 1109);
         }
         Ok(Stmt::empty())
     }
 
-    /// `nextTokenCanFollowModifier`, of the `export` the lexer is at: whether it is a modifier of what follows. If not it is
-    /// the keyword of `export =`, `export {}`, `export *`, `export as namespace` or `export default` before an expression.
+    /// `nextTokenCanFollowModifier` for the `export` at the current token: whether it is a modifier
+    /// of what follows. If not it is the keyword of `export =`, `export {}`, `export *`, `export as
+    /// namespace` or `export default` before an expression.
     #[cold]
     #[inline(never)]
     fn export_is_modifier(p: &mut Self) -> bool {
@@ -1978,7 +1997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_modifier
     }
 
-    /// What `export_is_modifier` looks at. The lexer is left wherever that took it.
+    /// The lookahead of `export_is_modifier`. Does not restore the lexer.
     fn scan_after_export(p: &mut Self) -> Result<bool> {
         p.lexer.next()?;
         if p.lexer.token == T::TDefault {
@@ -1989,7 +2008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 return Ok(true);
             }
-            let wanted = if p.lexer.is_contextual_keyword(b"abstract") {
+            let expected = if p.lexer.is_contextual_keyword(b"abstract") {
                 T::TClass
             } else if p.lexer.is_contextual_keyword(b"async") {
                 T::TFunction
@@ -1997,7 +2016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(false);
             };
             p.lexer.next()?;
-            return Ok(p.lexer.token == wanted && !p.lexer.has_newline_before);
+            return Ok(p.lexer.token == expected && !p.lexer.has_newline_before);
         }
         if p.lexer.is_contextual_keyword(b"type") {
             p.lexer.next()?;
@@ -2048,7 +2067,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "export import foo = bar"
         if (opts.is_export || (opts.scope.is_namespace() && !opts.is_typescript_declare))
             && p.lexer.token != T::TIdentifier
-            // `parseImportDeclarationOrImportEqualsDeclaration` takes every form of import after `export` and in a namespace.
+            // `parseImportDeclarationOrImportEqualsDeclaration` accepts every form of import after
+            // `export` and in a namespace.
             && !p.lexer.tolerant
         {
             p.lexer.expected(T::TIdentifier)?;
@@ -2366,7 +2386,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect_contextual_keyword(b"from")?;
             }
-            // `tryParseImportClause`: a reserved word starts no import clause. It is where the module specifier should be.
+            // `tryParseImportClause`: a reserved word cannot start an import clause. It is at the
+            // position where the module specifier is expected.
             _ if p.lexer.tolerant => {}
             _ => {
                 p.lexer.unexpected()?;
@@ -2405,7 +2426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Whether `parse_path` can read the module specifier at the current token.
+    /// Whether `parse_path` can parse the module specifier at the current token.
     #[inline]
     fn is_at_string_specifier(p: &Self) -> bool {
         matches!(
@@ -2414,8 +2435,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `parseModuleSpecifier` at a token that is not a string, and the rest of the import declaration. Any expression is taken.
-    /// `checkExternalImportOrExportDeclaration` reports 1141 unless the expression is missing, and checks nothing else.
+    /// `parseModuleSpecifier` at a token that is not a string, and the rest of the import
+    /// declaration. Any expression is accepted.
+    /// `checkExternalImportOrExportDeclaration` reports 1141 unless the expression is missing, and
+    /// checks nothing else.
     /// Tolerant mode only.
     #[cold]
     #[inline(never)]
@@ -2536,8 +2559,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Label { name: _name, stmt }, loc))
     }
 
-    /// `parseStatement`, of a statement that is in no list: the body of an `if`, a loop or a label, what follows a `case`. Its
-    /// modifiers are its own.
+    /// `parseStatement` for a statement that is not in a statement list: the body of an `if`, a
+    /// loop or a label, or the statement after a `case`. Its modifiers are its own.
     #[inline]
     fn parse_embedded_stmt(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         let outer_modifiers_base = p.begin_statement();
@@ -2632,9 +2655,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `parseDeclaration`, at a modifier that no statement takes: `public class C {}`, `async enum E {}`, `abstract interface I {}`.
-    /// TypeScript's parser accepts any modifiers before a declaration, and the checker reports the first misplaced one.
-    /// Returns `None`, with nothing consumed, if no declaration starts here or none of its modifiers has to be dropped.
+    /// `parseDeclaration`, at a modifier that no statement accepts: `public class C {}`, `async
+    /// enum E {}`, `abstract interface I {}`.
+    /// TypeScript's parser accepts any modifiers before a declaration, and the checker reports the
+    /// first misplaced one.
+    /// Returns `None`, with nothing consumed, if no declaration starts here or none of its
+    /// modifiers has to be dropped.
     #[cold]
     #[inline(never)]
     fn parse_declaration_after_modifiers(
@@ -2674,7 +2700,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(None);
         }
         let mut stmt = p.parse_stmt(opts)?;
-        // `parseFunctionDeclaration`: `modifierListHasAsync`, wherever `async` stands among the modifiers.
+        // `parseFunctionDeclaration`: `modifierListHasAsync`, with `async` at any position among
+        // the modifiers.
         if is_async && let js_ast::StmtData::SFunction(function) = &mut stmt.data {
             function.func.flags.insert(js_ast::Flags::Function::IsAsync);
         }
@@ -2685,7 +2712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn missing_semicolon_after_expr(p: &mut Self, expr: &Expr) -> Result<()> {
-        // `(x)`, `x as T`, `x!` and `x<T>` are only `x` in the tree.
+        // `(x)`, `x as T`, `x!` and `x<T>` are just `x` in the AST.
         let is_wrapped = p.last_cast(expr).is_some();
         let at = p.real_loc(expr.loc);
         match &expr.data {
@@ -2762,8 +2789,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// The word from `loc` to `end`, which spells `name`, was taken for the keyword of the statement that has just been parsed. `nextToken`
-    /// objects to a keyword that is written with an escape. `global` is read as a name (`parseAmbientExternalModuleDeclaration`).
+    /// The word from `loc` to `end`, which spells `name`, was treated as the keyword of the
+    /// statement just parsed. `nextToken` reports a keyword written with an escape. `global` is
+    /// parsed as a name (`parseAmbientExternalModuleDeclaration`).
     #[cold]
     #[inline(never)]
     fn ts_keyword_was_taken(
@@ -2776,7 +2804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if ts_stmt != js_lexer::TypescriptStmtKeyword::TsStmtGlobal
             && !p.source.contents()[loc.start as usize..].starts_with(name)
         {
-            // It comes before all that was said of the rest of the statement.
+            // It precedes all errors reported for the rest of the statement.
             let last = p.lexer.prev_error_loc;
             let len = end.map_or(0, |end| end.start - loc.start);
             p.lexer.ts_error(bun_ast::Range { loc, len }, 1260);
@@ -2784,8 +2812,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A reserved word written with an escape, where a statement starts. It is the word it spells, and `nextToken` objects to
-    /// the escape when the word is taken.
+    /// A reserved word written with an escape, at the start of a statement. It is treated as the
+    /// word it spells, and `nextToken` reports the escape when the word is consumed.
     #[cold]
     #[inline(never)]
     fn t_escaped_keyword(
@@ -2795,7 +2823,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         if p.lexer.tolerant && !p.lexer.is_log_disabled {
             match js_lexer::keyword(p.lexer.identifier) {
-                // Something else is said at these before they are taken: `try` or an expression is missed.
+                // Another error is reported at these before they are consumed: a missing `try` or a
+                // missing expression.
                 Some(word @ (T::TCatch | T::TFinally | T::TIn | T::TInstanceof)) => {
                     p.lexer.token = word;
                 }
@@ -2986,8 +3015,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
 
-                // `scanStartOfDeclaration`: `declare type` is an alias, come what may. `parseTypeAliasDeclaration` objects to a
-                // line break before the name.
+                // `scanStartOfDeclaration`: `declare type` is always a type alias.
+                // `parseTypeAliasDeclaration` reports a line break before the name.
                 if p.lexer.tolerant
                     && !p.lexer.is_log_disabled
                     && p.lexer.is_contextual_keyword(b"type")
@@ -3010,7 +3039,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
-                // The type checker is told of every declaration. That it says `declare` is among its modifiers.
+                // Every declaration is passed to the type checker. `declare` is recorded among its
+                // modifiers.
                 if p.preserves_type_syntax() {
                     return Ok(Some(stmt));
                 }
@@ -3022,8 +3052,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::StmtData::SLocal(_)
                         | js_ast::StmtData::SEmpty(_)
                 ) {
-                    // `parseDeclarationWorker`: imports and exports take modifiers like any declaration. The checker reports
-                    // them (1120, 1193, 1079).
+                    // `parseDeclarationWorker`: imports and exports accept modifiers like any
+                    // declaration. The checker reports them (1120, 1193, 1079).
                     if p.lexer.tolerant
                         && matches!(
                             &stmt.data,
@@ -3037,8 +3067,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         return Ok(Some(stmt));
                     }
-                    // An ambient namespace that `parse_type_script_namespace_stmt` kept because it holds real statements. It
-                    // starts at `declare`.
+                    // An ambient namespace that `parse_type_script_namespace_stmt` kept because it
+                    // contains real statements. It starts at `declare`.
                     if p.lexer.tolerant && matches!(&stmt.data, js_ast::StmtData::SNamespace(_)) {
                         return Ok(Some(Stmt {
                             loc,
@@ -3254,7 +3284,8 @@ const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
     b"await",
 ];
 
-/// What `parseErrorForMissingSemicolonAfter` suggests for `word` (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
+/// The suggestion of `parseErrorForMissingSemicolonAfter` for `word`
+/// (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
 #[cold]
 #[inline(never)]
 fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {

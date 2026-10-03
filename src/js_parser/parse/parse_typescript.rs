@@ -106,7 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.ts_error(range, 1109);
             let mut expr = p.new_expr(E::Missing {}, range.loc);
             if is_await_keyword {
-                // In a script `await` is a name at the top level: the file is then parsed again.
+                // In a script `await` is an identifier at the top level: the file is then reparsed.
                 if p.fn_or_arrow_data_parse.is_top_level {
                     p.top_level_await_keyword = range;
                 }
@@ -122,8 +122,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    /// The decorators of a missing declaration or of a `this` parameter. They stay in TypeScript's tree, and `checkDecorators` never
-    /// looks at them. Each becomes a statement of the list being parsed. `end`: where what comes after them starts.
+    /// The decorators of a missing declaration or of a `this` parameter. They stay in TypeScript's
+    /// tree, and `checkDecorators` never visits them. Each becomes a statement of the list being
+    /// parsed. `end`: the start of the syntax that follows them.
     #[cold]
     #[inline(never)]
     pub(crate) fn note_stray_decorators(&mut self, decorators: &[Expr], end: bun_ast::Loc) {
@@ -295,8 +296,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.lexer.next()?;
         } else {
-            // A string names no symbol. After `namespace` (`parseIdentifier`) and after a dot (`parseIdentifierName`) anything but a
-            // word stays, and the name is missing.
+            // A string names no symbol. After `namespace` (`parseIdentifier`) and after a dot
+            // (`parseIdentifierName`) any token but a word is not consumed, and the name is
+            // missing.
             name_text = b"";
             if name_is_string {
                 if p.preserves_type_syntax() {
@@ -365,7 +367,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.finish_node(&mut inner.loc, inner_full_start);
             stmts.push(inner);
         } else if p.lexer.token != T::TOpenBrace
-            // `parseAmbientExternalModuleDeclaration`: for TypeScript only a module named by a string can do without a body.
+            // `parseAmbientExternalModuleDeclaration`: in TypeScript only a module named by a
+            // string may omit its body.
             && (if p.lexer.tolerant {
                 name_is_string
             } else {
@@ -394,7 +397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             old_has_non_local_export_declare_inside_namespace;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // The rest serves code generation.
+        // The rest is only needed for code generation.
         if p.preserves_type_syntax() {
             use crate::sema::parse_declarations::ModuleNameKind;
             p.pop_and_discard_scope(scope_index);
@@ -627,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut external = None;
 
         let kind = js_ast::LocalKind::KConst;
-        // `parseEntityName`: anything but a name stays, and the name is missing.
+        // `parseEntityName`: any token but a name is not consumed, and the name is missing.
         let name: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.lexer.tolerant {
             p.lexer.identifier
         } else {
@@ -772,7 +775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.note(&mut value.loc, crate::sema::Mark::NameKind, 4);
                     }
                     js_ast::ExprData::EString(_) => {}
-                    // `checkEnumMember` never looks at it.
+                    // `checkEnumMember` never checks it.
                     _ => {
                         p.note_expr(&mut value.loc, crate::sema::Mark::ComputedName, name);
                     }
@@ -794,13 +797,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
-        // `createMissingIdentifier`: a missing name is where the previous token ends.
+        // `createMissingIdentifier`: a missing name is at the end of the previous token.
         let name_loc = if p.lexer.tolerant && p.lexer.token != T::TIdentifier {
             p.lexer.full_start()
         } else {
             p.lexer.loc()
         };
-        // `parseIdentifier`: anything else stays, and the name is missing.
+        // `parseIdentifier`: any other token is not consumed, and the name is missing.
         let name_text: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.lexer.tolerant {
             p.lexer.identifier
         } else {

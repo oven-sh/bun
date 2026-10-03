@@ -1,4 +1,4 @@
-//! What a `package.json` says, and a `tsconfig.json` as the one parser reads it.
+//! The contents of a `package.json`, and a `tsconfig.json` as parsed by the one shared parser.
 
 use crate::atom::Interner;
 use crate::check::spans::Spans;
@@ -15,7 +15,7 @@ pub enum Json {
     Number(f64),
     String(Vec<u8>),
     Array(Vec<Json>),
-    /// In the order written: the order of `exports` conditions matters.
+    /// In source order: the order of `exports` conditions matters.
     Object(Vec<(Vec<u8>, Json)>),
 }
 
@@ -224,7 +224,7 @@ impl Parser<'_> {
     }
 }
 
-/// The expression of the one statement of a JSON file.
+/// The expression of the single statement of a JSON file.
 fn root_expression(hir: &File) -> Option<ExprId> {
     hir.ids(hir.body).find_map(|s| match hir[s].kind {
         StmtKind::ExportAssign(e) => Some(e),
@@ -232,7 +232,8 @@ fn root_expression(hir: &File) -> Option<ExprId> {
     })
 }
 
-/// The end of `parseJSONText`, of the file `hir` that reads `text`: what `validateJsonValue` objects to is among what the parser does.
+/// The end of `parseJSONText` for the file `hir` with source `text`: the errors of
+/// `validateJsonValue` are parse diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
     /// `validateJsonValue`, `validateJsonObjectLiteral`
     fn validate_json_value(spans: Spans<'_>, e: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
@@ -286,12 +287,13 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
 pub struct TsConfigSourceFile {
     hir: File,
     atoms: Interner,
-    /// `convertConfigFileToObject`: the object that is read. `None`: there is none at the root, nor in a list at the root.
+    /// `convertConfigFileToObject`: the object that is converted. `None`: the root is not an
+    /// object, nor an array that contains one.
     pub root: Option<ExprId>,
 }
 
 impl TsConfigSourceFile {
-    /// `NewTsconfigSourceFileFromFilePath`. `None`: the parser gave up.
+    /// `NewTsconfigSourceFileFromFilePath`. `None`: the parser failed.
     pub fn parse(host: &dyn Host, text: std::borrow::Cow<'static, [u8]>) -> Option<Self> {
         let atoms = Interner::new();
         let mut hir = host.parse(b"/tsconfig.json", &text, &atoms, &Options::default());
@@ -350,7 +352,7 @@ impl TsConfigSourceFile {
         self.hir.ids(items)
     }
 
-    /// From where to where the name of `p` is written.
+    /// The span of the name of `p`.
     pub fn name_span(&self, p: PropId) -> (u32, u32) {
         (self.hir[p].pos, Spans::of(&self.hir).prop_name(p) as u32)
     }
@@ -359,7 +361,8 @@ impl TsConfigSourceFile {
         (start_of(&self.hir, e), Spans::of(&self.hir).expr(e) as u32)
     }
 
-    /// `convertPropertyValueToJson`. What is not in the expected format is `null`, which stays in a list.
+    /// `convertPropertyValueToJson`. A value that is not in the expected format becomes `null`,
+    /// which is preserved in an array.
     pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
         let hir = &self.hir;
         match hir[e].kind {

@@ -268,11 +268,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
-    /// Tolerant mode: a list refused `await` as a name in the top-level statement being parsed.
+    /// Tolerant mode: a list rejected `await` as an identifier in the top-level statement being
+    /// parsed.
     pub(crate) await_was_refused: bool,
-    /// Tolerant mode: the loop of `reparseTopLevelAwait` goes on to the end of the file.
+    /// Tolerant mode: the loop of `reparseTopLevelAwait` continues to the end of the file.
     pub(crate) reparses_rest_of_file: bool,
-    /// Tolerant mode: what `note_stray_decorators` kept, until the list of statements being parsed takes it.
+    /// Tolerant mode: the decorators saved by `note_stray_decorators`, until the statement list
+    /// being parsed takes them.
     pub(crate) stray_decorators: Vec<Expr>,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -394,15 +396,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
-    /// Where the type syntax that gets skipped is, when something wants to know. See `crate::sema`.
+    /// Records the type syntax that the parser skips, when a consumer requests it. See
+    /// `crate::sema`.
     pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax<'a>>>,
     /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
     pub(crate) jsx_parent_tag: Option<&'a [u8]>,
-    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes, with where it starts
-    /// and ends.
+    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child parsed and its
+    /// parent adopts, with its start and end positions.
     pub(crate) jsx_adopted_close: Option<(crate::parser::JSXTag<'a>, bun_ast::Loc, bun_ast::Loc)>,
-    /// Tolerant mode only. The children of a JSX element went on to the end of the file (`parseJsxChild`). The text among them is no
-    /// trivia, so what ends there ends with the file.
+    /// Tolerant mode only. The children of a JSX element extended to the end of the file
+    /// (`parseJsxChild`). The JSX text among them is not trivia, so a node that ends there ends at
+    /// the end of the file.
     pub(crate) jsx_children_met_end_of_file: bool,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
@@ -868,7 +872,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
-    /// `finishNode`: `expr` ends where the token before the current one does.
+    /// `finishNode`: `expr` ends at the end of the previous token.
     #[inline]
     pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
         if self.preserves_type_syntax() {
@@ -1979,15 +1983,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Binding::alloc(self.arena, t, self.real_loc(loc))
     }
 
-    /// `b`, of the binding that the expression whose `loc` is `loc` turned out to be. It is that node: what is noted of the expression
-    /// is noted of the binding.
+    /// `b` for the binding that the expression whose `loc` is `loc` turned out to be. It is the
+    /// same node: the notes of the expression are the notes of the binding.
     #[inline]
     fn binding_of_expr<T>(&mut self, t: T, expr: &Expr) -> Binding
     where
         T: js_ast::binding::BindingAlloc,
     {
         let mut binding = Binding::alloc(self.arena, t, expr.loc);
-        // The range of the declaration is about to be noted where the end of the expression is.
+        // The range of the declaration is about to be recorded in the entry that holds the end of
+        // the expression.
         if let Some(end) = self.end_of_literal(expr) {
             self.note_loc(&mut binding.loc, crate::sema::Mark::PatternEnd, end);
         }
@@ -4308,7 +4313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
-        // The type checker has what was written (`keep_import`).
+        // The type checker has the saved source syntax (`keep_import`).
         if self.preserves_type_syntax() {
             return Ok(self.s(S::TypeScript::default(), loc));
         }
@@ -5260,7 +5265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
-        // The type checker binds for itself.
+        // The type checker does its own binding.
         if self.preserves_type_syntax() {
             return Ok(self.store_name_in_ref(name));
         }
@@ -8446,7 +8451,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// [`Self::restore_parser_snapshot`], where what was parsed since is kept: what is noted of it stays.
+    /// [`Self::restore_parser_snapshot`] for a caller that keeps the nodes parsed since the
+    /// snapshot: their notes are not rolled back.
     pub(crate) fn restore_parser_snapshot_but_for_notes(
         &mut self,
         mut snapshot: ParserSnapshot<'a>,

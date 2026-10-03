@@ -1,8 +1,12 @@
-//! A class or an interface against what it extends and implements, and members against index signatures:
-//! 2415 2416 2417 2420 2720 2430 2320; 2515 2653 2654 2655 2656 2650, 2610 2611, 2423 2425 2426; 2411 2413 2374.
+//! A class or an interface checked against its base types and implemented types, and members
+//! against index signatures:
+//! 2415 2416 2417 2420 2720 2430 2320; 2515 2653 2654 2655 2656 2650, 2610 2611, 2423 2425 2426;
+//! 2411 2413 2374.
 //!
-//! Follows `checkClassLikeDeclaration`, `issueMemberSpecificError`, `checkKindsOfPropertyMemberOverrides`,
-//! `checkInterfaceDeclaration`, `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` of TypeScript 7.0.2's checker.go.
+//! Follows `checkClassLikeDeclaration`, `issueMemberSpecificError`,
+//! `checkKindsOfPropertyMemberOverrides`, `checkInterfaceDeclaration`,
+//! `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` of TypeScript 7.0.2's
+//! checker.go.
 
 use super::relate::Relation;
 use super::sink::held;
@@ -10,14 +14,15 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
 use smallvec::SmallVec;
 
-/// What `checkIndexConstraints` hands on.
+/// The arguments `checkIndexConstraints` passes on.
 struct IndexConstraints<'a> {
     file: FileId,
     /// `getIndexInfosOfType(t)`
     infos: &'a [IndexInfo],
-    /// The members that the declarations of `t` itself list.
+    /// The members declared directly in the declarations of `t`.
     locals: &'a [(FileId, Span<MemberId>)],
-    /// `interfaceDeclaration`, for a property and an index signature that come from different interfaces it extends.
+    /// `interfaceDeclaration`, for a property and an index signature that come from different base
+    /// interfaces.
     interface: Option<(Node, Sym)>,
 }
 
@@ -48,7 +53,7 @@ impl Checker<'_> {
         {
             match self.unrelated_with_this_argument(class_type, base, this) {
                 Some(with_this) => self.issue_member_specific_error(file, c, with_this, 2415),
-                // The static side is looked at only if the instances are in order.
+                // The static side is checked only if the instance side has no error.
                 None => {
                     let static_type = self.type_of_symbol(sym);
                     let base_constructor = self.base_constructor_type_of_class(sym);
@@ -84,7 +89,7 @@ impl Checker<'_> {
             self.check_kinds_of_property_member_overrides(file, c, sym, class_type, base);
         }
         for node in hir.ids(class.implements) {
-            // Not the primitive type: a name that nothing goes by.
+            // Not the primitive type: an unresolved name.
             if matches!(hir[node].kind, TypeNodeKind::Keyword(_)) {
                 continue;
             }
@@ -93,7 +98,8 @@ impl Checker<'_> {
             if self.is_any(implemented) {
                 continue;
             }
-            // `isValidBaseType`: what cannot be implemented is not compared with. That it cannot is said with the other checks of classes.
+            // `isValidBaseType`: a type that cannot be implemented is not compared. That error is
+            // reported with the other class checks.
             if !self.is_valid_base_type(implemented) {
                 continue;
             }
@@ -111,7 +117,8 @@ impl Checker<'_> {
         self.check_index_constraints(file, static_type, &locals, true, None);
     }
 
-    /// Whether `base` is an intersection and `ty` fits each member of it less its signatures.
+    /// Whether `base` is an intersection and `ty` is assignable to each member of it without its
+    /// signatures.
     fn fits_each_without_signatures(&mut self, ty: TypeId, base: TypeId) -> bool {
         if !self.is_intersection(base) {
             return false;
@@ -126,24 +133,26 @@ impl Checker<'_> {
         true
     }
 
-    /// `getTypeWithoutSignatures`, of what a class extends. `None`: that cannot be extended, which is an error of its own
-    /// (`getBaseConstructorTypeOfClass`).
+    /// `getTypeWithoutSignatures` for the type a class extends. `None`: it cannot be extended,
+    /// which is a separate error (`getBaseConstructorTypeOfClass`).
     fn type_without_signatures(&mut self, ty: TypeId) -> Option<TypeId> {
-        // Of what is no object only `null` can be extended, and it is left as it is.
+        // Among non-object types only `null` can be extended, and it is returned unchanged.
         let Some(members) = self.members(ty) else {
             return (ty == TypeId::NULL).then_some(ty);
         };
         let mut shape = Shape::default();
         for prop in &members.shape().props {
-            // `propertiesRelatedTo` passes over `prototype`. A static `#name` is neither inherited nor asked for
-            // (`isStaticPrivateIdentifierProperty`). What `createUnionOrIntersectionProperty` makes of several is no
+            // `propertiesRelatedTo` skips `prototype`. A static `#name` is neither inherited nor
+            // required (`isStaticPrivateIdentifierProperty`). A property that
+            // `createUnionOrIntersectionProperty` synthesizes from several is not
             // `SymbolFlagsPrototype`.
             if prop.name == known::prototype && !matches!(prop.source, PropSource::Intersected(..))
                 || self.atoms().bytes(prop.name).first() == Some(&b'#')
             {
                 continue;
             }
-            // As it is declared: where a private or protected one comes from tells whether it is the same.
+            // As declared: the origin of a private or protected property determines whether it is
+            // the same property.
             let mut own = prop.clone();
             self.instantiate_prop(&mut own, members.mapper);
             shape.props.push(own);
@@ -158,8 +167,9 @@ impl Checker<'_> {
         base: TypeId,
         this: TypeId,
     ) -> Option<[TypeId; 2]> {
-        // It gives back what is no reference. To tell costs (`isThislessInterface`), and whether the two are related does not hang
-        // on it: it is asked once they are not.
+        // It returns a type that is not a reference unchanged. Deciding that is costly
+        // (`isThislessInterface`), and whether the two are related does not depend on it, so it is
+        // evaluated only once they are found unrelated.
         let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
         let [source, target] = with_this;
         if self.try_is_type_related_to(source, target, Relation::Assignable, true) == Ok(true) {
@@ -199,13 +209,14 @@ impl Checker<'_> {
             ) else {
                 continue;
             };
-            let (given, wanted) = (
+            let (actual, expected) = (
                 self.type_of_prop(&prop, mapper),
                 self.type_of_prop(&base_prop, base_mapper),
             );
             let at = (file, member.name_pos, self.end_of_member_name(file, m));
             let mut diags = Vec::new();
-            if !self.check_type_assignable_to_ex(given, wanted, Some(at), None, Some(&mut diags)) {
+            if !self.check_type_assignable_to_ex(actual, expected, Some(at), None, Some(&mut diags))
+            {
                 let declared = self.prop_to_string(&prop);
                 let args = [
                     Arg::Bytes(&declared),
@@ -229,7 +240,7 @@ impl Checker<'_> {
         }
     }
 
-    /// The members that declare `prop`, if members of classes or interfaces do.
+    /// The members that declare `prop`, if it is declared by members of classes or interfaces.
     fn declarations_of_prop(&mut self, prop: &Prop) -> SmallVec<[(FileId, MemberId); 2]> {
         match prop.source {
             PropSource::Symbol(sym) => self.members_of_symbol(sym),
@@ -237,13 +248,14 @@ impl Checker<'_> {
         }
     }
 
-    /// What `checkKindsOfPropertyMemberOverrides` asks of the symbol of a property: whether it is a property, has a getter, has a
-    /// setter, is a method. `None`: what declares it does not tell.
+    /// The symbol flags `checkKindsOfPropertyMemberOverrides` tests on a property: whether it is a
+    /// property, has a getter, has a setter, is a method. `None`: its declarations do not determine
+    /// them.
     fn kinds_of_prop(&mut self, prop: &Prop) -> Option<(bool, bool, bool, bool)> {
         match &prop.source {
             PropSource::Symbol(sym) => {
                 let flags = self.flags_of_property(*sym);
-                // What an assignment declares does not tell.
+                // A property declared by an assignment does not determine them.
                 let tells = flags.intersects(SymFlags::CLASS_MEMBER)
                     && !self.is_declared_by_assignment(*sym);
                 tells.then_some((
@@ -253,8 +265,9 @@ impl Checker<'_> {
                     flags.contains(SymFlags::METHOD),
                 ))
             }
-            // `createUnionOrIntersectionProperty`: accessors if all the members of the intersection have the same ones, else a property.
-            // A method besides (`CheckFlagsSyntheticMethod`) if it is one in all of them.
+            // `createUnionOrIntersectionProperty`: accessors if all the members of the intersection
+            // have the same ones, else a property.
+            // Also a method (`CheckFlagsSyntheticMethod`) if it is one in all of them.
             PropSource::Intersected(_, parts) => {
                 let mut all: Option<(bool, bool, bool, bool)> = None;
                 for part in parts.iter() {
@@ -273,7 +286,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether an interface declares `prop`, or one of the properties an intersection makes it of.
+    /// Whether an interface declares `prop`, or one of the properties an intersection combines into
+    /// it.
     fn is_declared_in_interface(&self, prop: &Prop) -> bool {
         match &prop.source {
             PropSource::Symbol(sym) => {
@@ -321,7 +335,8 @@ impl Checker<'_> {
                 .iter()
                 .any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ABSTRACT));
             if derived.source == inherited.source {
-                // Taken over as it is. What is abstract has to be filled in, unless the class is abstract as well.
+                // Inherited unchanged. An abstract member must be implemented, unless the class is
+                // abstract as well.
                 if is_abstract && !is_abstract_class {
                     let elsewhere = self.base_types(sym).iter().any(|&other| {
                         other != base
@@ -336,7 +351,8 @@ impl Checker<'_> {
                 }
                 continue;
             }
-            // `getDeclarationModifierFlagsFromSymbol`: what several members of an intersection have is private if it is in one of them.
+            // `getDeclarationModifierFlagsFromSymbol`: a property shared by several members of an
+            // intersection is private if it is private in any of them.
             let is_private_somewhere = matches!(&inherited.source, PropSource::Intersected(_, parts) if parts.iter().any(|part| part.flags.contains(PropFlags::PRIVATE)));
             if (inherited.flags | derived.flags).contains(PropFlags::PRIVATE)
                 || is_private_somewhere
@@ -366,7 +382,8 @@ impl Checker<'_> {
             let (base_accessor, derived_accessor) =
                 (base_getter || base_setter, derived_getter || derived_setter);
             if (base_property || base_accessor) && (derived_property || derived_accessor) {
-                // `arePropertiesAbstractOrInterface`: all the declarations, or one of those an intersection puts together.
+                // `arePropertiesAbstractOrInterface`: all the declarations, or one of the
+                // properties an intersection combines.
                 let is_abstract_or_interface = match &inherited.source {
                     PropSource::Intersected(..) => self.is_declared_in_interface(inherited),
                     _ => {
@@ -460,8 +477,9 @@ impl Checker<'_> {
         }
     }
 
-    /// The end of `checkKindsOfPropertyMemberOverrides`, under `useDefineForClassFields`: whether a declaration of `derived` in the
-    /// class `c` has no initializer, so that it defines the property anew, and the constructor does not assign to it either.
+    /// The end of `checkKindsOfPropertyMemberOverrides`, under `useDefineForClassFields`: whether a
+    /// declaration of `derived` in the class `c` has no initializer, so that it redefines the
+    /// property, and the constructor does not assign to it either.
     fn is_redefined_without_initializer(
         &mut self,
         file: FileId,
@@ -476,7 +494,7 @@ impl Checker<'_> {
             || hir[c].flags.contains(Flags::AMBIENT)
             || decls.iter().any(|&(f, m)| {
                 let member = &self.hir(f)[m];
-                // `SymbolFlagsTransient`: `lateBindMember` made the symbol.
+                // `SymbolFlagsTransient`: `lateBindMember` created the symbol.
                 member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
                     || matches!(member.key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
             })
@@ -548,7 +566,7 @@ impl Checker<'_> {
             }
             let this = self.intern(TypeData::ThisParam(sym));
             for &base in bases.iter() {
-                // `resolveBaseTypesOfInterface`: what cannot be extended is no base type.
+                // `resolveBaseTypesOfInterface`: a type that cannot be extended is not a base type.
                 if !self.is_valid_base_type(base) {
                     continue;
                 }
@@ -574,8 +592,8 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        // What is said where the interface is named is said once. Nothing is where a class goes by the name as well: the type is
-        // that of the class then (`ObjectFlagsInterface`).
+        // An error at the name of the interface is reported once. None is reported where a class
+        // has the same name: the type is then that of the class (`ObjectFlagsInterface`).
         let is_class = self.files().flags(sym).contains(SymFlags::CLASS);
         let fallback = first
             .filter(|&(f, _)| f == file && is_first && !is_class)
@@ -596,7 +614,7 @@ impl Checker<'_> {
         if bases.len() < 2 {
             return true;
         }
-        // What it declares itself settles the matter.
+        // A property it declares itself resolves any conflict.
         let mut own: Vec<Atom> = Vec::new();
         for (f, d) in self.files().decls(sym) {
             let members = match d {
@@ -613,11 +631,11 @@ impl Checker<'_> {
         }
         let this = self.intern(TypeData::ThisParam(sym));
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
-        // Of what is private or protected, where it is declared as well.
+        // For a private or protected property, also its declaration.
         let mut seen: Vec<(Atom, TypeId, PropFlags, Option<PropSource>, TypeId)> = Vec::new();
         let mut identical = true;
         for &declared_base in bases {
-            // `this` is in each what it is in the heir.
+            // In each base, `this` is instantiated with the `this` type of the derived type.
             let base = self.type_with_this_argument(declared_base, this);
             let Some(members) = self.members(base) else {
                 continue;
@@ -638,8 +656,8 @@ impl Checker<'_> {
                     // `isPropertyIdenticalTo`, `compareProperties`
                     Some((_, other, flags, source, from)) => {
                         let (other, flags, from) = (*other, *flags, *from);
-                        // What is not for all to see is the same only if it is declared in one place. Of the rest, whether it can be
-                        // left out counts.
+                        // Non-public properties are identical only if they have the same
+                        // declaration. For the rest, optionality is compared.
                         let same = if flags.intersects(access) {
                             PropFlags::READONLY
                         } else {
@@ -707,7 +725,8 @@ impl Checker<'_> {
                 self.check_index_constraint_for_property(&cx, prop, None, prop_type);
             }
         }
-        // The members of a class whose names are only known when it runs (`hasBindableName`): each is a property of its own.
+        // The members of a class whose names are only known at run time (`hasBindableName`): each
+        // is a separate property.
         for &(f, span) in locals.iter().filter(|local| local.0 == file) {
             for m in span.iter() {
                 let member = self.hir(f)[m];
@@ -750,7 +769,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkIndexConstraintForProperty`. `name_type`: `propNameType`, of a name that is only known when it runs.
+    /// `checkIndexConstraintForProperty`. `name_type`: `propNameType`, for a name only known at run
+    /// time.
     fn check_index_constraint_for_property(
         &mut self,
         cx: &IndexConstraints<'_>,
@@ -819,7 +839,7 @@ impl Checker<'_> {
                 related = Some(self.declared_here(place, name));
             }
             let (start, end) = self.get_error_range_for_node(cx.file, error_node);
-            // `symbolToString`: a name that is only known when it runs is as it is written.
+            // `symbolToString`: a name only known at run time is printed as its source text.
             let name = match name_type {
                 Some(_) => self.source_text(cx.file, start, end),
                 None => self.prop_to_string(prop),

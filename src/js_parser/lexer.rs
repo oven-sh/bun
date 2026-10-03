@@ -226,23 +226,27 @@ pub struct Lexer<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    /// Set for the type checker only: what is objected to is noted and parsing goes on from the same token, the way TypeScript's
-    /// parser does, so that there is a tree to check however much is wrong with the file.
+    /// Set for the type checker only: a syntax error is logged and parsing continues from the same
+    /// token, as in TypeScript's parser, so that there is an AST to check no matter how many errors
+    /// the file has.
     pub(crate) tolerant: bool,
-    /// How many times in a row something was put up with at one and the same place.
+    /// Number of consecutive error recoveries at the same position.
     pub(crate) stuck: u32,
-    /// Tolerant mode: how many errors were not logged because the log was disabled. TypeScript keeps the errors of a speculative
-    /// parse that succeeds (`mark`, `rewind`), so one during which this changed has to be run again with the log enabled.
+    /// Tolerant mode: the number of errors that were not logged because the log was disabled.
+    /// TypeScript keeps the errors of a speculative parse that succeeds (`mark`, `rewind`), so a
+    /// speculative parse during which this count changed must be repeated with the log enabled.
     pub(crate) swallowed: u32,
-    /// Without `EscapeSequenceScanningFlagsReportInvalidEscapeErrors`: an escape that is objected to elsewhere is not, and stands for
-    /// its own text.
+    /// Without `EscapeSequenceScanningFlagsReportInvalidEscapeErrors`: an escape sequence that is
+    /// an error elsewhere is not reported, and decodes to its own source text.
     is_under_tag: bool,
-    /// `statementHasAwaitIdentifier`: `await` was used as a name in the top-level statement being parsed. Tolerant mode only.
+    /// `statementHasAwaitIdentifier`: `await` was used as an identifier in the top-level statement
+    /// being parsed. Tolerant mode only.
     pub(crate) await_name_seen: bool,
     /// `parsingContexts`: one bit per `parse::lists::ListKind` that is currently being parsed. Only maintained in tolerant mode. It lives
     /// in the lexer, and in its snapshot, because backtracking out of a list only restores the lexer.
     pub(crate) list_contexts: u32,
-    /// Tolerant mode: where the last string or template that was not closed starts (`TokenFlagsUnterminated`).
+    /// Tolerant mode: start of the most recent unterminated string or template
+    /// (`TokenFlagsUnterminated`).
     pub(crate) unterminated_at: usize,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
     pub(crate) code_point: CodePoint,
@@ -265,18 +269,18 @@ pub struct Lexer<'a> {
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
-    /// Beside each of `all_comments`, in tolerant mode: `sema::comments::flags`.
+    /// Parallel to `all_comments`, in tolerant mode: the `sema::comments::flags` of each comment.
     pub(crate) comment_flags: Vec<u8>,
-    /// `fullStartPos`: where the token before the current one ends.
+    /// `fullStartPos`: the end of the previous token.
     pub(crate) token_full_start: usize,
     /// `Scanner.commentDirectives`. Tolerant mode only: see `sema::comments`.
     pub(crate) comment_directives: Vec<bun_sema::hir::CommentDirective>,
-    /// `lastLineStart`, of the `/* */` comment that was scanned last.
+    /// `lastLineStart` of the most recently scanned `/* */` comment.
     pub(crate) last_line_start: usize,
     /// `skipJSDocLeadingAsterisks`: a type in a JSDoc comment is being scanned, where the first `*` of a line is trivia. Set for the
     /// type checker only.
     pub(crate) skips_jsdoc_asterisks: bool,
-    /// Where the `*` that was last skipped as trivia ends.
+    /// End of the `*` most recently skipped as trivia.
     jsdoc_asterisk_end: usize,
 }
 
@@ -611,7 +615,8 @@ impl<'a> Lexer<'a> {
                         }
                         0x38 | 0x39 => {
                             if self.tolerant {
-                                // `scanEscapeSequence`: objected to, and it stands for the digit. Under a tag for its own text.
+                                // `scanEscapeSequence`: reported, and it decodes to the digit. In a
+                                // tagged template it decodes to its own source text.
                                 let escape = [b'\\', c2 as u8];
                                 self.escape_error_about(
                                     start,
@@ -1116,7 +1121,7 @@ impl<'a> Lexer<'a> {
         self.next()
     }
 
-    /// `parseExpectedMatchingBrackets`: `expect`, of the bracket that closes the one at `open`.
+    /// `parseExpectedMatchingBrackets`: `expect` for the bracket that closes the one at `open`.
     #[inline]
     pub(crate) fn expect_closing(&mut self, token: T, open: Loc) -> Result<(), Error> {
         if self.token != token && self.tolerant {
@@ -1127,8 +1132,9 @@ impl<'a> Lexer<'a> {
         self.expect(token)
     }
 
-    /// `expected`, of the bracket that closes the one at `open`. If it is said, and not left out for being at the place of the last
-    /// error, it is said with where the opening bracket is, unless that was missed too. Tolerant mode only.
+    /// `expected` for the bracket that closes the one at `open`. If the error is reported, and not
+    /// dropped for being at the position of the previous error, the position of the opening bracket
+    /// is attached to it, unless the opening bracket was missing too. Tolerant mode only.
     #[cold]
     #[inline(never)]
     pub(crate) fn expected_closing(&mut self, token: T, open: Loc) -> Result<(), Error> {
@@ -1147,15 +1153,17 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `parseImportAttributes`, `parseImportType`: `expect`, of the "}" of what opens at `open`. If it is missed, the last error of the
-    /// parser is told where that is, whichever it is, provided it is one about a token that was expected.
+    /// `parseImportAttributes`, `parseImportType`: `expect` for the "}" of the construct that opens
+    /// at `open`. If it is missing, the position of `open` is attached to the parser's most recent
+    /// error, whatever that error is, provided it is about an expected token.
     pub(crate) fn expect_close_brace_of_attributes(&mut self, open: Loc) -> Result<(), Error> {
         if self.token == T::TCloseBrace || !self.tolerant {
             return self.expect(T::TCloseBrace);
         }
         let at = self.prev_error_loc;
         self.expected(T::TCloseBrace)?;
-        // Not what `ts_grammar_error` and `ts_checker_error` log: those are the checker's.
+        // Skips the messages that `ts_grammar_error` and `ts_checker_error` log: those are checker
+        // errors.
         let last = self.log().msgs.iter().rposition(|msg| {
             msg.kind == bun_ast::Kind::Err
                 && !msg.data.text.starts_with(b"TG")
@@ -1193,13 +1201,16 @@ impl<'a> Lexer<'a> {
         msg.notes = notes.into_boxed_slice();
     }
 
-    /// Notes an error by the code TypeScript has for it. Only in tolerant mode: nobody but the type checker reads it.
-    /// Like any other error it is dropped if the last one was at the same place, which is TypeScript's own rule.
+    /// Logs an error by its TypeScript error code. Only in tolerant mode: only the type checker
+    /// reads it.
+    /// Like any other error it is dropped if the previous error was at the same position, which is
+    /// TypeScript's own rule.
     pub(crate) fn ts_error(&mut self, r: Range, code: u32) {
         self.log_ts_error(false, r, code, None);
     }
 
-    /// `ts_error`, of an error that names `what` (`{0}`; a NUL before `{1}`).
+    /// `ts_error` for an error whose message takes the argument `what` (`{0}`; a NUL precedes
+    /// `{1}`).
     pub(crate) fn ts_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
         self.log_ts_error(false, r, code, Some(what));
     }
@@ -1222,7 +1233,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// From `start` to where the token before this one ends.
+    /// The range from `start` to the end of the previous token.
     #[inline]
     pub(crate) fn range_from(&self, start: Loc) -> Range {
         Range {
@@ -1236,7 +1247,7 @@ impl<'a> Lexer<'a> {
         self.ts_error_about(r, 1005, token.as_bytes());
     }
 
-    /// The same, where TypeScript's checker says it (`ts_grammar_error`).
+    /// The same, for an error that TypeScript's checker reports (`ts_grammar_error`).
     pub(crate) fn ts_grammar_expected(&mut self, r: Range, token: &str) {
         self.ts_grammar_error_about(r, 1005, token.as_bytes());
     }
@@ -1247,7 +1258,7 @@ impl<'a> Lexer<'a> {
         self.log_ts_error(true, r, code, None);
     }
 
-    /// The same, of an error that names `what`.
+    /// The same, for an error whose message takes the argument `what`.
     pub(crate) fn ts_grammar_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
         self.log_ts_error(true, r, code, Some(what));
     }
@@ -1267,8 +1278,8 @@ impl<'a> Lexer<'a> {
             .any(|extension| path.ends_with(extension))
     }
 
-    /// `TokenFullStart`, `nodePos()`: where the previous token ends, before the whitespace and comments that precede the
-    /// current token.
+    /// `TokenFullStart`, `nodePos()`: the end of the previous token, before the leading trivia
+    /// (whitespace and comments) of the current token.
     #[inline]
     pub(crate) fn full_start(&self) -> Loc {
         bun_ast::usize2loc(self.token_full_start)
@@ -1284,8 +1295,9 @@ impl<'a> Lexer<'a> {
             .is_some_and(|comment| comment.loc.start < to.start)
     }
 
-    /// Whether the scan may go on after something TypeScript's scanner only reports: notes `code` at `at`.
-    /// Not while something is only tried out: a trial must fail.
+    /// Whether scanning may continue after an error that TypeScript's scanner only reports: logs
+    /// `code` at `at`.
+    /// Not during a speculative parse, which must fail.
     #[cold]
     #[inline(never)]
     fn tolerate(&mut self, at: usize, len: usize, code: u32) -> bool {
@@ -1302,9 +1314,10 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// A string that meets the end of its line or of the text, a template that meets the end of the text (`scanString`,
-    /// `scanTemplateAndSetTokenValue`): it is objected to there and ends there, before the line break.
-    /// `false`: it is not put up with.
+    /// A string that reaches the end of its line or of the source text, or a template that reaches
+    /// the end of the source text (`scanString`, `scanTemplateAndSetTokenValue`): the error is
+    /// reported there and the literal ends there, before the line break.
+    /// `false`: the error is not tolerated.
     #[cold]
     #[inline(never)]
     fn tolerate_unterminated(&mut self, quote: i32) -> bool {
@@ -1315,15 +1328,16 @@ impl<'a> Lexer<'a> {
         let text: &'a [u8] = &self.contents[(self.start + 1).min(at)..at];
         self.unterminated_at = usize::MAX;
         if quote != 0x60 {
-            // TypeScript reads the escapes of a string on its way here: what it says of them comes first, and hides
-            // what is said here if it is at the same place.
+            // TypeScript decodes the escape sequences of a string before it reaches this point:
+            // their errors are reported first, and suppress the error reported here if it is at the
+            // same position.
             let mut scratch = core::mem::take(&mut self.temp_buffer_u16);
             let _ = self.decode_escape_sequences(self.start + 1, text, &mut scratch);
             scratch.clear();
             self.temp_buffer_u16 = scratch;
         }
         self.unterminated_at = self.start;
-        // `scanEscapeSequence`: a backslash with nothing after it, in a template with a tag too.
+        // `scanEscapeSequence`: a backslash followed by nothing, also in a tagged template.
         let ends_in_backslash = text.iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 1;
         let code = if ends_in_backslash {
             1126
@@ -1335,14 +1349,14 @@ impl<'a> Lexer<'a> {
         self.tolerate(at, 0, code)
     }
 
-    /// Notes what `scanEscapeSequence` objects to at `at` in a text that starts at `start`.
+    /// Logs an error of `scanEscapeSequence` at offset `at` in a text that starts at `start`.
     #[cold]
     #[inline(never)]
     fn escape_error(&mut self, start: usize, at: usize, len: usize, code: u32) {
         self.escape_error_about(start, at, len, code, None);
     }
 
-    /// The same, of an error that names `what`.
+    /// The same, for an error whose message takes the argument `what`.
     #[cold]
     #[inline(never)]
     fn escape_error_about(
@@ -1357,8 +1371,9 @@ impl<'a> Lexer<'a> {
             return;
         }
         let is_unterminated = start.checked_sub(1) == Some(self.unterminated_at);
-        // TypeScript reads the escapes of a string while it scans it: those of one that is not closed were gone over
-        // then, and are not objected to again when its value is asked for.
+        // TypeScript decodes the escape sequences of a string while scanning it: those of an
+        // unterminated string were processed then, and are not reported again when its value is
+        // requested.
         if is_unterminated && matches!(self.contents[self.unterminated_at], b'"' | b'\'') {
             return;
         }
@@ -1367,16 +1382,18 @@ impl<'a> Lexer<'a> {
             len: len as i32,
         };
         self.log_ts_error(false, range, code, what);
-        // Those of a template it reads in a second scan (`reScanTemplateToken`), which comes to the end of the text
-        // again and says the same of it: that is where the last error is.
+        // It decodes those of a template in a second scan (`reScanTemplateToken`), which reaches
+        // the end of the source text again and reports the same error for it, so that is the
+        // position of the last error.
         if is_unterminated && !self.is_log_disabled {
             self.prev_error_loc = bun_ast::usize2loc(self.contents.len());
         }
     }
 
-    /// `scanEscapeSequence` on `\0` to `\7`; `digit` is where in `text` the first digit is. `\0` that no digit follows
-    /// is NUL. Anything else takes up to three octal digits, two if it starts with `4` to `7`, is objected to, and
-    /// stands for the character of that code. Gives back where in `text` the last digit is.
+    /// `scanEscapeSequence` on `\0` to `\7`; `digit` is the index of the first digit in `text`.
+    /// `\0` not followed by a digit is NUL. Anything else consumes up to three octal digits, two if
+    /// it starts with `4` to `7`, is reported, and decodes to the character with that code. Returns
+    /// the index of the last digit in `text`.
     #[cold]
     #[inline(never)]
     fn octal_escape(
@@ -1417,8 +1434,8 @@ impl<'a> Lexer<'a> {
         end - 1
     }
 
-    /// `scanEscapeSequence` on `\x` or `\uXXXX` with too few digits: 1125 where the scan stopped, which is `stop` in
-    /// `text`, and the escape stands for its own text.
+    /// `scanEscapeSequence` on `\x` or `\uXXXX` with too few digits: 1125 where the scan stopped,
+    /// which is index `stop` in `text`, and the escape decodes to its own source text.
     #[cold]
     #[inline(never)]
     fn bad_escape(&mut self, start: usize, text: &[u8], stop: usize, buf: &mut Vec<u16>) {
@@ -1427,8 +1444,8 @@ impl<'a> Lexer<'a> {
         buf.extend(text[backslash..stop].iter().map(|&b| u16::from(b)));
     }
 
-    /// `scanUnicodeEscape` on a `\u{` that comes to nothing, which stands for its own text. `stop`: where in `text`
-    /// its digits end.
+    /// `scanUnicodeEscape` on a malformed `\u{` escape, which decodes to its own source text.
+    /// `stop`: the index in `text` where its digits end.
     #[cold]
     #[inline(never)]
     fn bad_extended_escape(
@@ -1459,8 +1476,8 @@ impl<'a> Lexer<'a> {
         buf.extend(text[backslash..end].iter().map(|&b| u16::from(b)));
     }
 
-    /// The word is written with an escape and is wanted as the keyword it spells: `nextToken` says 1260, and it is
-    /// that keyword.
+    /// The identifier contains an escape sequence and the parser expects the keyword it spells:
+    /// `nextToken` reports 1260, and the token is that keyword.
     #[cold]
     #[inline(never)]
     pub(crate) fn unescape_keyword(&mut self) {
@@ -1470,9 +1487,11 @@ impl<'a> Lexer<'a> {
         self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
     }
 
-    /// A JSX name with `\u` escapes in it. TypeScript reads and decodes them (`ScanJsxIdentifier`, `scanIdentifierParts`)
-    /// and then objects (`parseIdentifierNameErrorOnUnicodeEscapeSequence`). The name starts at `self.start`; the lexer
-    /// is at a backslash. `false`: the backslash starts no escape that can stand here, and nothing was read.
+    /// A JSX name that contains `\u` escapes. TypeScript scans and decodes them
+    /// (`ScanJsxIdentifier`, `scanIdentifierParts`) and then reports an error
+    /// (`parseIdentifierNameErrorOnUnicodeEscapeSequence`). The name starts at `self.start`; the
+    /// lexer is at a backslash. `false`: the backslash does not start an escape that is valid here,
+    /// and nothing was consumed.
     #[cold]
     #[inline(never)]
     fn jsx_identifier_with_escapes(&mut self) -> bool {
@@ -1522,9 +1541,10 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// `ScanJsxTokenEx`: whether the `<` the lexer is at, in the text of a JSX element that starts at `text_start`, starts
-    /// a conflict marker. It is objected to and skipped to the end of its line (`scanConflictMarkerTrivia`), and the token,
-    /// which starts where the text does, is one that ends the children.
+    /// `ScanJsxTokenEx`: whether the `<` the lexer is at, in JSX text that starts at `text_start`,
+    /// starts a conflict marker. The marker is reported and skipped to the end of its line
+    /// (`scanConflictMarkerTrivia`), and the token, which starts where the text starts, terminates
+    /// the JSX children.
     #[cold]
     #[inline(never)]
     fn jsx_text_meets_conflict_marker(&mut self, text_start: usize) -> bool {
@@ -1609,8 +1629,8 @@ impl<'a> Lexer<'a> {
             // what caused us to get on this slow path in the first place.
             if self.code_point == 0x5C {
                 if self.tolerant {
-                    // `Scan`, `scanIdentifierParts`: an escape is part of the name only if it is well formed and stands for
-                    // an identifier character by itself.
+                    // `Scan`, `scanIdentifierParts`: an escape is part of the identifier only if it
+                    // is well formed and by itself decodes to an identifier character.
                     let is_first =
                         self.end == self.start + usize::from(kind == IdentifierKind::Private);
                     let fits =
@@ -1749,7 +1769,8 @@ impl<'a> Lexer<'a> {
         } else {
             T::TIdentifier
         };
-        // The name ended at a backslash that starts no escape, before any escape.
+        // The name ended at a backslash that does not start an escape, before any escape was
+        // scanned.
         if self.tolerant && !original_text.contains(&b'\\') {
             result.token = tables::keyword(result.contents).unwrap_or(T::TIdentifier);
         }
@@ -1817,7 +1838,8 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// The first character of the current token has been taken. `rest` is what is left of it.
+    /// The first character of the current token has been consumed. `rest` is the remainder of the
+    /// token.
     #[inline]
     fn split_token(&mut self, rest: T) {
         self.token = rest;
@@ -1994,7 +2016,8 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
-                    // The rest of the run at once: an indented line has many.
+                    // Consumes the rest of the run at once: an indented line has many of these
+                    // characters.
                     while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
                         self.current += 1;
                     }
@@ -2082,7 +2105,8 @@ impl<'a> Lexer<'a> {
                                     self.token = T::TQuestionDot;
                                 }
                             } else if self.tolerant {
-                                // TypeScript's `Scan`: no digit follows where the text ends.
+                                // TypeScript's `Scan`: at the end of the source text no digit
+                                // follows.
                                 self.step_with(contents);
                                 self.token = T::TQuestionDot;
                             }
@@ -2207,7 +2231,7 @@ impl<'a> Lexer<'a> {
                         0x2D => {
                             self.step_with(contents);
 
-                            // TypeScript's `Scan` knows no HTML comments.
+                            // TypeScript's `Scan` does not recognize HTML comments.
                             if self.code_point == 0x3E && self.has_newline_before && !self.tolerant
                             {
                                 // Genuinely almost-never taken — kept out of `next()`'s
@@ -2342,7 +2366,7 @@ impl<'a> Lexer<'a> {
                         }
                         // Handle legacy HTML-style comments
                         0x21 => {
-                            // TypeScript's `Scan` knows no HTML comments.
+                            // TypeScript's `Scan` does not recognize HTML comments.
                             if self.peek("--".len()) == b"--" && !self.tolerant {
                                 self.add_unsupported_syntax_error(
                                     b"Legacy HTML comments not implemented yet!",
@@ -2501,7 +2525,8 @@ impl<'a> Lexer<'a> {
                         return Ok(());
                     }
 
-                    // TypeScript's `IsWhiteSpaceSingleLine` has two more than ECMAScript's WhiteSpace.
+                    // TypeScript's `IsWhiteSpaceSingleLine` accepts two more code points than
+                    // ECMAScript's WhiteSpace.
                     if self.tolerant && matches!(self.code_point, 0x85 | 0x200B) {
                         self.step_with(contents);
                         continue;
@@ -2535,12 +2560,13 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `Scan`: whether the token being scanned starts with U+FFFD, or with what is no character at all (`utf8.RuneError`). The file is
-    /// taken for a binary one then, which is said of its start, and the rest of it is one token (`KindNonTextFileMarkerTrivia`).
+    /// `Scan`: whether the token being scanned starts with U+FFFD or with invalid UTF-8
+    /// (`utf8.RuneError`). The file is then treated as binary, which is reported at the start of
+    /// the file, and the rest of the file is one token (`KindNonTextFileMarkerTrivia`).
     #[cold]
     #[inline(never)]
     fn rest_is_no_text(&mut self) -> bool {
-        // A byte that can start no character is given as the code point of its value.
+        // A byte that cannot start a character is decoded as the code point equal to its value.
         let starts_no_character = matches!(
             self.contents.get(self.start),
             Some(0x80..=0xBF | 0xF8..=0xFF)
@@ -2560,8 +2586,9 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// `scanConflictMarkerTrivia`, if a conflict marker starts where the token being scanned does (`isConflictMarkerTrivia`).
-    /// Returns false, and scans nothing, if none does.
+    /// `scanConflictMarkerTrivia`, if a conflict marker starts at the start of the token being
+    /// scanned (`isConflictMarkerTrivia`).
+    /// Otherwise returns false and scans nothing.
     #[cold]
     #[inline(never)]
     fn skip_conflict_marker(&mut self) -> bool {
@@ -2596,15 +2623,17 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// `Scan`, the `*` case with `skipJSDocLeadingAsterisks`: the first `*` after a line break is trivia, once on the way to each
-    /// token (`TokenFlagsPrecedingJSDocLeadingAsterisks`). Called with the `*` scanned.
+    /// `Scan`, the `*` case with `skipJSDocLeadingAsterisks`: the first `*` after a line break is
+    /// trivia, once in the leading trivia of each token
+    /// (`TokenFlagsPrecedingJSDocLeadingAsterisks`). Called after the `*` has been scanned.
     #[cold]
     #[inline(never)]
     fn skip_jsdoc_asterisk(&mut self) -> bool {
         if !self.has_newline_before {
             return false;
         }
-        // Nothing but whitespace since the last one: that was on the way to the same token.
+        // Only whitespace since the previously skipped `*`, which was in the leading trivia of the
+        // same token.
         if self.jsdoc_asterisk_end != 0
             && self
                 .contents
@@ -2763,7 +2792,8 @@ impl<'a> Lexer<'a> {
             });
         }
 
-        // The type checker reads the pragmas it knows out of `all_comments` (`process_pragmas_into_fields`).
+        // The type checker reads the pragmas it recognizes from `all_comments`
+        // (`process_pragmas_into_fields`).
         if !for_pragma || self.tolerant {
             return;
         }
@@ -2826,7 +2856,8 @@ impl<'a> Lexer<'a> {
                     self.last_line_start = self.end;
                 }
                 -1 => {
-                    // TypeScript's `Scan`: `*/` is missed where the text ends, which is where the comment ends.
+                    // TypeScript's `Scan`: the missing `*/` is reported at the end of the source
+                    // text, which is where the comment ends.
                     if self.tolerate(self.end, 0, 1010) {
                         return Ok(());
                     }
@@ -3269,8 +3300,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `ReScanSlashToken` for a literal that is not closed on its line (1161). It ends before the first closing bracket that
-    /// closes nothing. Whitespace and semicolons at its end are not part of it.
+    /// `ReScanSlashToken` for a literal that is unterminated on its line (1161). It ends before the
+    /// first unmatched closing bracket. Trailing whitespace and semicolons are not part of it.
     #[cold]
     #[inline(never)]
     fn end_unterminated_reg_exp(&mut self) {
@@ -3464,7 +3495,7 @@ impl<'a> Lexer<'a> {
                             self.step();
                         }
 
-                        // `ScanJsxIdentifier`: the name goes on with an escape.
+                        // `ScanJsxIdentifier`: the name continues with an escape.
                         if self.code_point == 0x5C
                             && self.tolerant
                             && self.jsx_identifier_with_escapes()
@@ -3486,7 +3517,8 @@ impl<'a> Lexer<'a> {
                                     self.step();
                                 }
                             } else if self.tolerant {
-                                // `parseJsxTagName`: the colon is a token of its own. See `JSXTag::parse_namespaced_name`.
+                                // `parseJsxTagName`: the colon is a separate token. See
+                                // `JSXTag::parse_namespaced_name`.
                                 self.move_to(self.end - 1);
                             } else {
                                 self.add_syntax_error(
@@ -3505,8 +3537,8 @@ impl<'a> Lexer<'a> {
                     }
 
                     if self.tolerant {
-                        // Inside a tag TypeScript scans with `Scan`: its `IsWhiteSpaceSingleLine` has two more than
-                        // ECMAScript's WhiteSpace.
+                        // Inside a tag TypeScript scans with `Scan`, whose `IsWhiteSpaceSingleLine`
+                        // accepts two more code points than ECMAScript's WhiteSpace.
                         if matches!(self.code_point, 0x85 | 0x200B) {
                             self.step();
                             continue;
@@ -3555,7 +3587,8 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `KindLessThanSlashToken`: in a JSX file `Scan` makes one token of `</`, unless the `/` starts a comment.
+    /// `KindLessThanSlashToken`: in a JSX file `Scan` scans `</` as one token, unless the `/`
+    /// starts a comment.
     pub(crate) fn is_less_than_slash(&self) -> bool {
         self.token == T::TLessThan
             && self.code_point == 0x2F
@@ -3570,7 +3603,8 @@ impl<'a> Lexer<'a> {
         'string_literal: loop {
             match self.code_point {
                 -1 => {
-                    // `scanString`: it is objected to where the text ends, and ends there.
+                    // `scanString`: the error is reported at the end of the source text, and the
+                    // string ends there.
                     if self.tolerate(self.end, 0, 1002) {
                         is_closed = false;
                         break 'string_literal;
@@ -3660,7 +3694,7 @@ impl<'a> Lexer<'a> {
             let before = self.prev_error_loc;
             self.expected(token)?;
             if self.tolerant {
-                // `parseExpectedWithoutAdvancing`, then the next round of `parseJsxChildren`.
+                // `parseExpectedWithoutAdvancing`, then the next iteration of `parseJsxChildren`.
                 self.put_up_with(before)?;
                 return self.rescan_as_jsx_element_child();
             }
@@ -3696,7 +3730,7 @@ impl<'a> Lexer<'a> {
                     'string_literal: loop {
                         match self.code_point {
                             -1 => {
-                                // `ScanJsxTokenEx`: the text ends where the file does.
+                                // `ScanJsxTokenEx`: the JSX text ends at the end of the file.
                                 if self.tolerant {
                                     break 'string_literal;
                                 }
@@ -3786,8 +3820,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `ReScanJsxToken`: scans the current token again as a child of a JSX element. TypeScript starts at the whitespace before
-    /// the token, which only adds whitespace to the text.
+    /// `ReScanJsxToken`: rescans the current token as a child of a JSX element. TypeScript starts
+    /// at the whitespace before the token, which only adds whitespace to the text.
     #[cold]
     #[inline(never)]
     pub(crate) fn rescan_as_jsx_element_child(&mut self) -> Result<(), Error> {
@@ -3878,7 +3912,8 @@ impl<'a> Lexer<'a> {
                 // (release builds would silently encode garbage surrogate pairs).
                 cursor.c = match bun_core::parse_int::<i32>(number, base) {
                     Ok(v) if (0..=0x10FFFF).contains(&v) => v,
-                    // TypeScript's scanner does not look at entities (`scanString`, `ScanJsxTokenEx`).
+                    // TypeScript's scanner does not process entities (`scanString`,
+                    // `ScanJsxTokenEx`).
                     _ if self.tolerant => strings::UNICODE_REPLACEMENT as CodePoint,
                     Ok(_) => {
                         self.add_error(
@@ -4025,7 +4060,7 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `scanTemplateAndSetTokenValue` under a tag: what the piece of text `raw` stands for.
+    /// `scanTemplateAndSetTokenValue` in a tagged template: the cooked value of the raw text `raw`.
     pub(crate) fn cooked_template_contents(&mut self, raw: &[u8]) -> Vec<u8> {
         self.is_under_tag = true;
         let mut units = Vec::new();
@@ -4038,8 +4073,9 @@ impl<'a> Lexer<'a> {
         let mut text: &[u8] = b"";
 
         if self.tolerant {
-            // `getTemplateLiteralRawText`: a template that is not closed has no closing character to leave out.
-            // `parse_string_literal` has cut out the right text of either kind.
+            // `getTemplateLiteralRawText`: an unterminated template has no closing delimiter to
+            // exclude.
+            // `parse_string_literal` has already sliced the correct text in both cases.
             text = self.string_literal_raw_content;
         } else {
             match self.token {
@@ -4431,8 +4467,9 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Called where `parse_numeric_literal_or_dot` finds a malformed number. Ordinary builds report a syntax error. Tolerant mode scans
-    /// the token again the way TypeScript's scanner does, which reports what is wrong and always produces a token.
+    /// Called where `parse_numeric_literal_or_dot` finds a malformed number. Ordinary builds report
+    /// a syntax error. Tolerant mode rescans the token the way TypeScript's scanner does, which
+    /// reports the error and always produces a token.
     #[cold]
     #[inline(never)]
     fn recover_invalid_number(&mut self) -> Result<(), Error> {
@@ -4443,8 +4480,8 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `ParsePseudoBigInt`: the type checker knows a bigint literal by its digits in base 10, without leading zeros. `identifier` has
-    /// neither separators nor the `n`.
+    /// `ParsePseudoBigInt`: the type checker identifies a bigint literal by its base 10 digits,
+    /// without leading zeros. `identifier` has neither separators nor the `n`.
     #[cold]
     #[inline(never)]
     fn normalize_big_int(&mut self) {
@@ -4486,8 +4523,9 @@ impl<'a> Lexer<'a> {
         self.step();
     }
 
-    /// `scanNumberFragment`, `scanHexDigits`, `scanBinaryOrOctalDigits`: appends the digits of `radix` that start at `pos` to `digits`
-    /// and returns where they end. A `_` is only valid between two digits.
+    /// `scanNumberFragment`, `scanHexDigits`, `scanBinaryOrOctalDigits`: appends the digits of base
+    /// `radix` that start at `pos` to `digits` and returns their end. A `_` is only valid between
+    /// two digits.
     #[cold]
     fn scan_digits_with_separators(
         &mut self,
@@ -4597,22 +4635,23 @@ impl<'a> Lexer<'a> {
                 self.number = rest
                     .iter()
                     .fold(0.0, |number, &digit| number * 8.0 + f64::from(digit - b'0'));
-                // After the token `-` the error starts one byte earlier, whatever that byte is. An odd run of `-` ends with that token.
+                // After a `-` token the error starts one byte earlier, whatever that byte is. A run
+                // of `-` of odd length ends with that token.
                 let before = text[..start].trim_ascii_end();
                 let is_after_minus =
                     before.iter().rev().take_while(|&&ch| ch == b'-').count() % 2 == 1;
                 // Octal literals are not allowed.
                 let significant = rest.iter().position(|&digit| digit != b'0');
-                let mut meant: Vec<u8> = if is_after_minus {
+                let mut suggestion: Vec<u8> = if is_after_minus {
                     b"-0o".to_vec()
                 } else {
                     b"0o".to_vec()
                 };
-                meant.extend_from_slice(significant.map_or(b"0", |first| &rest[first..]));
+                suggestion.extend_from_slice(significant.map_or(b"0", |first| &rest[first..]));
                 self.ts_error_about(
                     range(start - usize::from(is_after_minus), pos),
                     1121,
-                    &meant,
+                    &suggestion,
                 );
                 return self.move_to(pos);
             }
@@ -4646,7 +4685,8 @@ impl<'a> Lexer<'a> {
         }
         self.number = bun_core::wtf::parse_double(&digits).unwrap_or(0.0);
         if has_leading_zero {
-            // Decimals with leading zeros are not allowed. Neither a bigint suffix nor what follows is looked at.
+            // Decimals with leading zeros are not allowed. Neither a bigint suffix nor the
+            // following characters are checked.
             self.ts_error(range(start, pos), 1489);
             return self.move_to(pos);
         }
@@ -4684,7 +4724,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-/// `peekUnicodeEscape`: the code point the escape at `at`, a backslash, stands for, and how many bytes it takes.
+/// `peekUnicodeEscape`: the code point that the escape at `at`, a backslash, decodes to, and its
+/// length in bytes.
 #[cold]
 pub(crate) fn peek_unicode_escape(contents: &[u8], at: usize) -> Option<(CodePoint, usize)> {
     let t = &contents[at..];
@@ -4727,12 +4768,12 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
         || strings::is_unicode_space_separator(codepoint as u32)
 }
 
-/// `IsWhiteSpaceSingleLine`: two more than ECMAScript's WhiteSpace.
+/// `IsWhiteSpaceSingleLine`: accepts two more code points than ECMAScript's WhiteSpace.
 pub(crate) fn is_white_space_single_line(codepoint: CodePoint) -> bool {
     is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
 }
 
-/// `charAndSize`: the character at `at` and how many bytes it takes, none at the end.
+/// `charAndSize`: the character at `at` and its length in bytes, 0 at the end.
 #[inline]
 pub(crate) fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
     match text.get(at) {
@@ -4746,13 +4787,13 @@ pub(crate) fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
     }
 }
 
-/// `DecodeLastRuneInString`, and where it starts.
+/// `DecodeLastRuneInString`, and the offset where that character starts.
 pub(crate) fn last_char(text: &[u8]) -> (CodePoint, usize) {
     let start = text.iter().rposition(|&c| c & 0xC0 != 0x80).unwrap_or(0);
     (char_and_size(text, start).0, start)
 }
 
-/// Where the characters from `at` on that `is` holds of end.
+/// End of the run of characters starting at `at` for which `is` returns true.
 pub(crate) fn end_of_run(text: &[u8], mut at: usize, is: impl Fn(CodePoint) -> bool) -> usize {
     loop {
         match char_and_size(text, at) {
@@ -4762,8 +4803,8 @@ pub(crate) fn end_of_run(text: &[u8], mut at: usize, is: impl Fn(CodePoint) -> b
     }
 }
 
-/// `EncodeJSStringRune`: UTF-8, with a lone surrogate as the three bytes UTF-8 would have for it if it had any. The type checker
-/// tells such strings apart.
+/// `EncodeJSStringRune`: UTF-8, with a lone surrogate encoded as the three-byte sequence its code
+/// point would have if UTF-8 allowed it. The type checker distinguishes such strings.
 #[cold]
 pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
     let mut text = Vec::with_capacity(units.len());
@@ -4783,19 +4824,19 @@ pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
     text
 }
 
-/// Where the escape starts that `text` ends in the middle of.
+/// Start of the escape sequence that the end of `text` truncates.
 fn last_backslash(text: &[u8]) -> usize {
     text.iter().rposition(|&b| b == b'\\').unwrap_or(0)
 }
 
-/// `IsLineBreak` of the character `text` starts with.
+/// `IsLineBreak` of the first character of `text`.
 pub(crate) fn starts_with_line_break(text: &[u8]) -> bool {
     matches!(text.first(), Some(b'\n' | b'\r'))
         || text.starts_with(b"\xE2\x80\xA8")
         || text.starts_with(b"\xE2\x80\xA9")
 }
 
-/// How many bytes of whitespace and line breaks `text` ends with (`IsWhiteSpaceLike`).
+/// Number of trailing bytes of `text` that are whitespace or line breaks (`IsWhiteSpaceLike`).
 #[cold]
 fn trailing_whitespace_len(text: &[u8]) -> usize {
     let mut end = text.len();
@@ -4809,8 +4850,9 @@ fn trailing_whitespace_len(text: &[u8]) -> usize {
     text.len() - end
 }
 
-/// `isConflictMarkerTrivia`: seven times the character at `pos`, and a blank after them unless they are `=`, at the start
-/// of a line. TypeScript also takes two characters after a line break for the start of a line.
+/// `isConflictMarkerTrivia`: the character at `pos` repeated seven times, followed by a space
+/// unless it is `=`, at the start of a line. TypeScript also treats the position two characters
+/// after a line break as the start of a line.
 fn is_conflict_marker(text: &[u8], pos: usize) -> bool {
     let ends_with_line_break = |text: &[u8]| {
         matches!(text.last(), Some(b'\n' | b'\r'))

@@ -29,7 +29,8 @@ pub fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// The category and the text of the message with `code`. `{0}`, `{1}`, ... stand for its arguments.
+/// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its
+/// arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
     MESSAGES
         .binary_search_by_key(&code, |m| m.0)
@@ -37,7 +38,8 @@ pub fn message(code: u32) -> Option<(Category, &'static str)> {
         .map(|i| (MESSAGES[i].1, MESSAGES[i].2))
 }
 
-/// `Message.Format`: writes `text` with `{n}` replaced by `args[n]`. What has no argument stays as it is written.
+/// `Message.Format`: writes `text` with `{n}` replaced by `args[n]`. A placeholder without an
+/// argument is left unchanged.
 pub fn format(out: &mut Vec<u8>, text: &str, args: &[impl AsRef<[u8]>]) {
     let mut rest = text.as_bytes();
     while let Some(open) = bun_core::strings::index_of_char_usize(rest, b'{') {

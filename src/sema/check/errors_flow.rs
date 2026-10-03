@@ -1,10 +1,11 @@
-//! Where control gets to and where it does not: 7027 7028 7029, 2355 2366 2534 7030.
-//! Whether a generator is what a generator function says it returns.
+//! Reachability: 7027 7028 7029, 2355 2366 2534 7030.
+//! Whether a generator matches the return type annotation of its generator function.
 //!
 //! Follows `checkSourceElementUnreachable`, `checkLabeledStatement`, `checkSwitchStatement`,
-//! `checkAllCodePathsInNonVoidFunctionReturnOrThrow`, `checkReturnStatement`, `checkGeneratorInstantiationAssignabilityToReturnType`,
-//! `isPostSuperFlowNode` and
-//! `checkGrammarBreakOrContinueStatement` of TypeScript 7.0.2's checker.go, flow.go and grammarchecks.go.
+//! `checkAllCodePathsInNonVoidFunctionReturnOrThrow`, `checkReturnStatement`,
+//! `checkGeneratorInstantiationAssignabilityToReturnType`, `isPostSuperFlowNode` and
+//! `checkGrammarBreakOrContinueStatement` of TypeScript 7.0.2's checker.go, flow.go and
+//! grammarchecks.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
@@ -31,8 +32,8 @@ impl Checker<'_> {
             StmtKind::Var(decls) => decls
                 .iter()
                 .any(|d| hir[d].kind != VarKind::Var || hir[d].init.is_some()),
-            // Neither a block nor `;` is. But `with (e) s` is kept as a block.
-            StmtKind::Block(_) => super::errors_x_statements::is_with_statement(hir, s),
+            // Neither a block nor `;` is. But `with (e) s` is stored as a block.
+            StmtKind::Block(_) => super::errors_statements::is_with_statement(hir, s),
             StmtKind::Empty
             | StmtKind::Fn(_)
             | StmtKind::Interface(_)
@@ -48,7 +49,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `isSourceElementUnreachable`, of what is potentially executable.
+    /// `isSourceElementUnreachable` for a potentially executable node.
     fn is_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
         let flow = self.bound(file).stmt_flow[s.idx()];
@@ -56,7 +57,8 @@ impl Checker<'_> {
         let preserves_const_enums =
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
         match hir[s].kind {
-            // The binder gives a class, an enum or a namespace no flow node: only what it finds out by itself counts for them.
+            // The binder gives a class, an enum or a namespace no flow node: only the reachability
+            // the binder itself determines applies to them.
             StmtKind::Class(_) => flow == UNREACHABLE,
             StmtKind::Enum(e) => {
                 flow == UNREACHABLE
@@ -125,7 +127,8 @@ impl Checker<'_> {
         self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
     }
 
-    /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030, of a `@type` tag on a function.
+    /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for
+    /// a `@type` tag on a function.
     pub(super) fn check_full_signature(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         let node = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
@@ -188,7 +191,8 @@ impl Checker<'_> {
         let declared = if let Some(declared) = annotated {
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
-            // `checkAccessorDeclaration` hands over `getTypeOfAccessors`: what the setter says it takes, or else what the body gives.
+            // `checkAccessorDeclaration` passes `getTypeOfAccessors`: the setter's parameter
+            // annotation, or else the type inferred from the body.
             Some(self.return_type_of_fn(file, func))
         } else if self.p.files.options.no_implicit_returns {
             None
@@ -204,7 +208,7 @@ impl Checker<'_> {
         if end.is_none() || end == UNREACHABLE || !self.is_reachable(file, end) {
             return;
         }
-        // `NodeFlagsHasExplicitReturn`: the binder passes over a `return` that it knows control does not get to.
+        // `NodeFlagsHasExplicitReturn`: the binder skips a `return` that it knows is unreachable.
         let has_explicit_return = bound
             .ids(bound.fns[func.idx()].returns)
             .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE);

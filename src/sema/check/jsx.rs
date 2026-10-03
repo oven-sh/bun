@@ -1,8 +1,9 @@
-//! What a JSX element passes to its component, and what the component takes.
+//! The attributes a JSX element passes to its component, and the props the component accepts.
 //!
-//! Follows `getEffectiveFirstArgumentForJsxSignature`, `getJsxPropsTypeFromCallSignature`, `getJsxPropsTypeFromClassType`,
-//! `getJsxManagedAttributesFromLocatedAttributes`, `getNameFromJsxElementAttributesContainer`,
-//! `getUninstantiatedJsxSignaturesOfType`, `getIntrinsicAttributesTypeFromStringLiteralType` and
+//! Follows `getEffectiveFirstArgumentForJsxSignature`, `getJsxPropsTypeFromCallSignature`,
+//! `getJsxPropsTypeFromClassType`, `getJsxManagedAttributesFromLocatedAttributes`,
+//! `getNameFromJsxElementAttributesContainer`, `getUninstantiatedJsxSignaturesOfType`,
+//! `getIntrinsicAttributesTypeFromStringLiteralType` and
 //! `createJsxAttributesTypeFromAttributesProperty` of TypeScript 7.0.2's jsx.go.
 
 use super::*;
@@ -43,10 +44,11 @@ impl<'p> Checker<'p> {
         Some(self.declared_type(symbol))
     }
 
-    /// `getJsxElementTypeTypeAt`: `JSX.ElementType`, its type parameters standing for their defaults.
+    /// `getJsxElementTypeTypeAt`: `JSX.ElementType`, with its type parameters instantiated to their
+    /// defaults.
     pub(super) fn jsx_element_type_constraint(&mut self, file: FileId) -> Option<TypeId> {
         let symbol = self.jsx_symbol(file, known::ElementType)?;
-        // `instantiateAliasOrInterfaceWithDefaults`: it takes an alias, a class or an interface.
+        // `instantiateAliasOrInterfaceWithDefaults`: it accepts an alias, a class or an interface.
         let can_be_instantiated = self
             .files()
             .flags(symbol)
@@ -86,7 +88,7 @@ impl<'p> Checker<'p> {
         self.jsx_name_from_container(file, known::ElementChildrenAttribute)
     }
 
-    /// `isJsxIntrinsicTagName`, and the name the element is looked up by.
+    /// `isJsxIntrinsicTagName`, and the name used to look up the element.
     pub(super) fn jsx_intrinsic_tag_name(&self, file: FileId, tag: ExprId) -> Option<Atom> {
         match self.hir(file)[tag].kind {
             ExprKind::String(name) => Some(name),
@@ -115,7 +117,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getUninstantiatedJsxSignaturesOfType`. `None`: it is not worked out.
+    /// `getUninstantiatedJsxSignaturesOfType`. `None`: unresolved.
     pub(super) fn uninstantiated_jsx_signatures_of_type(
         &mut self,
         file: FileId,
@@ -165,14 +167,15 @@ impl<'p> Checker<'p> {
         for &part in parts {
             lists.push(self.uninstantiated_jsx_signatures_of_type(file, part, caller)?);
         }
-        // `getUnionSignatures`: none as soon as one member has none.
+        // `getUnionSignatures`: none if any member has none.
         if lists.iter().any(Vec::is_empty) {
             return Some(Vec::new());
         }
         Some(self.union_signatures(&lists))
     }
 
-    /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, which is what a tag that is not a component comes to.
+    /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, the signature that a
+    /// tag that is not a component resolves to.
     pub(super) fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
         let ret = self.jsx_element_type(file);
         let params = vec![SigParam {
@@ -198,10 +201,11 @@ impl<'p> Checker<'p> {
         self.type_of_signature(sig, false)
     }
 
-    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`: what `JSX.IntrinsicElements` says of the tag `name`.
+    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`: the type `JSX.IntrinsicElements`
+    /// declares for the tag `name`.
     pub(super) fn jsx_intrinsic_attributes(&mut self, file: FileId, name: Atom) -> Option<TypeId> {
         let elements = self.jsx_type(file, known::IntrinsicElements)?;
-        // What an index signature gives is taken as it is, whatever noUncheckedIndexedAccess says.
+        // The type from an index signature is used as is, regardless of noUncheckedIndexedAccess.
         if self.prop_of(elements, name).is_none()
             && let Some(members) = self.members(elements)
             && let Some(value) = self
@@ -213,7 +217,8 @@ impl<'p> Checker<'p> {
         self.type_of_property(elements, name)
     }
 
-    /// `TypeFlagsStringLiteral`: what a string literal type says, that of a member of an enum too.
+    /// `TypeFlagsStringLiteral`: the value of a string literal type, including that of an enum
+    /// member.
     pub(super) fn string_literal_value(&self, ty: TypeId) -> Option<Atom> {
         match *self.data(ty) {
             TypeData::StringLit { value, .. }
@@ -225,8 +230,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getIntrinsicAttributesTypeFromStringLiteralType`: what a tag takes that is a value whose type is the string literal `name`.
-    /// `Ok(None)`: `JSX.IntrinsicElements` has nothing for it. `Err`: there is no such interface, or it is not known: anything goes.
+    /// `getIntrinsicAttributesTypeFromStringLiteralType`: the attributes accepted by a tag that is
+    /// a value whose type is the string literal `name`.
+    /// `Ok(None)`: `JSX.IntrinsicElements` has no entry for it. `Err`: that interface does not
+    /// exist, or is unresolved: anything is accepted.
     pub(super) fn jsx_attributes_of_literal_tag(
         &mut self,
         file: FileId,
@@ -235,14 +242,14 @@ impl<'p> Checker<'p> {
         let Some(elements) = self.jsx_type(file, known::IntrinsicElements) else {
             return Err(());
         };
-        // `getPropertyOfType`: what every object has counts.
+        // `getPropertyOfType`: properties that every object has count.
         let object = self.global_ref(known::Object, &[]);
         for holder in [elements, object] {
             if let Some((prop, mapper)) = self.prop_of(holder, name) {
                 return Ok(Some(self.type_of_prop(&prop, mapper)));
             }
         }
-        // Failing that, the index signature for strings and no other.
+        // Otherwise, the string index signature and no other.
         let Some(members) = self.members(elements) else {
             return Err(());
         };
@@ -251,7 +258,8 @@ impl<'p> Checker<'p> {
             .map(|info| info.value))
     }
 
-    /// `getJSXFragmentType`: what the fragment `e` is made with. `None`: anything, or it is not found.
+    /// `getJSXFragmentType`: the type of the component that the fragment `e` is created with.
+    /// `None`: any type, or it is not found.
     pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
         let (options, atoms) = (&files.options, self.atoms());
@@ -332,7 +340,7 @@ impl<'p> Checker<'p> {
         self.type_reference(managed, &[constructor, attributes])
     }
 
-    /// `getJsxPropsTypeFromCallSignature`, of a signature whose first parameter is `props`.
+    /// `getJsxPropsTypeFromCallSignature` for a signature whose first parameter is `props`.
     pub(super) fn jsx_props_from_first_parameter(
         &mut self,
         file: FileId,
@@ -346,9 +354,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getJsxPropsTypeForSignatureFromMember`: the property `name` of what `sig` makes. `None`: it has none.
+    /// `getJsxPropsTypeForSignatureFromMember`: the property `name` of the instance type of `sig`.
+    /// `None`: it has none.
     fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
-        // Of a signature that stands for those of the members of a union, what each of them makes has to be given its due.
+        // For a signature that represents those of the members of a union, the instance type of
+        // each of them is considered.
         let alone = [sig];
         let parts: &[SigId] = match self.types().sig(sig) {
             SigData::Synth { of, .. } if !of.is_empty() => &of[..],
@@ -360,7 +370,7 @@ impl<'p> Checker<'p> {
             if self.is_any(instance) {
                 return Some(instance);
             }
-            // `getTypeOfPropertyOfType`: an index signature is no property.
+            // `getTypeOfPropertyOfType`: an index signature is not a property.
             let apparent = self.apparent_type(instance);
             if !self.is_union(apparent) && self.prop_of(apparent, name).is_none() {
                 return None;
@@ -380,7 +390,8 @@ impl<'p> Checker<'p> {
         e: ExprId,
         sig: SigId,
     ) -> TypeId {
-        // `getTypeOfFirstParameterOfSignatureWithFallback`: of a rest parameter, what it holds first.
+        // `getTypeOfFirstParameterOfSignatureWithFallback`: for a rest parameter, its first element
+        // type.
         let first_parameter = |c: &mut Self| {
             let params = c.sig_params(sig);
             c.param_type_at(&params, 0).unwrap_or(TypeId::UNKNOWN)
@@ -419,7 +430,8 @@ impl<'p> Checker<'p> {
         let mut parts = Vec::with_capacity(3);
         parts.extend(self.jsx_type(file, known::IntrinsicAttributes));
         if let Some(of_class) = self.jsx_symbol(file, known::IntrinsicClassAttributes) {
-            // The type parameters are those of the symbol of the type: of what an alias stands for, and an alias's own stay open.
+            // The type parameters are those of the symbol of the type: those of the aliased type,
+            // and an alias's own stay uninstantiated.
             let declared = self.declared_type(of_class);
             let of_instance = match *self.data(declared) {
                 TypeData::Ref { target, .. } => {
@@ -445,7 +457,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkJsxChildren`: the children that count, and what each is.
+    /// `checkJsxChildren`: the children that count, and the type of each.
     pub(super) fn jsx_child_types(&mut self, file: FileId, e: ExprId) -> Vec<(ExprId, TypeId)> {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -496,20 +508,21 @@ impl<'p> Checker<'p> {
         };
         let jsx = &hir[j];
         let children_property_name = self.jsx_children_property_name(file);
-        // `emptyJsxObjectType`, which is what everything is spread onto.
+        // `emptyJsxObjectType`, onto which everything is spread.
         let empty = self.synth(Shape {
             literal: Literalness::JsxAttributes,
             ..Shape::default()
         });
         let has_spread = jsx.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
-        // Next to a spread, what is written goes on being what is written here (`shouldCheckAsExcessProperty`), as in an object literal.
+        // Next to a spread, the explicit attributes still count as declared here
+        // (`shouldCheckAsExcessProperty`), as in an object literal.
         let run = if has_spread {
             Literalness::Written
         } else {
             Literalness::JsxAttributes
         };
         let mut spread: Option<TypeId> = None;
-        // `typeToIntersect`: what cannot be spread.
+        // `typeToIntersect`: the types that cannot be spread.
         let mut not_spread: Vec<TypeId> = Vec::new();
         let mut pending = Shape {
             literal: run,
@@ -564,7 +577,7 @@ impl<'p> Checker<'p> {
         if !children.is_empty()
             && let JsxName::Name(name) = children_property_name
         {
-            // It is said of the attributes together.
+            // It is reported on the attributes as a whole.
             if let (Some(first), Some(last)) =
                 (jsx.attrs.iter().next(), jsx.attrs.iter().next_back())
                 && jsx.attrs.iter().any(|p| {
@@ -604,9 +617,10 @@ impl<'p> Checker<'p> {
                     self.array_of(element)
                 }
             };
-            // The synthesized declaration of the children has the attributes as its parent, so `shouldCheckAsExcessProperty` accepts
-            // it. The check only runs on a fresh type, and only `createJsxAttributesType` sets `ObjectFlagsFreshLiteral`: it needs a
-            // written attribute.
+            // The synthesized declaration of the children has the attributes as its parent, so
+            // `shouldCheckAsExcessProperty` accepts it. The check only runs on a fresh type, and
+            // only `createJsxAttributesType` sets `ObjectFlagsFreshLiteral`: it needs an explicit
+            // attribute.
             let has_source_attribute = jsx.attrs.iter().any(|p| hir[p].kind != PropKind::Spread);
             let flags = if has_source_attribute {
                 PropFlags::JSX_CHILDREN
@@ -622,7 +636,8 @@ impl<'p> Checker<'p> {
             });
         }
         flush(self, &mut spread, &mut pending);
-        // `getSpreadType(.., objectFlags, ..)`: what comes of spreading is still the attributes of an element.
+        // `getSpreadType(.., objectFlags, ..)`: the result of a spread is still the attributes type
+        // of an element.
         let attributes = match spread {
             Some(ty) if has_spread => self.map_type(ty, |c, m| c.as_jsx_attributes(m)),
             Some(ty) => ty,
@@ -637,7 +652,7 @@ impl<'p> Checker<'p> {
         self.intersection(&not_spread)
     }
 
-    /// `ty`, which came of spreading into the attributes of an element, marked as the attributes of one.
+    /// `ty`, the result of a spread into the attributes of an element, marked as JSX attributes.
     fn as_jsx_attributes(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Synth(shape)
@@ -651,7 +666,7 @@ impl<'p> Checker<'p> {
                     ..(**shape).clone()
                 })
             }
-            // What is generic is not spread but stands next to the rest.
+            // A generic type is not spread but intersected with the rest.
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()

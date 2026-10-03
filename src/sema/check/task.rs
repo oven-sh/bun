@@ -1,14 +1,18 @@
 //! Tasks, steps and barriers (bulk-synchronous parallel): fan/r8/DESIGN.md.
 //!
-//! Checking runs in STEPS. During a step the PUBLISHED state is read-only. A TASK reads the published state and what it owns, nothing
-//! else, and writes only to what it owns. So its result is a function of the program and of the published state at the start of its step.
+//! Checking runs in steps. During a step the published state is read-only. A task reads only the
+//! published state and what it owns, and writes only to what it owns. So its result is a function
+//! of the program and of the published state at the start of its step.
 //!
-//! A `Task` OWNS ITS STORES: the records it creates (`crate::types::OwnStore`, ids with `LOCAL`), its halves of the `Buffered` tables (the
-//! buffer), the entries of the `FileLocal` tables, its diagnostics. There is no thread-local.
+//! A `Task` owns its stores: the records it creates (`crate::types::OwnStore`, ids with `LOCAL`),
+//! the task-local parts of the `Buffered` tables (the buffer), the entries of the `FileLocal`
+//! tables, its diagnostics. There is no thread-local state.
 //!
-//! At the end of a task, on its own thread, `Task::finish` takes out what is to be published, compactly, and frees the rest. AT THE
-//! BARRIER after a step the link step gives every own id that survives a published id (`Program::link`), and then `publish` applies the
-//! tasks' entries in task order, every key and value rewritten through the link (`follow`). The first entry for a key stays.
+//! At the end of a task, on its own thread, `Task::finish` extracts what is to be published,
+//! compactly, and frees the rest. At the barrier after a step, the link step assigns a published id
+//! to every task-local id that survives (`Program::link`), and then `publish` applies the tasks'
+//! entries in task order, with every key and value rewritten through the link (`follow`). The first
+//! entry for a key wins.
 
 use super::sink::Reported;
 use super::{Program, Query};
@@ -21,7 +25,8 @@ use crate::util::{InParallel, for_each_mut};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
-/// Permission to store a finished result. `Checker::leave` and the scopes in check/mod.rs make one, and nothing else does.
+/// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs
+/// create one.
 #[derive(Copy, Clone)]
 pub struct Stored(());
 
@@ -38,17 +43,18 @@ pub struct Open;
 
 /// One per `Checker`.
 pub struct Task {
-    /// The step, and the place of the task in it. `None`: the task is outside the plan.
+    /// The step, and the index of the task in it. `None`: the task is outside the plan.
     place: Option<(u32, u32)>,
     /// See `Task::begin`.
     is_read_later: bool,
-    /// The file that the task is going through.
+    /// The file that the task is visiting.
     pub file: Option<FileId>,
-    /// Not 0: the task is a checker of `checkerPool`, which has this many. Its place in the step is its index.
+    /// Nonzero: the task is one checker of a `checkerPool` of this size. Its index in the step is
+    /// its checker index.
     pub(super) checker_count: u32,
     /// `Some(q)`: the diagnostic belongs to the entry that `q` stores. `None`: it belongs to the task.
     pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
-    /// Whether a query of this task has come back to itself.
+    /// Whether a query of this task has re-entered itself.
     pub(super) closed_a_cycle: bool,
     /// How many queries about a source file of another component the task has evaluated, by `FOREIGN_EVALUATION_KINDS`.
     pub(super) foreign_evaluations: [u32; 14],
@@ -79,9 +85,11 @@ impl Task {
         }
     }
 
-    /// Puts the task into the plan. `step` counts from 0. `index`: the place of the task in its step, in task order. Whatever the task
-    /// owned before is dropped, so no id with `LOCAL` and no reference from a kept table may be around.
-    /// `is_read_later`: whether anything will read what the task publishes. If not, `finish` hands over nothing but the diagnostics.
+    /// Puts the task into the plan. `step` counts from 0. `index`: the index of the task in its
+    /// step, in task order. Everything the task owned before is dropped, so no id with `LOCAL` and
+    /// no reference from a kept table may be live.
+    /// `is_read_later`: whether anything will read what the task publishes. If not, `finish`
+    /// returns only the diagnostics.
     pub fn begin(&mut self, step: u32, index: u32, is_read_later: bool) {
         debug_assert!(
             self.own.is_empty(),
@@ -91,20 +99,21 @@ impl Task {
         (self.place, self.is_read_later) = (Some((step, index)), is_read_later);
     }
 
-    /// `begin` has been called: what the task buffers goes to a barrier.
+    /// `begin` has been called: the entries the task buffers go to a barrier.
     #[inline]
     pub fn is_planned(&self) -> bool {
         self.place.is_some()
     }
 
-    /// The place of the task in its step.
+    /// The index of the task in its step.
     pub(super) fn index(&self) -> Option<u32> {
         self.place.map(|(_, index)| index)
     }
 
-    /// From now on the task goes through `file`: the entries under its nodes are dense. The entries of the `FileLocal` tables are dropped,
-    /// those of the `Buffered` tables stay. A task can go through any number of files. `is_imported`: whether another file can refer to
-    /// `file`. If none can, whatever mentions `file` is BOUND and is never published.
+    /// From now on the task visits `file`: the entries keyed by its nodes are stored densely. The
+    /// entries of the `FileLocal` tables are dropped, those of the `Buffered` tables stay. A task
+    /// can visit any number of files. `is_imported`: whether another file can refer to `file`. If
+    /// none can, anything that mentions `file` is bound and is never published.
     pub fn begin_file(&mut self, file: FileId, is_imported: bool) {
         self.file = Some(file);
         if !is_imported {
@@ -125,13 +134,14 @@ impl Task {
         self.file_local.get_mut().clear();
     }
 
-    /// The task's halves of the `Buffered` tables.
+    /// The task-local parts of the `Buffered` tables.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn buffer(&self) -> &mut Buffer {
-        // SAFETY: the task is not `Sync`, and no two of these references are in use at a time: `crate::table` uses the reference for one
-        // call into `crate::local`, which calls nothing outside itself. What a kept table hands out points into a `Chunked`, whose
-        // elements stay where they are until `finish`, `begin` or the drop.
+        // SAFETY: the task is not `Sync`, and no two of these references are live at the same time:
+        // `crate::table` uses the reference for one call into `crate::local`, which calls nothing
+        // outside itself. References returned by a kept table point into a `Chunked`, whose
+        // elements do not move until `finish`, `begin` or the drop.
         unsafe { &mut *self.buffer.get() }
     }
 
@@ -139,13 +149,14 @@ impl Task {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn file_local(&self) -> &mut FileLocalTables {
-        // SAFETY: as in `buffer`. What `FileLocalTables::kept` returns points into an allocation of its own, which stays where it is
-        // until the task ends or begins another file.
+        // SAFETY: as in `buffer`. The reference that `FileLocalTables::kept` returns points into a
+        // separate allocation, which does not move until the task ends or begins another file.
         unsafe { &mut *self.file_local.get() }
     }
 
-    /// The end of a task in the plan, ON ITS OWN THREAD. What is returned has everything that goes to the barrier: the entries whose key and
-    /// value are not bound, by table, and the own records that they mention. Everything else is freed here.
+    /// Ends a task in the plan, on its own thread. The result holds everything that goes to the
+    /// barrier: the entries whose key and value are not bound, by table, and the task-local records
+    /// that they mention. Everything else is freed here.
     /// `diagnostics`: from `Checker::take_diagnostics`.
     pub(super) fn finish(
         &mut self,
@@ -168,7 +179,7 @@ impl Task {
         let buffer = self.buffer.get_mut();
         let mut finishing = Finishing::new(&self.own, &mut marks);
         let mut published = Vec::new();
-        // What nothing reads later is not even looked at. It is dropped below.
+        // Entries that nothing reads later are not inspected. They are dropped below.
         if self.is_read_later {
             for table in tables {
                 published.push(table.finish(buffer.half_mut(table.slot()), &mut finishing));
@@ -197,7 +208,7 @@ impl Task {
     }
 }
 
-/// What a task hands to the barrier.
+/// The result a task passes to the barrier.
 pub struct Finished {
     pub step: u32,
     pub index: u32,
@@ -207,13 +218,13 @@ pub struct Finished {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent>,
-    /// The own records that the entries mention, in creation order.
+    /// The task-local records that the entries mention, in creation order.
     pub own: OwnRecords,
     /// `Program::link` fills it in, `publish` follows it.
     pub link: Link,
     /// By slot.
     tables: Vec<Option<Entries>>,
-    /// How many entries there are in `tables`.
+    /// The number of entries in `tables`.
     buffered: u64,
 }
 
@@ -260,15 +271,16 @@ impl OrderDependent {
     }
 }
 
-/// What a barrier did, for `--timing`. Each is a function of the program. `buffered == published + lost`.
+/// Statistics of a barrier, for `--timing`. Each is a function of the program. `buffered ==
+/// published + lost`.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Published {
-    /// The entries that the tasks have handed over.
+    /// The entries that the tasks passed to the barrier.
     pub buffered: u64,
     pub published: u64,
-    /// To a lower task of the step, or to the published state.
+    /// Lost to a task with a lower index in the step, or to the published state.
     pub lost: u64,
-    /// See `Applied::digest`. 0 unless it is asked for.
+    /// See `Applied::digest`. 0 unless requested.
     pub digest: u64,
     /// `(buffered, published)` of each table, in the order of `table_names`.
     pub by_table: Vec<(u64, u64)>,
@@ -290,8 +302,8 @@ fn tables_of(program: &Program) -> Vec<&dyn Publish> {
     super::buffered_fields!(each)
 }
 
-/// The last thing that `Program::new` does. A table finds its half in a task by its slot, which is its place in `buffered_fields!` or in
-/// `file_local_fields!`.
+/// Called last by `Program::new`. A table finds its task-local part in a task by its slot, which is
+/// its index in `buffered_fields!` or in `file_local_fields!`.
 pub(super) fn number_tables(program: &mut Program) {
     macro_rules! each {
         ($($field:ident)*) => {{
@@ -314,22 +326,26 @@ struct Stage<'a> {
     part: usize,
     /// In task order.
     shares: Vec<Share<'a>>,
-    /// Afterwards: how many of the entries were stored.
+    /// Set afterwards: the number of entries that were stored.
     published: u64,
 }
 
-/// What one thread applies: a table or a part of one, then the tables whose values hold its handles.
+/// The work of one thread: it applies a table or a part of one, then the tables whose values hold
+/// its handles.
 struct Chain<'a> {
     stages: Vec<Stage<'a>>,
     len: u64,
     applied: Applied<'a>,
 }
 
-/// AT THE BARRIER, after the link step. `finished`: the tasks of ONE step, in task order. No task is running.
+/// Runs at the barrier, after the link step. `finished`: the tasks of one step, in task order. No
+/// task is running.
 ///
-/// 1. FOLLOW, parallel over tasks and tables: every key and value is rewritten through the link of its task.
-/// 2. APPLY, parallel over tables and parts of tables: ONE thread applies all tasks' entries of one table or part, in task order, and the
-///    first entry for a key stays. Two threads never touch one key, so the outcome does not depend on timing.
+/// 1. Follow, parallel over tasks and tables: every key and value is rewritten through the link of
+///    its task.
+/// 2. Apply, parallel over tables and parts of tables: one thread applies all tasks' entries of one
+///    table or part, in task order, and the first entry for a key wins. Two threads never touch one
+///    key, so the outcome does not depend on timing.
 pub fn publish(
     program: &Program,
     finished: &mut [Finished],
@@ -343,7 +359,8 @@ pub fn publish(
 /// A barrier with fewer entries than this does not use the pool.
 const FEW_ENTRIES: u64 = 4096;
 
-/// `tables`: by slot. `atoms`: `Some` if the digest is asked for, which takes an atom as its text.
+/// `tables`: indexed by slot. `atoms`: `Some` if the digest is requested, which treats an atom as
+/// its text.
 fn publish_tables(
     tables: &[&dyn Publish],
     finished: &mut [Finished],
@@ -362,7 +379,8 @@ fn publish_tables(
         };
     }
     let buffered: u64 = finished.iter().map(|it| it.buffered).sum();
-    // Handing work to the pool costs more than a few entries do. The stages are the same, so the outcome is.
+    // Dispatching to the pool costs more than applying a few entries. The stages are the same, so
+    // the outcome is too.
     let inline = |count: usize, work: &(dyn Fn(usize) + Sync)| (0..count).for_each(work);
     let in_parallel: InParallel<'_> = if buffered < FEW_ENTRIES {
         &inline
@@ -436,7 +454,8 @@ fn publish_tables(
     chains.sort_by_key(|chain| std::cmp::Reverse(chain.len));
     let tasks = finished.len();
     for_each_mut(&mut chains, in_parallel, &|chain| {
-        // By task: the published handles of the entries of the stage before, by their places among the task's entries.
+        // By task: the published handles of the entries of the previous stage, indexed by their
+        // positions among the task's entries.
         let has_handles = chain.stages.len() > 1;
         let mut handles: Vec<Vec<Handle>> = vec![Vec::new(); if has_handles { tasks } else { 0 }];
         for stage in &mut chain.stages {

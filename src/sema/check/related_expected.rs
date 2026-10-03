@@ -1,22 +1,24 @@
-//! Where what is expected of a part of an expression comes from: the related information `elaborateError` adds to its errors.
+//! The origin of the expected type of a subexpression: the related information `elaborateError`
+//! adds to its errors.
 
 use super::related::Place;
 use super::*;
 use crate::bind::Decl;
 
 impl Checker<'_> {
-    /// The end of `elaborateElement`: the related information of the error about the property or the element `name` of what is held
-    /// against `target`.
+    /// The end of `elaborateElement`: the related information of the error about the property or
+    /// the element `name` of the expression compared with `target`.
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {
-        // What is compared on the way says nothing about the comparison that is being reported.
+        // Comparisons made along the way are independent of the comparison being reported.
         let too_complex = self.relation_too_complex;
         let related = self.related_info_for_expected_property(target, name);
         self.relation_too_complex = too_complex;
         related
     }
 
-    /// 6501 at the index signature of `target` that stands in for `name`, or 6500 at what declares the property, or else `target`.
-    /// Nothing in the default library is pointed at.
+    /// 6501 at the index signature of `target` that applies to `name`, or 6500 at the declaration
+    /// of the property, or else of `target`.
+    /// Nothing in the default library is referenced.
     fn related_info_for_expected_property(
         &mut self,
         target: TypeId,
@@ -50,8 +52,8 @@ impl Checker<'_> {
         ))
     }
 
-    /// What starts at `start` in `file`, from where to where `range` says. The text of the default library is not kept, so there
-    /// is no telling where anything ends in it.
+    /// The span, computed by `range`, of the node that starts at `start` in `file`. The text of the
+    /// default library is not retained, so end positions in it are unknown.
     fn place_in_file(
         &self,
         file: FileId,
@@ -65,8 +67,8 @@ impl Checker<'_> {
         (file, start, end)
     }
 
-    /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None`: there is no such property. `Some(None)`:
-    /// nothing declares it.
+    /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None`: no such
+    /// property. `Some(None)`: it has no declaration.
     fn first_declaration_of_property(&mut self, ty: TypeId, name: Atom) -> Option<Option<Place>> {
         let (prop, _) = self.get_property_of_type(ty, name)?;
         Some(self.place_of_first_prop_declaration(prop))
@@ -111,7 +113,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `getApplicableIndexInfo(target, nameType).declaration`, where `nameType` is what names the property `name`.
+    /// `getApplicableIndexInfo(target, nameType).declaration`, where `nameType` is the name type of
+    /// the property `name`.
     fn declaration_of_applicable_index_signature(
         &mut self,
         target: TypeId,

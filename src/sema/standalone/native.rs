@@ -8,14 +8,16 @@ use core::ffi::{c_char, c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────
 
-// With `--cfg bun_sema_mimalloc` the real one is linked instead, to measure with the allocator Bun has.
+// With `--cfg bun_sema_mimalloc` the real mimalloc is linked instead, to measure with Bun's
+// allocator.
 #[cfg(not(bun_sema_mimalloc))]
 mod fake_mimalloc {
     use super::*;
 
     #[repr(C)]
     struct Header {
-        /// What `malloc` returned, for a block that is freed on its own. Null for one that goes with its heap.
+        /// The pointer `malloc` returned, for a block that is freed individually. Null for a block
+        /// that is freed with its heap.
         base: *mut c_void,
         size: usize,
     }
@@ -74,7 +76,7 @@ mod fake_mimalloc {
             // SAFETY: forwarded.
             return unsafe { global_alloc(size, align, zero) };
         }
-        // SAFETY: a heap is used by the thread that made it.
+        // SAFETY: a heap is used by the thread that created it.
         let heap = unsafe { &mut *heap };
         let total = size + align.max(16) + HEADER;
         if heap.end - heap.at < total {
@@ -86,7 +88,7 @@ mod fake_mimalloc {
             }
             heap.chunks.push(base);
             if total > CHUNK / 4 {
-                // On its own, so that the rest of the current chunk stays usable.
+                // Allocated separately, so that the rest of the current chunk stays usable.
                 // SAFETY: `total` bytes were reserved.
                 let p = unsafe { place(base, base.addr(), size, align, false) };
                 if zero {
@@ -120,7 +122,7 @@ mod fake_mimalloc {
     }
 
     unsafe fn header(p: *const c_void) -> *const Header {
-        // SAFETY: every block handed out has a header right before it.
+        // SAFETY: every returned block has a header immediately before it.
         unsafe { p.cast::<Header>().sub(1) }
     }
 
@@ -147,7 +149,7 @@ mod fake_mimalloc {
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_destroy(heap: *mut c_void) {
-        // SAFETY: made by `mi_heap_new`.
+        // SAFETY: created by `mi_heap_new`.
         let heap = unsafe { Box::from_raw(heap.cast::<Heap>()) };
         for &chunk in &heap.chunks {
             // SAFETY: from `malloc`.
@@ -531,7 +533,7 @@ unsafe extern "C" fn simdutf__base64_encode(
 
 // ───────────────────────────── widths ─────────────────────────────
 
-/// Roughly. What Bun has knows about graphemes.
+/// An approximation. Bun's implementation is grapheme-aware.
 fn width_of(c: char) -> usize {
     match c as u32 {
         0x0300..=0x036F | 0x200B..=0x200F | 0xFE00..=0xFE0F => 0,
@@ -611,7 +613,7 @@ extern "C" fn mi_on_thread_idle_start() -> bool {
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_end() {}
 
-/// Says how much stack the current thread has left, roughly. Without it nothing stops recursion.
+/// Sets the approximate remaining stack of the current thread. Without it recursion is unbounded.
 pub fn set_stack_size(remaining: usize) {
     let probe = 0u8;
     STACK_LIMIT.with(|limit| limit.set((&raw const probe).addr().saturating_sub(remaining)));
@@ -657,7 +659,7 @@ fn __bun_macro_context_get_remap(
     None
 }
 
-/// The longest prefix of `p` that is a decimal number, as `WTF::parseDouble` reads it.
+/// The longest prefix of `p` that is a decimal number, as `WTF::parseDouble` parses it.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut usize) -> f64 {
     let text = unsafe { bytes(p, len) };

@@ -63,7 +63,8 @@ impl Hasher for FxHasher {
 }
 
 pub type FxBuild = BuildHasherDefault<FxHasher>;
-/// The keys are small ids. What `disallowed_types` is after is `RandomState`: the hasher here is Fx, as in `bun_collections::AutoContext`.
+/// The keys are small ids. `disallowed_types` targets `RandomState`: the hasher here is Fx, as in
+/// `bun_collections::AutoContext`.
 #[allow(clippy::disallowed_types)]
 pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
 #[allow(clippy::disallowed_types)]
@@ -76,10 +77,10 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
-/// A number for each key that comes more than once: 0, 1, .. in the order each first comes in.
+/// A number for each key that occurs more than once: 0, 1, .. in order of first occurrence.
 pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
     let mut numbers: FxHashMap<K, usize> = FxHashMap::default();
-    // Nearly always every key comes once.
+    // Nearly always every key occurs once.
     if keys.len() <= 32 && (1..keys.len()).all(|i| !keys[..i].contains(&keys[i])) {
         return numbers;
     }
@@ -96,7 +97,7 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// A list that is kept for good somewhere, or was made for whoever asked.
+/// A list that is either borrowed from permanent storage or was built for the caller.
 #[derive(Clone, Debug)]
 pub enum List<'p, T> {
     Kept(&'p [T]),
@@ -219,27 +220,27 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 /// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
 pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
 
-/// `work(&mut items[i])` for every item, on the pool. The first items are begun first.
+/// Runs `work(&mut items[i])` for every item, on the pool. The first items are started first.
 pub fn for_each_mut<T: Send>(
     items: &mut [T],
     in_parallel: InParallel<'_>,
     work: &(dyn Fn(&mut T) + Sync),
 ) {
     struct Items<T>(*mut T);
-    // SAFETY: the threads get at different items, which are `Send`.
+    // SAFETY: the threads access disjoint items, which are `Send`.
     unsafe impl<T: Send> Sync for Items<T> {}
     impl<T> Items<T> {
         /// # Safety
         /// `i` is in bounds, and no other reference to the item is in use.
         #[allow(clippy::mut_from_ref)]
         unsafe fn item(&self, i: usize) -> &mut T {
-            // SAFETY: the caller's.
+            // SAFETY: guaranteed by the caller.
             unsafe { &mut *self.0.add(i) }
         }
     }
     let all = Items(items.as_mut_ptr());
-    // SAFETY: `in_parallel` gives every `i` below the length to one call, so no two calls have one item, and `items` is borrowed until
-    // all have returned.
+    // SAFETY: `in_parallel` passes every `i` below the length to exactly one call, so no two calls
+    // share an item, and `items` is borrowed until all have returned.
     in_parallel(items.len(), &|i| work(unsafe { all.item(i) }));
 }
 
@@ -247,28 +248,30 @@ const FIRST_CHUNK_BITS: u32 = 10;
 /// One for each number of leading zeros a `u32` can have.
 const CHUNKS: usize = 33;
 
-/// A vector that only grows, whose elements never move, and that is read and added to without a lock.
+/// An append-only vector whose elements never move, with lock-free reads and appends.
 ///
-/// Each chunk is twice as long as the one before it. What is kept of a chunk is where it would begin if it held what is before it as
-/// well, so that an element is found without working out where in its chunk it is: see `locate`.
+/// Each chunk is twice as long as the previous one. The base pointer stored for a chunk is the
+/// address it would start at if it also held the preceding elements, so that an element is
+/// addressed without computing its offset within the chunk: see `locate`.
 pub struct AppendVec<T> {
     chunks: [AtomicPtr<T>; CHUNKS],
     len: AtomicU32,
 }
 
-// SAFETY: elements are only handed out by shared reference, and an index is only handed out once its slot is written.
+// SAFETY: elements are only exposed by shared reference, and an index is only returned once its
+// slot is written.
 unsafe impl<T: Send + Sync> Sync for AppendVec<T> {}
 // SAFETY: owns its elements.
 unsafe impl<T: Send> Send for AppendVec<T> {}
 
-/// Which chunk `index` is in, and how far it is from what is kept of the chunk.
+/// The chunk of `index`, and its offset from the chunk's stored base pointer.
 #[inline]
 fn locate(index: u32) -> (usize, usize) {
     let n = index.wrapping_add(1 << FIRST_CHUNK_BITS);
     (n.leading_zeros() as usize, n as usize)
 }
 
-/// Also how far the chunk is from what is kept of it.
+/// Also the offset of the chunk from its stored base pointer.
 #[inline]
 fn chunk_len(chunk: usize) -> usize {
     1usize << (31 - chunk)
@@ -288,7 +291,7 @@ impl<T> AppendVec<T> {
         }
     }
 
-    /// How many indices have been given out.
+    /// The number of indices that have been allocated.
     #[inline]
     pub fn len(&self) -> u32 {
         self.len.load(Ordering::Acquire)
@@ -298,7 +301,8 @@ impl<T> AppendVec<T> {
         self.push_with(|_| value)
     }
 
-    /// `make` is told the index the value gets. Whoever passes the index on to another thread has to do so with `Release`.
+    /// `make` receives the index of the new value. A caller that passes the index to another thread
+    /// must do so with `Release`.
     pub fn push_with(&self, make: impl FnOnce(u32) -> T) -> u32 {
         let index = self.len.fetch_add(1, Ordering::Relaxed);
         let (chunk, offset) = locate(index);
@@ -306,16 +310,17 @@ impl<T> AppendVec<T> {
         if base.is_null() {
             base = self.install_chunk(chunk);
         }
-        // SAFETY: `offset` is inside the chunk, the slot is this call's alone, and nobody reads it before the index is handed out.
+        // SAFETY: `offset` is inside the chunk, the slot is owned by this call alone, and no thread
+        // reads it before the index is returned.
         unsafe { base.wrapping_add(offset).write(make(index)) };
         index
     }
 
-    /// Gives out `count` indices in a row and returns the first. Their chunks are in place afterwards, so that many threads can `write`
-    /// to them at once.
+    /// Allocates `count` consecutive indices and returns the first. Their chunks are allocated
+    /// afterwards, so that several threads can `write` to them concurrently.
     ///
     /// # Safety
-    /// Every one of the indices is to be given to `write` before the vector is dropped.
+    /// Every one of the indices must be passed to `write` before the vector is dropped.
     pub unsafe fn reserve(&self, count: u32) -> u32 {
         let first = self.len.fetch_add(count, Ordering::Relaxed);
         if count != 0 {
@@ -330,16 +335,18 @@ impl<T> AppendVec<T> {
     }
 
     /// # Safety
-    /// `index` is one that `reserve` has given out, this is the only `write` to it, and nobody reads it before a barrier.
+    /// `index` was allocated by `reserve`, this is the only `write` to it, and no thread reads it
+    /// before a barrier.
     #[inline]
     pub unsafe fn write(&self, index: u32, value: T) {
         let (chunk, offset) = locate(index);
         let base = self.chunks[chunk].load(Ordering::Relaxed);
-        // SAFETY: `reserve` has put the chunk in place, `offset` is inside it, and the slot is this call's alone.
+        // SAFETY: `reserve` has allocated the chunk, `offset` is inside it, and the slot is owned
+        // by this call alone.
         unsafe { base.wrapping_add(offset).write(value) };
     }
 
-    /// Several threads may get here at once. The first to put its chunk in place wins.
+    /// Several threads may race here. The first to install its chunk wins.
     #[cold]
     fn install_chunk(&self, chunk: usize) -> *mut T {
         let layout = std::alloc::Layout::array::<T>(chunk_len(chunk)).unwrap();
@@ -347,7 +354,7 @@ impl<T> AppendVec<T> {
         let fresh = unsafe { std::alloc::alloc(layout) }.cast::<T>();
         assert!(!fresh.is_null());
         let base = fresh.wrapping_sub(chunk_len(chunk));
-        // Null is for a chunk that is not there.
+        // Null marks a chunk that is not allocated.
         assert!(!base.is_null());
         match self.chunks[chunk].compare_exchange(
             std::ptr::null_mut(),
@@ -357,7 +364,7 @@ impl<T> AppendVec<T> {
         ) {
             Ok(_) => base,
             Err(installed) => {
-                // SAFETY: allocated above with the same layout, and shown to nobody.
+                // SAFETY: allocated above with the same layout, and never published.
                 unsafe { std::alloc::dealloc(fresh.cast::<u8>(), layout) };
                 installed
             }
@@ -367,11 +374,12 @@ impl<T> AppendVec<T> {
     #[inline]
     pub fn get(&self, index: u32) -> &T {
         let (chunk, offset) = locate(index);
-        // SAFETY: there is a place for every number of leading zeros.
+        // SAFETY: there is a slot for every leading-zero count.
         let chunk = unsafe { self.chunks.get_unchecked(chunk) };
-        // Whoever pushed had seen the chunk, and the index came from there with `Release` and `Acquire`: there is nothing left to wait for.
+        // The thread that pushed had seen the chunk, and the index was passed from it with
+        // `Release` and `Acquire`: no further synchronization is needed.
         let base = chunk.load(Ordering::Relaxed);
-        // SAFETY: an index comes from `push`, which initialized the slot before handing it out.
+        // SAFETY: an index comes from `push`, which initialized the slot before returning it.
         unsafe { &*base.wrapping_add(offset) }
     }
 }
@@ -400,13 +408,15 @@ impl<T> Drop for AppendVec<T> {
 
 const MAP_SHARDS: usize = 256;
 
-/// Spreads a hash over all its bits: the top ones pick the shard, the low half is the tag, which the place in the table goes by.
+/// Mixes a hash into all of its bits: the top bits select the shard, the low half is the tag, which
+/// determines the slot in the table.
 #[inline]
 fn spread(hash: u64) -> u64 {
     (hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
-/// The places of an open-addressed table. A place holds 0, or the tag of a hash in its upper half and an index plus one in its lower.
+/// The slots of an open-addressed table. A slot holds 0, or the tag of a hash in its upper half and
+/// an index plus one in its lower half.
 pub(crate) struct Places {
     mask: usize,
     places: Box<[AtomicU64]>,
@@ -420,7 +430,8 @@ impl Places {
         })
     }
 
-    /// The index of what `is_it` says yes to among those with the hash `spread`. `order`: `Acquire` if another thread may be adding.
+    /// The index of the entry that `is_it` accepts among those with the hash `spread`. `order`:
+    /// `Acquire` if another thread may be inserting.
     #[inline]
     fn find(
         &self,
@@ -431,7 +442,7 @@ impl Places {
         let tag = spread as u32;
         let mut at = tag as usize & self.mask;
         loop {
-            // SAFETY: `mask` is one less than there are places.
+            // SAFETY: `mask` is the number of slots minus one.
             let place = unsafe { self.places.get_unchecked(at) }.load(order);
             if place == 0 {
                 return None;
@@ -443,12 +454,13 @@ impl Places {
         }
     }
 
-    /// Only whoever holds the lock of the shard puts anything in.
+    /// Only the holder of the shard's lock inserts.
     fn put(&self, spread: u64, index: u32) {
         self.put_place(u64::from(spread as u32) << 32 | u64::from(index + 1));
     }
 
-    /// What is in a place says where it goes: a table grows without looking at what it is a table of.
+    /// The content of a slot determines its position, so a table grows without reading the entries
+    /// it indexes.
     fn put_place(&self, place: u64) {
         let mut at = (place >> 32) as usize & self.mask;
         while self.places[at].load(Ordering::Relaxed) != 0 {
@@ -458,8 +470,9 @@ impl Places {
     }
 }
 
-/// One part of a table that only grows. It is read without a lock: the places are reached through a pointer that is swapped for
-/// one to a bigger table when they fill up, and the old ones stay where they are for whoever is still reading them.
+/// One shard of a table that only grows. Reads are lock-free: the slots are reached through a
+/// pointer that is swapped for one to a bigger table when they fill up, and the old tables stay
+/// allocated for concurrent readers.
 pub(crate) struct GrowingPlaces {
     current: AtomicPtr<Places>,
     writer: Guarded<Writer>,
@@ -468,8 +481,8 @@ pub(crate) struct GrowingPlaces {
 #[derive(Default)]
 struct Writer {
     count: usize,
-    /// All the tables there have been, the current one last. `GrowingPlaces::current` points into a box, and readers of an older one are
-    /// still at it when the list grows.
+    /// All tables ever allocated, the current one last. `GrowingPlaces::current` points into a box,
+    /// and readers of an older table may still be reading it when the list grows.
     #[expect(clippy::vec_box)]
     tables: Vec<Box<Places>>,
 }
@@ -490,11 +503,12 @@ impl GrowingPlaces {
         if current.is_null() {
             return None;
         }
-        // SAFETY: a table lives as long as `self`: `Writer::tables` owns it and gives nothing up.
+        // SAFETY: a table lives as long as `self`: `Writer::tables` owns it and never frees one.
         unsafe { &*current }.find(spread, Ordering::Acquire, is_it)
     }
 
-    /// `find`, during a step: nobody adds anything, and the barrier before the step has ordered what was added. Plain loads.
+    /// `find`, during a step: no thread inserts, and the barrier before the step has ordered the
+    /// earlier inserts. Plain loads.
     #[inline]
     pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
         let current = self.current.load(Ordering::Relaxed);
@@ -505,8 +519,9 @@ impl GrowingPlaces {
         unsafe { &*current }.find(spread, Ordering::Relaxed, is_it)
     }
 
-    /// At a barrier, by the one thread that fills this part: adds `count` pairs of a hash and an index, none of which is there yet. One
-    /// lock, and at most one bigger table, for all of them.
+    /// Runs at a barrier, on the one thread that fills this shard: adds `count` pairs of a hash and
+    /// an index, none of which is present yet. One lock acquisition, and at most one resize, for
+    /// all of them.
     pub(crate) fn extend(&self, count: usize, added: impl Iterator<Item = (u64, u32)>) {
         if count == 0 {
             return;
@@ -523,7 +538,7 @@ impl GrowingPlaces {
         writer.count += count;
     }
 
-    /// Afterwards `more` places can be filled, and three quarters of the table at most are.
+    /// Afterwards `more` slots can be filled with a load factor of at most three quarters.
     fn reserve(&self, writer: &mut Writer, more: usize) {
         let capacity = writer.tables.last().map_or(0, |t| t.mask + 1);
         if (writer.count + more) * 4 <= capacity * 3 {
@@ -544,7 +559,7 @@ impl GrowingPlaces {
         writer.tables.push(bigger);
     }
 
-    /// What `is_it` says yes to, or else what `make` adds.
+    /// The entry that `is_it` accepts, or else the one that `make` adds.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
@@ -552,7 +567,7 @@ impl GrowingPlaces {
         make: impl FnOnce() -> u32,
     ) -> u32 {
         let mut writer = self.writer.lock();
-        // Somebody may have been faster.
+        // Another thread may have inserted it first.
         if let Some(found) = writer
             .tables
             .last()
@@ -589,8 +604,8 @@ struct MapShard<K, V> {
     entries: AppendVec<(K, V)>,
 }
 
-/// A memo table many threads fill. Two threads may compute the same entry; they compute the same value. Looking something up takes no
-/// lock and writes to nothing that is shared. Only adding something takes the lock of one of the parts.
+/// A concurrent memo table. Two threads may compute the same entry; they compute the same value. A
+/// lookup is lock-free and writes to no shared memory. Only an insert takes the lock of one shard.
 pub struct ShardedMap<K, V> {
     shards: Box<[MapShard<K, V>; MAP_SHARDS]>,
 }
@@ -614,7 +629,7 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
         self.shards.iter().map(|s| s.entries.len() as usize).sum()
     }
 
-    /// What is kept never moves.
+    /// Stored values never move.
     #[inline]
     pub fn get_ref<Q>(&self, key: &Q) -> Option<&V>
     where
@@ -639,8 +654,9 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
             .map(|i| &shard.entries.get(i).1)
     }
 
-    /// At a barrier, by the one thread that fills the shard of `spread`, which is `spread_hash(key)`. Keeps what is there already.
-    /// Whether `value` was put in.
+    /// Runs at a barrier, on the one thread that fills the shard of `spread`, which is
+    /// `spread_hash(key)`. Does not overwrite an existing value.
+    /// Returns whether `value` was inserted.
     pub(crate) fn add_if_absent(&self, spread: u64, key: &K, value: V) -> bool
     where
         K: Clone,
@@ -655,7 +671,7 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
         value.is_none()
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, key: K, value: V) -> &V {
         let spread = spread_hash(&key);
         let shard = &self.shards[shard_of(spread)];
@@ -690,12 +706,12 @@ impl<K: std::hash::Hash + Eq, V: Clone> ShardedMap<K, V> {
         found.cloned()
     }
 
-    /// Keeps what is there already, and returns what is kept.
+    /// Does not overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
         let spread = spread_hash(&key);
         let shard = &self.shards[shard_of(spread)];
-        // Looked at until it is put in, which is the last thing that is done with it.
+        // Read until it is inserted, which is its last use.
         let entry = std::cell::RefCell::new(Some((key, value)));
         let index = shard.places.find_or_add(
             spread,

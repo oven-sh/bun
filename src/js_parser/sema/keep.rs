@@ -1,11 +1,12 @@
 //! Keep mode for TypeScript type syntax.
 //!
-//! By default the parser skips types. When `TypeSyntax::save_types` is set, the same skip functions in
-//! `parse/parse_skip_typescript.rs` also make the rows of the type checker's tree, by calling the helpers in this file under `if KEEP`
-//! (`clone_types.rs` makes them).
+//! By default the parser skips types. When `TypeSyntax::save_types` is set, the same skip functions
+//! in `parse/parse_skip_typescript.rs` also build the checker's HIR nodes, by calling the helpers
+//! in this file under `if KEEP` (`clone_types.rs` builds them).
 //!
-//! Each function that parses a type stores the result in `TypeSyntax::last_type`, and the caller reads it from there. `NONE` means there
-//! is no usable type, which only happens for invalid code. `NONE` propagates to the enclosing type.
+//! Each function that parses a type stores the result in `TypeSyntax::last_type`, and the caller
+//! reads it from there. `NONE` means there is no usable type, which only happens for invalid code.
+//! `NONE` propagates to the enclosing type.
 
 use crate::sema::ts_syntax::{
     Flags, FunctionBody, Interface, Keyword, MappedModifier, MappedType, Member, MemberKind,
@@ -66,7 +67,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.last_type = syntax.b.file.ty(kind, pos, 0);
     }
 
-    /// `finishNode`, of the type parsed last, unless it is finished: it ends where the token before the current one does.
+    /// `finishNode` for the last parsed type, unless it is already finished: it ends at the end of
+    /// the previous token.
     pub(crate) fn finish_last_type(&mut self) {
         let ty = self.last_type();
         if ty.is_some() && self.type_syntax_mut().b.file[ty].end == 0 {
@@ -89,7 +91,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    /// The last parsed type, a single token, turns out to be the subject of a type predicate: its row goes, which was made last.
+    /// The last parsed type, a single token, turned out to be the parameter name of a type
+    /// predicate. Removes its node, which is the most recent one.
     pub(crate) fn take_back_single_token_type(&mut self) {
         let syntax = self.type_syntax_mut();
         let file = &mut syntax.b.file;
@@ -302,7 +305,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.append_name(name);
     }
 
-    /// Called where the name after a `.` is missing (`parseRightSideOfDot`). An empty name stands for it.
+    /// Called where the name after a `.` is missing (`parseRightSideOfDot`). An empty name
+    /// represents it.
     pub(crate) fn append_missing_qualified_name(&mut self) {
         let name = Name {
             text: StoreStr::EMPTY,
@@ -311,7 +315,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.append_name(name);
     }
 
-    /// Whether a `.` goes on from the last parsed type: it is a name without type arguments (`parseEntityName`), or `import(..)`.
+    /// Whether a `.` can continue the last parsed type: it is a name without type arguments
+    /// (`parseEntityName`), or `import(..)`.
     pub(crate) fn last_type_takes_qualifier(&mut self) -> bool {
         let reference = self.last_type();
         if reference.is_none() {
@@ -374,11 +379,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
     }
 
-    /// The type parsed last, where type arguments may follow. Its row, which was made last, is taken back until they are read: a
-    /// type is numbered after what is in it. Pass the result to `attach_type_args`.
+    /// Takes the last parsed type at a point where type arguments may follow. Its node, the most
+    /// recent one, is removed until they are parsed, because a node is numbered after its children.
+    /// Pass the result to `attach_type_args`.
     pub(crate) fn take_reference(&mut self) -> Option<TypeNode> {
         let syntax = self.type_syntax_mut();
-        // `label: ...T[]` and `T!` leave a type that was not made last. It stays, and nothing attaches to it.
+        // `label: ...T[]` and `T!` leave a type that is not the most recent node. It stays in
+        // place, and nothing attaches to it.
         if syntax.last_type.is_none() || syntax.last_type.idx() + 1 != syntax.b.file.types.len() {
             return None;
         }
@@ -399,12 +406,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_arguments {
             node.end = 0;
             match (&mut node.kind, syntax.last_type_args.take()) {
-                // The type arguments of `import(T)` are never looked at.
+                // The type arguments of `import(T)` are never checked.
                 (TypeNodeKind::Import { spec, .. }, Some(_)) if spec.is_none() => {}
                 (
                     TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. },
-                    Some(given),
-                ) => *args = given,
+                    Some(actual),
+                ) => *args = actual,
                 _ => return,
             }
         }
@@ -413,7 +420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Called on each name in `typeof a.b.c`.
     pub(crate) fn push_typeof_name(&mut self) {
-        // An empty name stands for a missing one.
+        // An empty name represents a missing one.
         let is_name =
             self.lexer.is_identifier_or_keyword() || self.lexer.token == T::TPrivateIdentifier;
         let name = Name {
@@ -434,8 +441,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             last_type_args,
             ..
         } = self.type_syntax_mut();
-        // `typeof a.`: what is before the last dot is still looked up (`parseRightSideOfDot`). `typeof` before no name has the one,
-        // which is missing (`parseEntityName`). Any other missing name makes the type unusable.
+        // `typeof a.`: the part before the last dot is still resolved (`parseRightSideOfDot`).
+        // `typeof` without a name has a single, missing name (`parseEntityName`). Any other missing
+        // name makes the type unusable.
         let required = (name_stack.len() - names_base).saturating_sub(1);
         let is_complete = name_stack[names_base..]
             .iter()
@@ -467,8 +475,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some((self.string_token_text()?, self.token_start()))
     }
 
-    /// Called after `{ with: { "resolution-mode": "import" } }`, which the skipper parsed as an object type. Reads the resolution mode
-    /// from those nodes (`GetResolutionModeOverride`), and where `assert` is written instead of `with`. `None` if the attributes are not
+    /// Called after `{ with: { "resolution-mode": "import" } }`, which the skipper parsed as an
+    /// object type. Reads the resolution mode from those nodes (`GetResolutionModeOverride`), and
+    /// the position of `assert` if it is used instead of `with`. `None` if the attributes are not
     /// in that form.
     pub(crate) fn import_type_attributes(&mut self) -> Option<ImportTypeAttributes> {
         let syntax = self.type_syntax_mut();
@@ -511,8 +520,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some((mode, (keyword == b"assert").then_some(keyword_loc), None))
     }
 
-    /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a type reference.
-    /// `argument` is what is written instead of a string literal, and `NONE` if `specifier` is given.
+    /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a
+    /// type reference.
+    /// `argument` is the type in place of a string literal, and `NONE` if `specifier` is given.
     pub(crate) fn emit_import_type(
         &mut self,
         specifier: Option<(StoreStr, u32)>,
@@ -593,8 +603,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Wraps the last parsed type in JSDoc's `?` (`is_nullable`) or `!`, written after it (`is_postfix`) or before it. The result
-    /// starts at `pos`.
+    /// Wraps the last parsed type in JSDoc's `?` (`is_nullable`) or `!`, placed after it
+    /// (`is_postfix`) or before it. The result starts at `pos`.
     pub(crate) fn emit_jsdoc_type(&mut self, is_nullable: bool, is_postfix: bool, pos: u32) {
         let ty = self.last_type();
         if ty.is_some() {
@@ -675,7 +685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.last_binding = syntax.b.add_pattern(PatKind::Ident(name), loc, end);
     }
 
-    /// `createMissingIdentifier`: a name of no length at `loc`.
+    /// `createMissingIdentifier`: an empty name at `loc`.
     pub(crate) fn emit_missing_binding(&mut self, loc: bun_ast::Loc) {
         let syntax = self.type_syntax_mut();
         let name = syntax.b.atom(b"");
@@ -867,7 +877,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    /// `finishNode`, of the member added last, if it is not finished. `end`: `TokenFullStart` of the token after it.
+    /// `finishNode` for the most recently added member, unless it is already finished. `end`:
+    /// `TokenFullStart` of the next token.
     /// `parseTypeMemberSemicolon` is part of the member.
     pub(crate) fn end_type_member(&self, kept: &mut ObjectTypeBuilder, end: Loc) {
         if let Some(member) = kept.members.last_mut()
@@ -917,7 +928,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let built = self.build_type_member(member);
         match (built, &mut kept.mapped) {
-            // `parseMappedType` reads the members after `[K in T]: X`, and nothing comes of them but an error at the first.
+            // `parseMappedType` parses the members after `[K in T]: X` and only reports an error at
+            // the first.
             (Some(Ok(extra)), Some(mapped)) => {
                 // `GetErrorRangeForNode`: at the name of a property or an accessor.
                 let has_name = matches!(
@@ -1005,7 +1017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(ty) => ty,
             None => TypeId::NONE,
         };
-        let mut made = Member {
+        let mut created = Member {
             kind: MemberKind::Property,
             key: PropertyKey::None,
             flags: Flags::empty(),
@@ -1023,12 +1035,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let (flags, modifiers) =
                 self.member_modifiers(&member.words, member.newline_before_bracket)?;
             let params = member.parameters??;
-            made.flags |= flags;
-            made.modifiers = modifiers;
-            made.kind = MemberKind::IndexSignature;
-            made.signature = self.type_syntax_mut().b.add_signature(Signature {
+            created.flags |= flags;
+            created.modifiers = modifiers;
+            created.kind = MemberKind::IndexSignature;
+            created.signature = self.type_syntax_mut().b.add_signature(Signature {
                 kind: SignatureKind::IndexSignature,
-                flags: made.flags,
+                flags: created.flags,
                 type_params: TypeParams::EMPTY,
                 params,
                 return_type: ty,
@@ -1036,7 +1048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 open_paren_loc: loc(member.bracket_pos),
                 loc: loc(member.bracket_pos),
             });
-            return Some(Ok(made));
+            return Some(Ok(created));
         }
         if member.bracket_kind != BracketKind::Nothing && member.computed_name.is_none() {
             let (flags, modifiers) =
@@ -1097,8 +1109,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         return None;
                     }
-                    made.flags |= flags;
-                    made.modifiers = modifiers;
+                    created.flags |= flags;
+                    created.modifiers = modifiers;
                     let ast = &mut self.type_syntax_mut().b;
                     let name_end = Loc {
                         start: name_loc.start + name.len() as i32,
@@ -1110,10 +1122,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ty: key_type,
                         ..Param::at(name_loc)
                     }]);
-                    made.kind = MemberKind::IndexSignature;
-                    made.signature = ast.add_signature(Signature {
+                    created.kind = MemberKind::IndexSignature;
+                    created.signature = ast.add_signature(Signature {
                         kind: SignatureKind::IndexSignature,
-                        flags: made.flags,
+                        flags: created.flags,
                         type_params: TypeParams::EMPTY,
                         params,
                         return_type: ty,
@@ -1121,7 +1133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         open_paren_loc: loc(member.bracket_pos),
                         loc: loc(member.bracket_pos),
                     });
-                    return Some(Ok(made));
+                    return Some(Ok(created));
                 }
                 _ => return None,
             }
@@ -1145,48 +1157,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // `(a: A): R`
             (None, None) => {
-                made.kind = MemberKind::CallSignature;
-                made.ty = TypeId::NONE;
-                made.signature = self.emit_signature(
+                created.kind = MemberKind::CallSignature;
+                created.ty = TypeId::NONE;
+                created.signature = self.emit_signature(
                     member,
                     SignatureKind::CallSignature,
                     Flags::empty(),
                     member.start,
                 )?;
-                return Some(Ok(made));
+                return Some(Ok(created));
             }
             // `new (a: A): R`
             (None, Some((word, [])))
                 if word.token == T::TNew && has_signature && !member.is_optional =>
             {
-                made.kind = MemberKind::ConstructSignature;
-                made.ty = TypeId::NONE;
-                made.signature = self.emit_signature(
+                created.kind = MemberKind::ConstructSignature;
+                created.ty = TypeId::NONE;
+                created.signature = self.emit_signature(
                     member,
                     SignatureKind::ConstructSignature,
                     Flags::empty(),
                     member.start,
                 )?;
-                return Some(Ok(made));
+                return Some(Ok(created));
             }
             (None, Some((word, before))) => (before, *word),
         };
         if matches!(word.key, PropertyKey::None) {
             return None;
         }
-        made.key = word.key;
-        made.loc = loc(word.pos);
+        created.key = word.key;
+        created.loc = loc(word.pos);
         if matches!(word.token, T::TStringLiteral) {
-            made.flags |= Flags::STRING_NAME;
+            created.flags |= Flags::STRING_NAME;
         }
         if member.is_optional {
-            made.flags |= Flags::OPTIONAL;
+            created.flags |= Flags::OPTIONAL;
         }
         let mut signature_kind = SignatureKind::Method;
         let before = match before {
             [accessor] if member.is_accessor && has_signature => {
                 let is_getter = accessor.modifier == Some(PropertyModifierKeyword::PGet);
-                made.kind = if is_getter {
+                created.kind = if is_getter {
                     MemberKind::Getter
                 } else {
                     MemberKind::Setter
@@ -1201,18 +1213,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             before => before,
         };
         let (flags, modifiers) = self.member_modifiers(before, word.newline_before)?;
-        made.flags |= flags;
-        made.modifiers = modifiers;
+        created.flags |= flags;
+        created.modifiers = modifiers;
         if has_signature {
-            if made.kind == MemberKind::Property {
-                made.kind = MemberKind::Method;
+            if created.kind == MemberKind::Property {
+                created.kind = MemberKind::Method;
             }
-            made.ty = TypeId::NONE;
-            made.signature = self.emit_signature(member, signature_kind, made.flags, word.pos)?;
+            created.ty = TypeId::NONE;
+            created.signature =
+                self.emit_signature(member, signature_kind, created.flags, word.pos)?;
         } else if member.type_parameters.is_some() {
             return None;
         }
-        Some(Ok(made))
+        Some(Ok(created))
     }
 
     /// Finishes an object type.
@@ -1319,8 +1332,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Those pushed since there were `base` are the modifiers of the statement, or of the parameter or the member whose name it is,
-    /// that has the `loc` `loc`.
+    /// The modifiers pushed since the stack had `base` entries belong to the statement at `loc`, or
+    /// to the parameter or member whose name is at `loc`.
     pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: &mut Loc) {
         if !self.should_save_types() {
             return;
@@ -1336,14 +1349,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Those pushed since there were `base` are the modifiers of nothing.
+    /// Discards the modifiers pushed since the stack had `base` entries.
     pub(crate) fn drop_modifiers(&mut self, base: usize) {
         if let Some(syntax) = &mut self.type_syntax {
             syntax.statement_modifiers.truncate(base);
         }
     }
 
-    /// The same for a decorator, whose `@` is at `loc`, of a statement that is no class.
+    /// The same for a decorator, whose `@` is at `loc`, of a statement that is not a class.
     pub(crate) fn push_statement_decorator(&mut self, decorator: Expr, loc: Loc) {
         if self.should_save_types() {
             self.type_syntax_mut().statement_modifiers.push(Modifier {
@@ -1468,7 +1481,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// Of `import("m", { with: { .. } })`: the resolution mode, where `assert` is written instead of `with`, and the attributes.
+/// Of `import("m", { with: { .. } })`: the resolution mode, the position of `assert` if it is used
+/// instead of `with`, and the attributes.
 pub(crate) type ImportTypeAttributes = (
     ResolutionMode,
     Option<Loc>,
@@ -1512,7 +1526,8 @@ pub(crate) enum BracketKind {
     Index(TypeId),
     /// Tolerant mode: the parameter list of an index signature, well formed or not. It is in `TypeMemberParts::parameters`.
     IndexParameters,
-    /// `[name in Constraint as NameType]`. The name type is `None` if it is unusable. Where the constraint ends.
+    /// `[name in Constraint as NameType]`. The name type is `None` if it is unusable. The `Loc` is
+    /// the end of the constraint.
     Mapped(TypeId, Option<TypeId>, Loc),
 }
 
@@ -1657,7 +1672,7 @@ pub(crate) struct FnTypeHead {
 }
 
 impl FnTypeHead {
-    /// Whether its type parameters are among the first `rows`.
+    /// Whether its type parameters are among the first `rows` nodes.
     pub(super) fn is_within(&self, rows: usize) -> bool {
         self.type_params.is_none_or(|list| list.range().end <= rows)
     }

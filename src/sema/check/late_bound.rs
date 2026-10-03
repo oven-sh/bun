@@ -1,4 +1,5 @@
-//! The members whose names the checker works out: `getResolvedMembersOrExportsOfSymbol`, `lateBindMember`, `getLateBoundSymbol`.
+//! The members whose names the checker resolves: `getResolvedMembersOrExportsOfSymbol`,
+//! `lateBindMember`, `getLateBoundSymbol`.
 
 use super::*;
 use crate::bind::{Decl, flags_of_member, flags_of_property};
@@ -6,7 +7,8 @@ use crate::program::get_excluded_symbol_flags;
 
 /// What `lateBindMember` and `combineSymbolTables` report.
 pub(super) enum LateBoundConflict {
-    /// `lateBindMember`: the name, the declarations of the symbols that have it, early and late, and the one they refuse.
+    /// `lateBindMember`: the name, the declarations of the symbols with that name, early and late,
+    /// and the declaration that conflicts with them.
     Refused(Atom, Vec<(FileId, Decl)>, (FileId, Decl)),
     /// `reportMergeSymbolError`: the declarations of the early bound symbol, and those of the late bound one.
     NotMerged(Vec<(FileId, Decl)>, Vec<(FileId, Decl)>),
@@ -14,9 +16,10 @@ pub(super) enum LateBoundConflict {
 
 /// The symbols with `CheckFlagsLate` of one side of a container, after `combineSymbolTables`.
 pub(super) struct LateBoundSymbols {
-    /// `symbol.Declarations` of each: those of the early bound symbol of that name come first, if the two go together.
+    /// `symbol.Declarations` of each: those of the early bound symbol of that name come first, if
+    /// the two merge.
     declarations: Vec<Vec<(FileId, Decl)>>,
-    /// Which of them a declaration is a declaration of.
+    /// Index of the symbol that a declaration belongs to.
     symbol_of: FxHashMap<(FileId, Decl), u32>,
     pub(super) conflicts: Vec<LateBoundConflict>,
 }
@@ -61,7 +64,7 @@ impl<'p> Checker<'p> {
         files.decls_of(files.sym(file, symbol))
     }
 
-    /// `getResolvedMembersOrExportsOfSymbol`, as far as it adds to what the binder has.
+    /// `getResolvedMembersOrExportsOfSymbol`, only what it adds to the binder's tables.
     pub(super) fn late_bound_members(
         &mut self,
         container: Sym,
@@ -108,7 +111,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // `checkObjectLiteral` takes the exports as the binder left them.
+        // `checkObjectLiteral` uses the exports as the binder produced them.
         if is_static
             && !files.flags(container).contains(SymFlags::OBJECT_LITERAL)
             && let Some(assignments) = files.export(container, known::assignment_declaration)

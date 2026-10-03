@@ -1,10 +1,11 @@
-//! The order questions are asked in.
+//! The order in which queries are made.
 //!
-//! Types are worked out when they are asked for, and some answers depend on what has been asked before: a call settles what is
-//! expected of its arguments. TypeScript checks a file from the top down and puts off the bodies of function expressions
-//! (`checkNodeDeferred`), so the call a function is an argument of is always resolved before anything in the function is looked at.
-//! Here anybody may ask anything first. So a question that nothing led to starts by resolving the calls around what it is about,
-//! outermost first, and the answer does not depend on who asked.
+//! Types are computed on demand, and some results depend on earlier queries: a call determines the
+//! contextual types of its arguments. TypeScript checks a file from the top down and defers the
+//! bodies of function expressions (`checkNodeDeferred`), so the call a function is an argument of
+//! is always resolved before anything in the function is checked. Here any caller may make any
+//! query first. So a top-level query starts by resolving the calls that enclose its subject,
+//! outermost first, and the result does not depend on the caller.
 
 use super::Checker;
 use super::root_declaration;
@@ -13,26 +14,26 @@ use crate::hir::{ExprId, FnId, PatId};
 use crate::program::FileId;
 
 impl Checker<'_> {
-    /// Whether nothing is being worked out: what is asked now is asked from outside.
+    /// Whether no query is in progress: the current query is a top-level query.
     #[inline]
     pub(super) fn is_top_level_query(&self) -> bool {
         self.stack.is_empty() && self.contextual.is_empty()
     }
 
     #[inline]
-    /// Whether anything may have been worked out.
-    pub(super) fn prepare_question_about_expr(&mut self, file: FileId, e: ExprId) -> bool {
+    /// Returns whether anything may have been computed.
+    pub(super) fn prepare_query_for_expr(&mut self, file: FileId, e: ExprId) -> bool {
         if !self.is_top_level_query() || e.is_none() {
             return false;
         }
-        // Nothing is worked out without a question being asked.
-        let asked = self.work;
+        // Nothing is computed without a query being made.
+        let requested = self.work;
         self.prepare_enclosing(file, e);
-        self.work != asked
+        self.work != requested
     }
 
     #[inline]
-    pub(super) fn prepare_question_about_fn(&mut self, file: FileId, func: FnId) -> bool {
+    pub(super) fn prepare_query_for_fn(&mut self, file: FileId, func: FnId) -> bool {
         let is_from_outside = self.is_top_level_query();
         if is_from_outside {
             self.prepare_fn(file, func);
@@ -41,7 +42,7 @@ impl Checker<'_> {
     }
 
     #[inline]
-    pub(super) fn prepare_question_about_pat(&mut self, file: FileId, pat: PatId) -> bool {
+    pub(super) fn prepare_query_for_pat(&mut self, file: FileId, pat: PatId) -> bool {
         if !self.is_top_level_query() {
             return false;
         }

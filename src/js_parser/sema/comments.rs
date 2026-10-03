@@ -1,9 +1,10 @@
-//! What comments say to the type checker: `// @ts-ignore` and `// @ts-expect-error`, `/// <reference .. />`, `// @ts-check` and
-//! `// @ts-nocheck`, `/* @jsx h */` and its like.
+//! Comment directives for the type checker: `// @ts-ignore` and `// @ts-expect-error`, `///
+//! <reference .. />`, `// @ts-check` and `// @ts-nocheck`, `/* @jsx h */` and similar pragmas.
 //!
-//! Nothing here looks for a comment. The lexer stands on each comment once. That is when it asks `process_comment_directive`, as
-//! TypeScript's scanner does, and when it puts the comment in `Lexer::all_comments`. Those that were there when the parser stood on the
-//! first token are what `getCommentPragmas` goes through.
+//! Nothing here scans for comments. The lexer visits each comment once, calls
+//! `process_comment_directive` for it, as TypeScript's scanner does, and appends it to
+//! `Lexer::all_comments`. `getCommentPragmas` processes the comments recorded before the first
+//! token.
 
 use crate::lexer::{Lexer, starts_with_line_break};
 use bun_sema::atom::Interner;
@@ -14,7 +15,7 @@ use bun_sema::hir::{
 
 /// `Lexer::comment_flags`
 pub(crate) mod flags {
-    /// `GetLeadingCommentRanges`: a line break between it and what comes before it, a token or a comment.
+    /// `GetLeadingCommentRanges`: a line break separates it from the preceding token or comment.
     pub(crate) const LINE_BREAK_BEFORE: u8 = 1 << 0;
     /// `isJSDocLikeText`
     pub(crate) const JSDOC_LIKE: u8 = 1 << 1;
@@ -23,36 +24,37 @@ pub(crate) mod flags {
 }
 
 impl Lexer<'_> {
-    /// Of the comment that has just been scanned, from `start` to `end`, and put in `all_comments`.
+    /// For the comment just scanned, from `start` to `end`, which is the last entry of
+    /// `all_comments`.
     #[inline(never)]
     pub(crate) fn push_comment_flags(&mut self) {
         let text = self.contents;
-        // A comment on the way to the same token, or the token before.
+        // The previous comment before the same token, or else the previous token.
         let before = match self.all_comments.iter().rev().nth(1) {
             Some(comment) if comment.loc.to_usize() >= self.token_full_start => comment.end_i(),
             _ => self.token_full_start,
         };
-        let mut said = 0;
+        let mut reported = 0;
         if (before..self.start).any(|at| starts_with_line_break(&text[at..])) {
-            said |= flags::LINE_BREAK_BEFORE;
+            reported |= flags::LINE_BREAK_BEFORE;
         }
         let comment = &text[self.start..self.end];
         if super::jsdoc::is_jsdoc_like(comment) {
-            said |= flags::JSDOC_LIKE;
+            reported |= flags::JSDOC_LIKE;
         }
         if comment.starts_with(b"//") {
-            said |= flags::SINGLE_LINE;
+            reported |= flags::SINGLE_LINE;
         }
-        self.comment_flags.push(said);
+        self.comment_flags.push(reported);
     }
 
-    /// `processCommentDirective`, of the comment that has just been scanned, from `start` to `end`. `multiline`: it is a `/* */`
-    /// comment, of which the last line counts (`last_line_start`).
+    /// `processCommentDirective` for the comment just scanned, from `start` to `end`. `multiline`:
+    /// a `/* */` comment, of which only the last line is considered (`last_line_start`).
     #[inline(never)]
     pub(crate) fn process_comment_directive(&mut self, multiline: bool) {
         let (text, end) = (self.contents, self.end);
-        let skip = |mut pos: usize, wanted: &[u8]| {
-            while pos < end && wanted.contains(&text[pos]) {
+        let skip = |mut pos: usize, expected: &[u8]| {
+            while pos < end && expected.contains(&text[pos]) {
                 pos += 1;
             }
             pos
@@ -85,8 +87,8 @@ impl Lexer<'_> {
     }
 }
 
-/// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: how many of `Lexer::all_comments` there were when the parser stood on
-/// the first token, the `#!` line aside.
+/// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the number of
+/// `Lexer::all_comments` recorded before the first token, not counting the `#!` line.
 pub(crate) fn process_pragmas_into_fields(
     lexer: &Lexer<'_>,
     leading: usize,
@@ -98,18 +100,19 @@ pub(crate) fn process_pragmas_into_fields(
         let comment = &lexer.contents[pos..range.end_i()];
         match comment.get(..2) {
             Some(b"//") => single_line_pragma(comment, pos, atoms, file),
-            // Only where there can be JSX does anything ask.
+            // Only read for files that can contain JSX.
             Some(b"/*") if file.kind == FileKind::Tsx => {
                 multi_line_pragmas(comment, atoms, &mut file.jsx_pragmas);
             }
             Some(b"/*") => {}
-            // A conflict marker, which the list has as well: `GetLeadingCommentRanges` stops at it.
+            // A conflict marker, which is also in the list. `GetLeadingCommentRanges` stops at it.
             _ => break,
         }
     }
 }
 
-/// `extractPragmas` of the `//` comment `text`, which is at `comment_pos`, and what `processPragmasIntoFields` makes of it.
+/// `extractPragmas` for the `//` comment `text` at `comment_pos`, followed by
+/// `processPragmasIntoFields`.
 fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &mut File) {
     let mut pos = 2;
     let triple_slash = text.get(pos) == Some(&b'/');
@@ -141,7 +144,8 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
         b"resolution-mode",
         b"no-default-lib",
     ];
-    // `PragmaArgument.TextRange`, in the comment. Of two that go by one name the last counts.
+    // `PragmaArgument.TextRange`, relative to the comment. The last of two arguments with the same
+    // name wins.
     let mut args: [Option<(usize, usize)>; 5] = [None; 5];
     loop {
         pos = skip_blanks(text, pos);
@@ -193,7 +197,8 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
         .push((kind, value, (comment_pos + from) as u32, mode));
 }
 
-/// `extractPragmas` of the `/* */` comment `text`. Of two that say the same thing the last counts (`GetPragmaFromSourceFile`).
+/// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
+/// (`GetPragmaFromSourceFile`).
 fn multi_line_pragmas(text: &[u8], atoms: &Interner, pragmas: &mut JsxPragmas) {
     let text = text.strip_suffix(b"*/").unwrap_or(text);
     let mut pos = 2;
@@ -254,7 +259,7 @@ fn line_end_pos(text: &[u8], pos: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-/// Not in lower case, as `extractName` has it: who compares it goes by neither case.
+/// Not lowercased, unlike `extractName`: callers compare case-insensitively.
 fn extract_name(text: &[u8], pos: usize) -> &[u8] {
     let rest = text.get(pos..).unwrap_or_default();
     let len = rest

@@ -1,9 +1,10 @@
-//! Reads the JSDoc comments of a JavaScript file. A port of jsdoc.go of TypeScript 7.0.2's parser.
+//! Parses the JSDoc comments of a JavaScript file. A port of jsdoc.go of TypeScript 7.0.2's parser.
 //!
-//! It runs between the parse pass and the lowering, over the comments the lexer recorded. The tags are read here, with a scanner of
-//! their own (`ScanJSDocToken`). What they hold of ordinary syntax is read by the parser, whose lexer is pointed into the comment, and
-//! is kept like the type syntax of a TypeScript file. [`super::reparse`] makes ordinary nodes of the tags of the comments that belong
-//! to a node.
+//! It runs between the parse pass and the lowering pass, over the comments the lexer recorded. The
+//! tags are parsed here with their own scanner (`ScanJSDocToken`). Ordinary syntax inside them is
+//! parsed by the main parser, whose lexer is repositioned into the comment, and is saved like the
+//! type syntax of a TypeScript file. [`super::reparse`] turns the tags of comments attached to a
+//! node into ordinary nodes.
 
 use crate::sema::ts_syntax as ts;
 use bun_ast::op::Level;
@@ -20,14 +21,14 @@ use crate::lexer::{
 use crate::p::P;
 use crate::parse::lists::ListKind;
 
-// ───────────────────────────── what is read ─────────────────────────────
+// ───────────────────────────── parsed tags ─────────────────────────────
 
-/// An identifier in a tag: from where to where. One that is missing has no length.
+/// The span of an identifier in a tag. A missing identifier has an empty span.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Name {
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// The token, as it is written.
+    /// The token's source text.
     pub(crate) text: StoreStr,
 }
 
@@ -50,9 +51,9 @@ impl Name {
 pub(crate) struct TypeExpr {
     /// The type, without the `...` before it and the `=` after it.
     pub(crate) ty: ts::TypeId,
-    /// Where it starts, the `...` included.
+    /// Start position, including the `...`.
     pub(crate) pos: u32,
-    /// Where the token after it starts.
+    /// Start of the next token.
     pub(crate) end: u32,
     /// `...T` (`JSDocVariadicType`)
     pub(crate) is_variadic: bool,
@@ -64,7 +65,7 @@ pub(crate) struct TypeExpr {
 pub(crate) enum TagType {
     None,
     Expr(TypeExpr),
-    /// `JSDocTypeLiteral`: made of the `@property` or `@param` tags that follow.
+    /// `JSDocTypeLiteral`: built from the `@property` or `@param` tags that follow.
     Literal {
         properties: Vec<Tag>,
         is_array: bool,
@@ -80,7 +81,8 @@ pub(crate) struct Property {
     pub(crate) is_bracketed: bool,
     pub(crate) is_name_first: bool,
     pub(crate) ty: TagType,
-    /// `GetTextOfJSDocComment(tag.CommentList())`, of a tag that is nested in another. Empty for any other tag.
+    /// `GetTextOfJSDocComment(tag.CommentList())` for a tag nested in another tag. Empty for any
+    /// other tag.
     pub(crate) comment: Box<[u8]>,
 }
 
@@ -94,10 +96,10 @@ pub(crate) struct Signature {
 }
 
 pub(crate) struct TypeParameter {
-    /// Where its first token is: the `[`, a modifier, or the name.
+    /// Position of its first token: the `[`, a modifier, or the name.
     pub(crate) pos: u32,
     pub(crate) name: Name,
-    /// `node.Modifiers()`: each with where it is.
+    /// `node.Modifiers()`, each with its position.
     pub(crate) modifiers: Vec<(Flags, u32)>,
     /// `[T=Default]`
     pub(crate) default: Option<TypeExpr>,
@@ -107,7 +109,7 @@ pub(crate) struct TypeParameter {
 
 /// `JSDocTemplateTag`
 pub(crate) struct Template {
-    /// `@template {Constraint} T`: of the first type parameter.
+    /// `@template {Constraint} T`: applies to the first type parameter.
     pub(crate) constraint: Option<TypeExpr>,
     pub(crate) params: Vec<TypeParameter>,
 }
@@ -133,7 +135,7 @@ pub(crate) struct ClassName {
     /// `a.b.c`
     pub(crate) name: Vec<Name>,
     pub(crate) type_args: Option<ts::Types>,
-    /// Where the token after the type arguments starts.
+    /// Start of the token after the type arguments.
     pub(crate) end: u32,
 }
 
@@ -151,16 +153,16 @@ pub(crate) struct Import {
     pub(crate) has_clause: bool,
     pub(crate) default: Option<Name>,
     pub(crate) namespace: Option<Name>,
-    /// Where the first token of the import clause is, and the `*` of `* as namespace`.
+    /// Position of the first token of the import clause, and of the `*` of `* as namespace`.
     pub(crate) clause_start: u32,
     /// `importClause.End()`
     pub(crate) clause_end: u32,
     pub(crate) namespace_start: u32,
     pub(crate) named: Vec<ImportSpecifier>,
-    /// The module specifier and where it is. `None` if it is no string.
+    /// The module specifier and its position. `None` if it is not a string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
     pub(crate) module: Option<ts::ModuleSpecifier>,
-    /// Where the token after it starts.
+    /// Start of the next token.
     pub(crate) end: u32,
 }
 
@@ -181,27 +183,27 @@ pub(crate) enum TagKind {
     Import(Import),
     Implements(ClassName),
     /// `@augments`, `@extends`
-    /// With the word the tag is.
+    /// With the tag name that was used.
     Augments(ClassName, StoreStr),
     /// `@public`, `@private`, `@protected`, `@readonly`, `@override`
     Modifier(Flags),
-    /// Any other. Nothing is made of it.
+    /// Any other tag. Ignored.
     Other,
 }
 
 pub(crate) struct Tag {
     pub(crate) kind: TagKind,
-    /// Where the `@` is.
+    /// Position of the `@`.
     pub(crate) pos: u32,
-    /// Where the name after the `@` is.
+    /// Position of the name after the `@`.
     pub(crate) name_pos: u32,
-    /// `node.End()`: where the next tag starts, or else before the `*/`.
+    /// `node.End()`: the start of the next tag, or else the position before the `*/`.
     pub(crate) end: u32,
 }
 
 /// A JSDoc comment that has tags.
 pub(crate) struct JsDoc {
-    /// Where its `/**` starts and its `*/` ends.
+    /// Start of its `/**` and end of its `*/`.
     pub(crate) start: u32,
     pub(crate) end: u32,
     pub(crate) tags: Vec<Tag>,
@@ -213,12 +215,12 @@ pub(crate) struct JsDoc {
 #[derive(Default)]
 pub(crate) struct Comments {
     pub(crate) list: Vec<JsDoc>,
-    /// The rows of the types in them.
+    /// The HIR nodes of the types in them.
     pub(crate) types: super::clone_types::CommentTypes,
 }
 
 impl Comments {
-    /// Which one starts at `start`.
+    /// Index of the comment that starts at `start`.
     pub(crate) fn at(&self, start: u32) -> Option<usize> {
         self.list.binary_search_by_key(&start, |doc| doc.start).ok()
     }
@@ -244,8 +246,8 @@ fn is_object_or_object_array(file: &bun_sema::hir::File, ty: ts::TypeId) -> bool
     }
 }
 
-/// Reads every JSDoc comment the lexer of `p` recorded. `syntax` is what the parser kept of the file. The types in the comments
-/// become rows of a tree of their own.
+/// Parses every JSDoc comment recorded by the lexer of `p`. `syntax` is the type syntax the parser
+/// saved for the file. The types in the comments become nodes of a separate HIR.
 pub(crate) fn read_comments<'a>(
     p: &mut P<'a, true, false>,
     mut syntax: TypeSyntax<'a>,
@@ -260,7 +262,8 @@ pub(crate) fn read_comments<'a>(
     let file = core::mem::take(&mut syntax.b.file);
     let pending = core::mem::take(&mut syntax.b.pending);
     p.type_syntax = Some(Box::new(syntax));
-    // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so no list skips a token it has no use for.
+    // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so list error recovery
+    // never skips a token.
     let outer_contexts = core::mem::replace(
         &mut p.lexer.list_contexts,
         1 << ListKind::JsxChildren as u32,
@@ -291,7 +294,7 @@ pub(crate) fn read_comments<'a>(
     let mut syntax = *p.type_syntax.take().expect("set above");
     comments.types.file = core::mem::replace(&mut syntax.b.file, file);
     comments.types.pending = core::mem::replace(&mut syntax.b.pending, pending);
-    comments.types.made = core::mem::take(&mut syntax.comment_rows);
+    comments.types.created = core::mem::take(&mut syntax.comment_rows);
     (syntax, comments)
 }
 
@@ -318,7 +321,7 @@ enum Token {
     Backtick,
     /// An identifier or a keyword.
     Word,
-    /// A character `ScanJSDocToken` makes nothing of.
+    /// A character `ScanJSDocToken` does not recognize.
     Unknown,
     Other,
 }
@@ -343,7 +346,7 @@ fn token_of(token: T) -> Token {
     }
 }
 
-/// The token the lexer of the parser is at, as a name.
+/// The parser lexer's current token, as a `Name`.
 fn name_at_token(p: &P<'_, true, false>) -> Name {
     Name {
         start: p.lexer.start as u32,
@@ -352,7 +355,7 @@ fn name_at_token(p: &P<'_, true, false>) -> Name {
     }
 }
 
-/// `scanIdentifierParts`: where the identifier that goes on at `at` ends.
+/// `scanIdentifierParts`: the end of the identifier that continues at `at`.
 fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
     loop {
         at = end_of_run(text, at, is_identifier_continue);
@@ -366,7 +369,7 @@ fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
     }
 }
 
-/// The identifier `text` with what its unicode escapes stand for in their place.
+/// The identifier `text` with its unicode escapes decoded.
 pub(crate) fn unescaped_name(text: &[u8]) -> Vec<u8> {
     let mut name = Vec::with_capacity(text.len());
     let mut at = 0;
@@ -436,15 +439,15 @@ struct Reader<'p, 'a> {
     /// The source, up to the `*/` of the comment.
     text: &'a [u8],
     token: Token,
-    /// `TokenFullStart`, unless the token is in the lexer, which is asked then.
+    /// `TokenFullStart`, unless the token belongs to the parser's lexer, which is queried instead.
     full_start: usize,
     /// `TokenStart`
     start: usize,
-    /// Where the scanner is: `TokenEnd`.
+    /// The scanner position: `TokenEnd`.
     end: usize,
     /// `HasPrecedingLineBreak`
     has_newline_before: bool,
-    /// The token is the one the lexer of the parser is at.
+    /// The current token is the parser lexer's current token.
     is_in_lexer: bool,
     /// `tag_comments` collects the text in `comment_text`.
     saves_comment_text: bool,
@@ -452,7 +455,7 @@ struct Reader<'p, 'a> {
 }
 
 impl<'p, 'a> Reader<'p, 'a> {
-    /// `parseJSDocComment`, of the comment from `start` to `end`.
+    /// `parseJSDocComment` for the comment from `start` to `end`.
     fn read(p: &'p mut P<'a, true, false>, source: &'a [u8], start: usize, end: usize) -> JsDoc {
         let text = &source[..end - 2];
         p.lexer.contents = text;
@@ -596,7 +599,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.is_in_lexer = false;
     }
 
-    /// The parser cannot go on. Nothing more is read of the comment.
+    /// The parser cannot continue. The rest of the comment is skipped.
     fn give_up(&mut self) {
         self.reset_pos(self.text.len());
         self.token = Token::EndOfFile;
@@ -712,7 +715,8 @@ impl<'p, 'a> Reader<'p, 'a> {
             || starts_with_line_break(&self.text[self.end..])
     }
 
-    /// Takes over the token the lexer of the parser is at. `result`: what came of getting there.
+    /// Switches back to this scanner at the parser lexer's current token. `result`: the result of
+    /// the parse that got there.
     fn leave_lexer<X, E>(&mut self, result: Result<X, E>) -> Option<X> {
         let Ok(value) = result else {
             self.give_up();
@@ -727,7 +731,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         Some(value)
     }
 
-    /// Has the lexer of the parser scan the token that starts at or after `pos`.
+    /// Makes the parser's lexer scan the token at or after `pos`.
     fn scan_from(&mut self, pos: usize) {
         let lexer = &mut self.p.lexer;
         lexer.current = pos;
@@ -738,7 +742,8 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.leave_lexer(result);
     }
 
-    /// Before the parser reads on from the current token: its lexer scans that token, unless it did.
+    /// Called before the parser continues from the current token: its lexer scans that token unless
+    /// it already has.
     fn enter_lexer(&mut self) {
         if !self.is_in_lexer {
             let full_start = self.full_start;
@@ -798,24 +803,24 @@ impl<'p, 'a> Reader<'p, 'a> {
         false
     }
 
-    // ───────────────────────────── what the parser reads ─────────────────────────────
+    // ───────────────────────────── syntax parsed by the main parser ─────────────────────────────
 
     /// `SetSkipJSDocLeadingAsterisks`
     fn set_skips_leading_asterisks(&mut self, skips: bool) {
         self.p.lexer.skips_jsdoc_asterisks = skips;
     }
 
-    /// What `read` reads makes rows: which, is kept for `DeepCloneReparse`.
+    /// Records the range of nodes that `read` builds, for `DeepCloneReparse`.
     fn keeping_rows<R>(&mut self, read: impl FnOnce(&mut Self) -> R) -> R {
         let before = self.p.type_syntax_mut().rows();
         let result = read(self);
         let syntax = self.p.type_syntax_mut();
         let after = syntax.rows();
-        // What an attempt that was given up read is gone.
+        // Nodes built by an abandoned speculative parse are gone.
         while syntax
             .comment_rows
             .last()
-            .is_some_and(|made| made.1.types > before.types || made.1.ids > before.ids)
+            .is_some_and(|created| created.1.types > before.types || created.1.ids > before.ids)
         {
             syntax.comment_rows.pop();
         }
@@ -823,13 +828,14 @@ impl<'p, 'a> Reader<'p, 'a> {
         result
     }
 
-    /// `parseTypeOrTypePredicate`, from the current token on.
+    /// `parseTypeOrTypePredicate`, starting at the current token.
     fn read_type(&mut self) -> ts::TypeId {
         self.keeping_rows(Self::read_type_worker)
     }
 
     fn read_type_worker(&mut self) -> ts::TypeId {
-        // `parseTypeReference` at a token that is none: the name is missing (1110), and the token stays.
+        // `parseTypeReference` at an unrecognized token: the name is missing (1110), and the token
+        // is not consumed.
         if !self.is_in_lexer && self.token == Token::Unknown {
             self.error_at_token(1110);
             self.p.emit_type_ref(StoreStr::EMPTY, self.start as u32);
@@ -844,7 +850,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
-    /// `parseTypeArguments`, from the current token on.
+    /// `parseTypeArguments`, starting at the current token.
     fn read_type_arguments(&mut self) -> Option<ts::Types> {
         if self.token != Token::LessThan {
             return None;
@@ -859,7 +865,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         })
     }
 
-    /// `parseExpression`, from the current token on. Nothing is made of it.
+    /// `parseExpression`, starting at the current token. The result is discarded.
     fn read_expression(&mut self) {
         self.enter_lexer();
         self.p.scopes_in_order.truncate(0);
@@ -867,7 +873,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.leave_lexer(result);
     }
 
-    /// `parseImportTag`, from the token after the name of the tag on.
+    /// `parseImportTag`, starting at the token after the tag name.
     fn read_import(&mut self) -> Import {
         // Either only whitespace remains in the comment (`skipWhitespaceOrAsterisk` does not consume it), or `ScanJSDocToken` returned
         // `KindUnknown`, for example for a quote or a slash. `parseModuleSpecifier` reports TS1109 without consuming the token.
@@ -955,7 +961,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         Ok(())
     }
 
-    /// `canFollowModifier`, of a token the lexer scanned.
+    /// `canFollowModifier` for a token the lexer scanned.
     fn can_follow_modifier(&self) -> bool {
         self.p.lexer.is_identifier_or_keyword()
             || matches!(
@@ -992,7 +998,8 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     // ───────────────────────────── comments ─────────────────────────────
 
-    /// `parseJSDocCommentWorker`. Of the text only what decides where the tags are is kept track of.
+    /// `parseJSDocCommentWorker`. Only the state that determines where tags start is tracked, not
+    /// the text.
     fn comment(&mut self, start: usize) -> Vec<Tag> {
         let line_start = bun_core::strings::last_index_of_char(&self.text[..start], b'\n')
             .map_or(0, |at| at + 1);
@@ -1079,7 +1086,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
-    /// Whether only whitespace is left, which is part of nothing.
+    /// Whether only trailing whitespace remains, which belongs to no node.
     fn is_at_trailing_whitespace(&mut self) -> bool {
         matches!(self.token, Token::Whitespace | Token::NewLine)
             && self.look_ahead(Self::is_next_nonwhitespace_token_end_of_file)
@@ -1095,7 +1102,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
-    /// `skipWhitespaceOrAsterisk`. Returns how long the indentation after the last line break is.
+    /// `skipWhitespaceOrAsterisk`. Returns the length of the indentation after the last line break.
     fn skip_whitespace_or_asterisk(&mut self) -> usize {
         if self.is_at_trailing_whitespace() {
             return 0;
@@ -1119,7 +1126,8 @@ impl<'p, 'a> Reader<'p, 'a> {
         if seen_line_break { indent } else { 0 }
     }
 
-    /// `parseTrailingTagComments`, of the tag that starts at `start`. `indent_text`: the length of that text.
+    /// `parseTrailingTagComments` for the tag that starts at `start`. `indent_text`: the length of
+    /// that text.
     fn trailing_tag_comments(
         &mut self,
         start: usize,
@@ -1208,7 +1216,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                     };
                 }
                 Token::Asterisk if state == State::BeginningOfLine => {
-                    // A leading asterisk: the comment goes on at the next token.
+                    // A leading asterisk: the comment continues at the next token.
                     state = State::SawAsterisk;
                     indent += 1;
                     is_text = false;
@@ -1323,7 +1331,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
-    /// `parseJSDocIdentifierName`. `code`: what is said if there is none.
+    /// `parseJSDocIdentifierName`. `code`: the error reported if the name is missing.
     fn identifier_name(&mut self, code: Option<u32>) -> Name {
         if self.token != Token::Word {
             if let Some(code) = code {
@@ -1343,7 +1351,7 @@ impl<'p, 'a> Reader<'p, 'a> {
     /// `parseJSDocEntityName`
     fn entity_name(&mut self, code: Option<u32>) -> Vec<Name> {
         let mut names = vec![self.identifier_name(code)];
-        // `y[]` is accepted as a name. The brackets are not kept.
+        // `y[]` is accepted as a name. The brackets are dropped.
         if self.eat(Token::OpenBracket) {
             self.expect(Token::CloseBracket);
         }
@@ -1401,7 +1409,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         if is_bracketed {
             self.skip_whitespace();
         }
-        // A name in backquotes is no legal JSDoc, but occurs in the wild.
+        // A name in backquotes is not legal JSDoc, but occurs in the wild.
         let is_backquoted = self.eat_jsdoc(Token::Backtick);
         let name = self.entity_name(if target == PARAMETER {
             None
@@ -1514,7 +1522,8 @@ impl<'p, 'a> Reader<'p, 'a> {
         })
     }
 
-    /// `parseTypeTag`. Without an `indent` the comment after it is left: it is under a `@typedef`.
+    /// `parseTypeTag`. Without an `indent` the trailing comment is not consumed: the tag is nested
+    /// under a `@typedef`.
     fn type_tag(
         &mut self,
         previous: &[Tag],
@@ -1714,7 +1723,8 @@ impl<'p, 'a> Reader<'p, 'a> {
         TagKind::Overload(signature)
     }
 
-    /// `parseChildParameterOrPropertyTag`. `name`: that of the tag the child has to be a part of.
+    /// `parseChildParameterOrPropertyTag`. `name`: the name of the parent tag the child must belong
+    /// to.
     fn child_tag(&mut self, target: u8, indent: usize, name: Option<&[Name]>) -> Option<Tag> {
         let mut can_parse_tag = true;
         let mut seen_asterisk = false;
@@ -1751,7 +1761,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
-    /// `textsEqual`, of `parent` and what is left of the last dot in `child`.
+    /// `textsEqual` of `parent` and the part of `child` before its last dot.
     fn is_part_of(&self, child: &[Name], parent: &[Name]) -> bool {
         child.len() == parent.len() + 1 && child.iter().zip(parent).all(|(a, b)| a.text == b.text)
     }

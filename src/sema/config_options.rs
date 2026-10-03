@@ -20,12 +20,13 @@ enum Kind {
     Number,
     Object,
     List(Element),
-    /// What it can be, and what it could be once. Upper and lower case are the same.
+    /// The allowed values, and the formerly allowed values. Case-insensitive.
     OneOf(&'static [&'static [u8]], &'static [&'static [u8]]),
 }
 
 bun_core::comptime_string_map! {
-    /// `CommandLineCompilerOptionsMap`, less what is only for the command line: by the name in lower case, the name and what it takes.
+    /// `CommandLineCompilerOptionsMap`, without the command-line-only options: maps the lowercased
+    /// name to the name and the kind of value it accepts.
     static OPTIONS: (&'static [u8], Kind) = {
         b"all" => (b"all", Kind::Boolean),
         b"allowarbitraryextensions" => (b"allowArbitraryExtensions", Kind::Boolean),
@@ -163,20 +164,21 @@ bun_core::comptime_string_set! {
     static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
 }
 
-/// Something wrong with an option.
+/// An error in an option.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Problem {
-    /// The option, as it is written.
+    /// The option name, as spelled in the source.
     pub name: Vec<u8>,
-    /// The code of TypeScript's message, and what goes into it.
+    /// The code of TypeScript's message, and the message arguments.
     pub code: u32,
     pub args: Vec<Vec<u8>>,
-    /// Where it is in the file: from, to.
+    /// Its span in the file: start, end.
     pub span: Option<(u32, u32)>,
 }
 
-/// What `--name text` on a command line means: the option as it is spelled, whatever the case of `name`, and its value. `None`: there is
-/// no such option, it takes something that cannot be written in a word, or `text` is not the kind of thing it takes.
+/// Parses `--name text` from a command line: the canonical spelling of the option, which `name`
+/// matches case-insensitively, and its value. `None`: there is no such option, its value cannot be
+/// expressed as a single word, or `text` is not a valid value for it.
 pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
     let &(name, kind) = OPTIONS.get_ascii_case_insensitive(name)?;
     let value = match kind {
@@ -185,7 +187,7 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
         Kind::Boolean | Kind::Object | Kind::List(Element::Object) => return None,
         Kind::String | Kind::FilePath | Kind::OneOf(..) => Json::String(text.to_vec()),
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
-        // `ParseListTypeOption`: of the items only those that are one of a few words are trimmed.
+        // `ParseListTypeOption`: only the items of an enum-valued list are trimmed.
         Kind::List(Element::String | Element::FilePath) => Json::Array(
             text.trim_ascii()
                 .split(|&b| b == b',')
@@ -204,7 +206,7 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
     Some((name, value))
 }
 
-/// Whether the option `name`, whatever its case, is one of a few words or yes or no, and the words it can be.
+/// If the option `name`, matched case-insensitively, is enum-valued or boolean: its allowed values.
 pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     match OPTIONS.get_ascii_case_insensitive(name)?.1 {
         Kind::Boolean => Some(&[b"true", b"false"]),
@@ -218,7 +220,7 @@ fn kind_of(name: &[u8]) -> Option<Kind> {
     (option.0 == name).then_some(option.1)
 }
 
-/// `IsFilePath`, of the option `name` or of the elements of the list it takes.
+/// `IsFilePath` for the option `name` or for the elements of its list value.
 pub(crate) fn is_file_path(name: &[u8]) -> bool {
     matches!(
         kind_of(name),
@@ -226,15 +228,11 @@ pub(crate) fn is_file_path(name: &[u8]) -> bool {
     )
 }
 
-/// `getSpellingSuggestion`, as `createUnknownOptionError` asked it before TypeScript 7: the option whose name is nearest to `name`.
+/// `getSpellingSuggestion`, as `createUnknownOptionError` called it before TypeScript 7: the option
+/// whose name is closest to `name`.
 fn nearest(name: &[u8]) -> Option<&'static [u8]> {
     let names = OPTIONS.values().map(|option| option.0);
-    crate::check::errors_x_regexp_scanner::get_spelling_suggestion(
-        name,
-        names,
-        |name| name,
-        Ord::cmp,
-    )
+    crate::check::regexp_scanner::get_spelling_suggestion(name, names, |name| name, Ord::cmp)
 }
 
 /// Runs `convertJsonOption` on each of `options`, the converted value of `written` (the `compilerOptions` object of `file`).
@@ -265,15 +263,15 @@ pub fn problems(
             continue;
         }
         let Some(kind) = kind_of(name) else {
-            let meant = if as_typescript_does {
+            let suggestion = if as_typescript_does {
                 OPTIONS
                     .get_ascii_case_insensitive(name)
                     .map(|option| option.0)
             } else {
                 nearest(name)
             };
-            let (code, args) = match meant {
-                Some(meant) => (5025, vec![name.clone(), meant.to_vec()]),
+            let (code, args) = match suggestion {
+                Some(suggestion) => (5025, vec![name.clone(), suggestion.to_vec()]),
                 None => (5023, vec![name.clone()]),
             };
             out.push(Problem {
@@ -284,7 +282,7 @@ pub fn problems(
             });
             continue;
         };
-        // `null` takes back what a configuration this one extends says.
+        // `null` unsets the value from a configuration that this one extends.
         if matches!(value, Json::Null) {
             continue;
         }
@@ -317,13 +315,13 @@ pub fn problems(
             },
             Kind::OneOf(now, once) => match value.as_str() {
                 None => wrong(b"string"),
-                Some(said) => {
-                    let said = said.to_ascii_lowercase();
-                    // `es3` and `none` are not even among what is deprecated.
+                Some(specified) => {
+                    let specified = specified.to_ascii_lowercase();
+                    // `es3` and `none` are not even among the deprecated values.
                     let once = once
                         .iter()
                         .filter(|one| !(as_typescript_does && matches!(**one, b"es3" | b"none")));
-                    if !now.iter().chain(once).any(|&one| one == said) {
+                    if !now.iter().chain(once).any(|&one| one == specified) {
                         out.push(Problem {
                             name: name.clone(),
                             code: 6046,

@@ -446,8 +446,7 @@ impl Bin {
     }
 
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union whose members all span its 16 bytes; reading
-    // the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union; reading the wrong member is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;
@@ -469,18 +468,17 @@ pub enum ToJsonStyle {
 // `bin_real::StringBuilder` paths still resolve.
 pub use bun_semver::StringBuilder;
 
-/// An 8-byte `Value` member, widened to the 16 bytes of the union. A union
-/// literal stores only the bytes of the member it names, and a `Bin` is copied
-/// byte for byte into bun.lockb and the npm manifest cache, so a narrower
-/// member would put bytes that nothing stored into those files.
-///
-/// `v` comes first: a pointer to the member is a pointer to its `T`.
+/// An 8-byte `Value` member widened to the 16 bytes of the union, so a literal
+/// that names it stores every byte that bun.lockb copies out.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct Padded<T: Copy> {
     v: T,
     _padding: [u8; 8],
 }
+
+// The accessors cast `*const Padded<T>` to `*const T`.
+const _: () = assert!(core::mem::offset_of!(Padded<String>, v) == 0);
 
 impl<T: Copy> Padded<T> {
     #[inline]

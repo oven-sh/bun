@@ -522,20 +522,25 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   expect(code).not.toBe(0);
 });
 
-// Packages are stored as columns. The `bin` column sits after name (8),
-// name_hash (8), resolution (72), dependencies (8), resolutions (8) and meta
-// (88) per package. A bin is 20 bytes: a tag, 3 bytes of padding, then a
+// The file starts with a header, then the package list as one column per
+// field (`PackageField::ALL`). A bin is a tag, 3 bytes of padding, then a
 // 16-byte value.
+// Header: magic, format (u32), meta_hash (32 bytes), end offset (u64).
+const packageCountAt = "#!/usr/bin/env bun\nbun-lockfile-format-v0\n".length + 4 + 32 + 8;
+// Package list: count, alignment, field count (u64 each), then the begin offset.
+const packageColumnsBeginAt = packageCountAt + 8 + 8 + 8;
+// name (8), name_hash (8), resolution (72), dependencies (8), resolutions (8), meta (88).
+const columnsBeforeBin = 8 + 8 + 72 + 8 + 8 + 88;
+const binSize = 4 + 16;
 function packageBins(lockb: Buffer): string[] {
-  const N = Number(lockb.readBigUInt64LE(86));
-  const begin = Number(lockb.readBigUInt64LE(110));
-  const binsStart = begin + N * (8 + 8 + 72 + 8 + 8 + 88);
-  return Array.from({ length: N }, (_, i) => {
-    const at = binsStart + i * 20;
+  const count = Number(lockb.readBigUInt64LE(packageCountAt));
+  const binsStart = Number(lockb.readBigUInt64LE(packageColumnsBeginAt)) + count * columnsBeforeBin;
+  return Array.from({ length: count }, (_, i) => {
+    const at = binsStart + i * binSize;
     return [
       lockb.toString("hex", at, at + 4),
       lockb.toString("hex", at + 4, at + 12),
-      lockb.toString("hex", at + 12, at + 20),
+      lockb.toString("hex", at + 12, at + binSize),
     ].join(" ");
   });
 }
@@ -589,13 +594,14 @@ it("bun pm migrate stores every byte of each bin in bun.lockb", async () => {
       stderr: "pipe",
       env,
     });
-    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { packageDir, err, code };
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { packageDir, out, err, code };
   };
   const [first, second] = await Promise.all([migrate(), migrate()]);
 
   expect(first.err).toContain("migrated lockfile from pnpm-lock.yaml");
   expect(second.err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect([first.out, second.out]).toEqual(["", ""]);
   const lockb = Buffer.from(await file(join(first.packageDir, "bun.lockb")).arrayBuffer());
   expect(packageBins(lockb).sort()).toEqual(binShapeRows);
   // The same project gives the same file.

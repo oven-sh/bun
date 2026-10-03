@@ -762,6 +762,10 @@ impl<'p> Checker<'p> {
             return if is_untyped {
                 self.resolve_untyped_call(file, data.args)
             } else {
+                if !self.declared_index_infos_in_progress.is_empty() {
+                    let key = (file, call);
+                    (self.p.calls_before_signatures).insert(&mut self.task, key, (), Stored::new());
+                }
                 self.resolve_error_call(file, data.args)
             };
         }

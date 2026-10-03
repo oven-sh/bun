@@ -2025,6 +2025,33 @@ export const d = c;
       expect(exitCode).toBe(0);
     });
 
+    test("a class has no construct signatures while its static index signatures are computed", async () => {
+      using dir = project({
+        "a.ts": `declare const first: any, second: any;
+export class C {
+  constructor(x: number) {}
+  static [first]() {
+    return 1;
+  }
+  static [second]() {
+    return new C(1);
+  }
+  static plain() {
+    return new C(1);
+  }
+}
+export const made = new C(1);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      // The index signature is the union of the two methods. Reducing it infers their return types.
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,16): error TS2351: This expression is not constructable.
+          Type 'typeof C' has no construct signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

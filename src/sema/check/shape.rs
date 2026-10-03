@@ -228,7 +228,13 @@ struct Builder {
     names: Names,
     /// The keys of the index signatures that computed names implied.
     implied: Vec<TypeId>,
+    /// The static members with computed names and those with other names, by name: the arguments
+    /// of `add_index_signatures_of_computed_names`, which the static side of a class calls once all
+    /// its members are in place.
+    static_names: Option<StaticNames>,
 }
+
+type StaticNames = (FileId, Vec<MemberId>, Vec<(Atom, SmallVec<[MemberId; 4]>)>);
 
 impl Builder {
     /// Position of the property `name`.
@@ -559,7 +565,17 @@ impl<'p> Checker<'p> {
         if (self.declared_index_infos_in_progress.iter())
             .any(|it| self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
         {
-            let shape = build(self);
+            let mut shape = build(self);
+            // `resolveAnonymousTypeMembers` computes the index signatures of the static side of a
+            // class before its signatures.
+            if let TypeData::Anon {
+                origin: Origin::ClassStatic(_),
+                ..
+            } = self.data(key)
+            {
+                shape.call.clear();
+                shape.construct.clear();
+            }
             return self.provisional_shape(shape);
         }
         if let Some(raw) = self.provisional(Query::Shape(key)) {
@@ -1093,11 +1109,22 @@ impl<'p> Checker<'p> {
                         | MemberKind::ConstructSignature
                 )
             };
-            let holds_more = !want_static && (has_type_params || members.iter().any(has_nameless));
-            self.declared_index_infos_in_progress
-                .push((self.stack.len(), file, computed[0]));
-            self.add_index_signatures_of_computed_names(b, file, &computed, &groups, holds_more);
-            self.declared_index_infos_in_progress.pop();
+            if want_static {
+                b.static_names = Some((file, computed, groups.clone()));
+            } else {
+                let holds_more = has_type_params || members.iter().any(has_nameless);
+                self.declared_index_infos_in_progress
+                    .push((self.stack.len(), file, computed[0]));
+                self.add_index_signatures_of_computed_names(
+                    b,
+                    file,
+                    &computed,
+                    &groups,
+                    holds_more,
+                    &[],
+                );
+                self.declared_index_infos_in_progress.pop();
+            }
         }
         b.reserve(groups.len());
         // Whether a name is late bound among the instance members, and among the static ones.
@@ -1270,6 +1297,7 @@ impl<'p> Checker<'p> {
     /// `getIndexInfosOfIndexSymbol`: `[k] = v` with a `k` of type string, number or symbol implies
     /// an index signature for that key type, together with the sibling members whose names match
     /// that key type. `holds_more`: the siblings also include something that is not a property.
+    /// `others`: the siblings that are not among `named`, with their types.
     fn add_index_signatures_of_computed_names(
         &mut self,
         b: &mut Builder,
@@ -1277,6 +1305,7 @@ impl<'p> Checker<'p> {
         computed: &[MemberId],
         named: &[(Atom, SmallVec<[MemberId; 4]>)],
         holds_more: bool,
+        others: &[(Atom, TypeId)],
     ) {
         let hir = self.hir(file);
         // For string, number and symbol keys: the value types, and whether all contributing members
@@ -1361,6 +1390,16 @@ impl<'p> Checker<'p> {
                 if is_numeric {
                     found[1].1.push(value);
                     components[1].extend(component);
+                }
+            }
+        }
+        for &(name, value) in others {
+            if self.atoms().is_symbol_name(name) {
+                found[2].1.push(value);
+            } else {
+                found[0].1.push(value);
+                if self.is_numeric_name(name) {
+                    found[1].1.push(value);
                 }
             }
         }
@@ -2414,16 +2453,19 @@ impl<'p> Checker<'p> {
                 }
                 // `getIndexInfosOfIndexSymbol`: on this side, the siblings of a computed name are
                 // the whole member table.
-                if !b.implied.is_empty() {
-                    // TypeScript has the members in place by now, so no query made here re-enters
-                    // this type.
-                    self.eager.push(self.stack.len());
+                if let Some((file, computed, named)) = b.static_names.take() {
+                    // The members are in place by now, and the signatures are not: that is what a
+                    // query made here finds if it re-enters this type (`shape_memo_or`).
+                    self.declared_index_infos_in_progress.push((
+                        self.stack.len(),
+                        file,
+                        computed[0],
+                    ));
                     let mut others: Vec<(Atom, TypeId)> = Vec::new();
                     for prop in &b.shape.props[own..] {
                         let ty = self.type_of_prop(prop, MapperId::IDENTITY);
                         others.push((prop.name, ty));
                     }
-                    self.eager.pop();
                     // A type exported by a merged namespace is in the table too, and
                     // `getTypeOfSymbol` of it is the error type.
                     if self.files().flags(sym).intersects(SymFlags::MODULE) {
@@ -2433,23 +2475,10 @@ impl<'p> Checker<'p> {
                             }
                         }
                     }
-                    for i in 0..b.shape.index.len() {
-                        let key = b.shape.index[i].key;
-                        if !b.implied.contains(&key) {
-                            continue;
-                        }
-                        let mut values = vec![b.shape.index[i].value];
-                        for &(name, ty) in &others {
-                            let is_symbol = self.atoms().is_symbol_name(name);
-                            if key == TypeId::STRING && !is_symbol
-                                || key == TypeId::NUMBER && self.is_numeric_name(name)
-                                || key == TypeId::SYMBOL && is_symbol
-                            {
-                                values.push(ty);
-                            }
-                        }
-                        b.shape.index[i].value = self.union_reduced(&values);
-                    }
+                    self.add_index_signatures_of_computed_names(
+                        &mut b, file, &computed, &named, false, &others,
+                    );
+                    self.declared_index_infos_in_progress.pop();
                 }
                 // `anyBaseTypeIndexInfo`, where the class has no static index signature at all.
                 if b.shape.index.is_empty() && self.extends_any(sym) {
@@ -5618,7 +5647,11 @@ impl<'p> Checker<'p> {
         }
         let scope = self.begin_scope();
         let signatures = self.signatures_uncached(ty, construct);
-        if let Ok(stored) = self.end_scope_by_counters(scope) {
+        let ended = self.end_scope_by_counters(scope);
+        // A type whose members are in place does not have its signatures yet (`shape_memo_or`).
+        if self.declared_index_infos_in_progress.is_empty()
+            && let Ok(stored) = ended
+        {
             let signatures = signatures.into();
             let known: &'p [SigId] = kept.insert_ref(&mut self.task, ty, signatures, stored).1;
             self.recent_signatures[at] = (ty, known);

@@ -153,6 +153,7 @@ macro_rules! buffered_fields {
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
+            calls_before_signatures
         )
     };
 }
@@ -197,6 +198,10 @@ pub struct Program {
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
     circular_returns: ByNode<(FileId, FnId), (), Buffered>,
+    /// The calls that found no signature while index signatures were being computed. The callee may
+    /// be the static side of a class whose members were in place and whose signatures were not
+    /// (`resolveAnonymousTypeMembers`).
+    calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
     flows_too_deep: ByNode<(FileId, ExprId), (), Buffered>,
     /// `getEffectsSignature`, by call.
@@ -384,6 +389,7 @@ impl Program {
             circular_initializers: ByNode::new(&pats),
             circular_symbols: ByNode::new(&symbols),
             circular_returns: ByNode::new(&fns),
+            calls_before_signatures: ByNode::new(&exprs),
             flows_too_deep: ByNode::new(&exprs),
             effects_signatures: ByNode::new(&exprs),
             resolved_effects_signatures: ByNode::new(&exprs),

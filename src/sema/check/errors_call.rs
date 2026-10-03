@@ -119,9 +119,17 @@ impl Checker<'_> {
         // `getSignaturesOfType` uses `getReducedApparentType`: an intersection that reduces to
         // never has no signatures.
         let reduced = self.reduced(apparent);
-        let call_sigs = self.signatures(reduced, false);
+        // tsgo reports what the call found when it was resolved.
+        let found_none = (self.p.calls_before_signatures)
+            .get(&mut self.task, &(file, e))
+            .is_some();
+        let call_sigs = if found_none {
+            List::default()
+        } else {
+            self.signatures(reduced, false)
+        };
         // These are ignored where the callee can be called.
-        let construct_sigs = if is_new || call_sigs.is_empty() {
+        let construct_sigs = if !found_none && (is_new || call_sigs.is_empty()) {
             self.signatures(reduced, true)
         } else {
             List::default()

@@ -758,6 +758,28 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
+/// The `npm:` alias recorded under `name_hash`, parsed into the lockfile's string buffer.
+fn known_npm_alias(
+    this: &mut PackageManager,
+    name: SemverString,
+    name_hash: PackageNameHash,
+) -> Result<Option<dependency::Version>, bun_alloc::AllocError> {
+    let Some(specifier) = this.known_npm_aliases.get(&name_hash) else {
+        return Ok(None);
+    };
+    let literal = this.lockfile.string_buf().append(specifier)?;
+    let sliced = literal.sliced(this.lockfile.buffers.string_bytes.as_slice());
+    Ok(dependency::parse_with_tag(
+        name,
+        Some(name_hash),
+        sliced.slice,
+        dependency::version::Tag::Npm,
+        &sliced,
+        None,
+        None,
+    ))
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -800,10 +822,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
-            if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
+            if let Some(aliased) = known_npm_alias(this, dependency.name, name_hash)? {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
-                // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
+                // SAFETY: `aliased` is always tag == Npm (`known_npm_alias` parses with that tag).
                 let mut curr_list: Option<&Semver::semver_query::List> =
                     Some(&aliased.npm().version.head);
                 while let Some(queries) = curr_list {
@@ -815,7 +837,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             name = aliased.npm().name;
                             name_hash =
                                 Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                            break 'version aliased.clone();
+                            break 'version aliased;
                         }
                         curr = query.next.as_deref();
                     }

@@ -17,13 +17,14 @@ use crate::{PackageManager, PackageNameHash};
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
+    /// Takes the alias's text: a parsed `Version` is only valid with the buffer it was parsed in.
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 
 impl NpmAliasRegistry for PackageManager {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.known_npm_aliases.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        self.known_npm_aliases.record_npm_alias(hash, specifier);
     }
 }
 
@@ -34,8 +35,13 @@ impl NpmAliasRegistry for PackageManager {
 /// `&mut PackageManager`.
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        debug_assert!(specifier.starts_with(b"npm:"));
+        // One install records the same row several times (the loader, the differ, `clone_in`, `clean`).
+        if self.get(&hash).is_some_and(|known| **known == *specifier) {
+            return;
+        }
+        self.insert(hash, Box::from(specifier));
     }
 }
 
@@ -1183,7 +1189,7 @@ pub(crate) fn parse_with_tag(
 
             if is_alias {
                 if let Some(pm) = package_manager {
-                    pm.record_npm_alias(alias_hash.unwrap(), &result);
+                    pm.record_npm_alias(alias_hash.unwrap(), dependency);
                 }
             }
 

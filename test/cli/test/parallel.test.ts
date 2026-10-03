@@ -1120,37 +1120,33 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
 // so the worker's final RepeatBufs frame is backpressured and leaves through
 // its exit drain loop. More than 20 passes keep the end-of-run repeat section
 // printing.
-test(
-  "--parallel: worker drains a backpressured final frame under the JSC API lock",
-  async () => {
-    using dir = tempDir("parallel-drain-lock", {
-      "big.test.js": `import {test} from "bun:test";
-        const pad = Buffer.alloc(340, "t").toString();
-        for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
-        for (let i = 0; i < 25; i++) test("p" + i, () => {});`,
-      "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("PARALLEL");
-    // The backpressured RepeatBufs frame crossed the IPC intact: the last
-    // todo line appears exactly twice, streamed live and again in the
-    // end-of-run repeat section built from the frame.
-    expect(stderr).toContain("3000 tests todo:");
-    expect(stderr.split("-2999").length - 1).toBe(2);
-    expect(stderr).toContain("3000 todo");
-    expect(stderr).toContain("26 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  },
-  isASAN || isDebug ? 60_000 : 20_000,
-);
+test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
+  using dir = tempDir("parallel-drain-lock", {
+    "big.test.js": `import {test} from "bun:test";
+      const pad = Buffer.alloc(340, "t").toString();
+      for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
+      for (let i = 0; i < 25; i++) test("p" + i, () => {});`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // The backpressured RepeatBufs frame crossed the IPC intact: the last
+  // todo line appears exactly twice, streamed live and again in the
+  // end-of-run repeat section built from the frame.
+  expect(stderr).toContain("3000 tests todo:");
+  expect(stderr.split("-2999").length - 1).toBe(2);
+  expect(stderr).toContain("3000 todo");
+  expect(stderr).toContain("26 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
 
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
   const mk = (tag: string) =>

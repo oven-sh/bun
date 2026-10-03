@@ -82,6 +82,85 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeBufferLastIndexOfEncoding", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const b = Buffer.from("abcabc");
+        // lastIndexOf(value, encoding) has no byteOffset, so it searches from the end.
+        console.log("utf8", b.lastIndexOf("abc", "utf8"));
+        console.log("latin1", b.lastIndexOf("abc", "latin1"));
+        console.log("hex", Buffer.from("aabbccaabbcc", "hex").lastIndexOf("aabb", "hex"));
+        console.log("base64", Buffer.from("Zm9vYmFyZm9v", "base64").lastIndexOf("Zm9v", "base64"));
+        console.log("utf16le", Buffer.from("abcabc", "utf16le").lastIndexOf("abc", "utf16le"));
+        console.log("number", b.lastIndexOf(0x61, "utf8"));
+        console.log("buffer", b.lastIndexOf(Buffer.from("abc"), "utf8"));
+        // An explicit byteOffset and the forward search keep their results.
+        console.log("byteOffset", b.lastIndexOf("abc", 2, "utf8"), b.lastIndexOf("abc", undefined, "utf8"));
+        console.log("indexOf", b.indexOf("abc", "utf8"), b.includes("abc", "utf8"));
+        // A byteOffset is truncated toward zero: 2.5 is 2, and -0.5 is 0, not the last byte.
+        console.log("truncated", b.indexOf("abc", 2.5), b.lastIndexOf("abc", 2.5), b.lastIndexOf(0x63, -0.5), b.indexOf("abc", -0));
+      `,
+    },
+    target: "browser",
+    run: {
+      // The values that Node.js prints for the same code.
+      stdout: `
+        utf8 3
+        latin1 3
+        hex 3
+        base64 6
+        utf16le 6
+        number 3
+        buffer 3
+        byteOffset 0 3
+        indexOf 0 true
+        truncated 3 0 -1 0
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
+  itBundled("browser/NodeBufferIndexOfUtf16le", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const utf16 = Buffer.from("abcabc", "utf16le");
+        const odd = Buffer.concat([utf16, Buffer.from([0])]);
+        const ab = Buffer.from("ab", "utf16le");
+        // A match is reported in bytes, not in 2-byte units.
+        console.log("bytes", utf16.lastIndexOf("c", "ucs2"), utf16.lastIndexOf("c", 8, "ucs2"), utf16.indexOf("c", 6, "utf16le"));
+        // The search uses whole 2-byte units. An odd byteOffset is rounded down.
+        console.log("odd byteOffset", utf16.indexOf("abc", 1, "utf16le"), utf16.lastIndexOf("c", 5, "ucs2"), utf16.includes("c", 9, "ucs2"));
+        // The odd last byte of the buffer is not searched, and a match never starts at an odd byte.
+        console.log("odd length", odd.lastIndexOf("c", "utf16le"), odd.indexOf(Buffer.from("x", "utf16le"), "ucs2"), Buffer.from([98, 97, 0]).lastIndexOf("a", "ucs2"));
+        // With a string value, a negative byteOffset counts from the end of the last whole unit.
+        const a0a = Buffer.from([97, 0, 97]);
+        console.log("negative", a0a.indexOf("a", -2, "ucs2"), a0a.lastIndexOf("a", -3, "ucs2"), a0a.lastIndexOf(Buffer.from([97, 0]), -3, "ucs2"));
+        // The odd last byte of a Buffer value is not compared, but the whole value must fit in bytes.
+        console.log("odd value", Buffer.from([97, 97, 98, 0]).lastIndexOf(Buffer.from([97, 97, 98]), "ucs2"), ab.lastIndexOf(Buffer.from([97, 0, 98, 0, 1]), "ucs2"), ab.indexOf("b", 3, "ucs2"));
+        // The search does not need Symbol.species. Without it (Hermes), subarray() returns a plain Uint8Array.
+        Object.defineProperty(Buffer, Symbol.species, { get: () => Uint8Array });
+        console.log("no species", odd.lastIndexOf("c", "utf16le"), odd.indexOf("c", -4, "utf16le"));
+      `,
+    },
+    target: "browser",
+    run: {
+      // The values that Node.js prints for the same code.
+      stdout: `
+        bytes 10 4 10
+        odd byteOffset 0 4 true
+        odd length 10 -1 -1
+        negative 0 -1 0
+        odd value 0 -1 -1
+        no species 10 10
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

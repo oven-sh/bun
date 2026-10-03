@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
 import { join, tmp } from "../src/fs";
-import { getBuild, getRelease, getSemver, getSha } from "../src/github";
+import { getBuild, getRelease, getSemver } from "../src/github";
 
 // The source of truth for the git sha is what's in the local build, extracted from features.json
 // NOT the git tag revision.
@@ -45,10 +45,12 @@ try {
 
 const latest = await getRelease();
 const release = await getRelease(tag);
-const full_commit_hash = await getSha(tag, "long");
-console.log("Found release:", release.tag_name, "with commit hash:", full_commit_hash);
+console.log("Found release:", release.tag_name);
 
-console.log("Found build:", full_commit_hash);
+// The commit the assets were built from, read out of the local build's
+// features.json below. git has no ref for it on canary, so the bun.report
+// purge-cache call at the end waits for this instead of resolving heads/main.
+let full_commit_hash: string | undefined;
 const isCanary = release.tag_name === "canary";
 
 let paths: string[] = [];
@@ -58,7 +60,7 @@ async function setPaths(revision: string, isCanary: boolean) {
     paths = ["releases/latest", `releases/${release.tag_name}`, releaseSha];
   } else if (isCanary) {
     try {
-      const build = await getSemver("canary", await getBuild());
+      const build = await getSemver("canary", await getBuild(), revision);
       paths = ["releases/canary", `releases/${build}`, releaseSha];
     } catch (error) {
       console.warn(error);
@@ -139,6 +141,8 @@ for (const asset of release.assets) {
     const text = await getFeaturesJSON(body);
     const features = JSON.parse(text);
     const sha = features.revision;
+    full_commit_hash = sha;
+    console.log("Found build:", full_commit_hash);
     if (features.is_canary && !isCanary) {
       console.warn("Local build is a canary but release is not tagged as canary.");
     }
@@ -173,7 +177,7 @@ for (const asset of release.assets) {
   }
 }
 
-if (!dryRun && process.env.BUN_REPORT_TOKEN) {
+if (!dryRun && process.env.BUN_REPORT_TOKEN && full_commit_hash) {
   await fetch(`https://bun.report/purge-cache/${full_commit_hash}`, {
     method: "POST",
     headers: {

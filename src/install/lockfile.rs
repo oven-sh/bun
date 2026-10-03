@@ -3087,11 +3087,8 @@ impl Lockfile {
         let package_scripts = &self.packages.items_scripts()[..packages_len];
 
         let mut entries = Vec::new();
-        let root = package_scripts[0].script_entries(
-            bytes,
-            ResolutionTag::Root,
-            root_node_gyp_rebuild,
-        );
+        let root =
+            package_scripts[0].script_entries(bytes, ResolutionTag::Root, root_node_gyp_rebuild);
         if root.iter().any(Option::is_some) {
             entries.push(root);
         }
@@ -3200,8 +3197,8 @@ impl Lockfile {
             let _ = string_builder.append(SCRIPTS_BEGIN);
             for (hook, name) in Scripts::NAMES.iter().enumerate() {
                 for script in script_entries.iter().filter_map(|entries| entries[hook]) {
-                    let _ = string_builder
-                        .fmt(format_args!("{}: {}\n", name, bstr::BStr::new(script)));
+                    let _ =
+                        string_builder.fmt(format_args!("{}: {}\n", name, bstr::BStr::new(script)));
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);

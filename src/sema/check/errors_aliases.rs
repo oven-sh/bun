@@ -424,7 +424,7 @@ impl Checker<'_> {
             };
             let at = self.place_of_token(file, name_start);
             if is_export_specifier {
-                // The `@typedef` that exports it as it is.
+                // The `@typedef` in this file that already exports it.
                 let exported = target.symbol().and_then(|target| {
                     let declarations = files.decls_of(target);
                     let mut declarations = declarations.iter();

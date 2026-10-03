@@ -4969,7 +4969,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let relation = r.relation;
         let target_is_mapped = is_mapped_kind(td);
-        // Nothing fits what asks for nothing in particular.
+        // `isPartialMappedType(target) && isEmptyObjectType(source)`
         if !relation.is_subtype()
             && target_is_mapped
             && self.mapped_optional_modifier(target) == MappedModifier::Add
@@ -4995,7 +4995,7 @@ impl<'p> Checker<'p> {
             // An object type other than a mapped one is its own apparent type.
             if !is_object_kind(sd) || is_mapped_kind(sd) {
                 source = self.apparent_type_for_relation(source);
-                // It is named.
+                // Only for reporting: the diagnostic prints this type.
                 if REPORT {
                     source = self.apparent_type_of_intersection(source);
                 }
@@ -5605,7 +5605,8 @@ impl<'p> Checker<'p> {
                         }
                         return Ternary::FALSE;
                     }
-                    // Only as long as positions are what they seem.
+                    // "We can only exclude discriminant properties if we have not yet encountered a
+                    // variable-length element."
                     if can_exclude_discriminants {
                         if source_flag.intersects(variable) || target_flag.intersects(variable) {
                             can_exclude_discriminants = false;

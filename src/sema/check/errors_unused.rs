@@ -1078,7 +1078,7 @@ impl Unused<'_> {
             .flags
             .intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::MODULE)
             && bound.symbols[symbol.idx()].decls.iter().any(|&d| {
-                // It is around what is written in it: no walk.
+                // The span of the declaration contains `e`: a position test instead of an ancestor walk.
                 matches!(
                     d,
                     Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)
@@ -1696,7 +1696,8 @@ impl Checker<'_> {
                 }
                 MemberKind::Constructor => {
                     for p in hir[member.func].params.iter() {
-                        // The property, that is. The parameter may well be.
+                        // Whether the parameter property is referenced. The parameter itself may be referenced
+                        // even if the property is not.
                         let property = bound.symbol_of_declaration(Decl::ParameterProperty(p));
                         let is_referenced = property.is_some()
                             && (u.referenced_members).contains(&self.files().sym(file, property));

@@ -606,7 +606,8 @@ impl<'p> Checker<'p> {
             if let Some(combined) = self.combined_symbol_of_alias(at) {
                 return AliasTarget::Symbol(combined);
             }
-            // As the links have it: what was resolved while symbols were put together stands for what was there then.
+            // As in `aliasTarget` of the symbol links: a target resolved while symbols were merged is the symbol that
+            // existed at that time.
             if next == at || !files.is_non_local_alias(next) {
                 return AliasTarget::Symbol(next);
             }
@@ -808,7 +809,7 @@ impl<'p> Checker<'p> {
         let value = self.files().module_value(module);
         let ty = self.type_of_symbol(value);
         let files = self.files();
-        // To Node, what an ECMAScript module imports from a file.
+        // Under a Node module mode, an ECMAScript module imports a file.
         let is_file_to_node = files
             .symbol(module)
             .decls

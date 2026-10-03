@@ -385,6 +385,8 @@ pub struct Files {
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
     /// During the symbol merge: `redirect_name_to`.
     stand_ins: Vec<(Sym, SymbolId)>,
+    /// The exports of a module or a namespace that could not merge with the export of the same name in another declaration.
+    refused_exports: FxHashSet<Sym>,
     /// `symbol.Exports` of a transient symbol.
     merged_exports: FxHashMap<Sym, SymbolMap>,
     /// `symbol.Members` of a transient symbol.
@@ -2637,6 +2639,7 @@ impl Files {
             merged_symbols: FxHashMap::default(),
             merged_parts: FxHashMap::default(),
             stand_ins: Vec::new(),
+            refused_exports: FxHashSet::default(),
             merged_exports: FxHashMap::default(),
             merged_members: FxHashMap::default(),
             refused_merges: Vec::new(),
@@ -3880,7 +3883,12 @@ impl Files {
             // used. Two aliases never merge, and nothing refers to a member by its name alone.
             if !is_alias && !unidirectional && !source_flags.intersects(SymFlags::CLASS_MEMBER) {
                 for part in self.parts(source).into_vec() {
-                    self.redirect_name_to(part, target);
+                    // `declareModuleMember`: the `locals` of the declaring block hold an `ExportValue` symbol whose
+                    // `exportSymbol` is `part`, so there the name still resolves to `part` as a value.
+                    match self.symbol(part).parent.is_some() {
+                        true => _ = self.refused_exports.insert(part),
+                        false => self.redirect_name_to(part, target),
+                    }
                 }
             }
             return target;
@@ -4418,6 +4426,12 @@ impl Files {
             // `extends` clause that declares them.
             if !matches!(from, ScopeKind::Extends) {
                 let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
+                let is_export_value_only =
+                    held.is_some_and(|sym| self.refused_exports.contains(&sym));
+                let meaning = match is_export_value_only {
+                    true => meaning & SymFlags::VALUE,
+                    false => meaning,
+                };
                 if let Some(sym) = lookup(SymbolTable::Locals(file, scope), held, meaning)
                     && bound.is_seen_from(from, self.flags(sym), meaning)
                 {

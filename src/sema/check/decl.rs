@@ -2921,7 +2921,8 @@ impl<'p> Checker<'p> {
                         return self.this_type_in_scope(file, s.parent);
                     }
                 },
-                // Not in a method: in a property, or else in the head of the class or the name of a method, which are outside.
+                // Not inside a method body: in a property declaration, or else in the class head or in a method name, which
+                // belong to the enclosing scope.
                 ScopeKind::Class(c) => {
                     if let Some(m) = hir[c].members.iter().rev().find(|&m| hir[m].start <= pos)
                         && hir[m].kind == MemberKind::Property

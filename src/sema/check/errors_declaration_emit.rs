@@ -1110,7 +1110,7 @@ impl<'p> Checker<'p> {
     }
 
     pub(super) fn is_declaration_visible(&mut self, file: FileId, decl: Decl) -> bool {
-        // A name is bound by one node, whatever it is bound as.
+        // One cache entry per binding name, whichever kind of declaration it is.
         let decl = match decl {
             Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
             decl => decl,

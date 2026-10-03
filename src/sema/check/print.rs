@@ -1040,7 +1040,7 @@ impl<'p> Printer<'_, 'p> {
                 }
             }
         }
-        // Type parameters have no part in what is painted late.
+        // `trackedSymbols` holds no type parameters.
         if !self
             .c
             .flags_of(tracked.symbol)

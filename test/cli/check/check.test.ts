@@ -1807,6 +1807,24 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    test("an export that cannot merge is still the value its own block refers to", async () => {
+      const declarations = `declare module "m" {
+  const key: unique symbol;
+  interface Options {
+    mode?: typeof key;
+  }
+}
+`;
+      using dir = project({ "a.d.ts": declarations, "b.d.ts": declarations });
+      const { stdout, exitCode } = await check(dir, ["--skipLibCheck", "false"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.d.ts(2,9): error TS2451: Cannot redeclare block-scoped variable 'key'.
+        b.d.ts(2,9): error TS2451: Cannot redeclare block-scoped variable 'key'.
+        b.d.ts(4,5): error TS2717: Subsequent property declarations must have the same type.  Property 'mode' must be of type 'unique symbol | undefined', but here has type 'unique symbol | undefined'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a property picked from a union of intersections with a conditional type keeps its modifiers", async () => {
       using dir = project({
         "a.ts": `

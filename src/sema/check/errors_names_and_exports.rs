@@ -103,7 +103,7 @@ impl Checker<'_> {
             let Some(resolved) = files.resolve_alias_as(namespace, SymFlags::NAMESPACE) else {
                 return;
             };
-            // What has whatever is asked of it.
+            // A namespace without an exports table, such as a shorthand ambient module, resolves any member.
             if files.symbol(resolved).exports.is_none() && resolved != files.global_this_symbol
                 || !files.flags(resolved).intersects(SymFlags::NAMESPACE)
             {
@@ -236,7 +236,7 @@ impl Checker<'_> {
 
     fn check_exports(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // And `export =` all by itself.
+        // A module is only checked for an `export =` next to other exports.
         if self.files().module(file).is_module() {
             self.check_export_equals_alone(file, self.files().file_symbol(file));
             return;

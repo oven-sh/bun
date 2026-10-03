@@ -61,7 +61,7 @@ impl Checker<'_> {
                     if let Some(properties) = self.type_without_signatures(static_base)
                         && !self.is_assignable(static_type, properties)
                     {
-                        // `properties` goes by the name of what it is made from.
+                        // `properties` is printed under the name of `static_base`, which it is derived from.
                         let (heir, base) =
                             self.type_names_for_error_display(static_type, static_base);
                         let static_base =

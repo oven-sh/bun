@@ -180,7 +180,8 @@ impl<'p> Checker<'p> {
         self.instantiate(t, mapper)
     }
 
-    /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. A restrictive instantiation is known by having one.
+    /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
+    /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
         self.instantiate_type_parameters(t, |c, param| match c.data(param) {
             TypeData::Marker(

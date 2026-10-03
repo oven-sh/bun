@@ -3561,7 +3561,8 @@ impl<'p> Checker<'p> {
         let optional = self.optional_property(ty);
         // Whether it is stored is decided below.
         let ended = self.end_scope_as(scope, false);
-        // About these `union` has questions to ask, each time.
+        // `union` runs further queries for members of these kinds on every call, so the result is not
+        // cached.
         let asks = self.parts(ty).iter().any(|&member| {
             matches!(
                 self.data(member),

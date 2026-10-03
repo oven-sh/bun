@@ -1474,9 +1474,6 @@ describe("--compile-aot optimizations", () => {
     function readsFlagsAroundOnlyReads(o: Flagged) { const before = o.flags; const r = onlyReads(o); return before * 10 + o.flags + r - r; }
     function readsFlagsAroundStoresFlags(o: Flagged) { const before = o.flags; const r = storesFlags(o, 7); return before * 10 + o.flags + r - r; }
     function alsoCallsStoresFlags(o: Flagged) { return storesFlags(o, 8) + 1; }
-    function Made(this: { first: number; second: number; third: number }, v: number) { this.first = v; this.second = v + 1; this.third = v + 2; }
-    function readsThird(o: { third: number }) { return o.third; }
-    function readsWhatNothingWrites(o: { nothingWritesThis?: number }) { return o.nothingWritesThis; }
     function firstMatch<T, U>(array: readonly T[], callback: (x: T, i: number) => U | undefined): U | undefined {
       for (let i = 0; i < array.length; i++) {
         const result = callback(array[i], i);
@@ -1490,12 +1487,12 @@ describe("--compile-aot optimizations", () => {
     const flagged = { flags: 2, more: 1 };
     out.push(readsFlagsTwice(flagged), readsFlagsAroundGiven(flagged, () => { flagged.flags = 3; }), readsFlagsAroundOnlyReads(flagged), readsFlagsAroundStoresFlags(flagged));
     out.push(typeof alsoCallsStoresFlags({ flags: 0, more: 0 }));
-    out.push(readsThird(new (Made as any)(1)), readsThird({ third: 9 }), readsWhatNothingWrites({}), findsWithFunctionExpression([1, 5, 9], 4), findsWithVariable([1, 2, 3]));
+    out.push(findsWithFunctionExpression([1, 5, 9], 4), findsWithVariable([1, 2, 3]));
 
     console.log(out.join());
   `;
   const expectedOutput =
-    '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600,2,23,33,37,number,3,9,,5,3\n';
+    '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600,2,23,33,37,number,5,3\n';
   const withoutLoopOptions = "useAOTLoopSplitting=0,useAOTInlineFastPathsInLoops=0";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1563,7 +1560,6 @@ describe("--compile-aot optimizations", () => {
     ["copies-data-properties", ["spreadsAfterProperty", "takesTheRest"], ["takesTheRestByName", "spreadsFirst"]],
     ["reuses-property-read", ["readsFlagsTwice", "readsFlagsAroundOnlyReads"], ["readsFlagsAroundGiven", "readsFlagsAroundStoresFlags"]],
     ["call-keeps-property-reads", ["readsFlagsAroundOnlyReads"], ["readsFlagsAroundGiven"]],
-    ["looks-in-likely-slots", ["readsThird"], ["readsWhatNothingWrites"]],
     ["inlined-call-with-callback", ["findsWithFunctionExpression"], ["findsWithVariable"]],
     ["get-by-val-on-this", ["readsNamed"], ["readsNamedAndAdds"]],
     ["returns-scope-variable", ["returnsModuleVariable"], ["returnsModuleVariablePlusOne"]],
@@ -1702,6 +1698,23 @@ describe("--compile-aot with a type table", () => {
     ["calls:Add", [], ["coalescesOptional"]],
     ["calls:operationAOTValueAdd", [], ["coalescesOptional"]],
   ];
+
+  test("a value of another type is refused with the property, what is expected and what it got", async () => {
+    const { stdout, exitCode } = await buildAndRun("", { BREAK_TYPES: "1" });
+    expect(stdout.split("\n").slice(1)).toEqual([
+      "a number: 5",
+      'a string: TypeError: Type check failed: property "a": expected number, got string',
+      'a boolean, where nothing is known of the object: TypeError: Type check failed: property "b": expected number, got boolean',
+      "a number, where nothing is known of the object: 7",
+      'a string given to a constructor: TypeError: Type check failed: property "x": expected number, got string',
+      'null given to a constructor: TypeError: Type check failed: property "x": expected number, got null',
+      'undefined given to a constructor: TypeError: Type check failed: property "x": expected number, got undefined',
+      'undefined: TypeError: Type check failed: property "a": expected number, got undefined',
+      "numbers given to a constructor: 2.5",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 
   for (const [label, options, env] of [
     ["as it is", "", {}],

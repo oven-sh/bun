@@ -76,3 +76,20 @@ function coalescesParsed(p: ParsedOptional) { return p.a + (p.b ?? 7); }
 out.push(coalescesParsed(JSON.parse('{"a":1,"b":2.5}')), coalescesParsed(JSON.parse('{"a":1}')), coalescesParsed(JSON.parse('{"a":1,"b":null}')), coalescesParsed(JSON.parse('{"a":1,"b":"x"}')));
 
 console.log(out.join());
+
+if (process.env.BREAK_TYPES) {
+  const attempts: [string, () => unknown][] = [
+    ["a number", () => writesSound(makesSound(1), JSON.parse("5")).a],
+    ["a string", () => writesSound(makesSound(1), JSON.parse('"text"')).a],
+    ["a boolean, where nothing is known of the object", () => { const o: any = makesSound(1); o.b = true; return o.b; }],
+    ["a number, where nothing is known of the object", () => { const o: any = makesSound(1); o.b = 7; return o.b; }],
+    ["a string given to a constructor", () => new Vector(JSON.parse('"text"'), 1).x],
+    ["null given to a constructor", () => new Vector(JSON.parse("null"), 1).x],
+    ["undefined given to a constructor", () => new Vector(JSON.parse("[]")[0], 1).x],
+    ["undefined", () => writesSound(makesSound(1), JSON.parse("[]")[0]).a],
+    ["numbers given to a constructor", () => new Vector(JSON.parse("2.5"), 1).x],
+  ];
+  for (const [what, attempt] of attempts) {
+    try { console.log(what + ": " + attempt()); } catch (e) { console.log(what + ": " + e); }
+  }
+}

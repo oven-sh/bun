@@ -24,7 +24,8 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import * as helper from "./caller-source-origin-fixture";
 
 describe("bun:jsc", () => {
   function count() {
@@ -80,6 +81,71 @@ describe("bun:jsc", () => {
   });
   it("callerSourceOrigin", () => {
     expect(callerSourceOrigin()).toBe(import.meta.url);
+  });
+  // JavaScriptCore decides which `return f()` is a tail call, so an engine upgrade can change these
+  // results. packages/bun-types/jsc.d.ts documents them: keep its JSDoc in step with this test.
+  it("callerSourceOrigin from a helper in another module", async () => {
+    const helperUrl = new URL("./caller-source-origin-fixture.ts", import.meta.url).href;
+    expect({
+      plain: helper.plain(),
+      arrow: helper.arrow(),
+      generator: helper.generator().next().value,
+      asyncFunction: await helper.asyncFunction(),
+      asyncFunctionAfterAwait: await helper.asyncFunctionAfterAwait(),
+      asyncArrowAfterAwait: await helper.asyncArrowAfterAwait(),
+      asyncGenerator: (await helper.asyncGenerator().next()).value,
+    }).toEqual({
+      // A tail call: the helper has left the stack, so the caller is this file.
+      plain: import.meta.url,
+      arrow: import.meta.url,
+      // Not a tail call: the helper is the caller.
+      generator: helperUrl,
+      asyncFunction: helperUrl,
+      asyncFunctionAfterAwait: helperUrl,
+      asyncArrowAfterAwait: helperUrl,
+      asyncGenerator: helperUrl,
+    });
+  });
+  it("callerSourceOrigin: the @example in bun-types prints what its comments say", async () => {
+    const dts = await Bun.file(new URL("../../../../packages/bun-types/jsc.d.ts", import.meta.url)).text();
+    const declaration = dts.indexOf("\n  function callerSourceOrigin(");
+    expect(declaration).not.toBe(-1);
+    const end = dts.lastIndexOf("*/", declaration);
+    const jsdoc = dts.slice(dts.lastIndexOf("/**", end), end).replace(/^[ \t]*\* ?/gm, "");
+    const example = /^@example\n```ts\n([\s\S]*?)\n```/m.exec(jsdoc)?.[1];
+    if (example === undefined) throw new Error("the JSDoc of callerSourceOrigin has no @example fence");
+
+    // A `// name.ts` line starts a file.
+    const files: Record<string, string> = {};
+    let name: string | undefined;
+    for (const line of example.split("\n")) {
+      const header = /^\/\/ (\w+\.ts)$/.exec(line);
+      if (header) files[(name = header[1])] = "";
+      else if (name) files[name] += line + "\n";
+    }
+    expect(Object.keys(files)).toEqual(["helper.ts", "index.ts"]);
+
+    // The `//` line after each `console.log(...);` is the output the example documents.
+    const lines = files["index.ts"].split("\n");
+    const documented = lines
+      .filter((line, i) => line.startsWith("// ") && lines[i - 1].startsWith("console.log("))
+      .map(line => line.slice(3) + "\n")
+      .join("");
+    expect(documented).not.toBe("");
+
+    using dir = tempDir("caller-source-origin-example", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.replaceAll(Bun.pathToFileURL(String(dir)).href, "file:///home/me/app")).toBe(documented);
+    expect(exitCode).toBe(0);
   });
   it("noFTL", () => {});
   it("noOSRExitFuzzing", () => {});

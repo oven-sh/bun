@@ -1504,6 +1504,18 @@ checked are in PORT_STATUS.md, "Emit printer".
   type itself needs no import.
 - `Printer.Write` is `Printer::write_exported(node, source_file, writer)`: `write(text)` of printer.go 304 has the
   same snake case name and stays `write`, private to `printer/printer.rs`.
+- `crate::printer::Printer<'a, 'p>` has two lifetimes, as `NodeFactory<'a, 'c>`: `'a` is the tree and `'p` the borrow
+  of the emit context and of the writer. `new_printer(a: Ast<'a>, options, handlers, emit_context: &'p mut
+  EmitContext) -> Printer<'a, 'p>`; `write_exported` takes the writer as `&'p mut (dyn EmitTextWriter + 'p)`, and
+  `&mut *writer` of a `Box<dyn EmitTextWriter>` fits. The printer keeps both borrows until it is dropped: a caller
+  makes it in a block of its own and reads the writer (`writer.string()`) after the block, as the four functions of
+  `checker/printer.rs` do. Commits `ea3e7925bb` (`printer/printer.rs`: the record, `new_printer` and the eight `impl`
+  headers) and `adcacdc85c` (`checker/printer.rs`: the four `create_printer_*` and the four calls of
+  `write_exported`), written by the job that commits the worktree. Cargo had not compiled the two files when this was
+  written: the fixer of a file does not build in this step. `round2-layer7-checker/printer-lifetimes-probe.rs` (one
+  file that stands alone, stand-ins with the shapes of the tree) compiles with rustc without error or warning; with
+  `--cfg one_lifetime`, the printer of before, rustc rejects its two callers (`'1` must outlive `'a` at the emit
+  context, E0597 and E0502 at the writer). `rustfmt --check` passes for the two files.
 - `lib.rs` carries `#![allow(dead_code)]`: the rust lint `dead_code` is off for the whole crate from `c73680fe1d` on,
   every other lint of the workspace stays denied.
 
@@ -1520,18 +1532,8 @@ checked are in PORT_STATUS.md, "Emit printer".
 
 ### What waits
 
-- `checker/printer.rs` 162, 265, 333 and 373 call `p.write(node, source_file, writer)`: the name is `write_exported`.
 - `checker/nodebuilderimpl.rs` 214 names `NodeFactory<'c>`: with the checker's `Checker<'a>` the type is
   `NodeFactory<'a, 'c>`.
-- `Printer<'p>` still has one lifetime for the tree (`a: Ast<'p>`), for the emit context (`&'p mut EmitContext`) and
-  for the writer (`&'p mut (dyn EmitTextWriter + 'p)` of `write_exported`), and `Ast` is invariant. So a caller lends
-  its emit context and its writer for as long as the tree is used. No file of layers 1 to 6 makes a printer, so
-  nothing fails there. The four `create_printer_*` of `checker/printer.rs` take the context out of the checker for
-  one block: by the reasoning that explains the 18 borrow errors of `emit_property_access_expression`, such a printer
-  does not accept that. This was not compiled against the checker; the comment at the end of
-  `round2-layer6-printer/probe.rs` has a caller of a stand-in printer that rustc rejects for this reason. The answer
-  would be the one `NodeFactory` got, a second lifetime for the borrows: a change of `printer/printer.rs`, not of its
-  callers.
 
 ## Checker: grammar checks (`checker/grammarchecks.rs`)
 

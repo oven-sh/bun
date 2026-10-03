@@ -1,0 +1,54 @@
+warning: extern crate `criterion` is unused in crate `bun_js_parser`
+ --> /tmp/r4td/root2/src/js_parser/lib.rs:1:1
+  |
+1 | //! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
+  | ^
+  |
+  = help: remove the dependency or add `use criterion as _;` to the crate root
+  = note: requested on the command line with `--force-warn unused-crate-dependencies`
+  = note: the `unused_crate_dependencies` lint ignores `-D warnings`
+
+warning: extern crate `regex` is unused in crate `bun_js_parser`
+ --> /tmp/r4td/root2/src/js_parser/lib.rs:1:1
+  |
+1 | //! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
+  | ^
+  |
+  = help: remove the dependency or add `use regex as _;` to the crate root
+
+error: this argument is passed by value, but not consumed in the function body
+    --> /tmp/r4td/root2/src/js_parser/p.rs:7996:22
+     |
+7996 |         ts_metadata: bun_ast::ts::Metadata,
+     |                      ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#needless_pass_by_value
+     = note: requested on the command line with `-D clippy::needless-pass-by-value`
+help: consider taking a reference instead
+     |
+7996 |         ts_metadata: &bun_ast::ts::Metadata,
+     |                      +
+
+error: this argument (8 byte) is passed by reference, but would be more efficient if passed by value (limit: 8 byte)
+   --> /tmp/r4td/root2/src/js_parser/parse/erased_tests.rs:147:22
+    |
+147 | fn member_kind(data: &ErasedMemberData) -> &'static str {
+    |                      ^^^^^^^^^^^^^^^^^ help: consider passing by value instead: `ErasedMemberData`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#trivially_copy_pass_by_ref
+    = note: requested on the command line with `-D clippy::trivially-copy-pass-by-ref`
+
+error: use of a disallowed method `alloc::string::String::from_utf8_lossy`
+   --> /tmp/r4td/root2/src/js_parser/parse/generics.rs:719:13
+    |
+719 |             String::from_utf8_lossy(bytes).into_owned()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: silently corrupts non-UTF-8 bytes and allocates; keep data as bytes (bstr::BStr for Display)
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#disallowed_methods
+    = note: requested on the command line with `-D clippy::disallowed-methods`
+
+error: aborting due to 3 previous errors; 2 warnings emitted
+
+clippy exit=123
+exit=0

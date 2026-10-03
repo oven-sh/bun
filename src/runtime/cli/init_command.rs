@@ -470,19 +470,18 @@ impl InitCommand {
                 break 'probe ExistingPackageJson::Empty(pkg);
             }
 
-            let mut path_buf = path_buffer_pool::get();
             let source = bun_ast::Source::init_path_string(
-                package_json_path(&mut path_buf),
+                b"package.json",
                 package_json_contents.list.as_slice(),
             );
             let mut log = bun_ast::Log::init();
             let package_json_expr: bun_ast::Expr =
                 match json::parse_package_json_utf8(&source, &mut log, &bump) {
                     Ok(e) => e,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        exit_unusable_package_json(UnusablePackageJson::Parse(err));
-                    }
+                    Err(err) => exit_unusable_package_json(UnusablePackageJson::Parse(
+                        err,
+                        package_json_contents.list.as_slice(),
+                    )),
                 };
 
             if !package_json_expr.data.is_e_object() {
@@ -1952,12 +1951,13 @@ enum ExistingPackageJson {
 }
 
 /// Why `bun init` cannot use the package.json in the destination directory.
-enum UnusablePackageJson {
+enum UnusablePackageJson<'a> {
     Open(bun_sys::Error),
     Stat(bun_sys::Error),
     NotRegularFile,
     Read(bun_sys::Error),
-    Parse(bun_parsers::Error),
+    /// With the bytes of the file, for the code frame.
+    Parse(bun_parsers::Error, &'a [u8]),
     RootNotObject,
     /// Absent or empty at the probe, but not an empty regular file at the write.
     Changed,
@@ -1975,9 +1975,10 @@ fn package_json_path(buf: &mut bun_paths::PathBuffer) -> &[u8] {
 
 #[cold]
 #[inline(never)]
-fn exit_unusable_package_json(cause: UnusablePackageJson) -> ! {
+fn exit_unusable_package_json(cause: UnusablePackageJson<'_>) -> ! {
     let mut path_buf = path_buffer_pool::get();
-    let path = bstr::BStr::new(package_json_path(&mut path_buf));
+    let path_bytes = package_json_path(&mut path_buf);
+    let path = bstr::BStr::new(path_bytes);
     match cause {
         UnusablePackageJson::Open(err)
             if matches!(err.get_errno(), bun_sys::E::EACCES | bun_sys::E::EPERM) =>
@@ -1995,7 +1996,12 @@ fn exit_unusable_package_json(cause: UnusablePackageJson) -> ! {
             Output::err_generic("\"{s}\" is not a regular file", &[&path]);
         }
         UnusablePackageJson::Read(err) => Output::err(&err, "could not read \"{s}\"", &[&path]),
-        UnusablePackageJson::Parse(err) => {
+        UnusablePackageJson::Parse(err, contents) => {
+            // Parsed again so that the code frame names the absolute path.
+            let source = bun_ast::Source::init_path_string(path_bytes, contents);
+            let mut log = bun_ast::Log::init();
+            let _ = json::parse_package_json_utf8(&source, &mut log, &bun_alloc::Arena::new());
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(err, "failed to parse \"{s}\"", &[&path]);
             bun_core::note!("fix or remove this file, then run 'bun init' again");
         }

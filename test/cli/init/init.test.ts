@@ -521,12 +521,15 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       const decoder = new TextDecoder();
       let output = "";
       const picker = Promise.withResolvers<void>();
+      const refused = Promise.withResolvers<void>();
       await using terminal = new Bun.Terminal({
         cols: 80,
         rows: 24,
         data(_, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
           if (output.includes("Select a project template")) picker.resolve();
+          // The last line of every refusal.
+          if (/'bun init' again\r?\n/.test(output)) refused.resolve();
         },
       });
       await using proc = Bun.spawn({ cmd: [bunExe(), "init"], cwd, env: initEnv, terminal });
@@ -540,6 +543,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         onPicker(terminal);
       }
       const exitCode = await proc.exited;
+      // The pty can deliver the child's last lines after its exit is reported.
+      if (exitCode === 1) await refused.promise;
       return { output: normalizeBunSnapshot(Bun.stripANSI(output), cwd), exitCode };
     }
 

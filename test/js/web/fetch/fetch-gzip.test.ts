@@ -728,6 +728,91 @@ describe("corrupt compressed responses", () => {
   });
 });
 
+// One process is server and client. No timer: the server writes the head and the first `split` body
+// bytes in one write, and the rest only after the client's fetch() promise settled.
+// argv: the Content-Encoding, then JSON of { plain, bodies, decoded, splits? } with the bytes in base64.
+// It prints one word for each body, framing and split: "ok", the size of a wrong body, or the error code.
+const splitDeliveryFixture = /* js */ `
+  const input = JSON.parse(process.argv[2], (key, value) =>
+    typeof value === "string" ? Buffer.from(value, "base64") : value,
+  );
+  const cells = new Map();
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      async data(socket, request) {
+        const { framing, bytes, split, headersSeen } = cells.get(String(request).split(" ")[1]);
+        const head = Buffer.from(
+          "HTTP/1.1 200 OK\\r\\nContent-Encoding: " + process.argv[1] + "\\r\\nConnection: close\\r\\n" +
+            (framing === "length" ? "Content-Length: " + bytes.length + "\\r\\n" : "") +
+            (framing === "chunked" ? "Transfer-Encoding: chunked\\r\\n" : "") +
+            "\\r\\n",
+        );
+        const piece = data =>
+          framing !== "chunked" || data.length === 0
+            ? data
+            : Buffer.concat([Buffer.from(data.length.toString(16) + "\\r\\n"), data, Buffer.from("\\r\\n")]);
+        const tail = Buffer.from(framing === "chunked" ? "0\\r\\n\\r\\n" : "");
+        if (split === 0) return void socket.end(Buffer.concat([head, piece(bytes), tail]));
+        socket.write(Buffer.concat([head, piece(bytes.subarray(0, split))]));
+        await headersSeen;
+        socket.end(Buffer.concat([piece(bytes.subarray(split)), tail]));
+      },
+      error() {},
+    },
+  });
+  const results = {};
+  await Promise.all(
+    Object.entries(input.bodies).flatMap(([body, bytes]) =>
+      ["length", "chunked", "close"].flatMap(framing =>
+        (input.splits?.[body] ?? [0, 1, 2]).map(async (split, i) => {
+          const { promise: headersSeen, resolve } = Promise.withResolvers();
+          const path = "/" + body + "/" + framing + "/" + split;
+          cells.set(path, { framing, bytes, split, headersSeen });
+          const result = await fetch("http://127.0.0.1:" + server.port + path)
+            .finally(resolve)
+            .then(res => res.arrayBuffer())
+            .then(
+              decoded =>
+                Buffer.from(decoded).equals(input.decoded[body] ?? input.plain) ? "ok" : decoded.byteLength + " bytes",
+              e => e.code,
+            );
+          ((results[body] ??= {})[framing] ??= [])[i] = result;
+        }),
+      ),
+    ),
+  );
+  server.stop(true);
+  console.log(JSON.stringify(results, (key, value) => (Array.isArray(value) ? value.join(" ") : value)));
+`;
+const base64 = (buffers: Record<string, Buffer>) =>
+  Object.fromEntries(Object.entries(buffers).map(([name, bytes]) => [name, bytes.toString("base64")]));
+// Runs the fixture: its words, its count of "Decompression error" lines, and its exit code.
+async function splitDeliveries(encoding: string, input: string, noLibdeflate: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", splitDeliveryFixture, encoding, input],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let results: unknown = stdout;
+  try {
+    results = JSON.parse(stdout);
+  } catch {}
+  return {
+    results,
+    errorLines: stderr.split("\n").filter(line => line.includes("Decompression error")).length,
+    exitCode,
+  };
+}
+// One word per split in each framing.
+const everyCell = (result: string, splits = 3) => {
+  const row = Array(splits).fill(result).join(" ");
+  return { length: row, chunked: row, close: row };
+};
+
 // RFC 1952 §2.2: a gzip file is a sequence of members. Concatenated members
 // (cat a.gz b.gz, bgzf, pigz, pre-compressed segment stitching) must all be
 // decoded. Previously fetch() silently returned only the first member.
@@ -851,6 +936,54 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
       server.close();
     }
   });
+
+  // The first byte after a member's trailer decides, once, what the rest of the body is. 0x1f starts the
+  // next member. Any other byte ends the content: fetch() ignores that byte and every byte after it, so
+  // a later read that starts with 0x1f does not start a member.
+  const badMember = Buffer.from([0x1f, 0x00, 0x41]); // the first byte of a member, then no gzip header
+  // Each body is M1, then these two parts.
+  const afterFirstMember: Record<string, [Buffer, Buffer]> = {
+    twoMembers: [Buffer.alloc(0), M2],
+    zerosThenMember: [Buffer.alloc(8), M2],
+    junkThenMember: [Buffer.from("AB"), M2],
+    crlfThenBadMember: [Buffer.from("\r\n"), badMember],
+    badMember: [Buffer.alloc(0), badMember],
+  };
+  const afterFirstMemberInput = JSON.stringify({
+    plain: P1.toString("base64"),
+    bodies: base64(
+      Object.fromEntries(
+        Object.entries(afterFirstMember).map(([body, parts]) => [body, Buffer.concat([M1, ...parts])]),
+      ),
+    ),
+    // The content that fetch() must return, for a body that does not decode to P1.
+    decoded: base64({ twoMembers: Buffer.concat([P1, P2]) }),
+    // The whole body in one read, then a second read that starts inside M1, at the end of M1, at the last part.
+    splits: Object.fromEntries(
+      Object.entries(afterFirstMember).map(([body, [middle]]) => [
+        body,
+        [...new Set([0, 10, M1.length, M1.length + middle.length])],
+      ]),
+    ),
+  });
+
+  it.concurrent.each(["0", "1"])(
+    "bytes after a member: the read boundary and the framing do not change the result (BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s)",
+    async noLibdeflate => {
+      expect(await splitDeliveries("gzip", afterFirstMemberInput, noLibdeflate)).toEqual({
+        results: {
+          twoMembers: everyCell("ok", 3),
+          zerosThenMember: everyCell("ok", 4),
+          junkThenMember: everyCell("ok", 4),
+          crlfThenBadMember: everyCell("ok", 4),
+          badMember: everyCell("ZlibError", 3),
+        },
+        // Only `badMember` prints an error: one line for each of its nine cells.
+        errorLines: 9,
+        exitCode: 0,
+      });
+    },
+  );
 
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
   // the libdeflate fast path takes the decompress_to_vec branch, which must
@@ -1024,74 +1157,12 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     oneByte: Buffer.from([0x78]), // the body ends while the decoder waits for the second header byte
   };
 
-  // One process is server and client. No timer: the server writes the head and the first `split` body
-  // bytes in one write, and the rest only after the client's fetch() promise settled.
-  const fixture = /* js */ `
-    const input = JSON.parse(process.argv[1], (key, value) =>
-      typeof value === "string" ? Buffer.from(value, "base64") : value,
-    );
-    const cells = new Map();
-    const server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        async data(socket, request) {
-          const { framing, bytes, split, headersSeen } = cells.get(String(request).split(" ")[1]);
-          const head = Buffer.from(
-            "HTTP/1.1 200 OK\\r\\nContent-Encoding: deflate\\r\\nConnection: close\\r\\n" +
-              (framing === "length" ? "Content-Length: " + bytes.length + "\\r\\n" : "") +
-              (framing === "chunked" ? "Transfer-Encoding: chunked\\r\\n" : "") +
-              "\\r\\n",
-          );
-          const piece = data =>
-            framing !== "chunked" || data.length === 0
-              ? data
-              : Buffer.concat([Buffer.from(data.length.toString(16) + "\\r\\n"), data, Buffer.from("\\r\\n")]);
-          const tail = Buffer.from(framing === "chunked" ? "0\\r\\n\\r\\n" : "");
-          if (split === 0) return void socket.end(Buffer.concat([head, piece(bytes), tail]));
-          socket.write(Buffer.concat([head, piece(bytes.subarray(0, split))]));
-          await headersSeen;
-          socket.end(Buffer.concat([piece(bytes.subarray(split)), tail]));
-        },
-        error() {},
-      },
-    });
-    const results = {};
-    await Promise.all(
-      Object.entries(input.bodies).flatMap(([body, bytes]) =>
-        ["length", "chunked", "close"].flatMap(framing =>
-          [0, 1, 2].map(async (split, i) => {
-            const { promise: headersSeen, resolve } = Promise.withResolvers();
-            const path = "/" + body + "/" + framing + "/" + split;
-            cells.set(path, { framing, bytes, split, headersSeen });
-            const result = await fetch("http://127.0.0.1:" + server.port + path)
-              .finally(resolve)
-              .then(res => res.arrayBuffer())
-              .then(
-                decoded => (Buffer.from(decoded).equals(input.decoded[body] ?? input.plain) ? "ok" : "wrong bytes"),
-                e => e.code,
-              );
-            ((results[body] ??= {})[framing] ??= [])[i] = result;
-          }),
-        ),
-      ),
-    );
-    server.stop(true);
-    console.log(JSON.stringify(results, (key, value) => (Array.isArray(value) ? value.join(" ") : value)));
-  `;
-  const base64 = (buffers: Record<string, Buffer>) =>
-    Object.fromEntries(Object.entries(buffers).map(([name, bytes]) => [name, bytes.toString("base64")]));
   const input = JSON.stringify({
     plain: plain.toString("base64"),
     bodies: base64({ ...decodes, ...fails }),
     // The content that fetch() must return, for a body that does not hold `plain`.
     decoded: base64({ twoReadings: zlibReading }),
   });
-  // One word per split (0, 1, 2) in each framing.
-  const everyCell = (result: string) => {
-    const row = [result, result, result].join(" ");
-    return { length: row, chunked: row, close: row };
-  };
 
   it.concurrent.each(["0", "1"])(
     "the read boundary and the framing do not change the result (BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s)",
@@ -1099,22 +1170,7 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
       // node:zlib reads `twoReadings` both ways.
       expect(inflateSync(twoReadings)).toEqual(zlibReading);
       expect(inflateRawSync(twoReadings)).not.toEqual(zlibReading);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture, input],
-        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      let results: unknown = stdout;
-      try {
-        results = JSON.parse(stdout);
-      } catch {}
-      expect({
-        results,
-        errorLines: stderr.split("\n").filter(line => line.includes("Decompression error")).length,
-        exitCode,
-      }).toEqual({
+      expect(await splitDeliveries("deflate", input, noLibdeflate)).toEqual({
         results: {
           ...Object.fromEntries(Object.keys(decodes).map(body => [body, everyCell("ok")])),
           ...Object.fromEntries(Object.keys(fails).map(body => [body, everyCell("ZlibError")])),

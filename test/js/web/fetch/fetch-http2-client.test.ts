@@ -1737,6 +1737,39 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("bytes after a gzip member stay ignored when a later DATA frame starts with 0x1f", async () => {
+      const payload = "the first gzip member, via h2";
+      let first: RawConn | undefined;
+      await withRawH2Server(
+        (conn, id) => {
+          if (!first) {
+            first = conn;
+            // One write, so the client reads HEADERS and the first DATA frame together: a member, then CRLF.
+            conn.socket.write(
+              Buffer.concat([
+                frame(1, 4, id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")])),
+                frame(0, 0, id, Buffer.concat([zlib.gzipSync(payload), Buffer.from("\r\n")])),
+              ]),
+            );
+          } else {
+            // The client sends this request after the first fetch() resolved: it has read the CRLF.
+            first.data(1, zlib.gzipSync("not content: the CRLF ended it"), true);
+            conn.headers(id, hpackStatus(204), { endStream: true });
+          }
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const tls = { rejectUnauthorized: false };
+            const res = await fetch("${url}", { tls });
+            await fetch("${url}", { tls });
+            process.stdout.write(await res.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: payload, stderr: "", exitCode: 0 });
+        },
+      );
+    });
+
     test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
       await withRawH2Server(
         (conn, id) => {

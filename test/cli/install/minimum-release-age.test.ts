@@ -3156,13 +3156,17 @@ export const scanner = {
       // Eight concurrent gated runs on the warm entry: none may delete the
       // directory another run is executing from.
       const procs = Array.from({ length: 8 }, spawnGated);
-      const results = await Promise.all(
-        procs.map(async p => {
-          const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-          return { out: out.trim(), code };
-        }),
-      );
-      expect(results).toEqual(Array.from({ length: 8 }, () => ({ out: "2.1.0", code: 0 })));
+      try {
+        const results = await Promise.all(
+          procs.map(async p => {
+            const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+            return { out: out.trim(), code };
+          }),
+        );
+        expect(results).toEqual(Array.from({ length: 8 }, () => ({ out: "2.1.0", code: 0 })));
+      } finally {
+        for (const p of procs) p.kill();
+      }
     });
   });
 });

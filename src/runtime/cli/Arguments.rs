@@ -1245,8 +1245,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(script) = args.option(b"--print") {
             ctx.runtime_options.eval.script = script.into();
             ctx.runtime_options.eval.eval_and_print = true;
+            ctx.runtime_options.eval.provided = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.provided = true;
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

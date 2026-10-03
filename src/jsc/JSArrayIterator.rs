@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, MarkedArgumentBuffer};
 
 pub struct JSArrayIterator<'a> {
     pub i: u32,
@@ -58,6 +58,29 @@ impl<'a> JSArrayIterator<'a> {
             self.fast = None;
         }
         Ok(Some(JSObject::get_index(self.array, self.global, i)?))
+    }
+
+    /// Appends the remaining elements to `roots` and ends the iteration. When
+    /// `is_fast()`, that is one call and it cannot run user JS.
+    pub fn append_remaining_to(&mut self, roots: &mut MarkedArgumentBuffer) -> JsResult<()> {
+        if let Some(elements) = self.fast {
+            if Bun__JSArray__contiguousVectorIsStillValid(self.array, elements, self.len) {
+                let i = self.i.min(self.len);
+                // SAFETY: the check above says `elements[0..self.len]` is the
+                // array's butterfly, and nothing can change the array before
+                // `append_slice` returns.
+                roots.append_slice(unsafe {
+                    core::slice::from_raw_parts(elements.add(i as usize), (self.len - i) as usize)
+                });
+                self.i = self.len;
+                return Ok(());
+            }
+            self.fast = None;
+        }
+        while let Some(value) = self.next()? {
+            roots.append(value);
+        }
+        Ok(())
     }
 }
 

@@ -533,7 +533,12 @@ function onClientHandshake(self, socket, success, verifyError) {
       const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671. After TLSSocket#connect() the callback can be the constructor's, and then `options` is not its owner.
+        const receiver =
+          options !== undefined && $getByIdDirect(options, "checkServerIdentity") === checkServerIdentity
+            ? options
+            : undefined;
+        verifyError = checkServerIdentity.$call(receiver, hostname, cert);
       }
     }
     let rejectUnauthorized;

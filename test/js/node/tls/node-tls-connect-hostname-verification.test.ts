@@ -1,7 +1,10 @@
 import { tls as ipSanCert } from "harness";
 import assert from "node:assert";
-import { once } from "node:events";
+import { X509Certificate } from "node:crypto";
+import { once, type EventEmitter } from "node:events";
 import fs from "node:fs";
+import http2 from "node:http2";
+import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
@@ -201,6 +204,230 @@ describe("tls.connect over an existing socket verifies the certificate against o
         reject(err);
       });
       assert.deepStrictEqual(await promise, { authorized: false, authorizationError: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    });
+  });
+});
+
+// Adds a pin and a callback that records its `this` to the caller's options.
+function pinned<T extends object>(callerOptions: T) {
+  let receiver: any;
+  let calls = 0;
+  const options = Object.assign(callerOptions, {
+    pin: "agent1",
+    checkServerIdentity(this: unknown) {
+      calls++;
+      receiver = this;
+      return undefined;
+    },
+  });
+  const seen = () => ({
+    calls,
+    pin: receiver?.pin,
+    host: receiver?.host,
+    ownsCallback: receiver?.checkServerIdentity === options.checkServerIdentity,
+    isCallerObject: receiver === options,
+  });
+  return { options, seen, receiver: () => receiver };
+}
+
+// The first of `event`, 'error' and 'close', with its arguments. It removes its listeners then.
+function firstOf(emitter: EventEmitter, event: string) {
+  const { promise, resolve } = Promise.withResolvers<{ name: string; args: any[] }>();
+  const names = [event, "error", "close"];
+  const listeners = names.map(name => (...args: any[]) => {
+    names.forEach((name, i) => emitter.off(name, listeners[i]));
+    resolve({ name, args });
+  });
+  names.forEach((name, i) => emitter.on(name, listeners[i]));
+  return promise;
+}
+
+// Resolves with the arguments of `event`. Rejects when 'error' or 'close' comes first.
+async function eventOf(emitter: EventEmitter, event: string) {
+  const { name, args } = await firstOf(emitter, event);
+  if (name === event) return args;
+  throw name === "error" ? args[0] : new Error(`'close' came before '${event}'`);
+}
+
+async function secureConnect(socket: tls.TLSSocket) {
+  try {
+    await eventOf(socket, "secureConnect");
+  } finally {
+    socket.destroy();
+  }
+}
+
+async function outcomeOf(socket: tls.TLSSocket) {
+  try {
+    const { name, args } = await firstOf(socket, "secureConnect");
+    if (name === "error") return `error: ${args[0].message}`;
+    return name === "close" ? "close" : `secureConnect, authorized=${socket.authorized}`;
+  } finally {
+    socket.destroy();
+  }
+}
+
+// What `seen()` gives when `this` is the copy of the caller's options that tls.connect() builds.
+const connectOptions = (host: string) => ({
+  calls: 1,
+  pin: "agent1",
+  host,
+  ownsCallback: true,
+  isCallerObject: false,
+});
+
+// Node calls the callback as a method of the options object that tls.connect()
+// builds: its defaults, then a copy of the caller's own properties. https and
+// http2 clients get their socket from tls.connect().
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671
+describe("checkServerIdentity is called with the connect options as `this`", () => {
+  test("tls.connect(options) to an IP address", async () => {
+    await withServer(async port => {
+      const { options, seen } = pinned({ ca, host: "127.0.0.1", port });
+      await secureConnect(tls.connect(options));
+      assert.deepStrictEqual(seen(), connectOptions("127.0.0.1"));
+    });
+  });
+
+  test("tls.connect(options) to a hostname", async () => {
+    await withServer(async port => {
+      const { options, seen } = pinned({ ca, host: "localhost", port });
+      await secureConnect(tls.connect(options));
+      assert.deepStrictEqual(seen(), connectOptions("localhost"));
+    });
+  });
+
+  test("tls.connect({ socket })", async () => {
+    await withRawSocketTo({ key: serverKey, cert: serverCert }, async raw => {
+      const { options, seen } = pinned({ ca, socket: raw, host: "agent1" });
+      await secureConnect(tls.connect(options));
+      assert.deepStrictEqual(seen(), connectOptions("agent1"));
+    });
+  });
+
+  test("https.request(options)", async () => {
+    const server = https.createServer({ key: serverKey, cert: serverCert }, (_req, res) => res.end("ok"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { options, seen } = pinned({ ca, host: "127.0.0.1", port: (server.address() as AddressInfo).port });
+      const [res] = await eventOf(https.request(options).end(), "response");
+      res.resume();
+      await eventOf(res, "end");
+      assert.deepStrictEqual(seen(), connectOptions("127.0.0.1"));
+    } finally {
+      server.close();
+      server.closeAllConnections();
+    }
+  });
+
+  test("http2.connect(authority, options)", async () => {
+    const server = http2.createSecureServer({ key: serverKey, cert: serverCert });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { options, seen } = pinned({ ca });
+      const session = http2.connect(`https://127.0.0.1:${(server.address() as AddressInfo).port}`, options);
+      try {
+        await eventOf(session, "connect");
+      } finally {
+        session.destroy();
+      }
+      assert.deepStrictEqual(seen(), connectOptions("127.0.0.1"));
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a callback that is a method can compare the certificate with `this.pin`", async () => {
+    const { fingerprint256 } = new X509Certificate(serverCert);
+    await withServer(async port => {
+      const connect = (pin: string) =>
+        tls.connect({
+          host: "127.0.0.1",
+          port,
+          ca,
+          pin,
+          checkServerIdentity(this: { pin: string }, _hostname: string, cert: tls.PeerCertificate) {
+            return cert.fingerprint256 === this.pin ? undefined : new Error("pin mismatch");
+          },
+        } as tls.ConnectionOptions);
+      assert.strictEqual(await outcomeOf(connect(fingerprint256)), "secureConnect, authorized=true");
+      assert.strictEqual(await outcomeOf(connect("not the fingerprint of agent1")), "error: pin mismatch");
+    });
+  });
+
+  // Sloppy mode turns a missing `this` into globalThis. A callback that guards
+  // on `this.pin` then skips its check and accepts every certificate.
+  test("a sloppy mode callback that guards on `this.pin` refuses a wrong pin", async () => {
+    // The Function constructor makes a sloppy mode function in this strict mode module.
+    const checkServerIdentity = new Function(
+      "hostname",
+      "cert",
+      `if (this.pin && cert.subject.CN !== this.pin) return new Error("pin mismatch");`,
+    ) as typeof tls.checkServerIdentity;
+    await withServer(async port => {
+      const connect = (pin: string) =>
+        tls.connect({ host: "127.0.0.1", port, ca, pin, checkServerIdentity } as tls.ConnectionOptions);
+      assert.strictEqual(await outcomeOf(connect("agent1")), "secureConnect, authorized=true");
+      assert.strictEqual(await outcomeOf(connect("agent2")), "error: pin mismatch");
+    });
+  });
+
+  // Node does not run the callback for a resumed session. Bun does.
+  test("tls.connect(options) that resumes a session", async () => {
+    const server = tls.createServer({ key: serverKey, cert: serverCert, maxVersion: "TLSv1.2" }, c => c.end());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const first = tls.connect({ host: "127.0.0.1", port, ca, servername: "agent1" });
+      const [session] = await eventOf(first, "session");
+      first.destroy();
+
+      const { options, seen } = pinned({ host: "127.0.0.1", port, ca, servername: "agent1", session });
+      const resumed = tls.connect(options);
+      try {
+        await eventOf(resumed, "secureConnect");
+        assert.deepStrictEqual(
+          { ...seen(), isSessionReused: resumed.isSessionReused() },
+          { ...connectOptions("127.0.0.1"), isSessionReused: true },
+        );
+      } finally {
+        resumed.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// Node runs the identity check only for a socket from tls.connect(), whose
+// options always own the callback. Bun also runs it after TLSSocket#connect().
+// There the callback can come from the constructor options, which Bun did not
+// keep. The options of connect() are then not its `this`.
+describe("checkServerIdentity after TLSSocket#connect()", () => {
+  test("`this` is undefined when the constructor options own the callback", async () => {
+    await withServer(async port => {
+      for (const ownKeys of [{}, { checkServerIdentity: undefined }]) {
+        const { options, seen, receiver } = pinned({ ca });
+        // @ts-expect-error @types/node requires a socket
+        const socket = new tls.TLSSocket(undefined, options);
+        socket.connect({ host: "127.0.0.1", port, ...ownKeys });
+        await secureConnect(socket);
+        assert.deepStrictEqual({ calls: seen().calls, receiver: receiver() }, { calls: 1, receiver: undefined });
+      }
+    });
+  });
+
+  test("`this` is the options of connect() when they own the callback", async () => {
+    await withServer(async port => {
+      const { options, seen } = pinned({ host: "127.0.0.1", port });
+      // @ts-expect-error @types/node requires a socket
+      const socket = new tls.TLSSocket(undefined, { ca });
+      socket.connect(options);
+      await secureConnect(socket);
+      assert.deepStrictEqual(seen(), { ...connectOptions("127.0.0.1"), isCallerObject: true });
     });
   });
 });

@@ -2682,7 +2682,7 @@ fn init_with_runtime_once(
     if has_lockb {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
-            lockfile::LoadResult::Ok(_) => {}
+            lockfile::LoadResult::Ok(_) => lockfile.mark_loaded_packages(),
             _ => lockfile.init_empty(),
         }
         manager.lockfile = lockfile;

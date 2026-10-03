@@ -1930,7 +1930,7 @@ impl Stream {
                 .set(client.queued_data_size.get() - len as u64);
             if !FINALIZING {
                 if let Some(callback_value) = frame.callback.get() {
-                    client.dispatch_write_callback(callback_value);
+                    client.dispatch_dropped_write_callback(callback_value);
                 }
             }
             drop(frame);
@@ -2426,6 +2426,15 @@ impl H2FrameParser {
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
         let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
+    }
+
+    /// For a dropped or refused write: `null` is "no error" to a Writable, and "not sent" to http2.ts.
+    pub(crate) fn dispatch_dropped_write_callback(&self, callback: JSValue) {
+        let _dispatch = self.enter_dispatch();
+        let _ = self
+            .handlers
+            .get()
+            .call_write_callback(callback, &[JSValue::NULL]);
     }
 
     pub(crate) fn dispatch_with_extra(
@@ -5897,7 +5906,7 @@ impl H2FrameParser {
         // is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream.can_send_data() {
-            this.dispatch_write_callback(callback_arg);
+            this.dispatch_dropped_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
         }
 

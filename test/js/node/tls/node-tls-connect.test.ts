@@ -8,6 +8,7 @@ import {
   bunRun,
   tls as COMMON_CERT_,
   isASAN,
+  isWindows,
   nodeExe,
   rejectUnauthorizedScope,
   tempDir,
@@ -929,7 +930,10 @@ describe("large writes and reads of a TLSSocket over a Duplex transport", () => 
     expect(transportWrites.length).toBeLessThanOrEqual(2);
   });
 
-  it("one large chunk from the transport costs the same CPU per byte as small chunks", async () => {
+  // process.cpuUsage() advances in scheduler ticks on Windows, about 15.6 ms
+  // each. Both measurements here are shorter than one tick on a release
+  // build, so both read 0 and the ratio is NaN.
+  it.skipIf(isWindows)("one large chunk from the transport costs the same CPU per byte as small chunks", async () => {
     const payload = Buffer.alloc(8 * 1024 * 1024, pattern);
     let held: Buffer[] | null = null;
     const { client, server, clientSide } = connectedPair((from, chunk) => {

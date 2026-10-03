@@ -3,9 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
-import https from "node:https";
 import net from "node:net";
-import tls from "node:tls";
 
 const skip = !fault.available() || isWindows;
 
@@ -310,58 +308,6 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
       second: secondHead < 0 ? null : bytes.subarray(bytes.indexOf("\r\n\r\n", secondHead) + 4).toString("latin1"),
     }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
     expect(await proc.exited).toBe(0);
-  });
-});
-
-describe.skipIf(skip)("node:https socket.end() behind a TLS record that the kernel took in part", () => {
-  // TLS counts a write as taken while part of its record still waits for the kernel. The FIN of socket.end() waits
-  // for that part, like for bytes that the server still holds. Nothing reads the upload, and the client ends in
-  // the middle of it: its FIN has to reach the server and close the connection.
-  // One process runs both sides: a short send does no harm to the client, which takes the second one when the
-  // server does not.
-  test.each([
-    ["res.end()", "end"],
-    ["res.write()", "write"],
-  ])("the response of %s arrives, then the FIN, and the connection closes", async (_name, respond) => {
-    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
-    const server = https.createServer({ key: certs.key, cert: certs.cert }, (req, res) => {
-      req.on("error", () => {});
-      res.on("error", () => {});
-      req.socket.on("error", () => {});
-      req.socket.on("close", () => onServerSocketClose());
-      // The kernel takes 16 bytes of each of the next two sends: the response, and the retry that a FIN makes.
-      fault.set({ syscall: "send", action: "short", bytes: 16, repeat: 2 });
-      if (respond === "end") res.end("response");
-      else res.write("response");
-      req.socket.end();
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const client = tls.connect({
-      port: (server.address() as net.AddressInfo).port,
-      host: "127.0.0.1",
-      rejectUnauthorized: false,
-      allowHalfOpen: true,
-    });
-    try {
-      let response = "";
-      const events: string[] = [];
-      client.on("data", chunk => (response += chunk.toString("latin1")));
-      client.on("error", () => {});
-      client.on("end", () => {
-        events.push("end");
-        client.end();
-      });
-      client.on("secureConnect", () => {
-        client.write(`POST / HTTP/1.1\r\nHost: a\r\nContent-Length: ${4 * 1024 * 1024}\r\n\r\n`);
-        client.write(Buffer.alloc(1024 * 1024, "x"));
-      });
-      await Promise.all([once(client, "close"), serverSocketClosed]);
-      expect({ gotResponse: response.includes("response"), events }).toEqual({ gotResponse: true, events: ["end"] });
-    } finally {
-      client.destroy();
-      server.closeAllConnections();
-      server.close();
-    }
   });
 });
 

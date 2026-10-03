@@ -21,6 +21,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kIsHandle = Symbol("isHandle");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -50,6 +51,7 @@ interface NativeReadable extends NodeReadable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kIsHandle]: boolean;
   debugId: number;
 }
 
@@ -87,6 +89,9 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  // Only the file-descriptor source (child stdio, Bun.spawn, Bun.stdin, Bun.file) has setFlowing. Node reads those
+  // through a handle. The other sources keep the promise semantics of Node's Readable.fromWeb.
+  stream[kIsHandle] = typeof bunNativePtr?.setFlowing === "function";
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -219,20 +224,27 @@ function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
 
-// `push()` returning false means the Readable's buffer is at/above hwm (or
-// the consumer paused); stop the native reader so kernel backpressure reaches
-// the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: any) {
+  if (stream[kIsHandle]) {
+    pushFromHandle(stream, chunk);
+  } else {
+    stream.push(chunk);
+  }
+}
+
+function pushFromHandle(stream: NativeReadable, chunk: any) {
   let wantMore: boolean;
   try {
     wantMore = stream.push(chunk);
   } catch (e) {
     // Node dispatches 'data' from its native read callback, where a listener throw is an uncaughtException.
     reportUncaughtException(e);
-    wantMore = true;
-    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
+    // The throw left addChunk before its maybeReadMore(). Node's handle reads on.
     process.nextTick(readAfterListenerThrow, stream);
+    return;
   }
+  // `push()` returning false means the Readable's buffer is at/above hwm (or the consumer paused); stop the native
+  // reader so kernel backpressure reaches the writer (readStop, like net.Socket). The next `_read()` re-enables it.
   if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
@@ -240,9 +252,7 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
 }
 
 function readAfterListenerThrow(stream: NativeReadable) {
-  // On native close, handleResult already scheduled the EOF push(null).
-  if (stream.destroyed || stream[kCloseState][0]) return;
-  stream.read(0);
+  if (!stream.destroyed) stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {

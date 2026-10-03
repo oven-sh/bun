@@ -40,7 +40,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
-// On an IncomingMessage: the native response of that request, null for a request that JS parsed.
+// On an IncomingMessage: the native response of that request, null for one that JS parsed, undefined for one the program built.
 // Never cleared, unlike kHandle: req.rawHeaders reads it after _destroy, and ws upgrades through it.
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.

@@ -4,7 +4,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
 import { bunEnv, bunExe, isDebug, tls as tlsOptions } from "harness";
-import { createServer, request, type Server as HttpServer, type RequestListener, type ServerResponse } from "http";
+import {
+  createServer,
+  IncomingMessage,
+  request,
+  type Server as HttpServer,
+  type RequestListener,
+  type ServerResponse,
+} from "http";
 import { AddressInfo, connect, createServer as createNetServer } from "net";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
@@ -1775,6 +1782,27 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(received).toEndWith(helloFrame);
   });
 
+  it("upgrades with an IncomingMessage that the program constructed", async () => {
+    await using upgrade = await receiveUpgrade(upgradeRequest());
+    const { req, socket, head } = upgrade;
+    const wss = new WebSocketServer({ noServer: true });
+    const connections: unknown[] = [];
+    const request = new IncomingMessage(socket);
+    request.method = req.method;
+    request.url = req.url;
+    request.headers = { ...req.headers };
+
+    wss.handleUpgrade(request, socket, head, ws => {
+      connections.push(ws);
+      ws.send("hello");
+    });
+
+    expect(connections).toHaveLength(1);
+    const received = await upgrade.received(helloFrame);
+    expect(statusLines(received)).toEqual(["HTTP/1.1 101 Switching Protocols"]);
+    expect(received).toEndWith(helloFrame);
+  });
+
   it("refuses a socket that is no connection of node:http", async () => {
     const wss = new WebSocketServer({ noServer: true });
     const written: Buffer[] = [];
@@ -2114,6 +2142,27 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       const received = await server.exchange(upgradeRequest(), helloFrame);
       expect(statusLines(received)).toEqual(["HTTP/1.1 101 Switching Protocols"]);
       expect(received).toEndWith(helloFrame);
+    });
+
+    it.each([
+      ["a Proxy of the request", (req: IncomingMessage) => new Proxy(req, {})],
+      ["an object that inherits from the request", (req: IncomingMessage) => Object.create(req) as IncomingMessage],
+    ])("replies through the ServerResponse when its 'request' listener passes %s", async (_, wrap) => {
+      let wss!: WebSocketServer;
+      let repliedThroughResponse: boolean | undefined;
+      await using server = await serve(
+        door,
+        () => (wss = new WebSocketServer({ noServer: true })),
+        (req, res) => {
+          wss.handleUpgrade(wrap(req), req.socket, Buffer.alloc(0), ws => wss.emit("connection", ws, req));
+          repliedThroughResponse = res.writableEnded;
+        },
+      );
+
+      const received = await server.exchange(upgradeRequest({ key: "" }));
+      expect(statusLines(received)).toEqual(["HTTP/1.1 400 Bad Request"]);
+      expect(received).toEndWith("\r\n\r\nMissing or invalid Sec-WebSocket-Key header");
+      expect(repliedThroughResponse).toBe(true);
     });
   });
 

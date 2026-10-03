@@ -65,7 +65,7 @@ function IncomingMessage(socket) {
   this[kHeaders] = null;
   this[kReqShouldKeepAlive] = undefined;
   this[kRawHeaders] = null;
-  this[kHeaderSource] = null;
+  this[kHeaderSource] = undefined;
   this[kHeadersCount] = 0;
   this[kTrailers] = null;
   this[kTrailersCount] = 0;

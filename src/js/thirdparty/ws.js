@@ -23,14 +23,23 @@ function lazyHttp() {
 
 // The server upgrades through the native response of the request. node:http keeps it on the
 // request: null for a request that it parsed in JS (http2 allowHTTP1, a socket given to
-// server.emit("connection")), and such a request cannot upgrade. A request object that the
-// program built has no such slot, so the response that the socket holds is taken.
+// server.emit("connection")), and such a request cannot upgrade. A request that the program
+// built holds none, so the response that the socket holds is taken.
 // Loaded on the first handshake.
 let kHeaderSource;
 function nativeRequest(request, socket) {
   kHeaderSource ??= require("internal/http").kHeaderSource;
   const own = request?.[kHeaderSource];
   return own !== undefined ? own : socket[kBunInternals];
+}
+
+// Whether `response` answers `request`, or a wrapper that shares its native response.
+function answersRequest(response, request) {
+  const own = response.req;
+  if (!own || own === request) return true;
+  kHeaderSource ??= require("internal/http").kHeaderSource;
+  const native = request?.[kHeaderSource];
+  return native != null && native === own[kHeaderSource];
 }
 let upgradeNodeHTTPResponse;
 
@@ -963,7 +972,7 @@ function abortHandshake(socket, code, message, headers, req) {
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
   // In an 'upgrade' listener the socket can still hold the response of a request ahead.
   const response = socket._httpMessage;
-  if (response && (!response.req || response.req === req)) {
+  if (response && answersRequest(response, req)) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();

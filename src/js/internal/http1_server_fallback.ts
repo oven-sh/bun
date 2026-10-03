@@ -357,7 +357,7 @@ function connectionListenerHTTP1(server, socket, options) {
     MAX_HEADER_PAIRS,
   } = require("node:_http_common");
   const { ConnResetException } = require("internal/shared");
-  const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
     queuePipelinedResponse,
@@ -443,6 +443,7 @@ function connectionListenerHTTP1(server, socket, options) {
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
+    req[kHeaderSource] = null;
     req.socket = socket;
     req.httpVersionMajor = versionMajor;
     req.httpVersionMinor = versionMinor;

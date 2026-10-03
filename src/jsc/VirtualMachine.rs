@@ -5035,6 +5035,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        global_cache: bun_resolver::GlobalCache,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5124,7 +5125,6 @@ impl VirtualMachine {
             } else {
                 bun_ast::ImportKind::Require
             };
-            let global_cache = self.transpiler.resolver.opts.global_cache;
             match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
@@ -5226,12 +5226,14 @@ impl VirtualMachine {
                     if let Some(name) = global.resolve_virtual_module(&answer, source) {
                         return Ok(Ok(name));
                     }
+                    // The name of what an `onLoad` serves may be a package's in the registry.
                     let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
                         global,
                         &answer,
                         source,
                         query_string,
                         mode,
+                        bun_resolver::GlobalCache::disable,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
                     if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
@@ -5247,6 +5249,7 @@ impl VirtualMachine {
             source,
             query_string,
             mode,
+            global.bun_vm().transpiler.resolver.opts.global_cache,
         )
     }
 
@@ -5256,6 +5259,7 @@ impl VirtualMachine {
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        global_cache: bun_resolver::GlobalCache,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5401,6 +5405,7 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            global_cache,
         );
         if let Err(err_) = resolve_result {
             let err = err_;

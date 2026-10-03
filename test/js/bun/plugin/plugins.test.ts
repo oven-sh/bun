@@ -1313,6 +1313,84 @@ describe.concurrent("what onResolve answers without a namespace", () => {
   });
 });
 
+// Without a node_modules directory, Bun installs the package it does not find.
+describe.concurrent("what onResolve answers is not asked of the registry", () => {
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      `import a from "served.ask"; import b from "itself-served.js"; console.log(a, b);`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "import()",
+      "entry.mjs",
+      `console.log((await import("served.ask")).default, (await import("itself-served.js")).default);`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "require()",
+      "entry.cjs",
+      `console.log(require("served.ask").default, require("itself-served.js").default);`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "require.resolve()",
+      "entry.cjs",
+      `console.log(require.resolve("served.ask"), require.resolve("itself-served.js"));
+       for (const specifier of ["package.ask", "itself-not-served.js"])
+         try { require.resolve(specifier); } catch (error) { console.log(error.message.split("\\n")[0]); }`,
+      "virtual.js itself-served.js\nCannot find module 'a-package'\nCannot find module 'itself-not-served.js'\n",
+    ],
+  ])("by %s", async (_, name, source, stdout) => {
+    const asked: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        asked.push(new URL(request.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("plugin-onresolve-registry", {
+      "plugin.ts": `
+        const answers = { "served.ask": "virtual.js", "package.ask": "a-package" };
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onResolve({ filter: /\\.ask$/ }, ({ path }) => ({ path: answers[path] }));
+            build.onResolve({ filter: /^itself-/ }, ({ path }) => ({ path }));
+            build.onLoad({ filter: /^(virtual|itself-served)\\.js$/ }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      // The last line is what no plugin answers about, which is asked of the registry.
+      [name]: source + `\nimport("not-answered").catch(() => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", name],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        NPM_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: resolve(String(dir), ".cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: out, stderr, exitCode, asked }).toEqual({
+      stdout,
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+});
+
 it.concurrent("an onLoad in the namespace of builtins leaves their aliases alone", async () => {
   const source = `
     Bun.plugin({ name: "node", setup(build) { build.onLoad({ filter: /^never$/, namespace: "node" }, () => {}); } });

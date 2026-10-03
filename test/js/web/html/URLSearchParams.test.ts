@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 
 describe("URLSearchParams", () => {
   it("does not crash when calling .toJSON() on a URLSearchParams object with a large number of properties", () => {
@@ -305,4 +307,131 @@ it(".has second argument", () => {
   expect(params.has("a", 3)).toBe(false);
   expect(params.has("b", 3)).toBe(true);
   expect(params.has("b", 4)).toBe(false);
+});
+
+// WTF's URL-encoded form parser RELEASE_ASSERTs when the UTF-8 form of a name or
+// value does not fit a WTF::Vector (1 GiB - 1 bytes), so Bun rejects such input
+// with a RangeError before parsing. The limit follows the synthetic allocation
+// limit so that every entry point can be exercised with megabyte inputs.
+describe("URL-encoded input longer than the string limit", () => {
+  const LIMIT = 1024 * 1024;
+  const tooLong = (received: number) =>
+    `RangeError: A URL-encoded name or value must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
+
+  it("throws a RangeError from every parser entry point, at the UTF-8 byte limit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+        setSyntheticAllocationLimitForTesting(${LIMIT});
+        const out = {};
+        const attempt = (label, f) => {
+          try {
+            out[label] = f();
+          } catch (e) {
+            out[label] = e.constructor.name + ": " + e.message;
+          }
+        };
+        const ascii = n => Buffer.alloc(n, "a").toString();
+        // One Latin-1 character is 2 UTF-8 bytes, one UTF-16 unit of "€" is 3.
+        const latin1 = n => Buffer.alloc(n * 2, "é").toString();
+        const utf16 = n => Buffer.alloc(n * 3, "€").toString();
+
+        attempt("ascii at limit", () => new URLSearchParams(ascii(${LIMIT})).size);
+        attempt("ascii past limit", () => new URLSearchParams(ascii(${LIMIT} + 1)).size);
+        attempt("leading ? is not counted", () => new URLSearchParams("?" + ascii(${LIMIT})).size);
+        attempt("latin1 at limit", () => new URLSearchParams(latin1(${LIMIT / 2})).size);
+        attempt("latin1 past limit", () => new URLSearchParams(latin1(${LIMIT / 2} + 1)).size);
+        attempt("utf16 at limit", () => new URLSearchParams(utf16(349525)).size);
+        attempt("utf16 past limit", () => new URLSearchParams(utf16(349526)).size);
+        // WTF converts the encoded text to UTF-8 before it percent-decodes, so the
+        // encoded length is the one that counts.
+        attempt("percent-encoded past limit", () => new URLSearchParams(Buffer.alloc(${LIMIT} + 2, "%41").toString()).size);
+        // The limit applies to one name or value, not to the whole input.
+        attempt("two names at limit", () => new URLSearchParams(ascii(${LIMIT}) + "&" + ascii(${LIMIT})).size);
+        attempt("name and value at limit", () => new URLSearchParams(ascii(${LIMIT}) + "=" + ascii(${LIMIT})).size);
+        attempt("one value past limit among pairs", () => new URLSearchParams("a=1&b=" + ascii(${LIMIT} + 1) + "&c=2").size);
+        attempt("url.searchParams at limit", () => new URL("http://x/?" + ascii(${LIMIT})).searchParams.size);
+        attempt("url.searchParams past limit", () => new URL("http://x/?" + ascii(${LIMIT} + 1)).searchParams.size);
+
+        const url = new URL("http://x/?a=1");
+        const params = url.searchParams;
+        attempt("url.href= past limit", () => { url.href = "http://x/?" + ascii(${LIMIT} + 1); });
+        out["url.href= past limit leaves the url set and the params empty"] = {
+          search: url.search.length,
+          size: params.size,
+          sameObject: url.searchParams === params,
+        };
+        attempt("url.href= at limit", () => { url.href = "http://x/?" + ascii(${LIMIT}); return params.size; });
+        // Component setters return void, so the params only empty out.
+        attempt("url.search= past limit", () => { url.search = ascii(${LIMIT} + 1); return params.size; });
+        console.log(JSON.stringify(out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Keep stderr and the exit code in the diff when the child aborts before it prints.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
+        "ascii at limit": 1,
+        "ascii past limit": tooLong(LIMIT + 1),
+        "leading ? is not counted": 1,
+        "latin1 at limit": 1,
+        "latin1 past limit": tooLong(LIMIT + 2),
+        "utf16 at limit": 1,
+        "utf16 past limit": tooLong(LIMIT + 2),
+        "percent-encoded past limit": tooLong(LIMIT + 2),
+        "two names at limit": 2,
+        "name and value at limit": 1,
+        "one value past limit among pairs": tooLong(LIMIT + 1),
+        "url.searchParams at limit": 1,
+        "url.searchParams past limit": tooLong(LIMIT + 1),
+        "url.href= past limit": tooLong(LIMIT + 1),
+        "url.href= past limit leaves the url set and the params empty": {
+          search: LIMIT + 2,
+          size: 0,
+          sameObject: true,
+        },
+        "url.href= at limit": 1,
+        "url.search= past limit": 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The real limit needs a 1 GiB string, so this runs only on large machines.
+  it.skipIf(totalmem() < 10 * 1024 ** 3)("throws a RangeError at the real limit instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const input = Buffer.alloc(2 ** 30, "a").toString();
+        try {
+          new URLSearchParams(input);
+          console.log("no error");
+        } catch (e) {
+          console.log(e.constructor.name + ": " + e.message);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "RangeError: A URL-encoded name or value must not be longer than 1073741823 bytes as UTF-8. Received 1073741824 bytes.\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

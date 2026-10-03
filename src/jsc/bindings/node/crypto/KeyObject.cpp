@@ -1212,9 +1212,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
     switch (kty) {
     case Kty::Akp:
     case Kty::Okp: {
-        // "OKP" (Ed25519, X25519) and "AKP" (ML-DSA, ML-KEM) are both raw-key
-        // JWKs: a name ("crv" / "alg", matched case-sensitively), the public key
-        // ("x" / "pub") and, for a private key, "d" / the seed in "priv".
+        // OKP and AKP are both raw-key JWKs: a name, a public member and an optional private member.
         const bool isAkp = kty == Kty::Akp;
         const ASCIILiteral invalidKey = isAkp ? "Invalid JWK AKP key"_s : "Invalid JWK OKP key"_s;
 
@@ -1307,8 +1305,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         }
         JSC::ensureStillAliveHere(pubBuf);
 
-        // Every private-key consumer rejects a public-only JWK here. Node does so
-        // only in createPrivateKey and lets the others fail in the operation.
+        // Node rejects this only in createPrivateKey. Here every private-key consumer does.
         if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
             ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
             return {};

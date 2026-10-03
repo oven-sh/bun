@@ -118,8 +118,6 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   return OPENSSL_VERSION_NUMBER >= opensslVersionNumber(major, minor, patch);
 };
 
-const isBoringSSL = process.features.openssl_is_boringssl;
-
 let opensslCli = null;
 
 module.exports = {
@@ -136,7 +134,6 @@ module.exports = {
   sec1Exp,
   sec1EncExp,
   hasOpenSSL,
-  isBoringSSL,
   get hasOpenSSL3() {
     return hasOpenSSL(3);
   },

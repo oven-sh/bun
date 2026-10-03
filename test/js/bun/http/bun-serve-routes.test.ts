@@ -1,7 +1,8 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 describe("path parameters", () => {
   let server: Server;
@@ -616,6 +617,60 @@ describe("route reloading", () => {
     const res = await fetch(`${server.url}test`);
     expect(await res.text()).toBe("fallback");
   });
+
+  // A reload without a routes object used to keep the callback routes but
+  // drop the static, file, and negative routes, so those fell through to the
+  // new fetch handler.
+  it("keeps every kind of route on a reload without a routes object", async () => {
+    using dir = tempDir("bun-serve-routes-reload-keeps-static", { "file.txt": "file" });
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch v1", { status: 404 }),
+      routes: {
+        "/static": new Response("static"),
+        "/fn": () => new Response("fn"),
+        "/p/:x": () => new Response("param"),
+        "/file": Bun.file(join(String(dir), "file.txt")),
+        "/negative": false,
+      },
+    });
+    const probe = async () => {
+      const result: Record<string, [number, string]> = {};
+      for (const path of ["/static", "/fn", "/p/1", "/file", "/negative", "/missing"]) {
+        const res = await fetch(new URL(path, server.url));
+        result[path] = [res.status, await res.text()];
+      }
+      return result;
+    };
+    expect(await probe()).toEqual({
+      "/static": [200, "static"],
+      "/fn": [200, "fn"],
+      "/p/1": [200, "param"],
+      "/file": [200, "file"],
+      "/negative": [404, "fetch v1"],
+      "/missing": [404, "fetch v1"],
+    });
+
+    server.reload({ fetch: () => new Response("fetch v2", { status: 404 }) } as ServeOptions);
+    expect(await probe()).toEqual({
+      "/static": [200, "static"],
+      "/fn": [200, "fn"],
+      "/p/1": [200, "param"],
+      "/file": [200, "file"],
+      "/negative": [404, "fetch v2"],
+      "/missing": [404, "fetch v2"],
+    });
+
+    server.reload({ fetch: () => new Response("fetch v3", { status: 404 }), routes: {} } as ServeOptions);
+    expect(await probe()).toEqual({
+      "/static": [404, "fetch v3"],
+      "/fn": [404, "fetch v3"],
+      "/p/1": [404, "fetch v3"],
+      "/file": [404, "fetch v3"],
+      "/negative": [404, "fetch v3"],
+      "/missing": [404, "fetch v3"],
+    });
+  });
 });
 
 describe("reload() keeps the server able to answer", () => {
@@ -659,18 +714,25 @@ describe("reload() keeps the server able to answer", () => {
     expect(await (await fetch(server.url)).text()).toBe("fetch");
   });
 
-  // Unlike callback routes, static routes are replaced by every reload, even
-  // one without a routes object, so they cannot stand in for a missing handler.
-  it("rejects a reload that names no handler on a server whose only routes are static", async () => {
+  it("allows a reload that names no handler at all on a static-routes-only server", async () => {
     using server = Bun.serve({
       port: 0,
       routes: { "/": new Response("static") },
     });
-    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    server.reload({ development: false } as ServeOptions);
     expect(await (await fetch(server.url)).text()).toBe("static");
   });
 
-  // Same for node:http's request handler: a reload that omits it clears it.
+  it("rejects routes: {} on a static-routes-only server, and keeps serving the old routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": new Response("static") },
+    });
+    expect(() => server.reload({ routes: {} } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("static");
+  });
+
+  // node:http's request handler is cleared by a reload that omits it.
   it("rejects a reload that names no handler on a server whose only handler is onNodeHTTPRequest", () => {
     using server = Bun.serve({
       port: 0,

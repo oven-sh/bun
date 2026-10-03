@@ -153,12 +153,12 @@ import { test, expect } from "bun:test";
 
 // These tests run in parallel with each other
 test.concurrent("concurrent test 1", async () => {
-  await fetch("/api/endpoint1");
+  await Bun.sleep(10); // stands in for I/O, such as a network request
   expect(true).toBe(true);
 });
 
 test.concurrent("concurrent test 2", async () => {
-  await fetch("/api/endpoint2");
+  await Bun.sleep(10);
   expect(true).toBe(true);
 });
 

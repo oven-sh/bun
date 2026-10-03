@@ -2099,6 +2099,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
+  /* A close does not wait for the first flight: the FIN that was held back for it leaves now. */
+  s->ssl_first_flight_before_fin = 0;
+  if (s->ssl_shutdown_after_first_flight) {
+    s->ssl_shutdown_after_first_flight = 0;
+    us_internal_ssl_shutdown(s);
+  }
   ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 
@@ -2693,7 +2699,8 @@ restart:
  * and the expensive crypto work is the first step, so deprioritising
  * mid-handshake sockets keeps fully-established ones responsive under load. */
 int us_internal_ssl_is_low_prio(struct us_socket_t *s) {
-  return SSL_in_init(s_ssl(s));
+  /* The peer's FIN closes a socket that sent its own, so what the peer sent before it cannot wait in the queue. */
+  return SSL_in_init(s_ssl(s)) && us_internal_socket_can_raw_write(s);
 }
 
 /* ── Socket-level accessors / write / shutdown ───────────────────────────── */

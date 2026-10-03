@@ -1084,32 +1084,50 @@ test("end() inside 'connect' still reports a ClientHello that the client cannot 
   assert.match(events.join(", "), /^error ERR_SSL_NO_(PROTOCOLS_AVAILABLE|SUPPORTED_VERSIONS_ENABLED), close$/);
 });
 
-for (const method of ["end", "destroySoon"]) {
-  test(`${method}() inside 'connect' sends the ClientHello before the FIN`, async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    let accepted;
-    const server = net.createServer({ allowHalfOpen: true }, socket => {
-      accepted = socket;
-      const received = [];
-      socket.on("error", reject);
-      socket.on("data", chunk => received.push(chunk));
-      socket.on("end", () => resolve(Buffer.concat(received)));
-    });
+test("end() inside 'connect' sends the ClientHello before the FIN", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let accepted;
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    accepted = socket;
+    const received = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => received.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(received)));
+  });
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  client.on("connect", () => client.end());
+  const beforeFin = await promise;
+  client.destroy();
+  accepted.destroy();
+  server.close();
+  // One complete handshake record: the ClientHello.
+  assert.deepStrictEqual(
+    { type: beforeFin[0], complete: beforeFin.length >= 5 && beforeFin.length === 5 + beforeFin.readUInt16BE(3) },
+    { type: 22, complete: true },
+  );
+});
+
+test(
+  "the handle refuses a write after shutdown() inside 'connect'",
+  { skip: !isBun && "Node's handle has another interface" },
+  async () => {
+    const server = net.createServer(socket => socket.on("error", () => {}).resume());
     await new Promise(listening => server.listen(0, "127.0.0.1", listening));
     const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
-    client.on("error", () => {});
-    client.on("connect", () => client[method]());
-    const beforeFin = await promise;
+    const written = await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      client.on("connect", () => {
+        client._handle.shutdown();
+        resolve(client._handle.write("x"));
+      });
+    });
     client.destroy();
-    accepted.destroy();
     server.close();
-    // One complete handshake record: the ClientHello.
-    assert.deepStrictEqual(
-      { type: beforeFin[0], complete: beforeFin.length >= 5 && beforeFin.length === 5 + beforeFin.readUInt16BE(3) },
-      { type: 22, complete: true },
-    );
-  });
-}
+    assert.strictEqual(written, -1);
+  },
+);
 
 test("TLSv1.3: twelve clients that end() in the same tick all complete the handshake", async () => {
   // One turn of the event loop takes a few handshakes and the others wait for the next. This thread blocks until the

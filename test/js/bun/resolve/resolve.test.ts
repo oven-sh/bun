@@ -1,7 +1,28 @@
 import { pathToFileURL } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isGlibc,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { constants } from "os";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1957,6 +1978,332 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(`error: Could not resolve: ${JSON.stringify(specifier)}`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// A read of a directory can fail after the directory opened: an I/O error, a
+// network mount that went away. The resolver took that error as the end of the
+// directory and cached the names it had read as the whole directory.
+//
+// The LD_PRELOAD shim below plays it for one directory. The first getdents64
+// of a handle returns the real records without one name, and each later
+// getdents64 of that handle fails. bun issues getdents64 through libc's
+// syscall(), which is the symbol the shim interposes, so this needs glibc.
+//
+//   READDIR_FAULT_DIR    the directory, as /proc/self/fd names it
+//   READDIR_FAULT_HIDE   the name that the first read leaves out
+//   READDIR_FAULT_COUNT  how many reads fail in total (default: every one)
+//   READDIR_FAULT_ERRNO  the errno of a failed read (default: EIO)
+//   READDIR_FAULT_WHILE  a path: reads fail only while it exists
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.concurrent.skipIf(!isGlibc || !cc)("a directory read that fails", () => {
+  const shimSource = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+struct linux_dirent64 {
+  uint64_t d_ino;
+  int64_t d_off;
+  unsigned short d_reclen;
+  unsigned char d_type;
+  char d_name[];
+};
+
+static long (*next_syscall)(long, ...);
+static int reads_left = -2; /* -2: not read from the environment yet, -1: no limit */
+
+static int fault_is_on(void) {
+  if (reads_left == -2) {
+    const char *count = getenv("READDIR_FAULT_COUNT");
+    reads_left = count ? atoi(count) : -1;
+  }
+  if (reads_left == 0) return 0;
+  const char *while_exists = getenv("READDIR_FAULT_WHILE");
+  return !while_exists || access(while_exists, F_OK) == 0;
+}
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  const char *dir = nr == SYS_getdents64 ? getenv("READDIR_FAULT_DIR") : NULL;
+  if (dir && fault_is_on()) {
+    int fd = (int)a1;
+    char link[64], target[PATH_MAX];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, target, sizeof target - 1);
+    if (n > 0 && (target[n] = 0, strcmp(target, dir) == 0)) {
+      if (lseek(fd, 0, SEEK_CUR) != 0) {
+        if (reads_left > 0) reads_left--;
+        const char *err = getenv("READDIR_FAULT_ERRNO");
+        errno = err ? atoi(err) : EIO;
+        return -1;
+      }
+      long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+      const char *hide = getenv("READDIR_FAULT_HIDE");
+      char *buf = (char *)a2;
+      for (long pos = 0; hide && pos < rc;) {
+        struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + pos);
+        unsigned short len = d->d_reclen;
+        if (strcmp(d->d_name, hide) == 0) {
+          memmove(buf + pos, buf + pos + len, rc - pos - len);
+          rc -= len;
+        } else {
+          pos += len;
+        }
+      }
+      return rc;
+    }
+  }
+  return next_syscall(nr, a1, a2, a3, a4, a5, a6);
+}
+`;
+
+  let shimDir: ReturnType<typeof tempDir> | undefined;
+  let shim: string;
+
+  beforeAll(() => {
+    shimDir = tempDir("resolver-readdir-fault-shim", { "shim.c": shimSource });
+    shim = join(String(shimDir), "shim.so");
+    const compile = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(shimDir), "shim.c"), "-ldl"],
+      env: bunEnv,
+    });
+    if (compile.exitCode !== 0) {
+      throw new Error(`Failed to build the readdir fault shim:\n${compile.stderr.toString()}`);
+    }
+  });
+
+  afterAll(() => {
+    shimDir?.[Symbol.dispose]();
+  });
+
+  type Fault = { dir: string; hide?: string; count?: number; errno?: number; while?: string };
+
+  async function runWithFault(args: string[], cwd: string, fault: Fault) {
+    const existing = bunEnv.LD_PRELOAD;
+    const env: Record<string, string | undefined> = {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${shim}:${existing}` : shim,
+      READDIR_FAULT_DIR: fault.dir,
+    };
+    if (fault.hide !== undefined) env.READDIR_FAULT_HIDE = fault.hide;
+    if (fault.count !== undefined) env.READDIR_FAULT_COUNT = String(fault.count);
+    if (fault.errno !== undefined) env.READDIR_FAULT_ERRNO = String(fault.errno);
+    if (fault.while !== undefined) env.READDIR_FAULT_WHILE = fault.while;
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Resolves "dep" four ways. With a READDIR_FAULT_WHILE path it then removes
+  // that path and resolves once more.
+  const resolveDep = `
+    const { unlinkSync } = require("fs");
+    const attempt = fn => {
+      try {
+        return fn();
+      } catch (e) {
+        return { error: e.message };
+      }
+    };
+    const out = {
+      import: await import("dep").then(m => m.default, e => ({ error: e.message })),
+      require: attempt(() => require("dep")),
+      resolveSync: attempt(() => Bun.resolveSync("dep", import.meta.dir)),
+      requireResolve: attempt(() => require.resolve("dep")),
+    };
+    if (process.env.READDIR_FAULT_WHILE) {
+      unlinkSync(process.env.READDIR_FAULT_WHILE);
+      out.afterwards = attempt(() => require("dep"));
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  describe.each([
+    // The directory walk reads the package directory.
+    { main: "real.js", faultDir: "node_modules/dep", hide: "package.json" },
+    // The lookup of the "main" file reads the directory that holds it.
+    { main: "lib/real.js", faultDir: "node_modules/dep/lib", hide: "real.js" },
+  ])('in a package with "main": "$main"', ({ main, faultDir, hide }) => {
+    const files = {
+      "entry.js": resolveDep,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", main }),
+      [`node_modules/dep/${main}`]: `module.exports = "the main of package.json";`,
+      "node_modules/dep/index.js": `module.exports = "index.js, which is not the main";`,
+    };
+
+    it("one failed read does not change what resolves", async () => {
+      using dir = tempDir("resolver-readdir-fault-once", files);
+      const root = realpathSync(String(dir));
+      const result = await runWithFault(["entry.js"], root, { dir: join(root, faultDir), hide, count: 1 });
+      expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+        stdout: {
+          import: "the main of package.json",
+          require: "the main of package.json",
+          resolveSync: join(root, "node_modules/dep", main),
+          requireResolve: join(root, "node_modules/dep", main),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("a read that keeps failing is an error that names the directory, and nothing is cached", async () => {
+      using dir = tempDir("resolver-readdir-fault-persistent", { ...files, "fault-is-on": "" });
+      const root = realpathSync(String(dir));
+      const result = await runWithFault(["entry.js"], root, {
+        dir: join(root, faultDir),
+        hide,
+        while: join(root, "fault-is-on"),
+      });
+      const error = { error: `Cannot read directory "${join(root, faultDir)}": EIO while resolving "dep"` };
+      expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+        stdout: {
+          import: error,
+          require: error,
+          resolveSync: error,
+          requireResolve: error,
+          afterwards: "the main of package.json",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // src/x.js is what "./src/x" resolves to when the listing of src has no x.ts.
+  const staleSibling = {
+    "entry.ts": `import x from "./src/x";\nconsole.log(x);\n`,
+    "src/x.ts": `export default "x.ts, the current source";\n`,
+    "src/x.js": `export default "x.js, a stale build output";\n`,
+  };
+
+  it.each(["browser", "bun"])("bun build --target=%s fails when the read keeps failing", async target => {
+    using dir = tempDir("resolver-readdir-fault-build", staleSibling);
+    const root = realpathSync(String(dir));
+    const { stderr, exitCode } = await runWithFault(
+      ["build", "entry.ts", `--target=${target}`, "--outfile=out.js"],
+      root,
+      { dir: join(root, "src"), hide: "x.ts" },
+    );
+    expect(stderr).toContain(`error: Cannot read directory "${join(root, "src")}": EIO while resolving "./src/x"`);
+    expect(existsSync(join(root, "out.js"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  it("bun build bundles the same file after one failed read", async () => {
+    using dir = tempDir("resolver-readdir-fault-build-once", staleSibling);
+    const root = realpathSync(String(dir));
+    const { stderr, exitCode } = await runWithFault(["build", "entry.ts", "--outfile=out.js"], root, {
+      dir: join(root, "src"),
+      hide: "x.ts",
+      count: 1,
+    });
+    expect(stderr).not.toContain("error");
+    expect(readFileSync(join(root, "out.js"), "utf8")).toContain("x.ts, the current source");
+    expect(exitCode).toBe(0);
+  });
+
+  it("Bun.build keeps the listing of the last build when a later read fails", async () => {
+    using dir = tempDir("resolver-readdir-fault-rebuild", {
+      ...staleSibling,
+      "build.js": `
+        const { unlinkSync, writeFileSync } = require("fs");
+        const faultIsOn = process.env.READDIR_FAULT_WHILE;
+        async function build() {
+          try {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+            const text = await result.outputs[0].text();
+            return text.includes("x.ts, the current source") ? "x.ts" : text;
+          } catch (e) {
+            return (e.errors ?? [e]).map(e => e.message);
+          }
+        }
+        const out = { healthy: await build() };
+        writeFileSync(faultIsOn, "");
+        out.failing = await build();
+        unlinkSync(faultIsOn);
+        out.healthyAgain = await build();
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    const result = await runWithFault(["build.js"], root, {
+      dir: join(root, "src"),
+      hide: "x.ts",
+      while: join(root, "fault-is-on"),
+    });
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        healthy: "x.ts",
+        failing: [`Cannot read directory "${join(root, "src")}": EIO while resolving "./src/x"`],
+        healthyAgain: "x.ts",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("bun run --filter finds every workspace after one failed read of the root", async () => {
+    const script = (name: string) => JSON.stringify({ name, scripts: { hello: `echo hello from ${name}` } });
+    using dir = tempDir("resolver-readdir-fault-filter", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/a/package.json": script("a"),
+      "packages/b/package.json": script("b"),
+      "packages/c/package.json": script("c"),
+    });
+    const root = realpathSync(String(dir));
+    const { stdout, stderr, exitCode } = await runWithFault(["run", "--filter", "*", "hello"], root, {
+      dir: root,
+      hide: "packages",
+      count: 1,
+    });
+    const ran = (stdout + stderr)
+      .split("\n")
+      .filter(line => line.includes("hello from"))
+      .sort();
+    expect(ran).toEqual(["a hello: hello from a", "b hello: hello from b", "c hello: hello from c"]);
+    expect(exitCode).toBe(0);
+  });
+
+  const belowAncestor = {
+    "outer/project/index.js": `console.log(require("./dep.js"));`,
+    "outer/project/dep.js": `module.exports = "loaded";`,
+  };
+
+  // The same outcome as an ancestor that may not be opened.
+  it("an ancestor that may not be listed is an empty directory", async () => {
+    using dir = tempDir("resolver-readdir-fault-eacces-ancestor", belowAncestor);
+    const root = realpathSync(String(dir));
+    const result = await runWithFault(["--no-install", "index.js"], join(root, "outer/project"), {
+      dir: join(root, "outer"),
+      errno: constants.errno.EACCES,
+    });
+    expect(result).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 0 });
+  });
+
+  it("an ancestor whose read keeps failing fails the resolutions below it", async () => {
+    using dir = tempDir("resolver-readdir-fault-eio-ancestor", belowAncestor);
+    const root = realpathSync(String(dir));
+    const { stdout, stderr, exitCode } = await runWithFault(["--no-install", "index.js"], join(root, "outer/project"), {
+      dir: join(root, "outer"),
+    });
+    expect(stderr).toContain(`Cannot read directory "${join(root, "outer")}": EIO`);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

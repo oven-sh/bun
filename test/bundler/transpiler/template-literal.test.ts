@@ -258,7 +258,7 @@ test("bun build --target=bun preserves non-ASCII in regex/raw templates", async 
 });
 
 // When printing for the runtime the printer writes 8-bit (Latin-1) output and
-// widens the whole buffer to UTF-16 at the first code point above U+00FF, so
+// widens the whole buffer to UTF-16 when it had a code point above U+00FF, so
 // every path that hands transpiler output to JSC has an 8-bit arm and a 16-bit
 // arm; `// @bun` files skip the printer and are decoded from UTF-8. The same
 // module goes through each of those paths here with text of each class; a path
@@ -540,10 +540,10 @@ describe("NODE_COMPILE_CACHE bytecode is accepted", () => {
 });
 
 // Error positions must still map back to the original source when a module
-// widens partway through. These layouts pin the line accounting on both sides
-// of the switch (the runtime printer puts each statement on its own generated
-// line, so they say nothing about columns within a line; the column arithmetic
-// of both builder modes is pinned by test/cli/inspect/inspect-inline-sourcemap.test.ts).
+// has text that makes its buffer UTF-16. These layouts pin the line accounting
+// before and after that text (the runtime printer puts each statement on its
+// own generated line, so they say nothing about columns within a line; the
+// columns are pinned by test/cli/inspect/inspect-inline-sourcemap.test.ts).
 // Columns below are 1-based UTF-16 offsets of the callee in the original
 // line, which `indexOf` gives directly.
 describe.concurrent("stack positions are remapped around non-ASCII regex/raw text", () => {
@@ -590,4 +590,21 @@ describe.concurrent("stack positions are remapped around non-ASCII regex/raw tex
       expect(exitCode).toBe(0);
     },
   );
+
+  // U+2028 is a line terminator inside raw template text too, so the lines
+  // after it move by one in the original source and in the printed module.
+  test("UTF-16 text with a line separator in it", async () => {
+    const lines = [
+      `const raw = String.raw\`中\u2028x\`; const a = new Error("a");`,
+      `const b = new Error("b");`,
+      `print(a, b);`,
+    ];
+    using dir = tempDir("nonascii-stack-positions", { "main.js": [...lines, ...print].join("\n") });
+    const { stdout, stderr, exitCode } = await runIn(String(dir), ["main.js"]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify(expectedPositions(lines.join("\n").split(/[\n\u2028]/))),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

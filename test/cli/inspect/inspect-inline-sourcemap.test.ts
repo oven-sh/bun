@@ -128,10 +128,9 @@ test("--inspect inline sourcemap for a module in a non-ASCII directory", async (
 // variant's texts occupy the same number of UTF-16 code units, the variants
 // must produce the same mappings as each other. The regex is the first
 // non-ASCII text of its module: the 8-bit variant pins that a Latin-1 buffer is
-// counted one column per byte after it, and the widening variant pins that the
-// buffer is counted in code units from the point where the regex widened it
-// (astral text counting two), including the raw template text written after
-// the switch.
+// counted one column per byte after it, and the widening variant pins that
+// text above U+00FF counts one column per code unit (astral text counting
+// two), also for the raw template text after it.
 describe.concurrent("--inspect inline sourcemap columns after verbatim text", () => {
   test.each([
     ["ASCII", "xyz", "w"],

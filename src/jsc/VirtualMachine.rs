@@ -3808,26 +3808,17 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
-        // Appended through the writer rather than straight into its byte
-        // buffer, since the buffer may be holding UTF-16 by now. The module's
-        // URL is the provider's; no `//# sourceURL=` directive is needed.
-        let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
-        printer.ctx.write_all(b"\n");
-        printer.ctx.write_all(SOURCE_MAP_URL_PREFIX_START);
-        {
-            let region = printer.ctx.reserve_next(encode_len as u64);
-            // SAFETY: `reserve_next` returned room for `encode_len` bytes, which
-            // `encode` fills (`wrote <= encode_len`) before `advance_by` commits
-            // exactly that many.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    core::slice::from_raw_parts_mut(region, encode_len),
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            printer.ctx.advance_by(wrote as u64);
-        }
-        printer.ctx.write_all(b"\n");
+        // The buffer may be UTF-16 by now. The module's URL is the provider's;
+        // no `//# sourceURL=` directive is needed.
+        let source_map_json = temp_json_buffer.list.as_slice();
+        printer.ctx.append_ascii(b"\n");
+        printer.ctx.append_ascii(SOURCE_MAP_URL_PREFIX_START);
+        printer
+            .ctx
+            .append_ascii_with(bun_base64::encode_len(source_map_json), |encoded| {
+                bun_base64::encode(encoded, source_map_json)
+            });
+        printer.ctx.append_ascii(b"\n");
         Ok(())
     }
 }

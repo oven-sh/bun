@@ -387,8 +387,8 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 
     /// How the printer's output buffer (the `output` passed to every method
-    /// here) is encoded. `last_generated_update` is a byte offset into it in
-    /// every case; generated columns are UTF-16 code units in every case.
+    /// here) is encoded while it prints: `Utf8`, or `Latin1` for one byte per
+    /// UTF-16 code unit.
     pub output_encoding: EncodingNonAscii,
 }
 
@@ -463,33 +463,9 @@ impl Drop for OwnedLineOffsetTables {
 // and lives once in this crate, adjacent to `flush_window`. The concrete
 // (non-generic) impl is what pins one copy per CGU.
 impl NewBuilder<'_, VLQSourceMap> {
-    /// The printer's buffer, which held one Latin-1 character per byte so far,
-    /// has just been widened in place to UTF-16 code units (two bytes each).
-    /// The caller consumed everything written before the widening with
-    /// [`Self::update_generated`] first, so the only thing to carry over is the
-    /// byte offset of that point.
-    pub fn output_widened_to_utf16(&mut self) {
-        debug_assert!(self.output_encoding == EncodingNonAscii::Latin1);
-        self.output_encoding = EncodingNonAscii::Utf16;
-        self.last_generated_update *= 2;
-    }
-
-    /// Consume the output written since the previous call, advancing the
-    /// generated line and column. `Utf8` and `Latin1` buffers share the byte
-    /// version (whose ASCII window fast path still inlines here); a widened
-    /// buffer takes the code unit version.
-    #[inline]
-    pub fn update_generated(&mut self, output: &[u8]) {
-        if self.output_encoding == EncodingNonAscii::Utf16 {
-            self.update_generated_utf16_slow(output);
-        } else {
-            self.update_generated_line_and_column(output);
-        }
-    }
-
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
-        self.update_generated(output);
+        self.update_generated_line_and_column(output);
         // Capture scalars before borrowing `source_map` mutably via
         // `get_buffer`, to satisfy the borrow checker.
         if self.prepend_count {
@@ -562,7 +538,6 @@ impl NewBuilder<'_, VLQSourceMap> {
         let mut c: i32;
         while i < n {
             if latin1 {
-                // One character per byte; nothing above U+00FF can be present.
                 c = slice[i] as i32;
                 i += 1;
             } else {
@@ -608,7 +583,31 @@ impl NewBuilder<'_, VLQSourceMap> {
                         }
                     }
 
-                    self.begin_generated_line(&mut needs_mapping);
+                    // If we're about to move to the next line and the previous line didn't have
+                    // any mappings, add a mapping at the start of the previous line.
+                    if needs_mapping {
+                        self.append_mapping_without_remapping(SourceMapState {
+                            generated_line: self.prev_state.generated_line,
+                            generated_column: 0,
+                            source_index: self.prev_state.source_index,
+                            original_line: self.prev_state.original_line,
+                            original_column: self.prev_state.original_column,
+                        });
+                    }
+
+                    self.prev_state.generated_line += 1;
+                    self.prev_state.generated_column = 0;
+                    self.generated_column = 0;
+                    self.source_map
+                        .append_line_separator()
+                        .expect("unreachable");
+
+                    // This new line doesn't have a mapping yet
+                    self.line_starts_with_mapping = false;
+
+                    needs_mapping = self.cover_lines_without_mappings
+                        && !self.line_starts_with_mapping
+                        && self.has_prev_state;
                 }
 
                 _ => {
@@ -621,69 +620,18 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.last_generated_update = output.len() as u32;
     }
 
-    /// [`Self::update_generated_line_and_column`] for a buffer of native-endian
-    /// UTF-16 code units. Every unit, surrogates included, is one column, which
-    /// is what the byte version arrives at too. Only modules whose text did
-    /// not fit in Latin-1 get here, so there is no fast path.
-    #[inline(never)]
+    /// `output[start..]` is `text` as a `Latin1` writer stored it: a character
+    /// above U+00FF is one placeholder byte per code unit there, so U+2028 and
+    /// U+2029 do not show. Count that part from `text` (WTF-8) instead.
     #[cold]
-    fn update_generated_utf16_slow(&mut self, output: &[u8]) {
-        let slice = &output[self.last_generated_update as usize..];
-        debug_assert!(slice.len().is_multiple_of(2));
-
-        let mut needs_mapping = self.cover_lines_without_mappings
-            && !self.line_starts_with_mapping
-            && self.has_prev_state;
-
-        let mut units = slice
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|&pair| u16::from_ne_bytes(pair))
-            .peekable();
-        while let Some(unit) = units.next() {
-            match unit {
-                0x0D | 0x0A | 0x2028 | 0x2029 => {
-                    // windows newline
-                    if unit == 0x0D && units.peek() == Some(&0x0A) {
-                        continue;
-                    }
-                    self.begin_generated_line(&mut needs_mapping);
-                }
-                _ => self.generated_column += 1,
-            }
-        }
-
+    pub fn update_generated_verbatim(&mut self, output: &[u8], start: usize, text: &[u8]) {
+        debug_assert!(self.output_encoding == EncodingNonAscii::Latin1);
+        self.update_generated_line_and_column(&output[..start]);
+        self.output_encoding = EncodingNonAscii::Utf8;
+        self.last_generated_update = 0;
+        self.update_generated_line_and_column(text);
+        self.output_encoding = EncodingNonAscii::Latin1;
         self.last_generated_update = output.len() as u32;
-    }
-
-    /// The output just crossed a line break.
-    fn begin_generated_line(&mut self, needs_mapping: &mut bool) {
-        // If we're about to move to the next line and the previous line didn't have
-        // any mappings, add a mapping at the start of the previous line.
-        if *needs_mapping {
-            self.append_mapping_without_remapping(SourceMapState {
-                generated_line: self.prev_state.generated_line,
-                generated_column: 0,
-                source_index: self.prev_state.source_index,
-                original_line: self.prev_state.original_line,
-                original_column: self.prev_state.original_column,
-            });
-        }
-
-        self.prev_state.generated_line += 1;
-        self.prev_state.generated_column = 0;
-        self.generated_column = 0;
-        self.source_map
-            .append_line_separator()
-            .expect("unreachable");
-
-        // This new line doesn't have a mapping yet
-        self.line_starts_with_mapping = false;
-
-        *needs_mapping = self.cover_lines_without_mappings
-            && !self.line_starts_with_mapping
-            && self.has_prev_state;
     }
 
     #[inline(always)]
@@ -777,7 +725,7 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
-        self.update_generated(output);
+        self.update_generated_line_and_column(output);
 
         // If this line doesn't start with a mapping and we're about to add a mapping
         // that's not at the start, insert a mapping first so the line starts with one.

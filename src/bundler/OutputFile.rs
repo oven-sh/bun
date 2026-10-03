@@ -48,6 +48,15 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
+    /// Names the file this output was read from (`src_path`).
+    pub fn set_src_path(&mut self, path: Box<[u8]>) {
+        self.owned_src_path_text = path;
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
+        let text: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&self.owned_src_path_text) };
+        self.src_path = fs::Path::init(text);
+    }
+
     // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
     pub fn zero_value() -> OutputFile {
         OutputFile {

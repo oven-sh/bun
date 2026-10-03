@@ -1,9 +1,3 @@
-10-02_15:21:38 anon=1024MB pids=114 load=391.61 top=bun.bc7a813b1:248MB
-10-02_15:22:11 anon=375MB pids=75 load=411.38 top=bun.bc7a813b1:248MB
-10-02_15:22:43 anon=883MB pids=120 load=433.78 top=bun.bc7a813b1:226MB
-10-02_15:23:15 anon=933MB pids=107 load=454.98 top=bun.bc7a813b1:241MB
-10-02_15:23:49 anon=956MB pids=117 load=491.31 top=bun.bc7a813b1:247MB
-10-02_15:24:21 anon=1010MB pids=126 load=459.05 top=bun.bc7a813b1:247MB
 10-02_15:24:52 anon=993MB pids=123 load=439.86 top=bun.bc7a813b1:252MB
 10-02_15:25:23 anon=923MB pids=99 load=418.14 top=bun.bc7a813b1:248MB
 10-02_15:25:57 anon=1764MB pids=57 load=412.99 top=bun.f4d755a9c:1935MB
@@ -398,3 +392,9 @@
 10-03_03:16:49 anon=161MB pids=45 load=1636.98 top=rustc:312MB
 10-03_03:19:03 anon=129MB pids=54 load=1516.11 top=ld.lld:226MB
 10-03_03:20:27 anon=17MB pids=42 load=1572.52 top=node-MainThread:49MB
+10-03_03:21:58 anon=97MB pids=36 load=1754.98 top=clippy-driver:187MB
+10-03_03:22:40 anon=112MB pids=36 load=1499.81 top=clippy-driver:229MB
+10-03_03:24:31 anon=151MB pids=39 load=1639.08 top=clippy-driver:297MB
+10-03_03:26:58 anon=212MB pids=34 load=1769.07 top=clippy-driver:362MB
+10-03_03:28:12 anon=39MB pids=35 load=1549.57 top=rustc:67MB
+10-03_03:29:52 anon=56MB pids=40 load=1714.71 top=rustc:103MB

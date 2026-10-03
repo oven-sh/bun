@@ -1,0 +1,14 @@
+warning: extern crate `criterion` is unused in crate `bun_js_parser`
+  |
+  = help: remove the dependency or add `use criterion as _;` to the crate root
+  = note: requested on the command line with `--force-warn unused-crate-dependencies`
+  = note: the `unused_crate_dependencies` lint ignores `-D warnings`
+
+warning: extern crate `regex` is unused in crate `bun_js_parser`
+  |
+  = help: remove the dependency or add `use regex as _;` to the crate root
+
+warning: 2 warnings emitted
+
+-rwxr-xr-x 1 root root 23001056 Oct  3 03:20 /tmp/r4td/root3/out/w5/bun_js_parser-83a59f86a92ee8c1
+exit=0

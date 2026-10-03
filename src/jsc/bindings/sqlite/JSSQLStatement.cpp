@@ -15,6 +15,7 @@
 #include "JSSQLStatement.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <limits>
 #include <wtf/text/ExternalStringImpl.h>
 
@@ -913,15 +914,16 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         CHECK_BIND(sqlite3_bind_null(stmt, i));
     } else if (value.isBoolean()) {
         CHECK_BIND(sqlite3_bind_int(stmt, i, value.toBoolean(lexicalGlobalObject) ? 1 : 0));
-    } else if (value.isAnyInt()) {
-        int64_t val = value.asAnyInt();
-        if (val < INT_MIN || val > INT_MAX) {
-            CHECK_BIND(sqlite3_bind_int64(stmt, i, val));
-        } else {
-            CHECK_BIND(sqlite3_bind_int(stmt, i, val))
-        }
+    } else if (value.isInt32()) {
+        CHECK_BIND(sqlite3_bind_int(stmt, i, value.asInt32()));
     } else if (value.isNumber()) {
-        CHECK_BIND(sqlite3_bind_double(stmt, i, value.asDouble()))
+        double number = value.asDouble();
+        // Not isAnyInt(): that is JSC's Int52 test, which rejects 2^51 and up. -0 binds as REAL to keep its sign.
+        if (JSC::isSafeInteger(number) && !JSC::isNegativeZero(number)) {
+            CHECK_BIND(sqlite3_bind_int64(stmt, i, static_cast<int64_t>(number)));
+        } else {
+            CHECK_BIND(sqlite3_bind_double(stmt, i, number));
+        }
     } else if (value.isString()) {
         auto* str = value.toStringOrNull(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, false);

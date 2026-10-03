@@ -344,7 +344,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         false
     }
 
-    pub(crate) fn at_trailing_end(&mut self) -> bool {
+    fn at_trailing_end(&mut self) -> bool {
         loop {
             let p = self.pos_at(self.cursor);
             if p >= self.contents.len() {
@@ -360,11 +360,18 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    pub(crate) fn unexpected_here(&mut self) -> crate::Error {
-        self.unexpected(self.cursor)
+    /// Parses the document's root value. Only whitespace and comments may
+    /// follow it, unless `opts.stop_after_first_value` is set.
+    pub(crate) fn parse_root(&mut self) -> PResult<Expr> {
+        let root = self.parse_value()?;
+        if !self.opts.stop_after_first_value && !self.at_trailing_end() {
+            self.expected(self.cursor, "end of file");
+            return Err(crate::Error::ParserError);
+        }
+        Ok(root)
     }
 
-    pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
+    fn parse_value(&mut self) -> PResult<Expr> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {

@@ -21,6 +21,10 @@ pub struct JSONOptions {
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
     pub record_value_locs: bool,
+    /// Stop after the first value and ignore the rest of the input. When
+    /// false, anything but whitespace and comments after the root value is
+    /// an error.
+    pub stop_after_first_value: bool,
 }
 
 impl JSONOptions {
@@ -32,6 +36,7 @@ impl JSONOptions {
         was_originally_macro: false,
         guess_indentation: false,
         record_value_locs: false,
+        stop_after_first_value: false,
     };
 }
 
@@ -40,6 +45,7 @@ const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
     allow_trailing_commas: true,
     ignore_leading_escape_sequences: true,
+    stop_after_first_value: true,
     ..JSONOptions::DEFAULT
 };
 
@@ -89,16 +95,14 @@ fn parse_impl(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
-    check_len: bool,
 ) -> crate::Result<ParseOutput> {
-    parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
+    parse_impl_in(source, log, opts, E::TapeAlloc::Global)
 }
 
 fn parse_impl_in(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
-    check_len: bool,
     tape_alloc: E::TapeAlloc,
 ) -> crate::Result<ParseOutput> {
     let contents: &[u8] = &source.contents;
@@ -113,7 +117,7 @@ fn parse_impl_in(
         return Err(report_index_error(e, source, log));
     }
     let log_mark = (log.errors, log.msgs.len());
-    let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
+    let result = run_stage2(source, log, &mut sidx, opts, tape_alloc);
 
     let drop_stage2_errors = |log: &mut bun_ast::Log| {
         let mut i = log_mark.1;
@@ -186,14 +190,10 @@ fn run_stage2<'s>(
     log: &mut bun_ast::Log,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
-    check_len: bool,
     tape_alloc: E::TapeAlloc,
 ) -> crate::Result<ParseOutput> {
     let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
-    let root = parser.parse_value()?;
-    if check_len && !parser.at_trailing_end() {
-        return Err(parser.unexpected_here());
-    }
+    let root = parser.parse_root()?;
     let tape = parser.take_tape();
     drop(parser);
     Ok(ParseOutput {
@@ -310,19 +310,10 @@ pub fn parse_utf8(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    parse_utf8_impl::<false>(source, log, bump)
-}
-
-#[inline]
-pub fn parse_utf8_impl<const CHECK_LEN: bool>(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic(source, log, bump, JSON_OPTS)?.root)
 }
 
 fn parse_classic(
@@ -330,13 +321,12 @@ fn parse_classic(
     log: &mut bun_ast::Log,
     bump: &Bump,
     opts: JSONOptions,
-    check_len: bool,
 ) -> crate::Result<ParseOutput> {
     let opts = JSONOptions {
         record_value_locs: true,
         ..opts
     };
-    let mut out = parse_impl(source, log, opts, check_len)?;
+    let mut out = parse_impl(source, log, opts)?;
     out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
@@ -429,7 +419,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -452,7 +442,7 @@ fn parse_to_rows_in(
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(source, log, opts, tape_alloc)?.root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
@@ -464,7 +454,7 @@ pub fn parse_package_json_utf8(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS)?.root)
 }
 
 #[derive(Default)]
@@ -486,7 +476,7 @@ pub fn parse_package_json_utf8_with_opts(
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic(source, log, bump, opts)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -501,7 +491,7 @@ pub fn parse_for_macro(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
@@ -514,7 +504,7 @@ pub fn parse_ts_config(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
@@ -539,15 +529,15 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
+        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS)?.root);
     }
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS)?.root)
         }
         _ => {
             let word_len = contents
@@ -2101,6 +2091,75 @@ mod tests {
         expect_error("[1] // c\n /2", "JSON does not support comments");
         expect_error("[@] 1/2", "Decorators are not allowed in JSON");
         expect_error("/ [1]", "Operators are not allowed in JSON");
+    }
+
+    #[test]
+    fn content_after_the_root_value() {
+        let far = format!("{{\"a\":1}}{}garbage", " ".repeat(3 * 8192));
+        for which in [
+            Which::Utf8,
+            Which::TsConfig,
+            Which::PackageJson,
+            Which::Jsonc,
+            Which::Immutable,
+        ] {
+            for (input, found) in [
+                ("{\"a\":1} garbage here", "garbage"),
+                ("{\"a\":1}{\"b\":2}", "{"),
+                ("{\"a\":1},", ","),
+                ("{\"a\":1}}", "}"),
+                ("[1]]", "]"),
+                ("null true", "true"),
+                ("1 2", "2"),
+                ("\"a\" \"b\"", "\"b\""),
+                ("{\"a\":1} # tail", "#"),
+                ("{\"a\":1};", ";"),
+                ("{\"a\":1}\n<<<<<<< HEAD\n", "<<<<<<<"),
+                (far.as_str(), "garbage"),
+            ] {
+                let p = run(input.as_bytes(), which);
+                assert!(p.root.is_none(), "{input:?} parsed");
+                assert_eq!(p.errors, 1, "{input:?}");
+                assert_eq!(
+                    p.first_msg,
+                    format!("Expected end of file but found \"{found}\""),
+                    "{input:?}"
+                );
+            }
+            for input in [
+                "{\"a\":1} ",
+                "{\"a\":1}\r\n",
+                "{\"a\":1}\u{feff}",
+                "{\"a\":1}\u{a0}\n",
+                "[1]\t\n\n",
+                "1 ",
+                "\"a\"\n",
+            ] {
+                let p = run(input.as_bytes(), which);
+                assert!(p.root.is_some(), "{input:?}: {}", p.first_msg);
+                assert_eq!(p.errors, 0, "{input:?}: {}", p.first_msg);
+            }
+        }
+        for which in [Which::TsConfig, Which::PackageJson, Which::Jsonc] {
+            for input in ["{\"a\":1} // c", "{\"a\":1}\n/* c */\n", "1 // c"] {
+                let p = run(input.as_bytes(), which);
+                assert!(p.root.is_some(), "{input:?}: {}", p.first_msg);
+                assert_eq!(p.errors, 0, "{input:?}: {}", p.first_msg);
+            }
+        }
+        expect_error("{\"a\":1} // c", "JSON does not support comments");
+    }
+
+    #[test]
+    fn env_json_stops_after_the_first_value() {
+        for (src, want) in [("1 2", 1.0), ("7 days", 7.0)] {
+            let p = run(src.as_bytes(), Which::Env);
+            assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
+            let Some(Data::ENumber(n)) = p.root.as_ref().map(|r| &r.data) else {
+                panic!("{src}: expected a number ({})", p.first_msg);
+            };
+            assert_eq!(n.value(), want, "{src}");
+        }
     }
 
     #[test]

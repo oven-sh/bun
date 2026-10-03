@@ -265,9 +265,21 @@ const N_INVALID: Case[] = [
   ["n_structure_whitespace_U+2060_word_joiner.json", "[⁠]"],
 ];
 
+const N_TRAILING_CONTENT: Case[] = [
+  ["n_array_comma_after_close.json", '[""],'],
+  ["n_array_extra_close.json", '["x"]]'],
+  ["n_object_with_trailing_garbage.json", '{"a":"b"}#'],
+  ["n_string_with_trailing_garbage.json", '""x'],
+  ["n_structure_array_trailing_garbage.json", "[1]x"],
+  ["n_structure_array_with_extra_array_close.json", "[1]]"],
+  ["n_structure_close_unopened_array.json", "1]"],
+  ["n_structure_double_array.json", "[][]"],
+  ["n_structure_object_followed_by_closing_object.json", "{}}"],
+  ["n_structure_object_with_trailing_garbage.json", '{"a": true} "x"'],
+  ["n_structure_trailing_#.json", '{"a":"b"}#{}'],
+];
+
 const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = [
-  ["n_array_comma_after_close.json", '[""],', [""]],
-  ["n_array_extra_close.json", '["x"]]', ["x"]],
   ["n_array_extra_comma.json", '["",]', [""]],
   ["n_array_number_and_comma.json", "[1,]", [1]],
   ["n_number_-01.json", "[-01]", [-1]],
@@ -290,18 +302,9 @@ const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = 
   ["n_object_trailing_comma.json", '{"id":0,}', { "id": 0 }],
   ["n_object_trailing_comment.json", '{"a":"b"}/**/', { "a": "b" }],
   ["n_object_trailing_comment_slash_open.json", '{"a":"b"}//', { "a": "b" }],
-  ["n_object_with_trailing_garbage.json", '{"a":"b"}#', { "a": "b" }],
   ["n_string_escape_x.json", '["\\x00"]', ["\u0000"]],
   ["n_string_single_quote.json", "['single quote']", ["single quote"]],
-  ["n_string_with_trailing_garbage.json", '""x', ""],
-  ["n_structure_array_trailing_garbage.json", "[1]x", [1]],
-  ["n_structure_array_with_extra_array_close.json", "[1]]", [1]],
-  ["n_structure_close_unopened_array.json", "1]", 1],
-  ["n_structure_double_array.json", "[][]", []],
-  ["n_structure_object_followed_by_closing_object.json", "{}}", {}],
   ["n_structure_object_with_comment.json", '{"a":/*comment*/"b"}', { "a": "b" }],
-  ["n_structure_object_with_trailing_garbage.json", '{"a": true} "x"', { "a": true }],
-  ["n_structure_trailing_#.json", '{"a":"b"}#{}', { "a": "b" }],
   ["n_structure_whitespace_formfeed.json", "[\f]", []],
 ];
 
@@ -351,7 +354,13 @@ const I_IMPLEMENTATION_DEFINED: Case[] = [
 
 describe("JSONTestSuite", () => {
   test("the corpus is complete", () => {
-    expect(Y_VALID.length + N_INVALID.length + N_VALID_JSONC.length + I_IMPLEMENTATION_DEFINED.length).toBe(318);
+    expect(
+      Y_VALID.length +
+        N_INVALID.length +
+        N_TRAILING_CONTENT.length +
+        N_VALID_JSONC.length +
+        I_IMPLEMENTATION_DEFINED.length,
+    ).toBe(318);
   });
 
   describe("y_ (valid JSON parses and matches JSON.parse)", () => {
@@ -364,6 +373,20 @@ describe("JSONTestSuite", () => {
     test.each(N_INVALID)("%s", (_name, source) => {
       expect(() => JSON.parse(source)).toThrow();
       expect(() => Bun.JSONC.parse(source)).toThrow();
+    });
+  });
+
+  describe("n_ (content after the root value throws)", () => {
+    test.each(N_TRAILING_CONTENT)("%s", (_name, source) => {
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
+      let thrown: unknown;
+      try {
+        Bun.JSONC.parse(source);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(SyntaxError);
+      expect((thrown as Error).message).toStartWith("JSONC Parse error: Expected end of file but found ");
     });
   });
 

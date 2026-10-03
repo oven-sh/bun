@@ -37,13 +37,18 @@ export interface Flag {
   lang?: "c" | "cxx";
   /** What this flag does. */
   desc: string;
+  /**
+   * linkerFlags only: part of the toolchain half of the link line (triple +
+   * sysroot, which linker, C++ runtime, PIE policy, deployment target,
+   * sanitizer runtime), which any executable for the target needs, not only
+   * bun. See computeTargetLinkFlags().
+   */
+  toolchain?: true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CPU TARGET FLAGS
-//   -march/-mcpu/-mtune. Split out so deps that manage their own optimization
-//   and sanitizer flags (WebKit) can still inherit the target arch without
-//   the rest of globalFlags.
+//   -march/-mcpu/-mtune. Split out for computeCpuTargetFlags().
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const cpuTargetFlags: Flag[] = [
@@ -237,9 +242,8 @@ export const globalFlags: Flag[] = [
   // ─── Optimization ───
   {
     // cmake's Release/RelWithDebInfo build types append this to
-    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
-    // from there. Direct deps only see globalFlags, so it must be here
-    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically. Deps only see globalFlags, so
+    // it must be here — otherwise every assert() in zstd/boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
@@ -876,6 +880,7 @@ export const linkerFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
+    toolchain: true,
   },
   {
     flag: "-fsanitize=null",
@@ -985,6 +990,7 @@ export const linkerFlags: Flag[] = [
     flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
     when: c => c.windows,
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+    toolchain: true,
   },
   {
     // Serviced UCRT overlay: an explicit /libpath: is searched before the
@@ -995,6 +1001,7 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
     when: c => c.windows && c.host.os !== "windows",
     desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+    toolchain: true,
   },
   {
     // Windows cross-compile: these ldflags go after /link, straight to
@@ -1005,6 +1012,7 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+    toolchain: true,
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
@@ -1147,6 +1155,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
     when: c => c.darwin && c.crossTarget !== undefined,
     desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
+    toolchain: true,
   },
   {
     // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
@@ -1169,6 +1178,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
     when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
     desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
+    toolchain: true,
   },
   {
     flag: "-Wl,-w",
@@ -1208,6 +1218,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
     when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
     desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+    toolchain: true,
   },
   {
     // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
@@ -1282,11 +1293,13 @@ export const linkerFlags: Flag[] = [
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
+    toolchain: true,
   },
   {
     flag: ["-lstdc++", "-lgcc"],
     when: c => c.linux && c.abi === "musl",
     desc: "Dynamic C++ runtime on musl (static unavailable)",
+    toolchain: true,
   },
   {
     flag: c => [
@@ -1302,6 +1315,7 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.linux && c.abi === "android",
     desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
+    toolchain: true,
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
@@ -1322,16 +1336,19 @@ export const linkerFlags: Flag[] = [
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.linux,
     desc: "Use lld instead of system ld",
+    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.linux && c.abi !== "android",
     desc: "No PIE (we don't need ASLR; simpler codegen)",
+    toolchain: true,
   },
   {
     flag: ["-fPIC", "-pie"],
     when: c => c.abi === "android",
     desc: "Android: bionic loader requires PIE",
+    toolchain: true,
   },
   {
     flag: [
@@ -1457,16 +1474,19 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
     when: c => c.freebsd && c.crossTarget !== undefined,
     desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+    toolchain: true,
   },
   {
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.freebsd,
     desc: "Use lld instead of system ld",
+    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.freebsd,
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
+    toolchain: true,
   },
   {
     flag: [
@@ -1877,7 +1897,7 @@ export function computeFlags(cfg: Config): ComputedFlags {
 }
 
 /**
- * Flags forwarded to vendored dependencies via -DCMAKE_C_FLAGS/-DCMAKE_CXX_FLAGS.
+ * Flags every vendored dependency is compiled with.
  * This is ONLY the global table — no -Werror, no bun-specific defines, no UBSan.
  */
 export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: string[] } {
@@ -1888,10 +1908,22 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 }
 
 /**
- * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
- * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets nehalem.
+ * The link flags of an executable for the target that is not bun (JSC's LLInt
+ * extractors, the jsc shell): the `toolchain` entries of linkerFlags, plus
+ * dropping unreferenced sections. Bun's own link policy (symbol lists, ICF,
+ * stack size, wraps) is left out.
  */
+export function computeTargetLinkFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of linkerFlags) {
+    if (!f.toolchain || (f.when && !f.when(cfg))) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+  return out;
+}
+
+/** Just the -march/-mcpu/-mtune flags: rust.ts translates them into rustc's -Ctarget-cpu so Rust code targets the same CPU as the C++. */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];
   for (const f of cpuTargetFlags) {

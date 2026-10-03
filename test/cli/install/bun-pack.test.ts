@@ -992,6 +992,25 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
   ]);
 });
 
+test.concurrent("--dry-run still runs prepack, prepare and postpack", async () => {
+  using dir = tempDir("pack-dry-run-scripts", {
+    "package.json": JSON.stringify({
+      name: "pack-dry-run-scripts",
+      version: "1.1.1",
+      scripts: {
+        prepack: "echo prepack > prepack.txt",
+        prepare: "echo prepare > prepare.txt",
+        postpack: "echo postpack > postpack.txt",
+      },
+    }),
+  });
+
+  const { exitCode } = await runPack(dir, ["--dry-run"]);
+  // The three markers exist and no tarball does.
+  expect((await readdir(String(dir))).sort()).toEqual(["package.json", "postpack.txt", "prepack.txt", "prepare.txt"]);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("lifecycle script modifying version updates tarball filename (#17195)", async () => {
   const updateScript = `const fs = require("fs");
   const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));

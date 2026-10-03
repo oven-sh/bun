@@ -3306,6 +3306,54 @@ it.concurrent("we should always send date", async () => {
   }
 });
 
+// The idle timeout closes a TLS connection gracefully: close_notify, then a wait for the client's
+// reply. By then a request body that nothing reads has paused the socket, and a paused socket
+// never read the reply: the connection, its fd and the pending request stayed for the life of
+// the process. The client here still has body bytes queued when the close_notify arrives, so it
+// can only answer after the server reads again.
+it.concurrent(
+  "idle timeout closes a tls connection whose request body is paused",
+  async () => {
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      idleTimeout: 1,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        // Nothing reads the body: the server buffers 1 MB of it and pauses the socket.
+        await aborted.promise;
+        return new Response();
+      },
+    });
+
+    const chunk = Buffer.alloc(256 * 1024, "x");
+    const pump = (socket: { write(data: Buffer): number }) => {
+      while (socket.write(chunk) === chunk.length) {}
+    };
+    const peerClosed = Promise.withResolvers<void>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket, success, authorizationError) {
+          if (!success) return peerClosed.reject(authorizationError ?? new Error("client handshake failed"));
+          socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 104857600\r\n\r\n");
+          pump(socket);
+        },
+        drain: pump,
+        data() {},
+        error: (_socket, error) => peerClosed.reject(error),
+        connectError: (_socket, error) => peerClosed.reject(error),
+        close: () => peerClosed.resolve(),
+      },
+    });
+    await Promise.all([aborted.promise, peerClosed.promise]);
+  },
+  15_000,
+);
+
 it.concurrent(
   "should allow use of custom timeout",
   async () => {

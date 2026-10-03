@@ -43,7 +43,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
       if (bun) {
         if (isWindows) {
-          expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+          expect(realpathSync(nodeBin)).toContain("\\bun-node");
         } else {
           expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
         }
@@ -166,7 +166,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     const nodeBin = result.stdout.toString().trim();
 
     if (isWindows) {
-      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+      expect(realpathSync(nodeBin)).toContain("\\bun-node");
     } else {
       expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
     }

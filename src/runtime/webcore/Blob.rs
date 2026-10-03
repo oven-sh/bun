@@ -2014,7 +2014,7 @@ impl BlobExt for Blob {
                 let mode_seen_by_clone = file.mode_seen_by_clone.filter(|_| has_size);
                 if !file
                     .seekable
-                    .or(mode_seen_by_clone.map(bun_sys::S::ISREG))
+                    .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
                     .unwrap_or(false)
                 {
                     return u64::MAX;

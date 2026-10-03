@@ -691,3 +691,99 @@ console.log("OK");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(0);
 });
+
+// A cache hit registers the stored sourcemap section as the module's source
+// map, and stack remapping reads that section as an InternalSourceMap blob
+// through a bare pointer. An entry with no sourcemap section has nothing to
+// read: it must be a miss, so the module is transpiled again and its stack
+// traces still remap.
+//
+// Metadata layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+//   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, then
+//   twelve u64 fields; sourcemap_byte_length @ 62.
+describe("a cached entry with no sourcemap section", () => {
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  // 120 filler lines, one blank line, the function header, then the throw.
+  const THROW_LINE = 123;
+
+  // A module large enough for the cache (>= 4 KiB) that throws and prints the
+  // first frame of the error's stack. Reading the stack is what remaps the
+  // captured frame through the module's sourcemap. The transpiled output has
+  // no filler comments, so a frame that is not remapped reports line 2.
+  function writeThrowingModule() {
+    const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+    const filler = Buffer.alloc(120 * line.length, line).toString();
+    writeFileSync(
+      join(temp_dir, "boom.ts"),
+      `${filler}
+function boom(): number {
+  throw new Error("boom");
+}
+try {
+  boom();
+} catch (e) {
+  console.log((e as Error).stack!.split("\\n")[1].trim());
+}
+console.log("OK");
+`,
+    );
+  }
+
+  const run = (extra: Record<string, string> = {}) =>
+    Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env: { ...env, ...extra } });
+
+  const cacheEntries = () =>
+    existsSync(cache_dir) ? readdirSync(cache_dir).filter(name => name.endsWith(".pile")) : [];
+
+  function storedSourceMapLength() {
+    const entries = cacheEntries();
+    expect(entries).toHaveLength(1);
+    return Number(readFileSync(join(cache_dir, entries[0])).readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+  }
+
+  function expectRemappedFrame(result: ReturnType<typeof run>) {
+    expect(result.stdout.toString()).toContain(`boom.ts:${THROW_LINE}:`);
+    expect(result.stdout.toString()).toContain("OK");
+    expect(result.signalCode).toBeUndefined();
+  }
+
+  test("is not written by a run with source maps off", () => {
+    writeThrowingModule();
+
+    // BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS turns source maps off for the run,
+    // so the printer has no sourcemap to store next to the output.
+    const first = run({ BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" });
+    expect(first.stdout.toString()).toContain("OK");
+    expect(cacheEntries()).toEqual([]);
+    expect(first.exitCode).toBe(0);
+
+    // A run with source maps on finds no entry, transpiles the module itself
+    // and writes an entry that has a sourcemap.
+    const second = run();
+    expectRemappedFrame(second);
+    expect(storedSourceMapLength()).toBeGreaterThan(0);
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("is rejected and written again with a sourcemap", () => {
+    writeThrowingModule();
+
+    const first = run();
+    expectRemappedFrame(first);
+    expect(storedSourceMapLength()).toBeGreaterThan(0);
+    expect(first.exitCode).toBe(0);
+
+    // Point the metadata at no sourcemap bytes and leave the rest of the entry
+    // untouched. The loader sees what a build that stored entries with source
+    // maps off left behind.
+    const entry = join(cache_dir, cacheEntries()[0]);
+    const data = readFileSync(entry);
+    data.writeBigUInt64LE(0n, SOURCEMAP_BYTE_LENGTH_AT);
+    writeFileSync(entry, data);
+
+    const second = run();
+    expectRemappedFrame(second);
+    expect(storedSourceMapLength()).toBeGreaterThan(0);
+    expect(second.exitCode).toBe(0);
+  });
+});

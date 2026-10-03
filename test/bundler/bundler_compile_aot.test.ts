@@ -283,6 +283,41 @@ describe("bundler", () => {
   });
 });
 
+test("--compile-aot does not inline a function that is never reached", async () => {
+  using dir = tempDir("compile-aot-unreached-callee", {
+    "app.ts": `
+      type Comparer = (a: number, b: number) => number;
+      function sortsIndices(values: number[], indices: number[], comparer: Comparer) {
+        indices.sort((x, y) => comparer(values[x], values[y]) || x - y);
+      }
+      function withComparer(values: number[], comparer: Comparer) {
+        const indices = values.map((_, index) => index);
+        sortsIndices(values, indices, comparer);
+        return indices.map(index => values[index]);
+      }
+      function deduplicate(values: number[], comparer?: Comparer) {
+        return comparer ? withComparer(values, comparer) : [...new Set(values)];
+      }
+      console.log(deduplicate([3, 1, 3, 2]).join());
+    `,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--compile-aot", "app.ts", "--outfile", "app"],
+    env: { ...bunEnv, BUN_SOUND_TYPES: "infer", BUN_AOT_OPTIONS: "verboseAOTCompilation=1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).toContain("omitted as unreachable: `sortsIndices`");
+  expect(buildExitCode).toBe(0);
+
+  await using app = Bun.spawn({ cmd: [join(String(dir), "app")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, , exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+  expect(stdout).toBe("3,1,2\n");
+  expect(exitCode).toBe(0);
+});
+
 test("compile.aot: concurrent builds from several threads", async () => {
   const apps = [1, 2, 3, 4];
   using dir = tempDir("compile-aot-at-once", {
@@ -1434,7 +1469,7 @@ describe("--compile-aot optimizations", () => {
   `;
   const expectedOutput =
     '2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true,12,3,true,false,true,[{"z":1,"a":2},{"b":2,"c":3},{"b":2},{"a":4}],2,6,700,500,600\n';
-  const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
+  const withoutLoopOptions = "useAOTLoopSplitting=0,useAOTInlineFastPathsInLoops=0";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
   function remarksWith(options: string) {
@@ -1493,7 +1528,7 @@ describe("--compile-aot optimizations", () => {
     ["takes-argument-list", ["countsArguments", "takesRest"], ["scaledBy", "keepsOptional", "small", "large"]],
     ["scalar-replaced-object", [], ["passesLiteralToOptionalThatEscapes"]],
     ["narrowed-tested-value", ["narrowsOptional"], ["testsUnknown", "comparesWithUndefined"]],
-    ["calls:Mul", ["testsUnknown"], ["narrowsOptional"]],
+    ["calls:Mul", ["testsUnknown"], ["narrowsOptional"], withoutLoopOptions],
     ["calls:GetGlobal", [], ["comparesWithUndefined", "narrowsOptional", "testsUnknown"]],
     ["calls:StrictEqual", [], ["comparesWithUndefined", "narrowsOptional"]],
     ["cached-call", ["callsEither", "callsReassigned"], ["inlinesSmall", "callsRecursive", "callsManyArguments", "constructsGiven"]],
@@ -1503,10 +1538,10 @@ describe("--compile-aot optimizations", () => {
     ["returns-scope-variable", ["returnsModuleVariable"], ["returnsModuleVariablePlusOne"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
     ["lowered-builtin:Array.isArray", ["isArray"], []],
-    ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
-    ["split-loop", ["sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
-    ["profitable-loop", [], ["sumsNumbers", "sumsFields"]],
-    ["split-loop", [], ["sumsFields"]],
+    ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"]],
+    ["split-loop", ["sumsFields"], ["callsInLoop", "hasNoLoop"]],
+    ["profitable-loop", [], ["sumsNumbers", "sumsFields"], withoutLoopOptions],
+    ["split-loop", [], ["sumsFields"], withoutLoopOptions],
   ];
   const matches = (remark: string, pattern: string) => remark === pattern || remark.startsWith(pattern + ":");
 
@@ -1640,7 +1675,7 @@ describe("--compile-aot with a type table", () => {
   for (const [label, options, env] of [
     ["as it is", "", {}],
     ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1", {}],
-    ["with loop optimizations", "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1", {}],
+    ["without loop optimizations", "useAOTLoopSplitting=0,useAOTInlineFastPathsInLoops=0", {}],
     ["without data stubs", "", { BUN_JSC_useAOTDataStubs: "0" }],
   ] as const) {
     test(label, async () => {

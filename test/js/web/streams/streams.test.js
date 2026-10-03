@@ -1,11 +1,11 @@
 import {
-  ArrayBufferSink,
   file,
   readableStreamToArray,
   readableStreamToArrayBuffer,
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
@@ -713,7 +713,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
 
   it("the per-global Web Streams state is not a GC cell", async () => {
     // JSStreamsRuntime is a plain struct held by value on Zig::GlobalObject; it should
-    // never appear as a JSCell in a heap snapshot. Do one direct read first so every
+    // never appear as a JSCell in the heap. Do one direct read first so every
     // streams path that would have materialized it has run.
     const rs = new ReadableStream({
       type: "direct",
@@ -724,10 +724,9 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
     const reader = rs.getReader();
     await reader.read();
-    const snap = Bun.generateHeapSnapshot();
-    expect(snap.nodeClassNames).toBeArray();
-    expect(snap.nodeClassNames).toContain("DirectStreamController");
-    expect(snap.nodeClassNames).not.toContain("StreamsRuntime");
+    const { objectTypeCounts } = heapStats();
+    expect(objectTypeCounts.DirectStreamController).toBeGreaterThanOrEqual(1);
+    expect(objectTypeCounts).not.toHaveProperty("StreamsRuntime");
     reader.cancel();
   });
 
@@ -1059,7 +1058,6 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     it("a read drained inside pull() leaves no end-of-tick job pinning the controller", async () => {
       // Nothing here yields to a macrotask, so a queued process.nextTick job would still be
       // holding every controller when the GC runs.
-      const { heapStats } = require("bun:jsc");
       const live = () => heapStats().objectTypeCounts.DirectStreamController ?? 0;
       Bun.gc(true);
       const before = live();
@@ -2499,7 +2497,7 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   expect(text).toBe("abdefgh");
 });
 
-it("Bun.file().stream() of a small file does not double-close the controller", async () => {
+it.concurrent("Bun.file().stream() of a small file does not double-close the controller", async () => {
   // When the first pull returns data + EOF synchronously, both the native onClose
   // callback and the pull-result handler enqueue callClose for the same controller.
   // The second callClose must be a no-op rather than throwing ERR_INVALID_STATE
@@ -2520,26 +2518,22 @@ it("Bun.file().stream() of a small file does not double-close the controller", a
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
-it("Bun.file().stream() read text from large file", async () => {
+it.concurrent("Bun.file().stream() read text from large file", async () => {
   // Guard against reading the same repeating chunks
   // There were bugs previously where the stream would
   // repeat the same chunk over and over again
-  // Debug+ASAN makes the ~260k SHA1 calls below ~50x slower; 1MB still spans
-  // multiple stream chunks so the repeating-chunk guard holds.
+  // Debug+ASAN builds read 1MB: it still spans multiple stream chunks, so the
+  // repeating-chunk guard holds.
   const targetSize = 1024 * 1024 * (isDebug || isASAN ? 1 : 10);
-  var sink = new ArrayBufferSink();
-  sink.start({ highWaterMark: targetSize });
-  var written = 0;
-  var i = 0;
-  while (written < targetSize) {
-    written += sink.write(Bun.SHA1.hash((i++).toString(10), "hex"));
-  }
-  const hugely = Buffer.from(sink.end()).toString();
+  // Each 8-character block is a different counter value, so no two chunks are equal.
+  const counters = new Uint32Array(targetSize / 8);
+  for (let i = 0; i < counters.length; i++) counters[i] = i;
+  const hugely = Buffer.from(counters.buffer).toString("hex");
   const tmpfile = join(realpathSync(tmpdirSync()), "bun-streams-test.txt");
   writeFileSync(tmpfile, hugely);
   try {
@@ -2616,7 +2610,7 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read when its poll fires. A read error must release that poll, or the
   // process never exits. The slave hangup fails the master read with EIO on
   // Linux and ends it on macOS.
-  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+  it.concurrent("a read error on a pollable fd releases the poll so the process can exit", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2656,22 +2650,29 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
         `,
       ],
       env: bunEnv,
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });
 
-it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
+it.concurrent("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));
+    let first;
     for await (const chunk of fileStream) {
-      expect(chunk).toBeDefined();
+      first = chunk;
       break;
     }
-    expect(true).toBe(true);
+    // The break destroys the stream after its first chunk, which starts with the PNG signature.
+    expect({ signature: first.subarray(0, 8).toString("hex"), destroyed: fileStream.destroyed }).toEqual({
+      signature: "89504e470d0a1a0a",
+      destroyed: true,
+    });
   }
 });
 
@@ -2714,7 +2715,7 @@ it("pipeThrough doesn't cause unhandled rejections on readable errors", async ()
   expect(unhandledRejectionCaught).toBe(false);
 });
 
-it("Handles exception during ReadableStream creation from Response.body", async () => {
+it.concurrent("Handles exception during ReadableStream creation from Response.body", async () => {
   const dir = tmpdirSync();
   const testFile = join(dir, "test-fixture.js");
   writeFileSync(
@@ -2747,15 +2748,17 @@ recursiveFunction();
     cmd: [bunExe(), testFile],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
-it("handles exceptions during empty stream creation", () => {
+it.concurrent("handles exceptions during empty stream creation", () => {
   expect(() => {
     // Only the unwind frames nearest the stack limit exercise the
     // ReadableStream__empty exception path this test covers; the remaining
@@ -3110,8 +3113,6 @@ describe("Bun.readableStreamTo* on an already used stream", () => {
 describe("text consumers reject strings over the string allocation limit", () => {
   const runInSubprocess = async source => {
     const script = `
-      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-      setSyntheticAllocationLimitForTesting(32 * 1024 * 1024);
       const big = "x".repeat(8 * 1024 * 1024);
       let caught;
       try {
@@ -3120,15 +3121,23 @@ describe("text consumers reject strings over the string allocation limit", () =>
         caught = e;
       }
       if (!caught) throw new Error("expected an out-of-memory error");
-      console.log(caught.message);
+      console.log(caught.name + ": " + caught.message);
     `;
-    const proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      // The variable sets the same limit as setSyntheticAllocationLimitForTesting(). The child does not
+      // load bun:internal-for-testing, which costs a debug build about 1s.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(32 * 1024 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   };
+  const outOfMemory = { stdout: "RangeError: Out of memory\n", stderr: "", exitCode: 0 };
 
-  test("Bun.readableStreamToText", async () => {
-    const { stdout, stderr, exitCode } = await runInSubprocess(`
+  test.concurrent("Bun.readableStreamToText", async () => {
+    const result = await runInSubprocess(`
       const stream = new ReadableStream({
         start(c) {
           for (let i = 0; i < 6; i++) c.enqueue(big);
@@ -3137,11 +3146,11 @@ describe("text consumers reject strings over the string allocation limit", () =>
       });
       await Bun.readableStreamToText(stream);
     `);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+    expect(result).toEqual(outOfMemory);
   });
 
-  test("direct stream text sink", async () => {
-    const { stdout, stderr, exitCode } = await runInSubprocess(`
+  test.concurrent("direct stream text sink", async () => {
+    const result = await runInSubprocess(`
       const stream = new ReadableStream({
         type: "direct",
         pull(c) {
@@ -3151,11 +3160,11 @@ describe("text consumers reject strings over the string allocation limit", () =>
       });
       await Bun.readableStreamToText(stream);
     `);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+    expect(result).toEqual(outOfMemory);
   });
 
-  test("mixed string and binary chunks", async () => {
-    const { stdout, stderr, exitCode } = await runInSubprocess(`
+  test.concurrent("mixed string and binary chunks", async () => {
+    const result = await runInSubprocess(`
       const stream = new ReadableStream({
         start(c) {
           for (let i = 0; i < 6; i++) {
@@ -3167,7 +3176,7 @@ describe("text consumers reject strings over the string allocation limit", () =>
       });
       await Bun.readableStreamToText(stream);
     `);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+    expect(result).toEqual(outOfMemory);
   });
 });
 
@@ -3611,7 +3620,7 @@ it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", a
 
 // When a Bun native sink (spawn stdin, Bun.serve response body) consumes a TransformStream's
 // readable and then tears it down on abort, the transform controller API must not segfault.
-it("TransformStreamDefaultController survives after a native sink tears down its readable", async () => {
+it.concurrent("TransformStreamDefaultController survives after a native sink tears down its readable", async () => {
   const script = `
     const { finished } = require("node:stream/promises");
     process.on("unhandledRejection", () => {});
@@ -3648,8 +3657,7 @@ it("TransformStreamDefaultController survives after a native sink tears down its
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  void stderr;
-  expect({ stdout: stdout.trim().split("\n"), exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: [
       "desiredSize returned:null",
       "enqueue threw:TypeError",
@@ -3657,6 +3665,7 @@ it("TransformStreamDefaultController survives after a native sink tears down its
       "error returned:undefined",
       "SURVIVED",
     ],
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -3664,7 +3673,7 @@ it("TransformStreamDefaultController survives after a native sink tears down its
 
 // https://github.com/oven-sh/bun/pull/33193 — constructing any stream class with a newTarget
 // from a non-Zig realm (a node:vm context) must not downcast that realm's global object.
-test("streams constructors survive a foreign-realm (node:vm) newTarget", async () => {
+test.concurrent("streams constructors survive a foreign-realm (node:vm) newTarget", async () => {
   const script = `
     const vm = require("node:vm");
     const context = vm.createContext({});
@@ -3699,8 +3708,9 @@ test("streams constructors survive a foreign-realm (node:vm) newTarget", async (
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "OK",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -3708,7 +3718,7 @@ test("streams constructors survive a foreign-realm (node:vm) newTarget", async (
 
 // https://github.com/oven-sh/bun/pull/33193 — TransferArrayBuffer must produce a
 // fixed-length buffer, or user resize() invalidates the byte controller's recorded sizes.
-test("byte streams transfer resizable ArrayBuffers to fixed-length", async () => {
+test.concurrent("byte streams transfer resizable ArrayBuffers to fixed-length", async () => {
   const script = `
     // BYOB read: the pull-into descriptor's transferred buffer must be fixed-length.
     {
@@ -3759,8 +3769,9 @@ test("byte streams transfer resizable ArrayBuffers to fixed-length", async () =>
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "OK",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -3840,8 +3851,9 @@ describe("ReadableStream async iterator reentrancy", () => {
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "SURVIVED",
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });
@@ -4137,15 +4149,20 @@ describe("direct stream contract", () => {
       // Read before `dir` is disposed at the end of this scope.
       return await Bun.file(file).text();
     },
-    "Bun.spawn({ stdin: s })": async s => {
+    // `child` receives how the echo child ended. A throw in here becomes observe()'s result, and the error
+    // shapes do not compare that result.
+    "Bun.spawn({ stdin: s })": async (s, child) => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", "for await (const c of process.stdin) process.stdout.write(c)"],
+        // The echo uses Bun.stdin and Bun.stdout. process.stdin loads node:stream, which costs a debug build
+        // about 1s for each child, and every shape spawns one.
+        cmd: [bunExe(), "-e", "for await (const chunk of Bun.stdin.stream()) await Bun.write(Bun.stdout, chunk);"],
         env: bunEnv,
         stdin: s,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [out] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      Object.assign(child, { stderr, exitCode, signalCode: proc.signalCode });
       return out;
     },
   };
@@ -4155,7 +4172,10 @@ describe("direct stream contract", () => {
     const shape = directShapes[shapeName];
     const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
     test.concurrent.each(cells)("%s", async consumerName => {
-      const got = await directObserve(shape, consumers[consumerName]);
+      const child = {};
+      const got = await directObserve(shape, s => consumers[consumerName](s, child));
+      // Bun.spawn() throws when pull() throws in the same call. That cell has no child.
+      if ("exitCode" in child) expect(child).toEqual({ stderr: "", exitCode: 0, signalCode: null });
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
         expect({ pulls: got.pulls, cancels: got.cancels }).toEqual({ pulls: 1, cancels: 0 });
         return;
@@ -4535,10 +4555,12 @@ describe("direct stream edge cases", () => {
           `,
         ],
         env: bunEnv,
-        stderr: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(JSON.parse(stdout)).toEqual({ text: "ok", unhandled: 0 });
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -4563,10 +4585,12 @@ describe("direct stream edge cases", () => {
           `,
         ],
         env: bunEnv,
-        stderr: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(JSON.parse(stdout)).toEqual({ unhandled: 0 });
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
@@ -4681,15 +4705,17 @@ describe("direct stream edge cases", () => {
           `,
         ],
         env: bunEnv,
-        stderr: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(JSON.parse(stdout)).toEqual({
         "new Response(s).bytes()": "caught: " + message,
         "new Response(s).arrayBuffer()": "caught: " + message,
         "Bun.readableStreamToBytes": "caught: " + message,
         "Bun.readableStreamToArrayBuffer": "caught: " + message,
       });
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -4739,9 +4765,10 @@ describe("direct stream edge cases", () => {
           `,
           ],
           env: bunEnv,
-          stderr: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
         });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         const each = {
           handled: "rejected: source failed",
           strayWhenHandled: [],
@@ -4757,6 +4784,8 @@ describe("direct stream edge cases", () => {
           "before the first await": everyConsumer,
           "after an await": everyConsumer,
         });
+        // The "unhandledRejection" listener takes every report, so nothing is printed.
+        expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       },
     );
@@ -4956,8 +4985,12 @@ describe("direct stream edge cases", () => {
         yield "a";
         yield new Blob(["blob"]);
       }
-      const result = await settle(new Response(gen()).text());
-      expect("err" in result).toBe(true);
+      const error = await new Response(gen()).text().then(
+        () => null,
+        e => e,
+      );
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.message).toBe("Expected text, ArrayBuffer or ArrayBufferView");
     });
   });
 

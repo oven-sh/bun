@@ -163,6 +163,19 @@ bun list --trusted
 └── esbuild@0.21.5
 ```
 
+To print the packages installed globally with `bun add -g`:
+
+```bash terminal icon="terminal"
+bun pm ls -g
+# or
+bun list --global
+```
+
+```txt
+<$HOME>/.bun/install/global node_modules (1 installed)
+└── typescript@5.0.4
+```
+
 ## licenses
 
 List every installed package grouped by license, as read from each package's `package.json` in `node_modules`. Bun lists packages without a `license` field under `Unknown`. Bun marks packages only reachable through `devDependencies` with `(dev)`.

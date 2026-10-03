@@ -188,7 +188,8 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>└<r> <cyan>-g<r>                        list the <b>global<r> dependency tree\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
   <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\

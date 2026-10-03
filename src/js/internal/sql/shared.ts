@@ -1749,13 +1749,19 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     return [resolvedUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 
-  if (!options.adapter && resolvedUrl !== null) {
-    const parsedPath = parseDefinitelySqliteUrl(resolvedUrl);
-
-    if (parsedPath !== null) {
-      // Return the original URL (with query params) for SQLite parsing
-      return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
-    }
+  if (
+    !options.adapter &&
+    resolvedUrl !== null &&
+    // `filename` is a SQLite-only option, and `adapter` is "sqlite" here only
+    // when the environment lookup ended at SQLITE_URL (Step 4 applies it under
+    // the same `=== undefined` test). Both name a SQLite database even when
+    // the value is a plain path, which Step 3 would prefix with `postgres://`.
+    (optionsFilename ||
+      (adapter === "sqlite" && options.adapter === undefined) ||
+      parseDefinitelySqliteUrl(resolvedUrl) !== null)
+  ) {
+    // Return the original URL (with query params) for SQLite parsing
+    return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
   }
 
   // Step 3: Parse protocol and ensure URL format for non-SQLite databases

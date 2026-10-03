@@ -28,6 +28,9 @@ const sql1 = new Bun.SQL();
 const sql2 = new Bun.SQL("postgres://localhost:5432/mydb");
 const sql3 = new Bun.SQL(new URL("postgres://localhost:5432/mydb"));
 const sql4 = new Bun.SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+// `filename` selects SQLite, so `adapter` stays optional in SQLiteOptions.
+const sql5 = new Bun.SQL({ filename: "./dev.db" });
+const sql6 = new Bun.SQL({ filename: ":memory:", readonly: true, strict: true });
 
 const query1 = sql1<string>`SELECT * FROM users WHERE id = ${1}`;
 const query2 = sql2({ foo: "bar" });

@@ -2,9 +2,10 @@
 //! `getBunServerOpenCount` / `upgradeNodeHTTPResponse` / `{get,set}MaxHTTPHeaderSize`.
 
 use bun_core::Utf8Bytes;
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
 
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NodeHTTPResponse};
+use crate::webcore::response::HeadersRef;
 
 pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,
@@ -95,12 +96,7 @@ pub(crate) fn upgrade_node_http_response(
         }
         // Through `Headers`: the trim and TypeError of `server.upgrade`.
         let protocol = protocol.to_bun_string(global)?;
-        let headers = scopeguard::guard(FetchHeaders::create_empty(), |headers| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            bun_opaque::opaque_deref_mut(headers.as_ptr()).deref();
-        });
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
+        let mut headers = HeadersRef::create_empty();
         headers.put(HTTPHeaderName::SecWebSocketProtocol, &protocol, global)?;
         if let Some(value) = headers.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
             sec_websocket_protocol = value.to_utf8().into_owned();

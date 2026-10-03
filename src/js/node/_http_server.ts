@@ -2186,7 +2186,8 @@ function getNodeHTTPServerSocket() {
     pause() {
       const handle = this[kHandle];
       const response = handle?.response;
-      if (response) {
+      // Not while the body of an Upgrade request still arrives: the request reads the connection, and Node's UpgradeStream pauses only itself.
+      if (response && this[kUpgradeIncoming] === undefined) {
         response.pause();
       }
 

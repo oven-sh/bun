@@ -219,6 +219,68 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(output).toContain("pkg-b@");
   });
 
+  it("should close the branch after the last visible workspace dependent", async () => {
+    await using tmpDir = tempDir(`why-workspace-last-${i++}`, {
+      "package.json": JSON.stringify({
+        name: "workspace-root",
+        version: "1.0.0",
+        workspaces: ["packages/*", "apps/*"],
+      }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+      }),
+      "packages/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": "workspace:*",
+        },
+      }),
+      "apps/app-a/package.json": JSON.stringify({
+        name: "app-a",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-b": "workspace:*",
+        },
+      }),
+    });
+
+    await using install = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await install.exited).toBe(0);
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd.split(" "), "pkg-a"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The implicit workspace-root entry under pkg-b is hidden, so app-a is
+    // the last visible dependent and closes the branch.
+    // The header prints the workspace path with the native separator.
+    expect(stdout.replaceAll("\\", "/")).toBe(
+      [
+        "pkg-a@workspace:packages/pkg-a",
+        "  ├─ pkg-b@workspace (requires workspace:*)",
+        "  │  └─ app-a@workspace (requires workspace:*)",
+        "  └─ workspace-root",
+        "",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("should handle npm aliases", async () => {
     await using tmpDir = tempDir(`why-alias-${i++}`, {
       "package.json": JSON.stringify({

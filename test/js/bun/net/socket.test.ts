@@ -4334,7 +4334,10 @@ Reo=
         let bytes = 0;
         socket.on("error", () => {});
         socket.on("data", chunk => (bytes += chunk.length));
-        socket.on("end", () => received.resolve(bytes));
+        socket.on("end", () => {
+          received.resolve(bytes);
+          socket.end();
+        });
       });
       await once(peer.listen(0, "127.0.0.1"), "listening");
       try {

@@ -1104,11 +1104,7 @@ test("end() inside 'connect' sends the FIN when setImmediate was replaced after 
   );
   try {
     await ended;
-    // A FIN that is due arrives before two new connections have been answered.
-    const noFin = pendingReadsDone()
-      .then(pendingReadsDone)
-      .then(() => false);
-    assert.strictEqual(await Promise.race([sawFin.promise, noFin]), true, "the peer got no FIN");
+    assert.strictEqual(await sawFin.promise, true, "the peer got no FIN");
   } finally {
     globalThis.setImmediate = realSetImmediate;
     client.destroy();

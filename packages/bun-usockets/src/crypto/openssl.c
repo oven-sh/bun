@@ -2732,7 +2732,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
 /* The records of every part share one batch, so they reach the kernel in one write. Returns the plaintext bytes taken, in order. */
 int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
   while (count && iov->iov_len == 0) iov++, count--;
-  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || count == 0) return 0;
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || s->ssl_shutdown_after_first_flight || count == 0) return 0;
 
   /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
    * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so

@@ -471,7 +471,7 @@ impl ExtractTarball {
             // The entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => {
-                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                    if !bun_install::dependency::is_valid_node_modules_entry_name(name) {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,

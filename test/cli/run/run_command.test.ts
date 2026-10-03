@@ -40,6 +40,45 @@ describe("bun", () => {
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
   });
+
+  test("a package.json that fails to parse reports the parse error, not 'Script not found'", () => {
+    using dir = tempDir("broken-package-json", {
+      "package.json": `{"name": "p", "scripts": {"s": "echo hi"`,
+    });
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "s"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    const err = stderr.toString();
+    expect(err).toContain(`Expected "}" but found end of file`);
+    expect(err).toContain(join(String(dir), "package.json") + ":1:40");
+    expect(err).not.toContain("Script not found");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a package.json that fails to parse in an ancestor is printed before 'Script not found'", () => {
+    using dir = tempDir("broken-ancestor-package-json", {
+      "package.json": `{"name": "top", "private": tru`,
+      "a/b/package.json": JSON.stringify({ name: "deep", scripts: { s: "echo hi" } }),
+    });
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: join(String(dir), "a", "b"),
+      cmd: [bunExe(), "run", "nope"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    const err = stderr.toString();
+    expect(err).toContain("Unexpected tru");
+    expect(err).toContain(join(String(dir), "package.json") + ":1:28");
+    expect(err).toContain('Script not found "nope"');
+    expect(exitCode).toBe(1);
+  });
 });
 
 test.if(isWindows)("[windows] A file in drive root runs", async () => {

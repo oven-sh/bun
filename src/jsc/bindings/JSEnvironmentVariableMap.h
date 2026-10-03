@@ -18,7 +18,11 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesPut
+        // Cached puts and fast indexed storage would both store without reaching put() / putByIndex().
+        | JSC::ProhibitsPropertyCaching
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {

@@ -1,10 +1,9 @@
 // Pure-JS port of `Wyhash11` (the legacy 32-byte-round, 5-prime wyhash variant
-// in src/wyhash/lib.rs). `Wyhash11::hash(0, bytes)` keys the lockfile string
-// interning pool (`semver::string::Buf`), so two different strings whose bytes
-// collide under this function share one pool slot. Use this to confirm a
-// collision holds before a test relies on it. This is a different algorithm
-// from `Bun.hash.wyhash` (the final4 variant); do not substitute one for the
-// other.
+// in src/wyhash/lib.rs). `bun install` uses `Wyhash11::hash(0, bytes)` where a
+// hash stands in for a string, so two strings that collide under it can be
+// taken for one. Use this to confirm a collision holds before a test relies on
+// it. This is a different algorithm from `Bun.hash.wyhash` (the final4
+// variant); do not substitute one for the other.
 
 const MASK = (1n << 64n) - 1n;
 const M128 = (1n << 128n) - 1n;

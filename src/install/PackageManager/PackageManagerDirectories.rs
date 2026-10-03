@@ -536,8 +536,14 @@ pub fn cached_git_folder_name_print<'a>(
     w.finish_z()
 }
 
+/// Bytes in `<url digest>.git` and its NUL.
+pub const GIT_CLONE_FOLDER_NAME_BUF_LEN: usize = 32 + b".git".len() + 1;
+
 /// `<url digest>.git`: the bare clone of the repository at `url`.
-pub fn cached_git_clone_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8]) -> &'a ZStr {
+pub fn cached_git_clone_folder_name_print<'a>(
+    buf: &'a mut [u8; GIT_CLONE_FOLDER_NAME_BUF_LEN],
+    url: &[u8],
+) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put_url_digest(url);
     w.put(b".git");

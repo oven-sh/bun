@@ -575,8 +575,9 @@ pub struct GitCloneRequest {
 }
 
 pub struct GitCommitRequest {
+    /// The bare repository that is searched.
+    pub(crate) repo_dir: Fd,
     pub(crate) name: StringOrTinyString,
-    /// Names the bare repository that is searched.
     pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }

@@ -381,7 +381,7 @@ fn offline_git_miss(
     if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
         return false;
     }
-    let mut folder_buf = [0u8; 64];
+    let mut folder_buf = [0u8; package_manager_real::GIT_CLONE_FOLDER_NAME_BUF_LEN];
     let folder = package_manager_real::cached_git_clone_folder_name_print(&mut folder_buf, url);
     let cache_dir = package_manager_real::get_cache_directory(this);
     let cached = bun_sys::directory_exists_at(cache_dir, folder).unwrap_or(false);
@@ -1422,8 +1422,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     return Ok(());
                                 }
 
-                                let task =
-                                    enqueue_git_commit(this, commit_id, alias, url, committish);
+                                let task = enqueue_git_commit(
+                                    this, commit_id, repo_fd, alias, url, committish,
+                                );
                                 this.enqueue_git_task(task);
                                 return Ok(());
                             }
@@ -1990,10 +1991,11 @@ fn enqueue_git_clone(
     this.preallocated_resolve_tasks.get_init(value)
 }
 
-/// `git log`: resolves `committish` in the bare repository of `url`.
+/// `git log`: resolves `committish` in the bare repository `repo_dir`.
 fn enqueue_git_commit(
     this: &mut PackageManager,
     task_id: Task::Id,
+    repo_dir: Fd,
     name: &[u8],
     url: &[u8],
     committish: &[u8],
@@ -2004,6 +2006,7 @@ fn enqueue_git_commit(
         tag: crate::package_manager_task::Tag::GitCommit,
         request: crate::package_manager_task::Request {
             git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
+                repo_dir,
                 name: StringOrTinyString::init_append_if_needed(
                     name,
                     &mut crate::network_task::filename_store_appender(),

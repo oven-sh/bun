@@ -24,6 +24,7 @@ use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::install::{ExtractData, ExtractDataJson};
+use crate::package_manager_real::GIT_CLONE_FOLDER_NAME_BUF_LEN;
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
@@ -92,7 +93,7 @@ impl Finalize {
             Finalize::PublishRepo(staging) => {
                 let request = task.request_git_clone();
                 let name = request.name.slice().to_vec();
-                let mut folder_buf = [0u8; 64];
+                let mut folder_buf = [0u8; GIT_CLONE_FOLDER_NAME_BUF_LEN];
                 let folder_name = bare_repo_folder_name(&mut folder_buf, request.url.slice());
                 staging
                     .publish(&mut task.log, &name, folder_name.as_bytes())
@@ -337,7 +338,10 @@ impl CacheStaging {
 }
 
 /// `<url digest>.git`: the cache folder of the bare clone of `url`.
-fn bare_repo_folder_name<'a>(buf: &'a mut [u8; 64], url: &[u8]) -> &'a bun_core::ZStr {
+fn bare_repo_folder_name<'a>(
+    buf: &'a mut [u8; GIT_CLONE_FOLDER_NAME_BUF_LEN],
+    url: &[u8],
+) -> &'a bun_core::ZStr {
     crate::package_manager_real::cached_git_clone_folder_name_print(buf, url)
 }
 
@@ -449,7 +453,7 @@ impl GitSubprocess {
     fn begin_clone(this: ThisPtr<Self>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
         let url = this.task().request_git_clone().url.slice().to_vec();
-        let mut folder_buf = [0u8; 64];
+        let mut folder_buf = [0u8; GIT_CLONE_FOLDER_NAME_BUF_LEN];
         let folder_name = bare_repo_folder_name(&mut folder_buf, &url);
         // Pushed in reverse so `pop` yields the https form first.
         this.urls.with_mut(|urls| {
@@ -519,12 +523,8 @@ impl GitSubprocess {
     fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
         let req = this.task().request_git_commit();
         let committish = req.committish.slice().to_vec();
-        let mut folder_buf = [0u8; 64];
-        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &this.manager().cache_directory_path,
-            &[bare_repo_folder_name(&mut folder_buf, req.url.slice()).as_bytes()],
-        )
-        .to_vec();
+        let mut repo_path_buf = Path::path_buffer_pool::get();
+        let path = bun_sys::get_fd_path(req.repo_dir, &mut repo_path_buf)?.to_vec();
         this.step.set(Step::Log);
         if committish.is_empty() {
             Self::spawn(this, &[b"-C", &path, b"log", b"--format=%H", b"-1"])

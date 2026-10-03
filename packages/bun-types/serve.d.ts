@@ -329,6 +329,24 @@ declare module "bun" {
     data: T;
 
     getBufferedAmount(): number;
+
+    /**
+     * Stops reading from the underlying socket, so the client sees TCP
+     * backpressure instead of the server buffering in memory. Messages
+     * already received may still be dispatched. No-op once the connection
+     * is closed.
+     */
+    pause(): void;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     */
+    resume(): void;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
   }
 
   /**

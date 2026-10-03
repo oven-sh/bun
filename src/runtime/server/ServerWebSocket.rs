@@ -66,7 +66,7 @@ pub(crate) struct ServerWebSocket {
 }
 
 // We pack the per-socket data into this struct below:
-// ssl:1, closed:1, <unused>:1, binary_type:4, packed_websocket_ptr:57
+// ssl:1, closed:1, paused:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Flags(u64);
@@ -74,6 +74,7 @@ pub(crate) struct Flags(u64);
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
     const CLOSED_BIT: u64 = 1 << 1;
+    const PAUSED_BIT: u64 = 1 << 2;
     const BINARY_TYPE_SHIFT: u32 = 3;
     const BINARY_TYPE_MASK: u64 = 0b1111 << Self::BINARY_TYPE_SHIFT;
     const PTR_SHIFT: u32 = 7;
@@ -101,6 +102,18 @@ impl Flags {
             self.0 |= Self::CLOSED_BIT;
         } else {
             self.0 &= !Self::CLOSED_BIT;
+        }
+    }
+    #[inline]
+    pub(crate) fn paused(self) -> bool {
+        self.0 & Self::PAUSED_BIT != 0
+    }
+    #[inline]
+    pub(crate) fn set_paused(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::PAUSED_BIT;
+        } else {
+            self.0 &= !Self::PAUSED_BIT;
         }
     }
     #[inline]
@@ -1456,6 +1469,45 @@ impl ServerWebSocket {
         Ok(JSValue::js_number(
             self.websocket().get_buffered_amount() as f64
         ))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn pause(
+        &self,
+        _global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        bun_output::scoped_log!(WebSocketServer, "pause()");
+
+        if self.is_closed() || self.flags.get().paused() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        self.update_flags(|f| f.set_paused(true));
+        self.websocket().pause();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn resume(
+        &self,
+        _global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        bun_output::scoped_log!(WebSocketServer, "resume()");
+
+        if self.is_closed() || !self.flags.get().paused() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        self.update_flags(|f| f.set_paused(false));
+        self.websocket().resume();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_is_paused(&self, _global_this: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(!self.is_closed() && self.flags.get().paused())
     }
 
     #[bun_jsc::host_fn(method)]

@@ -879,6 +879,38 @@ extern "C"
     return uws->getBufferedAmount();
   }
 
+  void uws_ws_pause(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->pause();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->pause();
+    }
+  }
+
+  void uws_ws_resume(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->resume();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->resume();
+    }
+  }
+
   size_t uws_ws_get_remote_address(int ssl, uws_websocket_t *ws,
                                    const char **dest)
   {

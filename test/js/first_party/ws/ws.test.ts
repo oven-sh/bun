@@ -1749,3 +1749,126 @@ describe("module loading", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("WebSocketServer pause() / resume()", () => {
+  const CHUNK = new Uint8Array(64 * 1024);
+  const TOTAL = 512; // 32 MiB, past the loopback socket buffers
+  const TOTAL_BYTES = TOTAL * CHUNK.byteLength;
+
+  function openNative(url: string): Promise<globalThis.WebSocket> {
+    const ws = new globalThis.WebSocket(url);
+    return new Promise(resolve => (ws.onopen = () => resolve(ws)));
+  }
+
+  // Forces the event loop through `n` I/O roundtrips without a timer. A
+  // paused socket that still had readable data would be delivered during
+  // these polls, so "nothing arrived across N roundtrips" is the assertion.
+  async function ioRoundtrips(clock: globalThis.WebSocket, n: number) {
+    for (let i = 0; i < n; i++) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      clock.onmessage = () => resolve();
+      clock.send("tick");
+      await promise;
+    }
+  }
+
+  it("exposes pause, resume and isPaused on server sockets", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    wss.on("connection", ws => {
+      try {
+        expect(typeof ws.pause).toBe("function");
+        expect(typeof ws.resume).toBe("function");
+        expect(ws.isPaused).toBe(false);
+        ws.pause();
+        expect(ws.isPaused).toBe(true);
+        ws.resume();
+        expect(ws.isPaused).toBe(false);
+        resolve();
+      } catch (err) {
+        reject(err);
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
+
+  it("stops reads while paused and drains after resume", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise: stream, resolve: resolveStream } = Promise.withResolvers<WebSocket>();
+    const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+    let received = 0;
+
+    wss.on("connection", (ws, req) => {
+      if (req.url === "/clock") {
+        ws.on("message", data => ws.send(data));
+        return;
+      }
+      ws.on("message", data => {
+        received += (data as Buffer).length;
+        if (received >= TOTAL_BYTES) resolveDone();
+      });
+      ws.pause();
+      resolveStream(ws);
+    });
+
+    try {
+      const url = "ws://localhost:" + wss.address().port;
+      const client = await openNative(url);
+      const clock = await openNative(url + "/clock");
+      const ws = await stream;
+      expect(ws.isPaused).toBe(true);
+
+      for (let i = 0; i < TOTAL; i++) client.send(CHUNK);
+      // The client's send() backed up: the server stopped reading and the
+      // TCP window closed. Nothing may arrive while paused.
+      await ioRoundtrips(clock, 20);
+      const baseline = received;
+      await ioRoundtrips(clock, 20);
+      expect(received).toBe(baseline);
+      expect(baseline).toBeLessThan(TOTAL_BYTES / 8);
+      expect(client.bufferedAmount).toBeGreaterThan(0);
+
+      ws.resume();
+      expect(ws.isPaused).toBe(false);
+      await done;
+      expect(received).toBe(TOTAL_BYTES);
+
+      client.close();
+      clock.close();
+    } finally {
+      wss.close();
+    }
+  }, 30_000);
+
+  it("pause() and resume() are no-ops after close", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    wss.on("connection", ws => {
+      ws.on("close", () => {
+        try {
+          expect(ws.readyState).toBe(WebSocket.CLOSED);
+          ws.pause();
+          expect(ws.isPaused).toBe(false);
+          ws.resume();
+          expect(ws.isPaused).toBe(false);
+          resolve();
+        } catch (err) {
+          reject(err);
+        } finally {
+          wss.close();
+        }
+      });
+      ws.close();
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
+});

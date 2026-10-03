@@ -996,6 +996,7 @@ class BunWebSocketMocked extends EventEmitter {
   #bufferedAmount = 0;
   // The default of the ServerWebSocket. The setter keeps both sides in sync.
   #binaryType = "nodebuffer";
+  #paused = false;
 
   #onclose;
   #onerror;
@@ -1137,6 +1138,32 @@ class BunWebSocketMocked extends EventEmitter {
     else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
+  }
+
+  get isPaused() {
+    return this.#paused;
+  }
+
+  pause() {
+    switch (this.#state) {
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
+        return;
+    }
+
+    this.#paused = true;
+    this.#ws.pause();
+  }
+
+  resume() {
+    switch (this.#state) {
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
+        return;
+    }
+
+    this.#paused = false;
+    this.#ws.resume();
   }
 
   send(data, opts, cb) {

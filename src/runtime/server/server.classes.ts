@@ -288,6 +288,17 @@ export default [
         fn: "getBufferedAmount",
         length: 0,
       },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
+      isPaused: {
+        getter: "getIsPaused",
+      },
       binaryType: {
         getter: "getBinaryType",
         setter: "setBinaryType",

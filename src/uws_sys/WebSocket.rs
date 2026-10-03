@@ -208,6 +208,18 @@ impl AnyWebSocket {
         c::uws_ws_get_buffered_amount(ssl, ws)
     }
 
+    /// Stops polling the socket for reads. Frames already read stay in flight;
+    /// the peer sees TCP backpressure for everything after them.
+    pub fn pause(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_pause(ssl, ws)
+    }
+
+    pub fn resume(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_resume(ssl, ws)
+    }
+
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
         let (ssl_flag, ws) = self.split();
         let mut ptr: *mut u8 = core::ptr::null_mut();
@@ -582,6 +594,8 @@ pub mod c {
             compress: bool,
         ) -> SendStatus;
         pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) safe fn uws_ws_pause(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_resume(ssl: i32, ws: &mut RawWebSocket);
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.

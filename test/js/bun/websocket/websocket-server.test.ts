@@ -2640,3 +2640,130 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
 });
+
+describe("ServerWebSocket.pause() / resume()", () => {
+  const CHUNK = new Uint8Array(64 * 1024);
+  const TOTAL = 512; // 32 MiB, past the loopback socket buffers
+  const TOTAL_BYTES = TOTAL * CHUNK.byteLength;
+
+  type Data = { role: "stream" | "clock" };
+
+  function open(url: string): Promise<WebSocket> {
+    const ws = new WebSocket(url);
+    return new Promise(resolve => (ws.onopen = () => resolve(ws)));
+  }
+
+  // Forces the event loop through `n` I/O roundtrips without a timer. A
+  // paused socket that still had readable data would be delivered during
+  // these polls, so "nothing arrived across N roundtrips" is the assertion.
+  async function ioRoundtrips(clock: WebSocket, n: number) {
+    for (let i = 0; i < n; i++) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      clock.onmessage = () => resolve();
+      clock.send("tick");
+      await promise;
+    }
+  }
+
+  it("stops reads while paused and drains after resume", async () => {
+    const { promise: stream, resolve: resolveStream } = Promise.withResolvers<ServerWebSocket<Data>>();
+    const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+    let received = 0;
+
+    using server = serve<Data>({
+      port: 0,
+      fetch(req, server) {
+        const role = new URL(req.url).pathname === "/clock" ? "clock" : "stream";
+        if (server.upgrade(req, { data: { role } })) return;
+        return new Response();
+      },
+      websocket: {
+        open(ws) {
+          if (ws.data.role !== "stream") return;
+          expect(ws.isPaused).toBe(false);
+          ws.pause();
+          expect(ws.isPaused).toBe(true);
+          resolveStream(ws);
+        },
+        message(ws, message) {
+          if (ws.data.role === "clock") {
+            ws.send(message);
+            return;
+          }
+          received += (message as Buffer).length;
+          if (received >= TOTAL_BYTES) resolveDone();
+        },
+      },
+    });
+
+    const client = await open(server.url.href);
+    const clock = await open(new URL("/clock", server.url).href);
+    const ws = await stream;
+
+    for (let i = 0; i < TOTAL; i++) client.send(CHUNK);
+    // The client's send() backed up: the server stopped reading and the TCP
+    // window closed. Nothing may arrive while paused.
+    await ioRoundtrips(clock, 20);
+    const baseline = received;
+    await ioRoundtrips(clock, 20);
+    expect(received).toBe(baseline);
+    expect(baseline).toBeLessThan(TOTAL_BYTES / 8);
+    expect(client.bufferedAmount).toBeGreaterThan(0);
+
+    ws.resume();
+    expect(ws.isPaused).toBe(false);
+    await done;
+    expect(received).toBe(TOTAL_BYTES);
+
+    client.close();
+    clock.close();
+  }, 30_000);
+
+  it("pause() and resume() are idempotent and no-ops after close", async () => {
+    const { promise: opened, resolve: resolveOpened } = Promise.withResolvers<ServerWebSocket<Data>>();
+    const { promise: closed, resolve: resolveClosed } = Promise.withResolvers<void>();
+    using server = serve<Data>({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req, { data: { role: "stream" } })) return;
+        return new Response();
+      },
+      websocket: {
+        open(ws) {
+          ws.resume();
+          expect(ws.isPaused).toBe(false);
+          ws.pause();
+          ws.pause();
+          expect(ws.isPaused).toBe(true);
+          ws.resume();
+          ws.resume();
+          expect(ws.isPaused).toBe(false);
+          ws.pause();
+          ws.send("still alive");
+          resolveOpened(ws);
+        },
+        message() {},
+        close() {
+          resolveClosed();
+        },
+      },
+    });
+
+    const client = await open(server.url.href);
+    // A paused socket still writes.
+    const { promise: got, resolve } = Promise.withResolvers<string>();
+    client.onmessage = ({ data }) => resolve(data);
+    expect(await got).toBe("still alive");
+
+    const ws = await opened;
+    expect(ws.isPaused).toBe(true);
+    ws.terminate();
+    await closed;
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.isPaused).toBe(false);
+    ws.pause();
+    expect(ws.isPaused).toBe(false);
+    ws.resume();
+    expect(ws.isPaused).toBe(false);
+  });
+});

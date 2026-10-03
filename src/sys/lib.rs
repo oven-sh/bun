@@ -145,9 +145,58 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
     }
 }
 
+/// `getdents64(2)`: fills `buf` with `linux_dirent64` records. Returns the
+/// byte count written (0 means end of directory). Retries EINTR.
+///
+/// SAFETY precondition: `buf` must be writable for `len` bytes.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub unsafe fn getdents64(fd: Fd, buf: *mut u8, len: usize) -> Maybe<usize> {
+    loop {
+        // SAFETY: caller contract.
+        let rc = unsafe { linux_syscall::getdents64(fd.native(), buf, len) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::getdents64));
+        }
+        return Ok(rc as usize);
+    }
+}
+
+/// FreeBSD `getdents(2)`: fills `buf` with `struct dirent` records. Returns
+/// the byte count written (0 means end of directory). Retries EINTR. ENOENT,
+/// which FreeBSD reports for an unlinked but still-open directory, reads as
+/// the end of the directory.
+///
+/// SAFETY precondition: `buf` must be writable for `len` bytes.
+#[cfg(target_os = "freebsd")]
+pub unsafe fn getdents(fd: Fd, buf: *mut u8, len: usize) -> Maybe<usize> {
+    unsafe extern "C" {
+        #[link_name = "getdents"]
+        fn libc_getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
+    }
+    loop {
+        // SAFETY: caller contract.
+        let rc = unsafe { libc_getdents(fd.native(), buf, len) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            if e == libc::ENOENT {
+                return Ok(0);
+            }
+            return Err(Error::from_code_int(e, Tag::getdents64));
+        }
+        return Ok(rc as usize);
+    }
+}
+
 pub mod dir_iterator {
     use super::{EntryKind, Fd, Result};
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     use super::{Error, Tag};
     use bun_paths::OSPathChar;
 
@@ -336,23 +385,13 @@ pub mod dir_iterator {
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
                 if self.index >= self.end_index {
-                    // glibc doesn't expose getdents64; go straight to the syscall.
-                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        super::linux_syscall::getdents64(
-                            dir.native(),
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                        )
-                    };
-                    if rc < 0 {
-                        return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    // SAFETY: buf is valid for BUF_SIZE bytes.
+                    let n = unsafe { super::getdents64(dir, self.buf.as_mut_ptr(), BUF_SIZE) }?;
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                 }
                 // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
                 //                         u8 d_type; char d_name[]; }
@@ -501,27 +540,15 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            unsafe extern "C" {
-                fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
-            }
             loop {
                 if self.index >= self.end_index {
                     // SAFETY: buf is valid for BUF_SIZE bytes.
-                    let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
-                    if rc < 0 {
-                        let e = super::last_errno();
-                        // FreeBSD reports ENOENT when iterating an unlinked
-                        // but still-open directory.
-                        if e == libc::ENOENT {
-                            return Ok(None);
-                        }
-                        return Err(Error::from_code_int(e, Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    let n = unsafe { super::getdents(dir, self.buf.as_mut_ptr(), BUF_SIZE) }?;
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                 }
                 // FreeBSD 12+ `struct dirent` (ino64):
                 //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;

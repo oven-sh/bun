@@ -710,12 +710,10 @@ impl JSGlobalObject {
         &self,
         namespace_: &BunString,
         path: &BunString,
-        target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
+        let result = crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -727,17 +725,42 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
-        target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, path, source, target)
-        })?;
+        let result =
+            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
         Ok(Some(result))
+    }
+
+    /// Whether an `onResolve` or `onLoad` is registered.
+    pub fn has_plugins(&self) -> bool {
+        Bun__hasPlugins(self)
+    }
+
+    /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
+    pub(crate) fn resolve_virtual_module(
+        &self,
+        specifier: &BunString,
+        importer: &BunString,
+    ) -> Option<BunString> {
+        let key = Bun__resolveVirtualModule(self, specifier, importer);
+        (!key.is_dead()).then_some(key)
+    }
+
+    /// Whether an `onLoad` would be called to load `key`.
+    pub(crate) fn has_on_load(&self, key: &[u8]) -> JsResult<bool> {
+        let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
+            return Ok(false);
+        };
+        let namespace_ = BunString::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        crate::from_js_host_call_generic(self, || {
+            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+        })
     }
 
     /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
@@ -1372,12 +1395,6 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-/// The enum is defined once in `bun_bundler::transpiler` (the lowest tier that names it,
-/// for `Linker::link`'s call into `PluginResolver::on_resolve`) and re-exported
-/// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
-/// type — no mirror enum, no transmute.
-pub use bun_bundler::transpiler::BunPluginTarget;
-
 // No `Default` derive — `code` has no default (only `errno`/`name` are
 // optional). Callers must always supply `code`.
 pub struct SysErrOptions {
@@ -1498,15 +1515,24 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
         path: &BunString,
-        target: BunPluginTarget,
     ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
-        target: BunPluginTarget,
     ) -> JSValue;
+    safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__resolveVirtualModule(
+        global: &JSGlobalObject,
+        specifier: &BunString,
+        importer: &BunString,
+    ) -> BunString;
+    safe fn Bun__hasOnLoad(
+        global: &JSGlobalObject,
+        namespace_: Option<&BunString>,
+        path: &BunString,
+    ) -> bool;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer

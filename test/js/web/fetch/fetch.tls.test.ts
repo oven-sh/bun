@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -551,6 +551,52 @@ describe.concurrent("fetch-tls", () => {
         timeout,
       );
     }
+
+    // A pooled keep-alive socket is mid-handshake while its server
+    // renegotiates. The TLS setup of a connection (SNI, ALPN, the cached
+    // session) ran again for a request that picked such a socket up, and
+    // BoringSSL aborts the process when a session is offered after the
+    // handshake has begun. The setup also took the session out of the cache.
+    // Node is the peer because BoringSSL cannot send a HelloRequest.
+    it.skipIf(!nodeExe())(
+      "a request that reuses a pooled socket mid-renegotiation does not set up TLS again",
+      async () => {
+        await using peer = Bun.spawn({
+          cmd: [nodeExe()!, join(import.meta.dir, "fetch.tls.renegotiation-peer-fixture.mjs")],
+          env: { ...bunEnv, SERVER_CERT: validTls.cert, SERVER_KEY: validTls.key },
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const { value } = await peer.stdout.getReader().read();
+        const [relayPort, controlPort] = new TextDecoder().decode(value).trim().split(" ");
+
+        await using client = Bun.spawn({
+          cmd: [bunExe(), join(import.meta.dir, "fetch.tls.renegotiation-client-fixture.ts"), relayPort, controlPort],
+          env: { ...bunEnv, CA_CERT: validTls.cert },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          client.stdout.text(),
+          client.stderr.text(),
+          client.exited,
+        ]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual([
+          "first ok",
+          // 22 is a handshake record: the client's renegotiation ClientHello.
+          "held record type 22",
+          // The process died in the pooled pickup.
+          "after the pooled pickup pong",
+          "third ok",
+          // The third request is on a connection of its own, and it resumes
+          // the session that the first one cached.
+          "resumed [false,true]",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
   });
 
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where

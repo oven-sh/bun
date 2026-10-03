@@ -625,7 +625,7 @@ impl ProxyTunnel {
                 return;
             }
         };
-        // The inner connection's form of the `set_inline_reject` call in `HTTPClient::on_open`.
+        // The inner connection's form of the `set_inline_reject` call in `HTTPClient::on_connect`.
         if this.flags.reject_unauthorized {
             wrapper.set_inline_reject();
         }

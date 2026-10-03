@@ -1,10 +1,17 @@
-import { TCPSocketListener } from "bun";
+import { type Socket, TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tls } from "harness";
 import { WebSocket } from "ws";
 
 const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "0");
+
+function makeAccept(key: string): string {
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(key);
+  hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+  return hasher.digest("base64");
+}
 
 describe("WebSocket", () => {
   test("short read on payload length", async () => {
@@ -101,13 +108,6 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocket upgrade split across reads", () => {
-  function makeAccept(key: string): string {
-    const hasher = new Bun.CryptoHasher("sha1");
-    hasher.update(key);
-    hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    return hasher.digest("base64");
-  }
-
   // Unmasked binary frame with a 64-bit length header and `n` zero bytes of payload.
   function bigBinaryFrame(n: number): Uint8Array {
     const header = new Uint8Array(10);
@@ -239,6 +239,215 @@ describe("WebSocket upgrade split across reads", () => {
     } finally {
       ws.close();
     }
+  });
+});
+
+describe("WebSocket reads while a handshake listener spins the event loop", () => {
+  function textFrame(text: string): Uint8Array {
+    const payload = new TextEncoder().encode(text);
+    return Uint8Array.from([0x81, payload.length, ...payload]);
+  }
+
+  // A raw peer that answers the upgrade request with a response head. `peer()` is the accepted socket.
+  //   status: the status line after "HTTP/1.1 ". The default is the 101.
+  //   glued: text frames in the same write as the head, so the client gets both from one read.
+  //   splitHead: the head goes out in two writes, so the client buffers the start of it.
+  function rawServer(
+    options: { secure?: boolean; status?: string; glued?: readonly string[]; splitHead?: boolean } = {},
+  ) {
+    let accepted: Socket<{ request: string }> | undefined;
+    const server = Bun.listen<{ request: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: options.secure ? tls : undefined,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        data(socket, chunk) {
+          if (accepted) return;
+          socket.data.request += chunk.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          accepted = socket;
+          const key = /sec-websocket-key: (.*)\r\n/i.exec(socket.data.request)![1];
+          const head =
+            `HTTP/1.1 ${options.status ?? "101 Switching Protocols"}\r\n` +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${makeAccept(key)}\r\n` +
+            "\r\n";
+          const respond = (from: number) => {
+            socket.write(Buffer.concat([Buffer.from(head.slice(from)), ...(options.glued ?? []).map(textFrame)]));
+            socket.flush();
+          };
+          if (!options.splitHead) return respond(0);
+          const first = "HTTP/1.1 ";
+          socket.write(first);
+          socket.flush();
+          // The client shows no sign of having read `first`. 50 ms puts the rest in a later read.
+          setTimeout(respond, 50, first.length);
+        },
+      },
+    });
+    return {
+      url: `${options.secure ? "wss" : "ws"}://127.0.0.1:${server.port}`,
+      peer: () => accepted!,
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  // For a listener: the peer sends `bytes`, then this waits synchronously for `until`.
+  // `expect().resolves` is not awaited on purpose. It ticks the event loop until the promise
+  // settles, and it throws if the promise rejects.
+  function sendAndWaitSynchronously(
+    peer: Socket<{ request: string }>,
+    bytes: Uint8Array | string,
+    until: Promise<void>,
+  ) {
+    peer.write(bytes);
+    peer.flush();
+    expect(until).resolves.toBeUndefined();
+  }
+
+  describe.each(["ws", "wss"])("%s", protocol => {
+    const secure = protocol === "wss";
+
+    // The 101 head arrives in one read. Parsed without it, as the start of an HTTP response,
+    // a frame of fewer than 9 bytes is a short read and a longer one is malformed.
+    test.each([
+      ["a 3-byte frame", [], "b"],
+      ["a 15-byte frame", [], "after the 101"],
+      ["a frame behind one that came with the 101", ["with the 101"], "after the 101"],
+    ] as const)("the 'upgrade' listener of the ws package lets in %s", async (_, glued, later) => {
+      using server = rawServer({ secure, glued });
+
+      const order: string[] = [];
+      const laterFrameRead = Promise.withResolvers<void>();
+      const upgradeReturned = Promise.withResolvers<void>();
+      const lastFrameRead = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<never>();
+      const ws = new WebSocket(server.url, { tls: { rejectUnauthorized: false } });
+      ws.on("error", failed.reject);
+      ws.on("close", code => failed.reject(new Error(`closed: ${code}`)));
+      ws.on("upgrade", () => {
+        order.push("upgrade");
+        try {
+          const until = Promise.race([laterFrameRead.promise, failed.promise]);
+          sendAndWaitSynchronously(server.peer(), textFrame(later), until);
+          order.push("upgrade returns");
+          upgradeReturned.resolve();
+        } catch (error) {
+          upgradeReturned.reject(error);
+        }
+      });
+      ws.on("open", () => order.push("open"));
+      ws.on("message", data => {
+        order.push(`message ${data}`);
+        if (String(data) === later) laterFrameRead.resolve();
+        if (String(data) === "last") lastFrameRead.resolve();
+      });
+
+      try {
+        await Promise.race([upgradeReturned.promise, failed.promise]);
+        // The client reads this frame after the call that dispatched 'upgrade' is over, so
+        // `order` has everything that call did.
+        server.peer().write(textFrame("last"));
+        server.peer().flush();
+        await Promise.race([lastFrameRead.promise, failed.promise]);
+        expect(order).toEqual([
+          "upgrade",
+          "open",
+          ...glued.map(text => `message ${text}`),
+          `message ${later}`,
+          "upgrade returns",
+          "message last",
+        ]);
+      } finally {
+        ws.close();
+      }
+    });
+
+    // 'handshake' is the native event under 'upgrade'. The ws package listens once, this listener stays.
+    test.each(["one read", "two reads"])(
+      "'handshake' fires once when its listener lets in a frame, head in %s",
+      async segmentation => {
+        using server = rawServer({ secure, splitHead: segmentation === "two reads" });
+
+        const order: string[] = [];
+        const laterFrameRead = Promise.withResolvers<void>();
+        const handshakeReturned = Promise.withResolvers<void>();
+        const lastFrameRead = Promise.withResolvers<void>();
+        const failed = Promise.withResolvers<never>();
+        const ws = new globalThis.WebSocket(server.url, { tls: { rejectUnauthorized: false } });
+        ws.addEventListener("error", event => failed.reject(new Error((event as ErrorEvent).message)));
+        ws.addEventListener("close", event => failed.reject(new Error(`closed: ${event.code} ${event.reason}`)));
+        ws.addEventListener("handshake" as any, () => {
+          order.push("handshake");
+          // A dispatch that repeats must not wait again.
+          if (order.length > 1) return;
+          try {
+            const until = Promise.race([laterFrameRead.promise, failed.promise]);
+            sendAndWaitSynchronously(server.peer(), textFrame("after the 101"), until);
+            order.push("handshake returns");
+            handshakeReturned.resolve();
+          } catch (error) {
+            handshakeReturned.reject(error);
+          }
+        });
+        ws.addEventListener("open", () => order.push("open"));
+        ws.addEventListener("message", event => {
+          order.push(`message ${event.data}`);
+          if (event.data === "after the 101") laterFrameRead.resolve();
+          if (event.data === "last") lastFrameRead.resolve();
+        });
+
+        try {
+          await Promise.race([handshakeReturned.promise, failed.promise]);
+          // As above: `order` has everything the call that dispatched 'handshake' did.
+          server.peer().write(textFrame("last"));
+          server.peer().flush();
+          await Promise.race([lastFrameRead.promise, failed.promise]);
+          expect(order).toEqual(["handshake", "open", "message after the 101", "handshake returns", "message last"]);
+        } finally {
+          ws.close();
+        }
+      },
+    );
+
+    test("a response that is not a 101 fails for that reason when its listener lets in more bytes", async () => {
+      using server = rawServer({ secure, status: "503 Service Unavailable" });
+
+      const order: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const handshakeReturned = Promise.withResolvers<void>();
+      const ws = new globalThis.WebSocket(server.url, { tls: { rejectUnauthorized: false } });
+      ws.addEventListener("handshake" as any, () => {
+        order.push("handshake");
+        // A dispatch that repeats must not wait again.
+        if (order.length > 1) return;
+        try {
+          sendAndWaitSynchronously(server.peer(), "more of the body", closed.promise);
+          order.push("handshake returns");
+          handshakeReturned.resolve();
+        } catch (error) {
+          handshakeReturned.reject(error);
+        }
+      });
+      ws.addEventListener("open", () => order.push("open"));
+      ws.addEventListener("close", event => {
+        order.push(`close ${event.code} ${event.reason}`);
+        closed.resolve();
+        // Without a 'handshake' nothing else settles the promise that the test awaits.
+        if (order[0] !== "handshake") handshakeReturned.reject(new Error(order[0]));
+      });
+
+      try {
+        await handshakeReturned.promise;
+        expect(order).toEqual(["handshake", "close 1002 Expected 101 status code", "handshake returns"]);
+      } finally {
+        ws.close();
+      }
+    });
   });
 });
 

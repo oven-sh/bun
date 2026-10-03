@@ -1,25 +1,19 @@
 --- a/libarchive/archive_read.c
 +++ b/libarchive/archive_read.c
-@@ -643,33 +643,67 @@ _archive_read_next_header2(struct archive *_a, struct archive_entry *entry)
- 	    ARCHIVE_STATE_DATA_RECOVERY,
- 	    "archive_read_next_header");
+@@ -647,29 +647,57 @@ _archive_read_next_header2(struct archiv
+ 	archive_clear_error(&a->archive);
  
--	archive_entry_clear(entry);
--	archive_clear_error(&a->archive);
--
  	/*
 -	 * If client didn't consume entire data, skip any remainder
 -	 * (This is especially important for GNU incremental directories.)
 -	 * A header that failed to parse (DATA_RECOVERY) still needs the
 -	 * same treatment: whatever of its body the format reader left
 -	 * unconsumed must be skipped before we can read the next header.
-+	 * BUN PATCH: when resuming after an ARCHIVE_RETRY from a
-+	 * non-blocking source, the format reader has already
-+	 * populated `entry` from consumed extension headers (pax,
-+	 * GNU long name/link). Clearing it here would discard that
-+	 * work, and since no data has been read for the pending
-+	 * entry there is nothing to skip. Skip straight to the
-+	 * format reader which will pick up where it left off.
++	 * BUN PATCH: a format reader sets read_header_in_progress
++	 * when a non-blocking source ran dry inside a header (see
++	 * tar_read_ahead() in the tar reader). It consumed nothing,
++	 * and the same entry continues: there is no data to skip and
++	 * the entry is already counted.
  	 */
 -	if (a->archive.state == ARCHIVE_STATE_DATA ||
 -	    a->archive.state == ARCHIVE_STATE_DATA_RECOVERY) {
@@ -31,9 +25,6 @@
 -			a->archive.state = ARCHIVE_STATE_FATAL;
 -			return (ARCHIVE_FATAL);
 +	if (!a->read_header_in_progress) {
-+		archive_entry_clear(entry);
-+		archive_clear_error(&a->archive);
-+
 +		/*
 +		 * If client didn't consume entire data, skip any remainder
 +		 * (This is especially important for GNU incremental directories.)
@@ -75,21 +66,17 @@
 +	}
  	r2 = (a->format->read_header)(a, entry);
 +	/*
-+	 * BUN PATCH: the format reader sets read_header_in_progress
-+	 * itself when a non-blocking source yields mid-header (see
-+	 * `bun_retry` in the tar reader). Clear it on any terminal
-+	 * result so the next call runs the full reset above. An
-+	 * ARCHIVE_RETRY that did not set the flag — upstream tar's
-+	 * pre-existing damaged-block skip — therefore behaves exactly
-+	 * as upstream: the next call re-runs archive_entry_clear /
-+	 * archive_clear_error.
++	 * BUN PATCH: the flag holds only across that kind of
++	 * ARCHIVE_RETRY. The tar reader clears it for upstream's own
++	 * damaged-block ARCHIVE_RETRY, so the next call starts a new
++	 * entry exactly as upstream.
 +	 */
 +	if (r2 != ARCHIVE_RETRY)
 +		a->read_header_in_progress = 0;
  
  	/*
  	 * EOF and FATAL are persistent at this layer.  By
-@@ -986,6 +1020,14 @@ archive_read_data_skip(struct archive *_a)
+@@ -986,6 +1014,14 @@ archive_read_data_skip(struct archive *_
  	if (r == ARCHIVE_EOF)
  		r = ARCHIVE_OK;
  
@@ -104,7 +91,7 @@
  	if (r == ARCHIVE_FATAL)
  		a->archive.state = ARCHIVE_STATE_FATAL;
  	else
-@@ -1447,6 +1489,33 @@ __archive_read_filter_ahead(struct archive_read_filter *f,
+@@ -1447,6 +1483,33 @@ __archive_read_filter_ahead(struct archi
  			}
  			bytes_read = (f->vtable->read)(f,
  			    &f->client_buff);
@@ -138,7 +125,7 @@
  			if (bytes_read < 0) {		/* Read error. */
  				f->client_total = f->client_avail = 0;
  				f->client_next =
-@@ -1641,7 +1710,14 @@ advance_file_pointer(struct archive_read_filter *f, int64_t request)
+@@ -1641,7 +1704,14 @@ advance_file_pointer(struct archive_read
  		bytes_read = (f->vtable->read)(f, &f->client_buff);
  		if (bytes_read < 0) {
  			f->client_buff = NULL;
@@ -156,19 +143,16 @@
  
 --- a/libarchive/archive_read_private.h
 +++ b/libarchive/archive_read_private.h
-@@ -189,6 +189,18 @@ struct archive_read {
+@@ -189,6 +189,15 @@ struct archive_read {
  	 */
  	int64_t		  entry_bytes_declared;
  
 +	/*
-+	 * BUN PATCH: set by the format's read_header callback when it
-+	 * returns ARCHIVE_RETRY from a non-blocking source and wants
-+	 * the next call to skip archive_entry_clear() so that
-+	 * attributes already populated by consumed extension headers
-+	 * (pax, GNU long name/link, etc.) survive the resume. Format
-+	 * readers that return ARCHIVE_RETRY without setting this —
-+	 * e.g. upstream tar's damaged-block skip — get the original
-+	 * reset-everything semantics on re-entry.
++	 * BUN PATCH: set by a format's read_header callback when it
++	 * returns ARCHIVE_RETRY because a non-blocking source ran dry
++	 * before the header consumed anything. The next
++	 * archive_read_next_header() call then continues the same
++	 * entry: it does not skip data or count the entry again.
 +	 */
 +	int		  read_header_in_progress;
 +
@@ -191,7 +175,7 @@
  };
  
  /* Gzip Filter. */
-@@ -140,8 +147,14 @@ peek_at_header(struct archive_read_filter *f, int *pbits,
+@@ -140,8 +147,14 @@ peek_at_header(struct archive_read_filte
  	 * is all fixed layout. */
  	len = 10;
  	p = __archive_read_filter_ahead(f, len, &avail);
@@ -207,7 +191,7 @@
  	/* We only support deflation- third byte must be 0x08. */
  	if (memcmp(p, "\x1F\x8B\x08", 3) != 0)
  		return (0);
-@@ -164,7 +177,7 @@ peek_at_header(struct archive_read_filter *f, int *pbits,
+@@ -164,7 +177,7 @@ peek_at_header(struct archive_read_filte
  	if (header_flags & 4) {
  		p = __archive_read_filter_ahead(f, len + 2, &avail);
  		if (p == NULL)
@@ -216,7 +200,7 @@
  		len += archive_le16dec(p + len);
  		len += 2;
  	}
-@@ -184,7 +197,7 @@ peek_at_header(struct archive_read_filter *f, int *pbits,
+@@ -184,7 +197,7 @@ peek_at_header(struct archive_read_filte
  				    len, &avail);
  			}
  			if (p == NULL)
@@ -225,7 +209,7 @@
  		} while (p[len - 1] != 0);
  
  #ifdef HAVE_ZLIB_H
-@@ -208,7 +221,7 @@ peek_at_header(struct archive_read_filter *f, int *pbits,
+@@ -208,7 +221,7 @@ peek_at_header(struct archive_read_filte
  				    len, &avail);
  			}
  			if (p == NULL)
@@ -234,7 +218,7 @@
  		} while (p[len - 1] != 0);
  	}
  
-@@ -216,7 +229,7 @@ peek_at_header(struct archive_read_filter *f, int *pbits,
+@@ -216,7 +229,7 @@ peek_at_header(struct archive_read_filte
  	if ((header_flags & 2)) {
  		p = __archive_read_filter_ahead(f, len + 2, &avail);
  		if (p == NULL)
@@ -243,7 +227,7 @@
  #if 0
  	int hcrc = ((int)p[len + 1] << 8) | (int)p[len];
  	int crc = /* XXX TODO: Compute header CRC. */;
-@@ -243,7 +256,16 @@ gzip_bidder_bid(struct archive_read_filter_bidder *b,
+@@ -243,7 +256,16 @@ gzip_bidder_bid(struct archive_read_filt
  
  	(void)b; /* UNUSED */
  
@@ -283,7 +267,7 @@
  	if (len == 0)
  		return (ARCHIVE_EOF);
  	__archive_read_filter_consume(f->upstream, len);
-@@ -346,22 +375,16 @@ consume_header(struct archive_read_filter *f)
+@@ -346,22 +375,16 @@ consume_header(struct archive_read_filte
  	/* Initialize CRC accumulator. */
  	gzip->crc = crc32(0L, NULL, 0);
  
@@ -316,11 +300,12 @@
  	ret = inflateInit2(&(gzip->stream),
  	    -15 /* Don't check for zlib header */);
  
-@@ -402,20 +425,33 @@ consume_trailer(struct archive_read_filter *f)
+@@ -402,20 +425,33 @@ consume_trailer(struct archive_read_filt
  {
  	struct gzip *gzip = f->data;
  	const unsigned char *p;
--
++	ssize_t avail;
+ 
 -	gzip->in_stream = 0;
 -	switch (inflateEnd(&(gzip->stream))) {
 -	case Z_OK:
@@ -330,8 +315,6 @@
 -		    ARCHIVE_ERRNO_MISC,
 -		    "Failed to clean up gzip decompressor");
 -		return (ARCHIVE_FATAL);
-+	ssize_t avail;
-+
 +	/*
 +	 * BUN PATCH: inflateEnd()/in_stream=0 are only safe to run
 +	 * once. If a previous consume_trailer() attempt was
@@ -361,7 +344,7 @@
  	if (p == NULL)
  		return (ARCHIVE_FATAL);
  
-@@ -423,6 +459,7 @@ consume_trailer(struct archive_read_filter *f)
+@@ -423,6 +459,7 @@ consume_trailer(struct archive_read_filt
  
  	/* We've verified the trailer, so consume it now. */
  	__archive_read_filter_consume(f->upstream, 8);
@@ -369,7 +352,7 @@
  
  	return (ARCHIVE_OK);
  }
-@@ -441,6 +478,18 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+@@ -441,6 +478,18 @@ gzip_filter_read(struct archive_read_fil
  
  	/* Try to fill the output buffer. */
  	while (gzip->stream.avail_out > 0 && !gzip->eof) {
@@ -388,7 +371,7 @@
  		/* If we're not in a stream, read a header
  		 * and initialize the decompression library. */
  		if (!gzip->in_stream) {
-@@ -449,6 +498,8 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+@@ -449,6 +498,8 @@ gzip_filter_read(struct archive_read_fil
  				gzip->eof = 1;
  				break;
  			}
@@ -397,7 +380,7 @@
  			if (ret < ARCHIVE_OK)
  				return (ret);
  		}
-@@ -459,6 +510,14 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+@@ -459,6 +510,14 @@ gzip_filter_read(struct archive_read_fil
  		gzip->stream.next_in = (unsigned char *)(uintptr_t)
  		    __archive_read_filter_ahead(f->upstream, 1, &avail_in);
  		if (gzip->stream.next_in == NULL) {
@@ -412,7 +395,7 @@
  			archive_set_error(&f->archive->archive,
  			    ARCHIVE_ERRNO_MISC,
  			    "truncated gzip input");
-@@ -485,6 +544,8 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+@@ -485,6 +544,8 @@ gzip_filter_read(struct archive_read_fil
  			/* Consume the stream trailer; release the
  			 * decompression library. */
  			ret = consume_trailer(f);
@@ -421,7 +404,7 @@
  			if (ret < ARCHIVE_OK)
  				return (ret);
  			break;
-@@ -504,6 +565,24 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+@@ -504,6 +565,24 @@ gzip_filter_read(struct archive_read_fil
  	else
  		*p = gzip->out_block;
  	return (decompressed);
@@ -448,43 +431,157 @@
  /*
 --- a/libarchive/archive_read_support_format_tar.c
 +++ b/libarchive/archive_read_support_format_tar.c
-@@ -156,6 +156,23 @@ struct tar {
+@@ -156,6 +156,22 @@ struct tar {
  	int			 read_concatenated_archives;
  	int			 default_inode;
  	int			 default_dev;
 +
 +	/*
-+	 * BUN PATCH: resume state for non-blocking sources.
-+	 *
-+	 * `tar_read_header` walks a variable-length sequence of
-+	 * extension headers (pax 'x'/'g', GNU 'L'/'K', etc.) before
-+	 * the real ustar header. When the underlying reader returns
-+	 * ARCHIVE_RETRY part-way through that walk, we must remember
-+	 * which extensions have already been parsed so the next call
-+	 * picks up at the right header instead of re-running
-+	 * `tar_reset_header_state` and re-bidding bytes that were
-+	 * already consumed.
++	 * BUN PATCH: header replay state for non-blocking sources.
++	 * See tar_read_ahead().
 +	 */
-+	int			 header_in_progress;
-+	int32_t			 header_seen;
-+	int			 header_eof_fatal;
-+	int			 header_err;
++	int			 nonblocking;
++	int64_t			 header_offset;
++	int64_t			 header_avail;
++	size_t			 header_need;
++	int			 header_deferring;
++	int			 header_would_block;
++	int			 header_replay;
++	int			 header_saved_inode;
++	int			 header_saved_dev;
++	int64_t			 header_saved_sparse_offset;
++	int64_t			 header_saved_sparse_numbytes;
  };
  
  /* Track which size fields were present in the headers */
-@@ -232,6 +249,8 @@ static int64_t	tar_atol(const char *, size_t);
- static int64_t	tar_atol10(const char *, size_t);
- static int64_t	tar_atol256(const char *, size_t);
- static int64_t	tar_atol8(const char *, size_t);
-+static int	tar_consume_retryable(struct archive_read *, struct tar *,
-+		    int64_t);
- static int	tar_read_header(struct archive_read *, struct tar *,
- 		    struct archive_entry *, int64_t *);
- static int	tohex(int c);
-@@ -474,6 +493,53 @@ archive_read_format_tar_options(struct archive_read *a,
- 	return (ARCHIVE_WARN);
- }
+@@ -251,6 +267,186 @@ static const size_t fflags_limit = 512;
+ static const size_t acl_limit = 131072; /* Longest textual ACL: 128kiB */
+ static const int64_t entry_limit = 0xfffffffffffffffLL; /* 2^60 bytes = 1 ExbiByte */
  
++/*
++ * BUN PATCH: header replay for non-blocking sources.
++ *
++ * A client read callback that is fed incrementally (tarball bytes
++ * that arrive from the network during `bun install`) answers
++ * ARCHIVE_RETRY when it has no bytes yet. Such a client sets the
++ * "nonblocking" option. Without it nothing below runs, and a header
++ * is read exactly as upstream reads it. The header of one entry is
++ * a sequence of blocks: pax 'x'/'g' and GNU 'L'/'K' extensions, the
++ * header itself, GNU sparse extension blocks, a PAX 1.0 sparse map,
++ * an AppleDouble blob. The source can run dry inside any of them.
++ *
++ * While a header is read with the option set, every
++ * __archive_read_ahead() and __archive_read_consume() in this file
++ * goes through the two functions below. A consume only moves `header_offset`, so the whole
++ * sequence stays in the filter's buffer. When the source runs dry,
++ * archive_read_format_tar_read_header() forgets what it parsed and
++ * returns ARCHIVE_RETRY, and the next call parses the sequence again
++ * from its first byte. A complete parse consumes the sequence at
++ * once. The readers are unchanged: a dry read looks like a short read
++ * to them, and they unwind through their error paths.
++ *
++ * A sequence longer than TAR_HEADER_REPLAY_LIMIT is consumed as it
++ * is read from that point on, which bounds the buffer. A dry read
++ * past that point is a truncation error.
++ */
++#define TAR_HEADER_REPLAY_LIMIT ((int64_t)32 * 1024 * 1024)
++
++static void
++tar_header_commit(struct archive_read *a, struct tar *tar)
++{
++	/* Every byte below header_offset is buffered, so this cannot
++	 * reach the client reader. */
++	if (tar->header_offset > 0)
++		__archive_read_consume(a, tar->header_offset);
++	tar->header_offset = 0;
++	tar->header_deferring = 0;
++}
++
++/*
++ * Consume what this header has used so far and keep deferring. The
++ * caller knows that a replay can start from here.
++ */
++static void
++tar_header_checkpoint(struct archive_read *a, struct tar *tar)
++{
++	if (tar->header_deferring && tar->header_offset > 0) {
++		__archive_read_consume(a, tar->header_offset);
++		tar->header_avail -= tar->header_offset;
++		tar->header_offset = 0;
++	}
++}
++
++static const void *
++tar_read_ahead(struct archive_read *a, size_t min, ssize_t *avail)
++{
++	struct tar *tar = a->format->data;
++	const char *p;
++	ssize_t got;
++
++	if (tar->header_would_block) {
++		if (avail != NULL)
++			*avail = ARCHIVE_RETRY;
++		return (NULL);
++	}
++	if (min > (size_t)(TAR_HEADER_REPLAY_LIMIT - tar->header_offset)) {
++		tar_header_commit(a, tar);
++		return (__archive_read_ahead(a, min, avail));
++	}
++	p = __archive_read_ahead(a, (size_t)tar->header_offset + min, &got);
++	if (p == NULL) {
++		if (got == ARCHIVE_RETRY) {
++			tar->header_would_block = 1;
++			tar->header_need = (size_t)tar->header_offset + min;
++		} else if (got >= 0) {
++			/* End of input: report what is left after the
++			 * bytes this header has already used. */
++			got -= (ssize_t)tar->header_offset;
++		}
++		if (avail != NULL)
++			*avail = got;
++		return (NULL);
++	}
++	if (got > tar->header_avail)
++		tar->header_avail = got;
++	if (avail != NULL)
++		*avail = got - (ssize_t)tar->header_offset;
++	return (p + tar->header_offset);
++}
++
++static int64_t
++tar_read_consume(struct archive_read *a, int64_t request)
++{
++	struct tar *tar = a->format->data;
++	ssize_t got;
++
++	if (request < 0 || tar->header_would_block)
++		return (ARCHIVE_FATAL);
++	if (request > TAR_HEADER_REPLAY_LIMIT - tar->header_offset) {
++		tar_header_commit(a, tar);
++		return (__archive_read_consume(a, request));
++	}
++	if (tar->header_offset + request > tar->header_avail) {
++		/* A skip over bytes that no reader looked at. Make
++		 * sure they are buffered. */
++		if (__archive_read_ahead(a,
++		    (size_t)(tar->header_offset + request), &got) == NULL) {
++			if (got == ARCHIVE_RETRY) {
++				tar->header_would_block = 1;
++				tar->header_need =
++				    (size_t)(tar->header_offset + request);
++				return (ARCHIVE_FATAL);
++			}
++			/* End of input or a read error: the real
++			 * consume reports it. */
++			tar_header_commit(a, tar);
++			return (__archive_read_consume(a, request));
++		}
++		tar->header_avail = got;
++	}
++	tar->header_offset += request;
++	return (request);
++}
++
 +/*
 + * BUN PATCH: consume up to `request` bytes in a way that is safe to
 + * resume from a non-blocking source. Each iteration uses
@@ -493,7 +590,7 @@
 + * the consume never has to invoke the client reader itself. On
 + * ARCHIVE_RETRY the remaining amount is written back into
 + * `tar->entry_bytes_remaining` / `tar->entry_padding` so the next
-+ * call (via archive_read_next_header → read_data_skip, or another
++ * call (via archive_read_next_header -> read_data_skip, or another
 + * read_data_block) continues from the right offset.
 + */
 +static int
@@ -532,84 +629,110 @@
 +	return (ARCHIVE_OK);
 +}
 +
- /* utility function- this exists to centralize the logic of tracking
-  * how much unconsumed data we have floating around, and to consume
-  * anything outstanding since we're going to do read_aheads
-@@ -530,32 +596,52 @@ archive_read_format_tar_read_header(struct archive_read *a,
- 	size_t l;
- 	int64_t unconsumed = 0;
- 
--	/* Assign default device/inode values. */
--	archive_entry_set_dev(entry, 1 + tar->default_dev); /* Don't use zero. */
--	archive_entry_set_ino(entry, ++tar->default_inode); /* Don't use zero. */
--	/* Limit generated st_ino number to 16 bits. */
--	if (tar->default_inode >= 0xffff) {
--		++tar->default_dev;
--		tar->default_inode = 0;
--	}
--
--	tar->entry_offset = 0;
--	gnu_clear_sparse_list(tar);
--	tar->size_fields = 0; /* We don't have any size info yet */
--
--	/* Setup default string conversion. */
--	tar->sconv = tar->opt_sconv;
--	if (tar->sconv == NULL) {
--		if (!tar->init_default_conversion) {
--			tar->sconv_default =
--			    archive_string_default_conversion_for_read(&(a->archive));
--			tar->init_default_conversion = 1;
-+	/*
-+	 * BUN PATCH: when resuming after an ARCHIVE_RETRY from a
-+	 * non-blocking source, skip the fresh-entry initialisation
-+	 * below. Extension headers parsed before the retry have
-+	 * already written into `entry` and `tar->entry_*`; repeating
-+	 * these resets would discard that work.
-+	 */
-+	if (!tar->header_in_progress) {
-+		/* Assign default device/inode values. */
-+		archive_entry_set_dev(entry, 1 + tar->default_dev); /* Don't use zero. */
-+		archive_entry_set_ino(entry, ++tar->default_inode); /* Don't use zero. */
-+		/* Limit generated st_ino number to 16 bits. */
-+		if (tar->default_inode >= 0xffff) {
-+			++tar->default_dev;
-+			tar->default_inode = 0;
-+		}
++#define __archive_read_ahead(a, min, avail) \
++	(((struct tar *)(a)->format->data)->header_deferring \
++	    ? tar_read_ahead((a), (min), (avail)) \
++	    : (__archive_read_ahead)((a), (min), (avail)))
++#define __archive_read_consume(a, request) \
++	(((struct tar *)(a)->format->data)->header_deferring \
++	    ? tar_read_consume((a), (request)) \
++	    : (__archive_read_consume)((a), (request)))
 +
-+		tar->entry_offset = 0;
-+		gnu_clear_sparse_list(tar);
-+		tar->size_fields = 0; /* We don't have any size info yet */
-+
-+		/* Setup default string conversion. */
-+		tar->sconv = tar->opt_sconv;
-+		if (tar->sconv == NULL) {
-+			if (!tar->init_default_conversion) {
-+				tar->sconv_default =
-+				    archive_string_default_conversion_for_read(&(a->archive));
-+				tar->init_default_conversion = 1;
-+			}
-+			tar->sconv = tar->sconv_default;
- 		}
--		tar->sconv = tar->sconv_default;
+ int
+ archive_read_support_format_gnutar(struct archive *a)
+ {
+@@ -466,6 +662,10 @@ archive_read_format_tar_options(struct a
+ 	} else if (strcmp(key, "read_concatenated_archives") == 0) {
+ 		tar->read_concatenated_archives = (val != NULL && val[0] != 0);
+ 		return (ARCHIVE_OK);
++	} else if (strcmp(key, "nonblocking") == 0) {
++		/* BUN PATCH: see tar_read_ahead(). */
++		tar->nonblocking = (val != NULL && val[0] != 0);
++		return (ARCHIVE_OK);
  	}
  
- 	r = tar_read_header(a, tar, entry, &unconsumed);
- 
-+	/*
-+	 * BUN PATCH: a non-blocking yield leaves `header_in_progress`
-+	 * set; in that case `*unconsumed == 0` (nothing pending that
-+	 * isn't already flushed) so the caller can yield and re-enter
-+	 * later. Upstream's damaged-block ARCHIVE_RETRY clears the
-+	 * flag and falls through to the original post-read handling
-+	 * below (which is what upstream did).
-+	 */
-+	if (r == ARCHIVE_RETRY && tar->header_in_progress)
-+		return (ARCHIVE_RETRY);
+ 	/* Note: The "warn" return is just to inform the options
+@@ -529,6 +729,38 @@ archive_read_format_tar_read_header(stru
+ 	int r;
+ 	size_t l;
+ 	int64_t unconsumed = 0;
++	ssize_t avail;
 +
++	/*
++	 * BUN PATCH: see tar_read_ahead(). After a dry read, start
++	 * again from the state this entry started with. The four
++	 * saved fields are the ones a header reads before it writes
++	 * them.
++	 */
++	if (tar->nonblocking) {
++		if (tar->header_replay) {
++			tar->default_inode = tar->header_saved_inode;
++			tar->default_dev = tar->header_saved_dev;
++			tar->sparse_offset = tar->header_saved_sparse_offset;
++			tar->sparse_numbytes =
++			    tar->header_saved_sparse_numbytes;
++			/* Parse again only when the bytes that were
++			 * missing are there. */
++			if (__archive_read_ahead(a, tar->header_need,
++			    &avail) == NULL && avail == ARCHIVE_RETRY)
++				return (ARCHIVE_RETRY);
++			tar->header_replay = 0;
++		} else {
++			tar->header_saved_inode = tar->default_inode;
++			tar->header_saved_dev = tar->default_dev;
++			tar->header_saved_sparse_offset = tar->sparse_offset;
++			tar->header_saved_sparse_numbytes =
++			    tar->sparse_numbytes;
++		}
++		tar->header_offset = 0;
++		tar->header_avail = 0;
++		tar->header_deferring = 1;
++	}
+ 
+ 	/* Assign default device/inode values. */
+ 	archive_entry_set_dev(entry, 1 + tar->default_dev); /* Don't use zero. */
+@@ -559,6 +791,29 @@ archive_read_format_tar_read_header(stru
  	tar_flush_unconsumed(a, &unconsumed);
  
  	/*
-@@ -629,9 +715,20 @@ archive_read_format_tar_read_data(struct archive_read *a,
++	 * BUN PATCH: the source ran dry somewhere in this header.
++	 * Nothing was consumed. Drop what was parsed, and tell
++	 * archive_read_next_header() that the same entry continues.
++	 * Any other result, upstream's damaged-block ARCHIVE_RETRY
++	 * included, ends the entry: the next call starts a new one.
++	 */
++	if (tar->nonblocking) {
++		if (tar->header_would_block) {
++			tar->header_would_block = 0;
++			tar->header_deferring = 0;
++			tar->header_offset = 0;
++			tar->header_replay = 1;
++			tar->entry_bytes_remaining = 0;
++			tar->entry_padding = 0;
++			gnu_clear_sparse_list(tar);
++			a->read_header_in_progress = 1;
++			return (ARCHIVE_RETRY);
++		}
++		tar_header_commit(a, tar);
++		a->read_header_in_progress = 0;
++	}
++
++	/*
+ 	 * "non-sparse" files are really just sparse files with
+ 	 * a single block.
+ 	 */
+@@ -601,6 +856,10 @@ archive_read_format_tar_read_header(stru
+ 	return (r);
+ }
+ 
++/* BUN PATCH: no header is in progress in the two functions below. */
++#undef __archive_read_ahead
++#undef __archive_read_consume
++
+ static int
+ archive_read_format_tar_read_data(struct archive_read *a,
+     const void **buff, size_t *size, int64_t *offset)
+@@ -629,9 +888,20 @@ archive_read_format_tar_read_data(struct
  			int64_t request = tar->entry_bytes_remaining +
  			    tar->entry_padding;
  
@@ -631,7 +754,7 @@
  			*buff = NULL;
  			*size = 0;
  			*offset = tar->disk_size;
-@@ -640,6 +737,15 @@ archive_read_format_tar_read_data(struct archive_read *a,
+@@ -640,6 +910,15 @@ archive_read_format_tar_read_data(struct
  
  		*buff = __archive_read_ahead(a, 1, &bytes_read);
  		if (*buff == NULL) {
@@ -647,7 +770,7 @@
  			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
  			    "Truncated tar archive"
  			    " detected while reading data");
-@@ -669,15 +775,26 @@ archive_read_format_tar_skip(struct archive_read *a)
+@@ -669,15 +948,26 @@ archive_read_format_tar_skip(struct arch
  {
  	struct tar *tar = a->format->data;
  	int64_t request;
@@ -676,333 +799,36 @@
  	tar->entry_padding = 0;
  
  	/* Free the sparse list. */
-@@ -711,14 +828,14 @@ tar_read_header(struct archive_read *a, struct tar *tar,
-     struct archive_entry *entry, int64_t *unconsumed)
- {
- 	ssize_t bytes;
--	int err = ARCHIVE_OK, err2;
--	int eof_fatal = 0; /* EOF is okay at some points... */
-+	int err, err2;
-+	int eof_fatal; /* EOF is okay at some points... */
- 	const char *h;
- 	const struct archive_entry_header_ustar *header;
- 	const struct archive_entry_header_gnutar *gnuheader;
- 
- 	/* Bitmask of what header types we've seen. */
--	int32_t seen_headers = 0;
-+	int32_t seen_headers;
- 	static const int32_t seen_A_header = 1;
- 	static const int32_t seen_g_header = 2;
- 	static const int32_t seen_K_header = 4;
-@@ -727,7 +844,24 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 	static const int32_t seen_x_header = 32; /* Also X */
- 	static const int32_t seen_mac_metadata = 512;
- 
--	tar_reset_header_state(tar);
-+	/*
-+	 * BUN PATCH: `header_in_progress` persists the header loop's
-+	 * locals across an ARCHIVE_RETRY so a non-blocking source can
-+	 * resume mid-sequence. On a fresh entry we initialise them
-+	 * exactly as before; on resume we restore and skip the reset
-+	 * that would otherwise wipe pax/GNU long-name data already
-+	 * parsed into `tar->entry_*`.
-+	 */
-+	if (!tar->header_in_progress) {
-+		tar_reset_header_state(tar);
-+		tar->header_in_progress = 1;
-+		tar->header_seen = 0;
-+		tar->header_eof_fatal = 0;
-+		tar->header_err = ARCHIVE_OK;
-+	}
-+	seen_headers = tar->header_seen;
-+	eof_fatal = tar->header_eof_fatal;
-+	err = tar->header_err;
- 
- 	/* Ensure format is set. */
- 	if (a->archive.archive_format_name == NULL) {
-@@ -735,6 +869,17 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 		a->archive.archive_format_name = "tar";
- 	}
- 
-+/*
-+ * BUN PATCH: every terminal exit from this function (anything other
-+ * than the non-blocking retry path) must clear `header_in_progress`
-+ * so the next entry starts with fresh `seen_headers` / header state.
-+ * The macro keeps the existing `return (X)` sites readable.
-+ */
-+#define TAR_HEADER_RETURN(rc) do { \
-+		tar->header_in_progress = 0; \
-+		return (rc); \
-+	} while (0)
-+
- 	/*
- 	 * TODO: Write global/default pax options into
- 	 * 'entry' struct here before overwriting with
-@@ -747,11 +892,22 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 		/* Find the next valid header record. */
- 		while (1) {
- 			if (tar_flush_unconsumed(a, unconsumed) != ARCHIVE_OK) {
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 
- 			/* Read 512-byte header record */
- 			h = __archive_read_ahead(a, 512, &bytes);
-+			if (h == NULL && bytes == ARCHIVE_RETRY) {
-+				/*
-+				 * BUN PATCH: non-blocking source ran
-+				 * out mid-header. Nothing has been
-+				 * added to `*unconsumed` yet this
-+				 * iteration, so save loop state and
-+				 * let the caller try again once more
-+				 * input arrives.
-+				 */
-+				goto bun_retry;
-+			}
- 			if (bytes == 0) { /* EOF at a block boundary. */
- 				if (eof_fatal) {
- 					/* We've read a special header already;
-@@ -759,9 +915,9 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 					 * a premature EOF. */
- 					archive_set_error(&a->archive, EINVAL,
- 							  "Damaged tar archive (end-of-archive within a sequence of headers)");
--					return (ARCHIVE_FATAL);
-+					TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 				} else {
--					return (ARCHIVE_EOF);
-+					TAR_HEADER_RETURN(ARCHIVE_EOF);
- 				}
- 			}
- 			if (h == NULL) {  /* Short block at EOF; this is bad. */
-@@ -769,7 +925,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 				    ARCHIVE_ERRNO_FILE_FORMAT,
- 				    "Truncated tar archive"
- 				    " detected while reading next header");
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			*unconsumed += 512;
- 
-@@ -789,22 +945,35 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 						__archive_read_consume(a, 512);
- 
- 				archive_clear_error(&a->archive);
--				return (ARCHIVE_EOF);
-+				TAR_HEADER_RETURN(ARCHIVE_EOF);
- 			}
- 
- 			/* This is NOT a null block, so it must be a valid header. */
- 			if (!checksum(a, h)) {
- 				if (tar_flush_unconsumed(a, unconsumed) != ARCHIVE_OK) {
--					return (ARCHIVE_FATAL);
-+					TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 				}
- 				archive_set_error(&a->archive, EINVAL,
- 						  "Damaged tar archive (bad header checksum)");
- 				/* If we've read some critical information (pax headers, etc)
- 				 * and _then_ see a bad header, we can't really recover. */
- 				if (eof_fatal) {
--					return (ARCHIVE_FATAL);
-+					TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 				} else {
--					return (ARCHIVE_RETRY);
-+					/*
-+					 * BUN PATCH: upstream's
-+					 * "damaged block, skip and retry
-+					 * the next one" — NOT a
-+					 * non-blocking yield. The next
-+					 * call must re-run the full
-+					 * state reset (archive_entry_clear,
-+					 * tar_reset_header_state) exactly
-+					 * as upstream, so clear both
-+					 * in-progress flags instead of
-+					 * routing through bun_retry.
-+					 */
-+					a->read_header_in_progress = 0;
-+					TAR_HEADER_RETURN(ARCHIVE_RETRY);
- 				}
- 			}
- 			break;
-@@ -812,12 +981,73 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 
- 		/* Determine the format variant. */
- 		header = (const struct archive_entry_header_ustar *)h;
-+
-+		/*
-+		 * BUN PATCH: extension headers ('A','g','K','L','V',
-+		 * 'x','X') are followed by a payload whose length is
-+		 * encoded in this block's `size` field. The handlers
-+		 * below flush `*unconsumed` (this 512-byte block) and
-+		 * then __archive_read_ahead() the payload; if that
-+		 * ahead were to return ARCHIVE_RETRY after the flush,
-+		 * the block would already be consumed and the resume
-+		 * would read payload bytes as a header.
-+		 *
-+		 * To keep the handlers unchanged, pre-buffer the
-+		 * header+payload here *before* the flush. On retry we
-+		 * roll back `*unconsumed` so nothing is consumed and
-+		 * the next attempt re-reads this exact block from the
-+		 * filter's buffer.
-+		 */
-+		switch (header->typeflag[0]) {
-+		case 'A': case 'g': case 'K': case 'L':
-+		case 'V': case 'X': case 'x': {
-+			int64_t ext_size = tar_atol(header->size,
-+			    sizeof(header->size));
-+			/* Bound the prebuffer before rounding
-+			 * (tar_atol saturates to INT64_MAX on
-+			 * overflow, so adding 511 first would be UB).
-+			 * A corrupted stream can produce garbage that
-+			 * decodes as an extension header with a
-+			 * multi-GB `size`; retrying `ahead(512+huge)`
-+			 * every chunk would never make progress. Real
-+			 * pax/GNU extension payloads are path-length
-+			 * bounded (a few KB), so anything beyond this
-+			 * is handed to the handler below, which will
-+			 * fail cleanly on its own
-+			 * `__archive_read_ahead`. */
-+			if (ext_size < 0 || ext_size > (int64_t)(1u << 20))
-+				break;
-+			int64_t ext_padded = (ext_size + 511) & ~511;
-+			if (__archive_read_ahead(a,
-+			    (size_t)(512 + ext_padded), &bytes) == NULL &&
-+			    bytes == ARCHIVE_RETRY) {
-+				*unconsumed -= 512;
-+				goto bun_retry;
-+			}
-+			/* Re-establish `h`: the filter may have
-+			 * memmoved its buffer to satisfy the larger
-+			 * request. A fatal error from the larger
-+			 * read (alloc failure, downstream I/O error)
-+			 * leaves `filter->fatal` set, so this read
-+			 * can return NULL even though the original
-+			 * 512 bytes are still buffered; bail cleanly
-+			 * rather than dereferencing `header` below. */
-+			h = __archive_read_ahead(a, 512, NULL);
-+			if (h == NULL)
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
-+			header = (const struct archive_entry_header_ustar *)h;
-+			break;
-+		}
-+		default:
-+			break;
-+		}
-+
- 		switch(header->typeflag[0]) {
- 		case 'A': /* Solaris tar ACL */
- 			if (seen_headers & seen_A_header) {
- 				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
- 						  "Redundant 'A' header");
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			seen_headers |= seen_A_header;
- 			a->archive.archive_format = ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE;
-@@ -828,7 +1058,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			if (seen_headers & seen_g_header) {
- 				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
- 						  "Redundant 'g' header");
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			seen_headers |= seen_g_header;
- 			a->archive.archive_format = ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE;
-@@ -872,7 +1102,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			if (seen_headers & seen_x_header) {
- 				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
- 						  "Redundant 'X'/'x' header");
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			seen_headers |= seen_x_header;
- 			a->archive.archive_format = ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE;
-@@ -884,7 +1114,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			if (seen_headers & seen_x_header) {
- 				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
- 						  "Redundant 'x' header");
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			seen_headers |= seen_x_header;
- 			a->archive.archive_format = ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE;
-@@ -911,7 +1141,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			err = err_combine(err, err2);
- 			/* We return warnings or success as-is.  Anything else is fatal. */
- 			if (err < ARCHIVE_WARN) {
--				return (ARCHIVE_FATAL);
-+				TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 			}
- 			/* Filename of the form `._filename` is an AppleDouble
- 			 * extension entry.  The body is the macOS metadata blob;
-@@ -930,7 +1160,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			    && is_mac_metadata_entry(entry)) {
- 				err2 = read_mac_metadata_blob(a, entry, unconsumed);
- 				if (err2 < ARCHIVE_WARN) {
--					return (ARCHIVE_FATAL);
-+					TAR_HEADER_RETURN(ARCHIVE_FATAL);
- 				}
- 				err = err_combine(err, err2);
- 				/* Note: Other headers can appear again. */
-@@ -945,7 +1175,7 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 				if (tar->filetype != 'S' && tar->filetype != '0') {
- 					archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
- 							  "Non-regular file cannot be sparse");
--					return (ARCHIVE_WARN);
-+					TAR_HEADER_RETURN(ARCHIVE_WARN);
- 				} else if (tar->sparse_gnu_major == 0 &&
- 				    tar->sparse_gnu_minor == 0) {
- 					/* Sparse map already parsed from 'x' header */
-@@ -958,22 +1188,22 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 					ssize_t bytes_read;
- 					bytes_read = gnu_sparse_10_read(a, tar, unconsumed);
- 					if (bytes_read < 0)
--						return ((int)bytes_read);
-+						TAR_HEADER_RETURN((int)bytes_read);
- 					tar->entry_bytes_remaining -= bytes_read;
- 				} else {
- 					archive_set_error(&a->archive,
- 							  ARCHIVE_ERRNO_MISC,
- 							  "Unrecognized GNU sparse file format");
--					return (ARCHIVE_WARN);
-+					TAR_HEADER_RETURN(ARCHIVE_WARN);
- 				}
- 			}
--			return (err);
-+			TAR_HEADER_RETURN(err);
- 		}
- 
- 		/* We're between headers ... */
- 		err = err_combine(err, err2);
- 		if (err == ARCHIVE_FATAL)
--			return (err);
-+			TAR_HEADER_RETURN(err);
- 
- 		/* The GNU volume header and the pax `g` global header
- 		 * are both allowed to be the only header in an
-@@ -983,6 +1213,26 @@ tar_read_header(struct archive_read *a, struct tar *tar,
- 			eof_fatal = 1;
- 		}
- 	}
-+
-+bun_retry:
-+	/*
-+	 * BUN PATCH: persist loop state so the next tar_read_header()
-+	 * call resumes exactly here. At this point `*unconsumed == 0`
-+	 * (either nothing was added this iteration, or we rolled the
-+	 * 512-byte header back above), so
-+	 * `archive_read_format_tar_read_header` can return
-+	 * ARCHIVE_RETRY without flushing. Setting
-+	 * `read_header_in_progress` here (rather than having
-+	 * archive_read_next_header2 set it on every RETRY) is what
-+	 * lets upstream's damaged-block RETRY keep its original
-+	 * reset-everything semantics.
-+	 */
-+	tar->header_seen = seen_headers;
-+	tar->header_eof_fatal = eof_fatal;
-+	tar->header_err = err;
-+	a->read_header_in_progress = 1;
-+	return (ARCHIVE_RETRY);
-+#undef TAR_HEADER_RETURN
+@@ -686,6 +976,15 @@ archive_read_format_tar_skip(struct arch
+ 	return (ARCHIVE_OK);
  }
  
++#define __archive_read_ahead(a, min, avail) \
++	(((struct tar *)(a)->format->data)->header_deferring \
++	    ? tar_read_ahead((a), (min), (avail)) \
++	    : (__archive_read_ahead)((a), (min), (avail)))
++#define __archive_read_consume(a, request) \
++	(((struct tar *)(a)->format->data)->header_deferring \
++	    ? tar_read_consume((a), (request)) \
++	    : (__archive_read_consume)((a), (request)))
++
  /*
+  * This function resets the accumulated state while reading
+  * a header.
+@@ -778,6 +1077,16 @@ tar_read_header(struct archive_read *a,
+ 
+ 				if (tar->read_concatenated_archives) {
+ 					/* We're ignoring NULL blocks, so keep going. */
++					/*
++					 * BUN PATCH: nothing of this entry is
++					 * parsed yet, so a replay can start
++					 * after this block. A long run of
++					 * NULL blocks then needs no buffer.
++					 */
++					if (seen_headers == 0 &&
++					    tar_flush_unconsumed(a, unconsumed)
++					    == ARCHIVE_OK)
++						tar_header_checkpoint(a, tar);
+ 					continue;
+ 				}
+ 

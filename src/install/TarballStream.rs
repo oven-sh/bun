@@ -9,10 +9,11 @@
 //! `ARCHIVE_RETRY`, libarchive propagates it (see the BUN PATCHes in
 //! `vendor/libarchive`), and the drain task returns — the worker is
 //! released. The next HTTP chunk reschedules the drain task, which calls
-//! back into libarchive and resumes exactly where it left off because the
-//! `struct archive *`, the gzip inflate state, the partially-read tar
-//! header and the open output `bun.FD` all live on the heap in this
-//! struct.
+//! back into libarchive and continues because the `struct archive *`, the
+//! gzip inflate state, the bytes of a partially-read tar header and the
+//! open output `bun.FD` all live on the heap in this struct. File data
+//! resumes where it stopped. A tar header that ran out of input is parsed
+//! again from its first byte.
 //!
 //! This lets `bun install` overlap download and extraction on the normal
 //! resolve thread pool without ever parking a worker on a condvar, and
@@ -110,7 +111,7 @@ pub struct TarballStream {
 
     /// Where we are in the per-entry state machine between drain
     /// invocations. libarchive preserves everything else (filter buffers,
-    /// zlib stream, tar header progress) on its own heap.
+    /// zlib stream, the bytes of an unfinished tar header) on its own heap.
     phase: Phase,
 
     /// Output file for the entry currently being written. `None` while
@@ -640,7 +641,17 @@ impl TarballStream {
             return Err(crate::Error::Fail);
         }
         let _ = archive.read_support_format_tar();
-        let _ = archive.read_set_options(c"read_concatenated_archives");
+        // `nonblocking`: `archive_read_callback` answers ARCHIVE_RETRY when
+        // no bytes are buffered, so the tar reader must keep an entry's
+        // header in its buffer until it has parsed all of it (see
+        // `tar_read_ahead` in patches/libarchive/nonblocking-read.patch).
+        // Without the option a read that runs dry inside a header is a
+        // truncation error.
+        if archive.read_set_options(c"read_concatenated_archives,nonblocking") != lib::Result::Ok {
+            // SAFETY: see fn-level # Safety — raw-ptr field write.
+            unsafe { (*this).fail_detail = archive.error_string().to_vec() };
+            return Err(crate::Error::Fail);
+        }
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
             return Err(crate::Error::Fail);

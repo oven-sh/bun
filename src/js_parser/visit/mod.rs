@@ -770,7 +770,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     AssignTarget::None
                 };
-                self.stmt_expr_value = st.value.data;
                 self.visit_expr_in_out(
                     &mut st.value,
                     ExprIn {

@@ -5,7 +5,7 @@ use bun_core::feature_flags as FeatureFlags;
 use crate::p::P;
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
+use bun_ast::{self as js_ast, Binding, E, Expr, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -316,117 +316,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
                             if identifier_opts.assign_target() != js_ast::AssignTarget::None {
                                 p.commonjs_module_exports_assigned_deoptimized = true;
-                            }
-
-                            // Detect if we are doing
-                            //
-                            //  module.exports = {
-                            //    foo: "bar"
-                            //  }
-                            //
-                            //  Note that it cannot be any of these:
-                            //
-                            //  module.exports += { };
-                            //  delete module.exports = {};
-                            //  module.exports()
-                            if !(identifier_opts.is_call_target()
-                                || identifier_opts.is_delete_target())
-                                && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
-                                && matches!(p.stmt_expr_value, js_ast::ExprData::EBinary(_))
-                                && p.stmt_expr_value
-                                    .e_binary()
-                                    .expect("infallible: variant checked")
-                                    .op
-                                    == js_ast::OpCode::BinAssign
-                            {
-                                let stmt_bin = p
-                                    .stmt_expr_value
-                                    .e_binary()
-                                    .expect("infallible: variant checked");
-                                let deopt =
-                                    // if it's not top-level, don't do this
-                                    p.module_scope != p.current_scope
-                                    // if you do
-                                    //
-                                    // exports.foo = 123;
-                                    // module.exports = {};
-                                    //
-                                    // that's a de-opt.
-                                    || p.commonjs_named_exports.count() > 0
-                                    // anything which is not module.exports = {} is a de-opt.
-                                    || !matches!(stmt_bin.right.data, js_ast::ExprData::EObject(_))
-                                    || !matches!(stmt_bin.left.data, js_ast::ExprData::EDot(_))
-                                    || stmt_bin.left.data.e_dot().expect("infallible: variant checked").name != b"exports"
-                                    || !matches!(
-                                        stmt_bin.left.data.e_dot().expect("infallible: variant checked").target.data,
-                                        js_ast::ExprData::EIdentifier(_)
-                                    )
-                                    || !stmt_bin
-                                        .left
-                                        .data
-                                        .e_dot()
-                                        .unwrap()
-                                        .target
-                                        .data
-                                        .e_identifier()
-                                        .unwrap()
-                                        .ref_
-                                        .eql(p.module_ref);
-                                if deopt {
-                                    p.deoptimize_common_js_named_exports();
-                                    return None;
-                                }
-
-                                let right_obj = stmt_bin
-                                    .right
-                                    .data
-                                    .e_object()
-                                    .expect("infallible: variant checked");
-                                let props: &[G::Property] = right_obj.properties.slice();
-                                for prop in props {
-                                    // if it's not a trivial object literal, de-opt
-                                    if prop.kind != G::PropertyKind::Normal
-                                        || prop.key.is_none()
-                                        || !matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EString(_))
-                                        || prop.flags.contains(Flags::Property::IsMethod)
-                                        || prop.flags.contains(Flags::Property::IsComputed)
-                                        || prop.flags.contains(Flags::Property::IsSpread)
-                                        || prop.flags.contains(Flags::Property::IsStatic)
-                                        // If it creates a new scope, we can't do this optimization right now
-                                        // Our scope order verification stuff will get mad
-                                        // But we should let you do module.exports = { bar: foo(), baz: 123 }
-                                        // just not module.exports = { bar: function() {}  }
-                                        // just not module.exports = { bar() {}  }
-                                        || match prop.value.expect("infallible: prop has value").data {
-                                            js_ast::ExprData::ECommonjsExportIdentifier(_)
-                                            | js_ast::ExprData::EImportIdentifier(_)
-                                            | js_ast::ExprData::EIdentifier(_) => false,
-                                            js_ast::ExprData::ECall(call) => match call.target.data {
-                                                js_ast::ExprData::ECommonjsExportIdentifier(_)
-                                                | js_ast::ExprData::EImportIdentifier(_)
-                                                | js_ast::ExprData::EIdentifier(_) => false,
-                                                call_target => {
-                                                    !js_ast::expr::Tag::is_primitive_literal(
-                                                        call_target.tag(),
-                                                    )
-                                                }
-                                            },
-                                            _ => !Expr::is_primitive_literal(&prop.value.expect("infallible: prop has value")),
-                                        }
-                                    {
-                                        p.deoptimize_common_js_named_exports();
-                                        return None;
-                                    }
-                                }
-                                // The loop above always runs to completion (no `break`), so
-                                // this block runs on every normal completion (including empty
-                                // `props`).
-                                {
-                                    // empty object de-opts because otherwise the statement becomes
-                                    // <empty space> = {};
-                                    p.deoptimize_common_js_named_exports();
-                                    return None;
-                                }
                             }
 
                             // Deoptimizations:

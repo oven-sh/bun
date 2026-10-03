@@ -370,7 +370,6 @@ impl SavedSourceMap {
                     SourceMap::ParseUrlResultHint::All {
                         line: line.zero_based().max(0),
                         column: column.zero_based().max(0),
-                        include_names: false,
                     }
                 }
             },

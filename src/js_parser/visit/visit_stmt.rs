@@ -1365,7 +1365,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         let should_trim_primitive = p.options.features.dead_code_elimination
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
-        p.stmt_expr_value = data.value.data;
 
         let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
         if p.should_unwrap_common_js_to_esm() {
@@ -1416,21 +1415,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `p.stmt_expr_value` is reset to EMissing at every return below.
-        macro_rules! restore_stmt_expr {
-            () => {
-                p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {});
-            };
-        }
-
         if should_trim_primitive && data.value.is_primitive_literal() {
-            restore_stmt_expr!();
             return Ok(());
         }
 
         // simplify unused
         let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
-            restore_stmt_expr!();
             return Ok(());
         };
         data.value = simplified;
@@ -1533,30 +1523,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 );
                                 stmts.extend_from_slice(&[local, export]);
 
-                                restore_stmt_expr!();
                                 return Ok(());
                             }
                         }
-                    } else if p.commonjs_replacement_stmts.len() > 0 {
-                        // `commonjs_replacement_stmts` is `StmtNodeList = StoreSlice<Stmt>`
-                        // here, so copy then clear.
-                        let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
-                        if stmts.is_empty() {
-                            *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
-                        } else {
-                            stmts.extend_from_slice(repl);
-                        }
-                        p.commonjs_replacement_stmts = StmtNodeList::EMPTY;
-
-                        restore_stmt_expr!();
-                        return Ok(());
                     }
                 }
             }
         }
 
         stmts.push(*stmt);
-        restore_stmt_expr!();
         Ok(())
     }
 

@@ -259,6 +259,8 @@ typedef struct ZigStackTrace {
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
+    // The frames index the JSC::Exception's stack, not the thrown Error's own.
+    bool frames_from_throw_site;
     JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 

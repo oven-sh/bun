@@ -409,6 +409,9 @@ impl HTTPClient<'_> {
         status_code: u32,
         headers: &'h [picohttp::Header],
     ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
+        if headers.len() > MAX_RESPONSE_HEADERS {
+            return Err(crate::Error::ResponseHeadersTooLarge);
+        }
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code,
@@ -1045,9 +1048,12 @@ const MAX_REQUEST_HEADERS: usize = 256;
 static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
+/// Field limit of a response on every protocol. Node's HTTP client enforces the same count.
+const MAX_RESPONSE_HEADERS: usize = 1000;
+
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_RESPONSE_HEADERS]> =
+    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_RESPONSE_HEADERS]);
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
@@ -1070,7 +1076,7 @@ mod scratch {
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
-    pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header; MAX_RESPONSE_HEADERS] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
     }
@@ -3819,14 +3825,6 @@ impl<'a> HTTPClient<'a> {
         // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
         self.set_timeout(&socket);
 
-        if (self.state.content_encoding_i as usize) < response.headers.list.len()
-            && !self.state.flags.did_set_content_encoding
-        {
-            // if it compressed with this header, it is no longer because we will decompress it
-            self.state.flags.did_set_content_encoding = true;
-            self.state.content_encoding_i = u8::MAX;
-        }
-
         if should_continue == ShouldContinue::Finished {
             if !to_read.is_empty() {
                 self.state.flags.allow_keepalive = false;
@@ -4925,7 +4923,7 @@ impl<'a> HTTPClient<'a> {
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
-        for (header_i, header) in response.headers.list.iter().enumerate() {
+        for header in response.headers.list.iter() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // byte-level parse — header.value() is network bytes, not &str
@@ -4966,13 +4964,11 @@ impl<'a> HTTPClient<'a> {
                                 Some(Encoding::Identity) => {}
                                 Some(coding) if coding.is_compressed() && content_codings == 0 => {
                                     self.state.encoding = coding;
-                                    self.state.content_encoding_i = header_i as u8;
                                     content_codings = 1;
                                 }
                                 // Stacked or unknown codings: we can only strip one layer, so pass through raw.
                                 _ => {
                                     self.state.encoding = Encoding::Identity;
-                                    self.state.content_encoding_i = u8::MAX;
                                     content_codings = u32::MAX;
                                 }
                             }

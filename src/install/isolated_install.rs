@@ -2224,6 +2224,20 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    // A dependency that this install leaves out (`--filter`) can hold the name.
+                    let held_by_name = dependencies
+                        .iter()
+                        .zip(lockfile_ro.buffers.resolutions.iter())
+                        .any(|(dep, &res)| {
+                            dep.name_hash == pkg_name_hash
+                                && res != invalid_package_id
+                                && pkg_name_hashes[res as usize] == pkg_name_hash
+                                && links_into_hidden_node_modules(pkg_resolutions[res as usize].tag)
+                        });
+                    if held_by_name {
+                        continue;
+                    }
+
                     installer.unlink_package_name_from_hidden_node_modules(store::entry::Id::from(
                         u32::try_from(entry_idx).expect("int cast"),
                     ));

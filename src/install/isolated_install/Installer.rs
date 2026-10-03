@@ -1538,23 +1538,8 @@ impl Task {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
 
-                    match pkg_res.tag {
-                        ResolutionTag::Uninitialized
-                        | ResolutionTag::Root
-                        | ResolutionTag::Workspace
-                        | ResolutionTag::Folder
-                        | ResolutionTag::Symlink
-                        | ResolutionTag::SingleFileModule => {}
-
-                        ResolutionTag::Npm
-                        | ResolutionTag::Git
-                        | ResolutionTag::Github
-                        | ResolutionTag::LocalTarball
-                        | ResolutionTag::RemoteTarball => {
-                            installer.link_to_hidden_node_modules(self.entry_id);
-                        }
-
-                        _ => {}
+                    if super::links_into_hidden_node_modules(pkg_res.tag) {
+                        installer.link_to_hidden_node_modules(self.entry_id);
                     }
 
                     step = self.next_step(current_step);

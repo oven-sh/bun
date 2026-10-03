@@ -4196,6 +4196,38 @@ describe("hoist", () => {
     });
   });
 
+  test("an install of one workspace keeps the fallback link another workspace holds", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "packages/one/package.json": JSON.stringify({
+          name: "one",
+          version: "1.0.0",
+          dependencies: { "an-alias": "npm:no-deps@2.0.0" },
+        }),
+        "packages/two/package.json": JSON.stringify({
+          name: "two",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+
+    await write(packageJson, JSON.stringify({ name: "hoist-filtered-install", workspaces: ["packages/*"] }));
+
+    const links = {
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+      "no-deps": inStore("no-deps@1.0.0", "no-deps"),
+    };
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // `two` is left out of this install, and the name it holds keeps its link
+    await runBunInstall(bunEnv, packageDir, { packages: ["--filter", "one"], savesLockfile: false });
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+  });
+
   test("npmrc hoist=false", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },

@@ -1398,6 +1398,25 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
     });
   });
 
+  it("and onResolve is not asked again about an answer in a namespace", async () => {
+    expect(await run("entry.cjs", `console.log(require("moved.namespace").default);`)).toEqual({
+      stdout: "onResolve moved.namespace\ninner.js\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
+  it("and what onResolve says about the bare name is an error if it is not valid", async () => {
+    const source = `try { require.resolve("first.invalid"); } catch (error) { console.log(error.message); }`;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout: `onResolve first.invalid\nonResolve second.invalid\nExpected "path" to be a string in onResolve plugin\n`,
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
   async function run(name: string, source: string) {
     const asked: string[] = [];
     using registry = Bun.serve({
@@ -1421,6 +1440,13 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
             build.onResolve({ filter: /\\.virtual$/ }, logged(({ path }) => ({ path: basename(path) })));
             build.onResolve({ filter: /\\.redirect$/ }, logged(({ path }) => ({ path: redirects[path] })));
             build.onResolve({ filter: /\\.declines$/ }, logged(({ path }) => (path === "file.declines" ? { path: "c-package/" + path } : undefined)));
+            build.onResolve({ filter: /\\.namespace$/ }, logged(() => ({ path: "inner.js", namespace: "custom" })));
+            build.onResolve({ filter: /.*/, namespace: "custom" }, logged(() => undefined));
+            build.onResolve({ filter: /\\.invalid$/ }, logged(({ path }) => ({ path: path === "first.invalid" ? "second.invalid" : 42 })));
+            build.onLoad({ filter: /.*/, namespace: "custom" }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path),
+              loader: "js",
+            }));
             build.onLoad({ filter: /^(itself-served\\.js|served\\.virtual)$/ }, ({ path }) => ({
               contents: "export default " + JSON.stringify(path),
               loader: "js",

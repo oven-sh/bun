@@ -5228,10 +5228,19 @@ impl VirtualMachine {
                     }
                     // A bare name may be a package's in the registry. It is the plugin's own, and not
                     // installed, if `onResolve` answers about it as well.
-                    let global_cache = if bun_resolver::is_package_path(&answer.to_utf8())
+                    let answer_utf8 = answer.to_utf8();
+                    let is_bare = bun_resolver::is_package_path(&answer_utf8)
+                        && ModuleLoader::plugin_namespace_and_path(&answer_utf8)
+                            .is_some_and(|(namespace, _)| namespace.is_empty());
+                    drop(answer_utf8);
+                    let is_own = is_bare
                         && (answer.eql(specifier)
-                            || run_on_resolve(global, &answer, source)?.is_some())
-                    {
+                            || match run_on_resolve(global, &answer, source)? {
+                                None => false,
+                                Some(Ok(_)) => true,
+                                Some(Err(error)) => return Ok(Err(error)),
+                            });
+                    let global_cache = if is_own {
                         bun_resolver::GlobalCache::disable
                     } else {
                         global.bun_vm().transpiler.resolver.opts.global_cache

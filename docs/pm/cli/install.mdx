@@ -255,6 +255,8 @@ The traditional npm/Yarn approach that flattens dependencies into a shared `node
 bun install --linker hoisted
 ```
 
+A package that needs its own version of a dependency gets it in a nested folder (`node_modules/a/node_modules/b`). A workspace gets it in its own `node_modules`. When `bun.lock` stops placing a copy there, Bun removes the copy in a run that installs a package or changes `bun.lock`, once the version `bun.lock` expects is installed above it. Bun does not remove entries of the root `node_modules` this way, and a repeat install with nothing to do does not look for leftovers. To remove everything `bun.lock` would not install, run [`bun prune`](/pm/cli/prune).
+
 ### Isolated installs
 
 A pnpm-like approach that creates strict dependency isolation to prevent [phantom dependencies](/pm/isolated-installs), packages you can import without declaring them in `package.json`:

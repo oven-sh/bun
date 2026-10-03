@@ -329,8 +329,9 @@ impl<C: Cell> Segmented<C> {
     fn footprint(&self) -> Footprint {
         let mut all = Footprint::default();
         for (segment, base) in self.segments.iter().enumerate() {
-            let (base, len) = (base.load(Ordering::Acquire), segment_len(segment));
+            let base = base.load(Ordering::Acquire);
             if !base.is_null() {
+                let len = segment_len(segment);
                 // SAFETY: what is kept of a segment is as far before it as it is long. All zero is a valid `C`.
                 let cells = unsafe { std::slice::from_raw_parts(base.wrapping_add(len), len) };
                 all = all.plus(Footprint::of_cells(cells));

@@ -2076,7 +2076,13 @@ impl<'p> Checker<'p> {
         let mut shape = Shape::default();
         let mut checked: Vec<Atom> = Vec::new();
         for &part in parts {
+            // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
+            // conditional type is one.
             let apparent = self.apparent_type(part);
+            let apparent = match self.is_union(apparent) {
+                true => self.union_as_object(apparent),
+                false => apparent,
+            };
             let Some(members) = self.members(apparent) else {
                 break;
             };

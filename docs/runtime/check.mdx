@@ -122,6 +122,8 @@ bun run --check dev
 
 A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
 
+For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import.
+
 ## Output
 
 In a terminal, `bun check` shows the source around each error and the declarations the error refers to.

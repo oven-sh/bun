@@ -10,6 +10,7 @@ use crate::table::{
 };
 use crate::types::{TypeData, TypeId, TypeStore, Types};
 use crate::util::{AppendVec, GrowingPlaces};
+use bun_sema_standalone as _;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 type Node = (FileId, u32);

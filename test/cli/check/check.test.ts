@@ -1806,6 +1806,25 @@ export const wrong: number = { ...tool, kind: 1 };
         `a.ts(6,14): error TS2322: Type '{ execute: () => void; type: "dynamic"; kind: number; } | { execute?: undefined; type: "dynamic"; kind: number; } | { execute: () => void; type?: "function" | undefined; kind: number; } | { execute?: undefined; type?: "function" | undefined; kind: number; }' is not assignable to type 'number'.`,
       );
     });
+
+    test("a property picked from a union of intersections with a conditional type keeps its modifiers", async () => {
+      using dir = project({
+        "a.ts": `
+type Cond<T> = T extends string ? { a?: never } : { a: T };
+type Either = { x?: 1; y?: never } | { x?: never; y?: 1 };
+type Settings<T> = { readonly model?: string } & Cond<T> & Either;
+export function f<T>(rest: T) {
+  const empty: Pick<Settings<T>, "model"> = {};
+  const cast = { model: empty.model, ...rest } as Pick<Settings<T>, "model">;
+  empty.model = "";
+  return [empty, cast];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`a.ts(8,9): error TS2540: Cannot assign to 'model' because it is a read-only property.`);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("compiler options as flags", () => {
@@ -2185,6 +2204,30 @@ describe.concurrent("--check", () => {
       Found 1 error in 1 file, checked 1 file [time]"
     `);
     expect(await Bun.file(join(String(dir), "out-bad", "bad.js")).exists()).toBe(false);
+    expect(bad.exitCode).toBe(1);
+  });
+
+  test("bun build --check checks the scripts of an HTML entry point", async () => {
+    const page = (script: string) => `<!doctype html>\n<script src="https://example.com/cdn.js"></script>\n<script type="module" src="${script}"></script>\n`;
+    using dir = project({
+      "good/index.html": page("./main.ts"),
+      "good/main.ts": `const good: number = 1;\nconsole.log(good);\n`,
+      "bad/index.html": page("./src/main.ts"),
+      "bad/src/main.ts": `import { imported } from "./imported";\nconsole.log(imported);\n`,
+      "bad/src/imported.ts": `export const imported: number = "1";\n`,
+    });
+    const [good, bad] = await Promise.all([
+      run(String(dir), ["build", "--check", "good/index.html", "--outdir", "out-good"]),
+      run(String(dir), ["build", "--check", "bad/index.html", "--outdir", "out-bad"]),
+    ]);
+    expect(good.stderr).toBe("");
+    expect(good.exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "out-good", "index.html")).exists()).toBe(true);
+    expect(bad.stderr).toMatchInlineSnapshot(`
+      "bad/src/imported.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+      Found 1 error in 1 file, checked 2 files [time]"
+    `);
+    expect(await Bun.file(join(String(dir), "out-bad", "index.html")).exists()).toBe(false);
     expect(bad.exitCode).toBe(1);
   });
 

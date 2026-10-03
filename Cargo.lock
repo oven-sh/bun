@@ -1357,6 +1357,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_paths",
+ "bun_sema_standalone",
  "bun_semver",
  "bun_threading",
  "smallvec",

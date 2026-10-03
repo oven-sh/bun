@@ -150,6 +150,13 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
+/// The import records of the HTML file `source`: one per `<script src>`, `<link href>` and other tag the bundler follows.
+pub fn scan_import_records(log: &mut Log, source: &Source) -> Result<Vec<ImportRecord>, Error> {
+    let mut scanner = HTMLScanner::init(log, source);
+    scanner.scan(&source.contents)?;
+    Ok(scanner.import_records)
+}
+
 type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 
 // ───────────────────────────────────────────────────────────────────────────

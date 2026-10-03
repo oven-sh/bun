@@ -405,11 +405,16 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     const CHECKED: [&[u8]; 8] = [
         b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
     ];
-    let paths: Vec<Vec<u8>> = entry_points
-        .iter()
-        .filter(|path| CHECKED.iter().any(|extension| path.ends_with(extension)))
-        .map(|path| path.to_vec())
-        .collect();
+    let is_checked = |path: &[u8]| CHECKED.iter().any(|extension| path.ends_with(extension));
+    let mut paths: Vec<Vec<u8>> = Vec::new();
+    for &entry_point in entry_points {
+        if is_checked(entry_point) {
+            paths.push(entry_point.to_vec());
+        } else if entry_point.ends_with(b".html") {
+            let scripts = imports_of_page(entry_point);
+            paths.extend(scripts.into_iter().filter(|path| is_checked(path)));
+        }
+    }
     if paths.is_empty() {
         return true;
     }
@@ -422,6 +427,26 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
         .into_iter()
         .collect();
     check_and_report(&paths, &allow_js)
+}
+
+/// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot
+/// be read or parsed, which the bundler reports.
+fn imports_of_page(page: &[u8]) -> Vec<Vec<u8>> {
+    use bun_paths::{platform::Auto, resolve_path};
+    let page = resolve_path::join_abs_string::<Auto>(&working_directory(), &[page]).to_vec();
+    let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
+        return Vec::new();
+    };
+    let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
+    let mut log = bun_ast::Log::init();
+    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
+    let directory = resolve_path::dirname::<Auto>(&page);
+    let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
+    (records.unwrap_or_default().iter())
+        .map(|record| record.path.text())
+        .filter(|path| !is_url(path))
+        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .collect()
 }
 
 /// Type checks the project around the working directory, as `bun check` does, before one of its scripts is run.

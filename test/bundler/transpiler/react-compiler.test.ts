@@ -3161,6 +3161,112 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
 });
 
+// EnterSSA finds the definition of a value from its use. At every join on the
+// way it made a phi, an identifier and four `defs` entries. EliminateRedundantPhi
+// drops the phi of a join that the value only passes, but the identifier stays,
+// and later passes size their tables by the number of identifiers. So n values
+// that are live across n joins cost n * n of each: an element with 1000
+// conditional children took 5 seconds and 494 MB, and one with 4000 took 7 GB.
+describe.concurrent("react-compiler memory does not grow with the values times the joins they are live across", () => {
+  // A debug build is 20 times slower.
+  const small = isDebug || isASAN;
+  const children = (count: number, child: (i: number) => string) =>
+    Array.from({ length: count }, (_, i) => child(i)).join("");
+  // The children of an element are evaluated in order and the element is made
+  // after the last one. So a literal that is ahead of the joins is live across
+  // each of them, and one that is after them is live across none.
+  const literals = children(small ? 600 : 4000, i => `{${i}}`);
+
+  // How much more the build of `body` takes than the build of `twin`, in MB.
+  // The twin has the same statements in another order, so this leaves out
+  // what the other passes need.
+  const overItsTwin = async (twin: string, body: string) => {
+    using dir = tempDir("react-compiler-live-across-joins", {
+      "twin.jsx": `export default function App(p) { ${twin} }`,
+      "body.jsx": `export default function App(p) { ${body} }`,
+      // On Linux ru_maxrss survives exec. Neither the parent nor the child
+      // reads a peak below the size of the parent at spawn, and the test runner
+      // of a debug build is larger than either build. VmHWM starts again at exec.
+      "peak.js": `
+        import { readFileSync } from "node:fs";
+        const result = await Bun.build({
+          entrypoints: [process.argv[2]],
+          target: "browser",
+          external: ["*"],
+          reactCompiler: true,
+        });
+        const output = await result.outputs[0].text();
+        const peakKB =
+          process.platform === "linux"
+            ? Number(/^VmHWM:\\s*(\\d+) kB$/m.exec(readFileSync("/proc/self/status", "utf8"))[1])
+            : process.resourceUsage().maxRSS;
+        console.log(JSON.stringify({ memoized: /\\b_c\\(\\d+\\)/.test(output), peakMB: peakKB / 1024 }));
+      `,
+    });
+    const measure = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "peak.js", entry],
+        env: {
+          ...bunEnv,
+          // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+            .filter(Boolean)
+            .join(":"),
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result: { memoized: boolean; peakMB: number } = JSON.parse(stdout);
+      expect(result.memoized).toBe(true);
+      expect(exitCode).toBe(0);
+      return result.peakMB;
+    };
+    const [twinMB, bodyMB] = await Promise.all([measure("twin.jsx"), measure("body.jsx")]);
+    return bodyMB - twinMB;
+  };
+
+  test("for a value that a block defines", async () => {
+    const joins = children(small ? 50 : 100, i => `{p.c${i} ? 1 : 2}`);
+    // Without the fix: 40 MB in a debug build, 335 MB in a release build.
+    expect(
+      await overItsTwin(`return <div>${joins}${literals}</div>;`, `return <div>${literals}${joins}</div>;`),
+    ).toBeLessThan(small ? 20 : 100);
+  });
+
+  // A local that both arms of an `if` assign is a phi after the `if`, and a
+  // read of it after the joins finds that phi through them. A debug build has
+  // no time for this: a local costs it twice what a literal does.
+  test.skipIf(small)("for a value that is the phi of an earlier join", async () => {
+    const locals = Array.from({ length: 4000 }, (_, i) => `l${i}`);
+    const assign = `let ${locals.join(", ")};
+      if (p.x) { ${locals.map((local, i) => `${local} = ${i};`).join(" ")} }
+      else { ${locals.map((local, i) => `${local} = ${i + 1};`).join(" ")} }`;
+    const joined = `const joined = <i>${children(100, i => `{p.c${i} ? 1 : 2}`)}</i>;`;
+    const read = `return <div>{joined}${locals.map(local => `{${local}}`).join("")}</div>;`;
+    // Without the fix: 300 MB.
+    expect(await overItsTwin(`${joined} ${assign} ${read}`, `${assign} ${joined} ${read}`)).toBeLessThan(100);
+  });
+
+  // While EnterSSA is in a nested function, the entry block of that function is
+  // a successor of the block that holds the function expression. With that
+  // successor still counted afterwards, such a block kept a `defs` entry for
+  // every value that is live across it. Codegen copies its temporaries for
+  // each nested function, so the twin has the same functions, after the joins.
+  // An entry is small: it takes this many to see them, which a debug build has
+  // no time for.
+  test.skipIf(small)("when a join holds a function expression", async () => {
+    const inside = children(400, i => `{p.c${i} ? <a onClick={() => f(${i})} /> : null}`);
+    const outside = children(400, i => `{p.c${i} ? <a /> : null}`) + children(400, i => `{() => f(${i})}`);
+    // With the successor still counted: 80 MB.
+    expect(
+      await overItsTwin(`return <div>${literals}${outside}</div>;`, `return <div>${literals}${inside}</div>;`),
+    ).toBeLessThan(40);
+  });
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,

@@ -22,6 +22,39 @@ test("SourceMap payload must be an object", () => {
   );
 });
 
+test("SourceMap accepts an empty mappings string", () => {
+  // esbuild and tsc emit `"mappings": ""` for modules that produce no code,
+  // such as re-export-only or side-effect-only modules.
+  const payload = { version: 3, sources: ["empty.js"], names: [], mappings: "" };
+  const sourceMap = new SourceMap(payload);
+
+  expect(sourceMap).toBeInstanceOf(SourceMap);
+  expect(sourceMap.payload).toEqual(payload);
+  expect(sourceMap.findEntry(0, 0)).toEqual({});
+  expect(sourceMap.findOrigin(1, 1)).toEqual({});
+});
+
+test("SourceMap accepts mappings made only of line separators", () => {
+  const sourceMap = new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: ";;;" });
+
+  expect(sourceMap.findEntry(0, 0)).toEqual({});
+  expect(sourceMap.findEntry(3, 0)).toEqual({});
+});
+
+test.each([
+  ["missing", { version: 3, sources: ["a.js"], names: [] }],
+  ["undefined", { version: 3, sources: ["a.js"], names: [], mappings: undefined }],
+  ["null", { version: 3, sources: ["a.js"], names: [], mappings: null }],
+])("SourceMap constructor rejects %s mappings", (_, payload) => {
+  expect(() => new SourceMap(payload)).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "payload 'mappings' must be a string",
+    }),
+  );
+});
+
 test("SourceMap instance has expected methods", () => {
   const sourceMap = new SourceMap({
     version: 3,

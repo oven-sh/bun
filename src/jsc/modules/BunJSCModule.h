@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ZeroCollectorStack.h"
 #include "_NativeModule.h"
 #include "CodeGenerationFromStrings.h"
 
@@ -171,6 +172,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGCAndSweep,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectNow(Sync, CollectionScope::Full);
+    Bun::zeroCollectorStack();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
 
@@ -181,6 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFullGC,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectSync(CollectionScope::Full);
+    Bun::zeroCollectorStack();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
 
@@ -191,6 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEdenGC,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectSync(CollectionScope::Eden);
+    Bun::zeroCollectorStack();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 }
 
@@ -234,6 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
     if (vm.heap.size() == 0) {
         vm.heap.collectNow(Sync, CollectionScope::Full);
+        Bun::zeroCollectorStack();
     }
 
     const auto createdSortedTypeCounts =

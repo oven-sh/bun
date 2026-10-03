@@ -439,8 +439,7 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 2>&1 === stdout=true and duplicate_out=true
-            /// 1>&2 === stderr=true and duplicate_out=true
+            /// `2>&1` is `STDOUT | DUPLICATE_OUT`, `1>&2` is `STDERR | DUPLICATE_OUT`. Never set with a file target.
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -835,33 +834,41 @@ impl<'bump> Parser<'bump> {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
-        let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
+        if self.match_stmt_end() {
+            return Ok(ast::Stmt { exprs: &[] });
+        }
 
-        while if self.inside_subshell.is_none() {
-            !self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
-        } else {
-            !self.match_any(&[
-                TokenTag::Semicolon,
-                TokenTag::Newline,
-                TokenTag::Eof,
-                self.inside_subshell
-                    .expect("infallible: checked is_some")
-                    .closing_tok(),
-            ])
-        } {
-            let expr = self.parse_expr()?;
-            if self.r#match(TokenTag::Ampersand) {
-                self.add_error(format_args!(
-                    "Background commands \"&\" are not supported yet."
-                ))?;
-                return Err(ParseError::Unsupported.into());
-            }
-            exprs.push(expr);
+        let expr = self.parse_expr()?;
+        if self.r#match(TokenTag::Ampersand) {
+            self.add_error(format_args!(
+                "Background commands \"&\" are not supported yet."
+            ))?;
+            return Err(ParseError::Unsupported.into());
+        }
+        if !self.match_stmt_end() {
+            self.add_error(format_args!(
+                "Expected \";\", \"&&\", \"||\", \"|\" or a newline but got: {}",
+                bstr::BStr::new(self.peek().as_human_readable(self.strpool))
+            ))?;
+            return Err(ParseError::Expected.into());
         }
 
         Ok(ast::Stmt {
-            exprs: exprs.into_bump_slice(),
+            exprs: core::slice::from_ref(self.allocate(expr)),
         })
+    }
+
+    /// Consumes a `;` or a newline. EOF and the token that closes a subshell also end a statement, and stay for the caller.
+    fn match_stmt_end(&mut self) -> bool {
+        match self.inside_subshell {
+            None => self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof]),
+            Some(kind) => self.match_any(&[
+                TokenTag::Semicolon,
+                TokenTag::Newline,
+                TokenTag::Eof,
+                kind.closing_tok(),
+            ]),
+        }
     }
 
     fn parse_expr(&mut self) -> ParseResult<ast::Expr<'bump>> {
@@ -880,6 +887,7 @@ impl<'bump> Parser<'bump> {
                 }
             };
 
+            self.skip_newlines();
             let right = self.parse_pipeline()?;
 
             let binary = self.allocate(ast::Binary { op, left, right });
@@ -904,6 +912,7 @@ impl<'bump> Parser<'bump> {
             pipeline_items.push(item);
 
             while self.r#match(TokenTag::Pipe) {
+                self.skip_newlines();
                 expr = self.parse_compound_cmd()?;
                 let item = match expr.as_pipeline_item() {
                     Some(i) => i,
@@ -1349,26 +1358,28 @@ impl<'bump> Parser<'bump> {
 
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        let mut parsed_redirect = ParsedRedirect::default();
-        let mut has_redirect = false;
+        let mut parsed_redirect: Option<ParsedRedirect<'bump>> = None;
         loop {
             if let Some(arg) = self.parse_atom()? {
                 name_and_args.push(arg);
                 continue;
             }
-            if self.check(TokenTag::Redirect) {
-                if has_redirect {
-                    self.add_error(format_args!(
-                        "Multiple redirects are not supported yet. Please open a GitHub issue."
-                    ))?;
-                    return Err(ParseError::Unsupported.into());
-                }
-                parsed_redirect = self.parse_redirect()?;
-                has_redirect = true;
-                continue;
+            if !self.check(TokenTag::Redirect) {
+                break;
             }
-            break;
+            if parsed_redirect.is_some() {
+                self.add_error(format_args!(
+                    "Multiple redirects are not supported yet. Please open a GitHub issue."
+                ))?;
+                return Err(ParseError::Unsupported.into());
+            }
+            parsed_redirect = Some(self.parse_redirect()?);
+            // A redirection is usually last: skip the parse_atom() call that would allocate and find no word.
+            if self.at_command_end() {
+                break;
+            }
         }
+        let parsed_redirect = parsed_redirect.unwrap_or_default();
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1376,6 +1387,22 @@ impl<'bump> Parser<'bump> {
             redirect_file: parsed_redirect.redirect,
             redirect: parsed_redirect.flags,
         }))
+    }
+
+    fn at_command_end(&self) -> bool {
+        let tag = self.peek().tag();
+        matches!(
+            tag,
+            TokenTag::Eof
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::DoubleAmpersand
+                | TokenTag::Ampersand
+        ) || self
+            .inside_subshell
+            .is_some_and(|kind| kind.closing_tok() == tag)
     }
 
     fn parse_redirect(&mut self) -> ParseResult<ParsedRedirect<'bump>> {
@@ -1390,8 +1417,6 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
-                // `2>&1` and `1>&2` are complete on their own. The next word is an
-                // argument of the command, not a file operand.
                 if redirect.duplicate_out() {
                     break 'redirect_file None;
                 }
@@ -1671,7 +1696,7 @@ impl<'bump> Parser<'bump> {
                     | Token::Delimit
                     | Token::Eof
                     | Token::DoubleBracketOpen
-                    | Token::DoubleBracketClose => return Ok(None),
+                    | Token::DoubleBracketClose => break,
                 }
             }
         }

@@ -41,6 +41,23 @@ describe("IOWriter file output redirection", () => {
       .fileEquals("o", "[A][B]")
       .runAsTest("printf argument after > file is passed to printf");
 
+    TestBuilder.command`echo two >> log extra`
+      .ensureTempDir()
+      .file("log", "one\n")
+      .fileEquals("log", "one\ntwo extra\n")
+      .runAsTest("words after >> file stay as arguments");
+
+    TestBuilder.command`echo x &> both extra`
+      .ensureTempDir()
+      .fileEquals("both", "x extra\n")
+      .runAsTest("words after &> file stay as arguments");
+
+    TestBuilder.command`echo y &>> both extra`
+      .ensureTempDir()
+      .file("both", "x\n")
+      .fileEquals("both", "x\ny extra\n")
+      .runAsTest("words after &>> file stay as arguments");
+
     TestBuilder.command`cat < f0 f1`
       .ensureTempDir()
       .file("f0", "a0\na1\n")
@@ -76,6 +93,18 @@ describe("IOWriter file output redirection", () => {
       .fileEquals("important.txt", "PRECIOUS\n")
       .runAsTest("2>&1 does not overwrite the file named by the next word");
 
+    TestBuilder.command`printf '[%s]' A 2>&1 B`
+      .ensureTempDir()
+      .stdout("[A][B]")
+      .doesNotExist("B")
+      .runAsTest("printf argument after 2>&1 is passed to printf");
+
+    test("words after a Buffer target stay as arguments", async () => {
+      const buf = Buffer.alloc(16);
+      await Bun.$`echo hi > ${buf} extra words`.quiet();
+      expect(buf.toString("utf8", 0, 15)).toBe("hi extra words\n");
+    });
+
     // The tail of an interpolated array in the target slot must not run.
     TestBuilder.command`echo hi > ${["out", "touch", "INJECTED"]}`
       .ensureTempDir()
@@ -84,10 +113,12 @@ describe("IOWriter file output redirection", () => {
       .doesNotExist("INJECTED")
       .runAsTest("interpolated array after > keeps its tail as arguments");
 
-    TestBuilder.command`echo a > f1 b > f2`
-      .ensureTempDir()
-      .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
-      .runAsTest("second redirect after intervening words is rejected at parse time");
+    test("a second redirection throws before anything runs", async () => {
+      using dir = tempDir("shell-second-redirect", {});
+      const run = async () => await Bun.$`echo a > f1 b > f2`.cwd(String(dir)).quiet();
+      await expect(run()).rejects.toThrow("Multiple redirects are not supported yet. Please open a GitHub issue.");
+      expect(fs.existsSync(join(String(dir), "f1"))).toBe(false);
+    });
   });
 
   describe("drainBufferedData edge cases", () => {

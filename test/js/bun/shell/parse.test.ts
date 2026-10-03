@@ -106,6 +106,39 @@ describe("parse shell", () => {
     });
   });
 
+  test.each([
+    [">", { stdout: true }],
+    [">>", { stdout: true, append: true }],
+    ["<", { stdin: true }],
+    ["2>", { stderr: true }],
+    ["&>", { stdout: true, stderr: true }],
+    ["&>>", { stdout: true, stderr: true, append: true }],
+  ])("word after `%s file` stays in the command", (operator, flags) => {
+    expect(JSON.parse(parse({ raw: [`echo a ${operator} f b`] }))).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "a" } }, { simple: { Text: "b" } }],
+                redirect: redirect(flags),
+                redirect_file: { atom: { simple: { Text: "f" } } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  test("newline after &&, || and |", () => {
+    expect(JSON.parse(parse({ raw: ["echo a &&\necho b ||\n\necho c"] }))).toEqual(
+      JSON.parse(parse`echo a && echo b || echo c`),
+    );
+    expect(JSON.parse(parse({ raw: ["echo a |\ncat |\n\ncat"] }))).toEqual(JSON.parse(parse`echo a | cat | cat`));
+  });
+
   test("single atom", () => {
     expect(JSON.parse(parse`ls`)).toEqual({
       stmts: [
@@ -1113,9 +1146,32 @@ describe("parse shell invalid input", () => {
     await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
+  });
 
-    await TestBuilder.command`echo a 2>&1 b > f`
-      .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
-      .run();
+  test("second redirection in one command", () => {
+    const message = "Multiple redirects are not supported yet. Please open a GitHub issue.";
+    expect(() => parse`echo a > f1 > f2`).toThrow(message);
+    expect(() => parse`echo a > f1 b > f2`).toThrow(message);
+    expect(() => parse`echo a 2>&1 b > f`).toThrow(message);
+  });
+
+  // Each of these ran two commands. bash reports a syntax error, except for
+  // `echo a [[ -n b ]]`, where `[[` is an argument.
+  test.each([
+    ["(echo a) echo b", "echo"],
+    ["(echo a) (echo b)", "`(`"],
+    ["[[ -n a ]] echo b", "echo"],
+    ["if true; then echo a; fi echo b", "echo"],
+    ["echo a [[ -n b ]]", "[["],
+    ["A=1 [[ -n b ]]", "[["],
+    ["echo a > f [[ -n b ]] touch g", "[["],
+    ["echo $( (echo a) echo b )", "echo"],
+    ["echo `(echo a) echo b`", "echo"],
+    ["( [[ -n a ]] echo b )", "echo"],
+    ["if [[ -n a ]] echo b; then echo c; fi", "echo"],
+    ["echo a | [[ -n a ]] echo b", "echo"],
+    ["true && (echo a) echo b", "echo"],
+  ])("a second command needs a separator: %s", (source, got) => {
+    expect(() => parse({ raw: [source] })).toThrow(`Expected ";", "&&", "||", "|" or a newline but got: ${got}`);
   });
 });

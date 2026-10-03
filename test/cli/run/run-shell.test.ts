@@ -37,6 +37,24 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
+
+  test("arguments after a script that ends in a subshell do not run as a command", async () => {
+    using dir = tempDir("run-shell-passthrough", {
+      "package.json": JSON.stringify({ name: "passthrough-fixture", scripts: { sub: "(echo a)" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "sub", "touch", "INJECTED"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(await Bun.file(join(String(dir), "INJECTED")).exists()).toBe(false);
+    expect(stdout).toBe("");
+    expect(stderr).toContain('Expected ";", "&&", "||", "|" or a newline but got: touch');
+    expect(exitCode).toBe(1);
+  });
 });
 
 test.skipIf(isWindows)(

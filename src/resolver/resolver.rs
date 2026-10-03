@@ -1608,7 +1608,7 @@ impl<'a> Resolver<'a> {
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
-                        result.file_fd = query.entry().cache().fd;
+                        result.file_fd = query.entry().fd();
                     }
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -1629,7 +1629,7 @@ impl<'a> Resolver<'a> {
 
                     let store_fd = self.store_fd;
 
-                    if !query.entry().cache().fd.is_valid() && store_fd {
+                    if !query.entry().fd().is_valid() && store_fd {
                         buf[out_len] = 0;
                         // SAFETY: buf[out_len] == 0 written above
                         let span = bun_core::ZStr::from_buf(&buf[..], out_len);
@@ -1641,7 +1641,7 @@ impl<'a> Resolver<'a> {
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = query.entry().mutex.lock_guard();
-                            query.entry().set_cache_fd(file);
+                            query.entry().set_fd(file);
                         }
                         Fs::FileSystem::set_max_fd(file.native());
                     }
@@ -1662,15 +1662,17 @@ impl<'a> Resolver<'a> {
                             let e = entry_ref.get();
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = e.mutex.lock_guard();
-                            let fd = e.cache().fd;
+                            let fd = e.fd();
                             if fd.is_valid() {
                                 fd.close();
-                                e.set_cache_fd(FD::INVALID);
+                                e.set_fd(FD::INVALID);
                             }
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = query.entry().symlink_or_fill(|| {
+                        Fs::FilenameStore::instance().append_thin(&buf[..out_len])
+                    })?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
@@ -1678,15 +1680,8 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(path.text())
                         ));
                     }
-                    {
-                        // Every cached-`Entry` rewrite takes the per-entry mutex.
-                        let _entry_guard = query.entry().mutex.lock_guard();
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
-                    }
                     if !result.file_fd.is_valid() && store_fd {
-                        result.file_fd = query.entry().cache().fd;
+                        result.file_fd = query.entry().fd();
                     }
 
                     path.set_realpath(symlink);
@@ -3787,7 +3782,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     dirname_fd,
-                    file_fd: entry_query.entry().cache().fd,
+                    file_fd: entry_query.entry().fd(),
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
                     package_json: Some(
@@ -3956,7 +3951,7 @@ impl<'a> Resolver<'a> {
                 secondary: None,
             },
             dirname_fd,
-            file_fd: query.entry().cache().fd,
+            file_fd: query.entry().fd(),
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
             package_json: Some(
@@ -5869,7 +5864,7 @@ impl<'a> Resolver<'a> {
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
                     dirname_fd: plain_dirname_fd,
-                    file_fd: query.entry().cache().fd,
+                    file_fd: query.entry().fd(),
                 }));
             }
         }
@@ -5966,7 +5961,7 @@ impl<'a> Resolver<'a> {
                                     query.entry().abs_path.as_bytes()
                                 },
                                 dirname_fd: ts_dirname_fd,
-                                file_fd: query.entry().cache().fd,
+                                file_fd: query.entry().fd(),
                             }));
                         }
                     }
@@ -6054,7 +6049,7 @@ impl<'a> Resolver<'a> {
                         query.entry().abs_path.as_bytes()
                     },
                     dirname_fd,
-                    file_fd: query.entry().cache().fd,
+                    file_fd: query.entry().fd(),
                 });
             }
         }
@@ -6264,13 +6259,11 @@ impl<'a> Resolver<'a> {
                 if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
+                        if entries_fd.is_valid() && !lookup.entry().fd().is_valid() && self.store_fd
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
+                            lookup.entry().set_fd(entries_fd);
                         }
                         // SAFETY: EntryStore-owned slot — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
@@ -6299,10 +6292,8 @@ impl<'a> Resolver<'a> {
                             let joined = self
                                 .fs_ref()
                                 .abs_buf(&parts, bufs!(dir_info_uncached_filename));
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
+                            symlink = entry
+                                .symlink_or_fill(|| self.fs_ref().dirname_store.append_thin(joined))
                                 .expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -6314,13 +6305,6 @@ impl<'a> Resolver<'a> {
                                     bstr::BStr::new(symlink)
                                 );
                                 logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
                         }

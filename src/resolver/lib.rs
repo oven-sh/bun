@@ -111,6 +111,13 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
+                /// Interns `value` behind one pointer.
+                pub(crate) fn append_thin(
+                    &self,
+                    value: &[u8],
+                ) -> crate::CrateResult<crate::fs_full::ThinInterned> {
+                    crate::fs_full::ThinInterned::intern(value, |parts| self.append_parts(parts))
+                }
                 /// Format directly into the store's tail; no intermediate `String`.
                 pub fn print(
                     &self,
@@ -716,7 +723,6 @@ pub mod fs {
 
     use bun_core::Generation;
     use bun_paths::strings;
-    use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
@@ -1375,7 +1381,7 @@ pub mod fs {
 
             let mut cache = EntryCache {
                 kind: EntryKind::File,
-                symlink: Interned::EMPTY,
+                symlink: None,
                 fd: Fd::INVALID,
             };
 
@@ -1477,8 +1483,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = Some(FilenameStore::instance().append_thin(real)?);
                 }
                 return Ok(cache);
             }
@@ -1539,8 +1544,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = Some(FilenameStore::instance().append_thin(symlink)?);
                 }
 
                 Ok(cache)
@@ -1927,7 +1931,7 @@ pub mod dir_entry_accessor {
                 };
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
-                let symlink_target = entry.cache().symlink;
+                let symlink_target = bun_ptr::Interned::from_static(entry.cached_symlink());
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid

@@ -848,7 +848,7 @@ impl Route {
             };
 
             if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
+                // The reads of `fd()` and the `set_abs_path` write below
                 // rewrite the cached `Entry`; serialize them on the per-entry
                 // mutex (the same lock every other `Entry` rewrite path takes).
                 // SAFETY: see fn-level NOTE — read-only reborrow.
@@ -869,7 +869,7 @@ impl Route {
                 });
 
                 // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = unsafe { &*entry }.fd().unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {

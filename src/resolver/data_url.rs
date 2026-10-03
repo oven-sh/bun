@@ -321,6 +321,7 @@ impl DataUrlBuf for CountingBuf {
     }
 }
 
+// Every test here reaches simdutf, and Miri cannot call a foreign function.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +341,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn shortest_data_url_percent_path() {
         // Plain ASCII: percent-escaped form is shorter than base64.
         let url = DataURL::encode_string_as_shortest_data_url(b"text/plain", b"hello");
@@ -348,6 +350,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn shortest_data_url_base64_fallback_invalid_utf8() {
         // Non-UTF-8 input makes the percent-escape path bail; the fallback
         // must emit a real base64 payload.
@@ -359,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn shortest_data_url_base64_fallback_when_shorter() {
         // Every byte needs escaping (3 bytes each) so base64 (4/3 per byte)
         // wins and the fallback path is taken.

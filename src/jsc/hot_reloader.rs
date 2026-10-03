@@ -1150,7 +1150,7 @@ where
                                                 // Every cached-`Entry` rewrite takes
                                                 // the per-entry mutex.
                                                 let _entry_guard = ent.mutex.lock_guard();
-                                                ent.set_cache_fd(Fd::INVALID);
+                                                ent.set_fd(Fd::INVALID);
                                                 ent.need_stat.store(
                                                     true,
                                                     core::sync::atomic::Ordering::Release,

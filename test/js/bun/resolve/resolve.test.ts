@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1144,6 +1156,120 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
   expect(exitCode).toBe(0);
 }, 20_000);
+
+// Every thread's resolver shares one cache of directory entries. For a file
+// inside a symlinked directory the first thread to resolve it stores the real
+// path in the cached entry while the other threads read that entry. A reader
+// that sees half of that store gets a slice with the wrong pointer or length:
+// the process dies in `Resolver::finalize_result` with
+// `Segmentation fault at address 0x2`, or the resolved path is wrong.
+it("threads resolve files inside a symlinked directory at the same time", async () => {
+  // Debug and ASAN builds resolve about 150 times slower.
+  const slow = isASAN || isDebug;
+  const [dirCount, fileCount, workerCount, rounds] = slow ? [2, 50, 3, 3] : [4, 250, 7, 40];
+
+  const files: Record<string, string> = {
+    "main.mjs": `
+      import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+
+      const PHASE = 0, DONE = 1, WRONG = 2, STOP = 3;
+
+      function resolveAll(ctl, dirs, names, expected) {
+        let wrong = 0;
+        for (let d = 0; d < dirs.length; d++) {
+          for (let i = 0; i < names.length; i++) {
+            if (Bun.resolveSync(names[i], dirs[d]) !== expected[d][i]) wrong++;
+          }
+        }
+        if (wrong) Atomics.add(ctl, WRONG, wrong);
+      }
+
+      if (isMainThread) {
+        const [linkRoot, dirCount, fileCount, workerCount, rounds] = JSON.parse(process.argv[2]);
+        const sep = process.platform === "win32" ? "\\\\" : "/";
+        const dirs = Array.from({ length: dirCount }, (_, d) => linkRoot + sep + "d" + d);
+        const names = Array.from({ length: fileCount }, (_, i) => "./f" + i + ".js");
+
+        // A failed resolve makes the runtime drop its cached listing of that
+        // directory, so the next resolve of each file starts from a fresh entry.
+        let missing = 0;
+        const dropCachedListings = () => {
+          for (const dir of dirs) {
+            try {
+              Bun.resolveSync("./missing-" + missing++ + ".js", dir);
+            } catch {}
+          }
+        };
+
+        // What one thread alone resolves each file to.
+        const expected = dirs.map(dir => names.map(name => Bun.resolveSync(name, dir)));
+        const viaLink = expected.flat().filter(path => path.startsWith(linkRoot + sep)).length;
+        dropCachedListings();
+
+        const ctl = new Int32Array(new SharedArrayBuffer(16));
+        const workers = await Promise.all(
+          Array.from({ length: workerCount }, () => {
+            const worker = new Worker(import.meta.path, { workerData: { ctl, dirs, names, expected } });
+            return new Promise(resolve => worker.once("message", () => resolve(worker)));
+          }),
+        );
+
+        for (let round = 0; round < rounds; round++) {
+          Atomics.store(ctl, DONE, 0);
+          Atomics.add(ctl, PHASE, 1);
+          Atomics.notify(ctl, PHASE);
+          resolveAll(ctl, dirs, names, expected);
+          for (let done; (done = Atomics.load(ctl, DONE)) < workerCount; ) Atomics.wait(ctl, DONE, done);
+          // Every worker is parked here, so the threads race on the entries and not on this.
+          dropCachedListings();
+        }
+
+        Atomics.store(ctl, STOP, 1);
+        Atomics.add(ctl, PHASE, 1);
+        Atomics.notify(ctl, PHASE);
+        await Promise.all(workers.map(worker => worker.terminate()));
+        console.log(JSON.stringify({ resolved: expected.flat().length, viaLink, wrong: Atomics.load(ctl, WRONG) }));
+      } else {
+        const { ctl, dirs, names, expected } = workerData;
+        let phase = 0;
+        parentPort.postMessage("ready");
+        for (;;) {
+          Atomics.wait(ctl, PHASE, phase);
+          if (Atomics.load(ctl, STOP)) break;
+          phase = Atomics.load(ctl, PHASE);
+          resolveAll(ctl, dirs, names, expected);
+          Atomics.add(ctl, DONE, 1);
+          Atomics.notify(ctl, DONE);
+        }
+      }
+    `,
+  };
+  for (let d = 0; d < dirCount; d++) {
+    for (let i = 0; i < fileCount; i++) files[`real/d${d}/f${i}.js`] = "";
+  }
+  using dir = tempDir("resolve-symlinked-dir-threads", files);
+  const root = String(dir);
+  // "junction" is the Windows-appropriate symlink kind for directories.
+  symlinkSync(join(root, "real"), join(root, "link"), "junction");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs", JSON.stringify([join(root, "link"), dirCount, fileCount, workerCount, rounds])],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    resolved: dirCount * fileCount,
+    // Every file resolves to its real path, not to the path through the link.
+    viaLink: isWindows ? expect.any(Number) : 0,
+    wrong: 0,
+  });
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {

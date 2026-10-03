@@ -10,7 +10,6 @@ import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Duplex } from "stream";
 import type { PeerCertificate } from "tls";
 import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
 
@@ -758,57 +757,69 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
   expect(true).toBe(true);
 });
 
-it.each(["TLSv1.3", "TLSv1.2"] as const)(
+it.concurrent.each(["TLSv1.3", "TLSv1.2"] as const)(
   "an ALPNCallback that destroys its socket over a Duplex drops that connection only (%s)",
   async maxVersion => {
     // The callback runs inside the handshake of the TLS engine that runs over the stream.
-    const server: Server = createServer({
-      ...COMMON_CERT,
-      maxVersion,
-      ALPNCallback(this: TLSSocket) {
-        this.destroy();
-        return undefined;
-      },
-    });
-    // A front hands the server a stream that is not a net.Socket.
-    const front = net.createServer(raw => {
-      raw.on("error", () => {});
-      const duplex = new Duplex({
-        read() {},
-        write(chunk, _encoding, callback) {
-          raw.write(chunk, callback);
-        },
-        final(callback) {
-          raw.end();
-          callback();
-        },
-        destroy(err, callback) {
-          raw.destroy();
-          callback(err);
+    const script = `
+      const tls = require("node:tls");
+      const net = require("node:net");
+      const { Duplex } = require("node:stream");
+      const { once } = require("node:events");
+      const server = tls.createServer({
+        ...${JSON.stringify(COMMON_CERT)},
+        maxVersion: ${JSON.stringify(maxVersion)},
+        ALPNCallback() {
+          this.destroy();
+          return undefined;
         },
       });
-      raw.on("data", chunk => duplex.push(chunk));
-      raw.on("end", () => duplex.push(null));
-      server.emit("connection", duplex);
+      // A front hands the server a stream that is not a net.Socket.
+      const front = net.createServer(raw => {
+        raw.on("error", () => {});
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            raw.write(chunk, callback);
+          },
+          final(callback) {
+            raw.end();
+            callback();
+          },
+          destroy(err, callback) {
+            raw.destroy();
+            callback(err);
+          },
+        });
+        raw.on("data", chunk => duplex.push(chunk));
+        raw.on("end", () => duplex.push(null));
+        server.emit("connection", duplex);
+      });
+      front.listen(0, "127.0.0.1", async () => {
+        const { port } = front.address();
+        const refused = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
+        const [err] = await once(refused, "error");
+        // A client that offers no ALPN does not reach the callback: the server still serves it.
+        const served = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        await once(served, "secureConnect");
+        console.log(JSON.stringify({ refused: err.code, alpnProtocol: served.alpnProtocol }));
+        served.destroy();
+        front.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    const clients: TLSSocket[] = [];
-    try {
-      front.listen(0, "127.0.0.1");
-      await once(front, "listening");
-      const port = (front.address() as AddressInfo).port;
-      const refused = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
-      clients.push(refused);
-      const [err] = await once(refused, "error");
-      expect(err.code).toBe("ECONNRESET");
-      // A client that offers no ALPN does not reach the callback: the server still serves it.
-      const served = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-      clients.push(served);
-      await once(served, "secureConnect");
-      expect(served.alpnProtocol).toBe(false);
-    } finally {
-      for (const client of clients) client.destroy();
-      front.close();
-    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ refused: "ECONNRESET", alpnProtocol: false }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   },
 );
 

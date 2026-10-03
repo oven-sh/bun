@@ -41,9 +41,9 @@ export default [
     // receiver's slot; it must never reach through JSBlob's layout here.
     values: ["stream"],
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      arrayBuffer: { fn: "getArrayBuffer" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
 

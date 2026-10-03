@@ -125,14 +125,25 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
   us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
 }
 
+extern void Bun__CPUProfiler__enterIdle(void *jsc_vm);
+extern void Bun__CPUProfiler__exitIdle(void);
+
+/* uv_run polls right after the prepare handles and runs the check handles once
+ * the poll returns (the same pair Node's profiler idle notifier uses). */
 static void prepare_cb(uv_prepare_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_pre(loop);
+  if (loop->data.jsc_vm) {
+    Bun__CPUProfiler__enterIdle(loop->data.jsc_vm);
+  }
 }
 
 /* Note: libuv timers execute AFTER the post callback */
 static void check_cb(uv_check_t *p) {
   struct us_loop_t *loop = p->data;
+  if (loop->data.jsc_vm) {
+    Bun__CPUProfiler__exitIdle();
+  }
   us_internal_loop_post(loop);
 }
 

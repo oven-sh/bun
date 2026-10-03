@@ -36,6 +36,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+const writeNodeInspectorLine = $newCppFunction("BunDebugger.cpp", "jsFunction_writeNodeInspectorLine", 1);
 
 let activeInspectorUrl: string | undefined;
 
@@ -100,7 +101,9 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
-  process.stderr.write(`Debugger listening on ${resolvedUrl}\n`);
+  const listening = `Debugger listening on ${resolvedUrl}\n`;
+  // process.stderr queues behind a full pipe, and a wait that follows does not flush that queue.
+  if (!writeNodeInspectorLine(listening)) process.stderr.write(listening);
 
   if (wait) {
     waitForNodeInspectorConnection();

@@ -124,9 +124,9 @@ Bun folds resolved peer dependencies (required and optional) into each global en
 
 ### Phantom-dependency fallback
 
-When packages live under the project's `node_modules/.bun/`, Node's module resolution walks up through `node_modules/.bun/node_modules/` — the hidden hoisted layer — before reaching the project root. With the global store, packages realpath into `<cache>/links/`, so that layer is no longer on the resolution path from inside a package.
+When packages live under the project's `node_modules/.bun/`, Node's module resolution walks up through `node_modules/.bun/node_modules/` — the hidden hoisted layer — before reaching the project root. With the global store, packages realpath into `<cache>/links/`, so that layer is no longer on the filesystem walk from inside a package.
 
-In practice this only affects **true phantom dependencies**: a package doing `require('helper')` for something it never declared in `dependencies`, `peerDependencies`, or `peerDependenciesMeta`. If you hit this, add the helper to the consuming package's dependencies (the right fix) or set `globalStore = false`.
+This only matters for **true phantom dependencies**: a package doing `require('helper')` for something it never declared in `dependencies`, `peerDependencies`, or `peerDependenciesMeta`. Bun's own resolver compensates: when the walk is about to leave a store entry, it continues at the hidden hoisted layer of the project that links that entry, so `bun run` and `bun build` resolve phantom dependencies in the same order as with a project-local store. Bun finds that project from the working directory, so run bun from inside the project. External tools that walk the real filesystem — `node`, `tsc`, `eslint` — still can't see that layer from inside the store. If one of those hits a phantom dependency, add the helper to the consuming package's dependencies (the right fix) or set `globalStore = false`.
 
 [`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the project's `node_modules`, which packages inside the global store can't reach. They still work for resolving hoisted packages from your own source code.
 

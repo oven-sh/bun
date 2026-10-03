@@ -206,4 +206,175 @@ describe("URLPattern", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
   });
+
+  // Two named groups with at most one character between them, as in "/:a-:b", compile to a regexp that is not the one
+  // the spec writes down. It has to match the same inputs with the same groups.
+  describe("adjacent named groups", () => {
+    // Every string over `alphabet` that is at most `maxLength` long.
+    function words(alphabet: string, maxLength: number): string[] {
+      const result = [""];
+      let start = 0;
+      for (let length = 0; length < maxLength; length++) {
+        const end = result.length;
+        for (let i = start; i < end; i++) {
+          for (const character of alphabet) result.push(result[i] + character);
+        }
+        start = end;
+      }
+      return result;
+    }
+
+    // `spec` is the regexp the URLPattern spec generates for the component.
+    const cases: {
+      init: URLPatternInit;
+      options?: URLPatternOptions;
+      component: Component;
+      spec: RegExp;
+      names: string[];
+      inputs: string[];
+    }[] = [
+      {
+        init: { pathname: "/:a-:b-:c" },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))-([^\/]+?)-([^\/]+?)$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 7).map(word => "/" + word),
+      },
+      {
+        init: { pathname: "/:a-:b/:c-:d/x" },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))-([^\/]+?)(?:\/([^\/]+?))-([^\/]+?)\/x$/v,
+        names: ["a", "b", "c", "d"],
+        inputs: words("a-", 3).flatMap(first => words("a-", 2).map(second => "/" + first + "/a" + second + "/x")),
+      },
+      {
+        // The separator is the prefix of the next group.
+        init: { pathname: "/:a{-:b}{-:c}" },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))(?:-([^\/]+?))(?:-([^\/]+?))$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 6).map(word => "/" + word),
+      },
+      {
+        // The separator is the suffix of the group.
+        init: { pathname: "/{:a-}{:b-}:c" },
+        component: "pathname",
+        spec: /^\/(?:([^\/]+?)-)(?:([^\/]+?)-)([^\/]+?)$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 6).map(word => "/" + word),
+      },
+      {
+        // No separator.
+        init: { pathname: "/:a:b:c" },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))([^\/]+?)([^\/]+?)$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 6).map(word => "/" + word),
+      },
+      {
+        // A separator of two characters keeps the spec regexp. The group after it does not.
+        init: { pathname: "/:a--:b-:c" },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))--([^\/]+?)-([^\/]+?)$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 7).map(word => "/" + word),
+      },
+      {
+        init: { pathname: "/:a{x}:b{x}:c" },
+        options: { ignoreCase: true },
+        component: "pathname",
+        spec: /^(?:\/([^\/]+?))x([^\/]+?)x([^\/]+?)$/iv,
+        names: ["a", "b", "c"],
+        inputs: words("aX", 6).map(word => "/" + word),
+      },
+      {
+        // The search component has no delimiter, so a group matches any character.
+        init: { search: ":a-:b-:c,x" },
+        component: "search",
+        spec: /^([^]+?)-([^]+?)-([^]+?),x$/v,
+        names: ["a", "b", "c"],
+        inputs: words("a-", 6).map(word => word + ",x"),
+      },
+      {
+        init: { hostname: ":a-:b.:c-:d" },
+        component: "hostname",
+        spec: /^([^\.]+?)-([^\.]+?)(?:\.([^\.]+?))-([^\.]+?)$/v,
+        names: ["a", "b", "c", "d"],
+        inputs: words("a-", 3).flatMap(first => words("a-", 2).map(second => "a" + first + "." + second + "a")),
+      },
+    ];
+
+    test.each(cases.map(entry => [JSON.stringify(entry.init), entry] as const))(
+      "%s matches like the spec regexp",
+      (_, { init, options, component, spec, names, inputs }) => {
+        const pattern = new URLPattern(init, options);
+        const mismatches: unknown[] = [];
+        let matched = 0;
+        for (const input of inputs) {
+          const match = spec.exec(input);
+          const expected = match && Object.fromEntries(names.map((name, i) => [name, match[i + 1]]));
+          const actual = pattern.exec({ [component]: input })?.[component].groups ?? null;
+          if (match) matched++;
+          if (!Bun.deepEquals(actual, expected)) mismatches.push({ input, actual, expected });
+        }
+        expect({ mismatches, matchedSome: matched > 0 }).toEqual({ mismatches: [], matchedSome: true });
+      },
+    );
+
+    test("a group keeps a separator it has to contain", () => {
+      const pattern = new URLPattern({ pathname: "/:a-:b-:c" });
+      expect([
+        pattern.exec({ pathname: "/x-y-z-w" })?.pathname.groups,
+        pattern.exec({ pathname: "/x--y-z" })?.pathname.groups,
+        pattern.exec({ pathname: "/--x-y" })?.pathname.groups,
+        pattern.exec({ pathname: "/x-y-" }),
+      ]).toEqual([{ a: "x", b: "y", c: "z-w" }, { a: "x", b: "-y", c: "z" }, { a: "-", b: "x", c: "y" }, null]);
+    });
+
+    test("a backreference in a later regexp group sees every split", () => {
+      // Only a = "x-y" lets \1 match, and the regexp finds it after a = "x" fails.
+      const pattern = new URLPattern({ pathname: "/:a-:b/(\\1)" });
+      expect(pattern.exec({ pathname: "/x-y-z/x-y" })?.pathname.groups).toEqual({ a: "x-y", b: "z", "0": "x-y" });
+    });
+
+    test("a group of more than a million characters matches", () => {
+      // A regexp that loops over a parenthesized group gives up after about a million iterations. A plain class does not.
+      const long = Buffer.alloc(1_200_000, "a").toString();
+      const groups = new URLPattern({ pathname: "/:a-:b-:c" }).exec({ pathname: `/${long}-${long}-${long}` })?.pathname
+        .groups;
+      expect({ a: groups?.a === long, b: groups?.b === long, c: groups?.c === long }).toEqual({
+        a: true,
+        b: true,
+        c: true,
+      });
+    });
+
+    test("matching a long input is not polynomial", () => {
+      // Every input fails to match only at its end. The spec regexp then retries every way to split the input over the
+      // three groups: 2048 separators take about 4 s and 3072 take about 13 s. The compiled regexp looks at each
+      // character a fixed number of times, which takes a few milliseconds in a debug build.
+      const budgetMs = 1000;
+      const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
+      for (const [init, input] of [
+        [{ pathname: "/:owner-:repo-:ref" }, { pathname: "/" + repeat("a-", 3072) + "/x" }],
+        [{ pathname: "/:a{-:b}{-:c}" }, { pathname: "/" + repeat("a-", 2048) + "/x" }],
+        [{ pathname: "/{:a-}{:b-}:c" }, { pathname: "/" + repeat("a-", 2048) + "/x" }],
+        [{ pathname: "/:a:b:c" }, { pathname: "/" + repeat("a", 4096) + "/x" }],
+        [{ search: ":a-:b-:c,x" }, { search: repeat("a-", 2048) }],
+        [{ hash: "/:a/:b/:c/end" }, { hash: "/" + repeat("a/", 2048) + "x" }],
+        [{ hostname: ":a-:b-:c.example.com" }, { hostname: repeat("a-", 2048) + "a.example.org" }],
+      ] as [URLPatternInit, URLPatternInit][]) {
+        const pattern = new URLPattern(init);
+        const start = performance.now();
+        const result = pattern.test(input);
+        const elapsed = performance.now() - start;
+        if (result || elapsed >= budgetMs) {
+          throw new Error(
+            `${JSON.stringify(init)}: test() returned ${result} after ${elapsed.toFixed(0)} ms (budget ${budgetMs} ms)`,
+          );
+        }
+      }
+    });
+  });
 });

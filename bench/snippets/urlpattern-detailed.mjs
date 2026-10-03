@@ -24,4 +24,18 @@ group("URLPattern.exec() - hot path", () => {
   bench("exec() match - simple", () => simplePattern.exec("https://example.com/api/items"));
 });
 
+// Several named groups in one segment
+const adjacentPattern = new URLPattern({ pathname: "/:owner-:repo-:ref" });
+const adjacentMatchURL = "https://example.com/oven-bun-main";
+const adjacentLongMatchURL = "https://example.com/" + "a".repeat(1024) + "-bun-main";
+const adjacentLongNoMatchURL = "https://example.com/" + "a-".repeat(128) + "/x";
+
+group("URLPattern - adjacent named groups", () => {
+  bench("test() match", () => adjacentPattern.test(adjacentMatchURL));
+  bench("exec() match", () => adjacentPattern.exec(adjacentMatchURL));
+  bench("test() match - 1 KB group", () => adjacentPattern.test(adjacentLongMatchURL));
+  bench("test() no-match - other route", () => adjacentPattern.test(noMatchURL));
+  bench("test() no-match - 128 separators", () => adjacentPattern.test(adjacentLongNoMatchURL));
+});
+
 await run();

@@ -180,8 +180,6 @@ function onServerResponseClose() {
   // Fortunately, that requires only a single if check. :-)
   const httpMessage = this._httpMessage;
   if (httpMessage) {
-    // The native close path clears kHandle before its 'close': this one was emitted by hand, and Node's socketOnClose aborts the request for it too.
-    if (this[kHandle]) abortIncoming(httpMessage.req);
     emitCloseNT(httpMessage);
   }
 }
@@ -950,9 +948,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node.js's connectionListener registers socketOnClose, which frees
           // the parser - even a manually emitted 'close' stops parsing of any
           // pipelined requests still in the buffer.
-          if (!socket[kStopParsingOnCloseListener]) {
-            socket[kStopParsingOnCloseListener] = true;
-            socket.on("close", onSocketCloseStopParsing);
+          if (!socket[kSocketOnCloseListener]) {
+            socket[kSocketOnCloseListener] = true;
+            socket.on("close", socketOnClose);
           }
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -1453,7 +1451,7 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 // responses. Reads are paused while it is at or above the high water mark.
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
-const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
+const kSocketOnCloseListener = Symbol("kSocketOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
 const kDispatcherDetached = Symbol("kDispatcherDetached");
@@ -2641,11 +2639,20 @@ function onResponseFinishHandleSocket(server, socket, res) {
   }
 }
 
-// Node.js's socketOnClose frees the parser, which aborts parsing of any
-// pipelined requests still sitting in the current buffer - even when 'close'
-// was emitted manually by user code.
-function onSocketCloseStopParsing(this: NodeHTTPServerSocket) {
-  this[kHandle]?.stopParsing?.();
+// Node.js's socketOnClose for a 'close' that user code emitted: it frees the parser and aborts the requests that wait for a response.
+function socketOnClose(this: NodeHTTPServerSocket) {
+  const handle = this[kHandle];
+  // The native close path clears kHandle before its 'close': #onClose did this work.
+  if (!handle) return;
+  handle.stopParsing?.();
+  const httpMessage = this._httpMessage;
+  abortIncoming(httpMessage?.req);
+  const queued = this[kPipelinedResponses];
+  if (queued) {
+    for (let i = 0; i < queued.length; i++) abortIncoming(queued[i].req);
+  }
+  // Node's next listener is onServerResponseClose. A socket that was assigned internally has none.
+  if (httpMessage) emitCloseNT(httpMessage);
 }
 
 // The second half of Node's read gate (lib/_http_server.js): uWS already pauses

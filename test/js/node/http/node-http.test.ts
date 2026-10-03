@@ -3563,6 +3563,17 @@ describe("a 'close' event that user code emits", () => {
       ok(`${keepAlive}Content-Length: 33554432\r\n`) + "<33554663 bytes in all>",
       ["response 'close'", "emit returned true", "the client reads", "response 'finish'", "response 'close'"],
     ],
+    // Node.js aborts the request for the 'close' of its socket, and the abort destroys the socket.
+    [
+      "socket.emit('close') after flushHeaders()",
+      chunkedHead,
+      ["request 'aborted'", "response 'close'", "response destroyed true, closed true", "request 'error' ECONNRESET"],
+    ],
+    [
+      "socket.emit('close') after write()",
+      chunkedHead + "1\r\na\r\n",
+      ["request 'aborted'", "response 'close'", "request 'error' ECONNRESET"],
+    ],
     [
       "socket.emit('close') with an own assignSocket(), after flushHeaders()",
       chunkedHead,
@@ -3648,6 +3659,7 @@ describe("a 'close' event that user code emits", () => {
         { path: "res.emit('close'), then end()", events: finished(), ...nothingLeft },
         { path: "res.emit('close'), then the client leaves", events: aborted, ...nothingLeft },
         { path: "res.emit('close'), then res.destroy()", events: aborted, ...nothingLeft },
+        { path: "socket.emit('close')", events: aborted, ...nothingLeft },
         { path: "socket.emit('close') with an own assignSocket()", events: aborted, ...nothingLeft },
         { path: "socket.emit('close') in a 'connect' tunnel", events: ["socket close"], ...nothingLeft },
         { path: "socket.emit('close') in an 'upgrade' tunnel", events: ["socket close"], ...nothingLeft },

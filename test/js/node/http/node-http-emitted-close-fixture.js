@@ -144,9 +144,8 @@ async function tunnel(eventName, request, head) {
   return connection.received();
 }
 
-// A subclass with its own assignSocket() gets the socket through the public method, which
-// listens for the 'close' of the socket. Node.js also aborts the request for that 'close',
-// and the abort destroys the socket.
+// Node.js aborts the request for a 'close' of its socket, and the abort destroys the socket.
+// A subclass with its own assignSocket() gets the socket through the public method.
 class ResponseWithAssignSocket extends http.ServerResponse {
   assignSocket(socket) {
     super.assignSocket(socket);
@@ -165,6 +164,36 @@ function endUnlessAborted(socket) {
   events.push("the socket is not destroyed");
   socket.destroy();
 }
+
+const socketCloseAfterFlushHeaders = options =>
+  firstThenSentinel(
+    async (req, res) => {
+      const socket = req.socket;
+      recordAbort(req, res);
+      res.flushHeaders();
+      await turn();
+      socket.emit("close");
+      events.push(`response destroyed ${res.destroyed}, closed ${res.closed}`);
+      await turn();
+      res.end("body");
+      endUnlessAborted(socket);
+    },
+    { options, sentinel: false },
+  );
+const socketCloseAfterWrite = options =>
+  firstThenSentinel(
+    async (req, res) => {
+      const socket = req.socket;
+      recordAbort(req, res);
+      res.write("a");
+      await turn();
+      socket.emit("close");
+      await turn();
+      res.end("body");
+      endUnlessAborted(socket);
+    },
+    { options, sentinel: false },
+  );
 
 const scenarios = {
   // 'close' is emitted after the listener returned.
@@ -360,35 +389,12 @@ const scenarios = {
     return connection.received();
   },
 
+  "socket.emit('close') after flushHeaders()": () => socketCloseAfterFlushHeaders({}),
+  "socket.emit('close') after write()": () => socketCloseAfterWrite({}),
   "socket.emit('close') with an own assignSocket(), after flushHeaders()": () =>
-    firstThenSentinel(
-      async (req, res) => {
-        const socket = req.socket;
-        recordAbort(req, res);
-        res.flushHeaders();
-        await turn();
-        socket.emit("close");
-        events.push(`response destroyed ${res.destroyed}, closed ${res.closed}`);
-        await turn();
-        res.end("body");
-        endUnlessAborted(socket);
-      },
-      { options: { ServerResponse: ResponseWithAssignSocket }, sentinel: false },
-    ),
+    socketCloseAfterFlushHeaders({ ServerResponse: ResponseWithAssignSocket }),
   "socket.emit('close') with an own assignSocket(), after write()": () =>
-    firstThenSentinel(
-      async (req, res) => {
-        const socket = req.socket;
-        recordAbort(req, res);
-        res.write("a");
-        await turn();
-        socket.emit("close");
-        await turn();
-        res.end("body");
-        endUnlessAborted(socket);
-      },
-      { options: { ServerResponse: ResponseWithAssignSocket }, sentinel: false },
-    ),
+    socketCloseAfterWrite({ ServerResponse: ResponseWithAssignSocket }),
 
   // The timer is not a wait: a timer that is due fires after the handlers of the rejection.
   "an unhandled rejection in a listener that leaves the response open": () =>

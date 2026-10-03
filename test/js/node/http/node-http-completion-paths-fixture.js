@@ -60,8 +60,8 @@ function nativeResponsesARootReaches() {
   const queue = [];
   for (let i = 0; i < roots.length; i += 3) {
     const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
-    // What an output constraint appends is recorded as a root, but only follows from its owner being marked.
-    if (reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+    // Not holders: what an output constraint appends follows from its owner, and a compilation in flight lets go when it is done.
+    if (reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput") || reason.includes("JITWorkList")) continue;
     reachedFrom.set(roots[i], reason);
     queue.push(roots[i]);
   }
@@ -289,6 +289,17 @@ const paths = {
   },
 };
 
+async function socketEmitsClose({ server, connect, events }) {
+  const closed = Promise.withResolvers();
+  server.on("request", (req, res) => {
+    record(events, req, res, closed.resolve);
+    res.flushHeaders();
+    setImmediate(() => req.socket.emit("close"));
+  });
+  (await connect()).write(get("/"));
+  await closed.promise;
+}
+
 // 'close' is emitted by hand first. The listeners that record come after it, so they record
 // what node:http emits.
 const emitted = {
@@ -332,18 +343,10 @@ const emitted = {
     (await connect()).write(get("/"));
     await closed.promise;
   },
+  "socket.emit('close')": socketEmitsClose,
   "socket.emit('close') with an own assignSocket()": {
     options: { ServerResponse: ResponseWithAssignSocket },
-    run: async ({ server, connect, events }) => {
-      const closed = Promise.withResolvers();
-      server.on("request", (req, res) => {
-        record(events, req, res, closed.resolve);
-        res.flushHeaders();
-        setImmediate(() => req.socket.emit("close"));
-      });
-      (await connect()).write(get("/"));
-      await closed.promise;
-    },
+    run: socketEmitsClose,
   },
   "socket.emit('close') in a 'connect' tunnel": async ({ server, connect, events }) => {
     const closed = Promise.withResolvers();

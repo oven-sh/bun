@@ -3520,3 +3520,30 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+// A C string ends at the first NUL byte: the lookup would stat, and exec would run, the bytes before it.
+test.skipIf(isWindows)("a PATH entry or a command with a NUL byte finds no command", async () => {
+  using dir = tempDir("shell-argv0-nul", {
+    "tool": "#!/bin/sh\necho ran-tool\n",
+  });
+  const toolDir = String(dir);
+  const tool = join(toolDir, "tool");
+  chmodSync(tool, 0o755);
+
+  const run = async (command: $.ShellPromise) => {
+    const { stdout, stderr, exitCode } = await command.quiet().nothrow();
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  };
+
+  expect({
+    control: await run($`tool`.env({ ...bunEnv, PATH: toolDir })),
+    pathEntry: await run($`zz`.env({ ...bunEnv, PATH: tool + "\0" })),
+    pathEntryOfWhichBuiltin: await run($`which zz`.env({ ...bunEnv, PATH: tool + "\0" })),
+    commandFromVariable: await run($`$TOOL`.env({ ...bunEnv, PATH: toolDir, TOOL: "tool\0zz" })),
+  }).toEqual({
+    control: { stdout: "ran-tool\n", stderr: "", exitCode: 0 },
+    pathEntry: { stdout: "", stderr: "bun: command not found: zz\n", exitCode: 1 },
+    pathEntryOfWhichBuiltin: { stdout: "which: zz not found\n", stderr: "", exitCode: 1 },
+    commandFromVariable: { stdout: "", stderr: "bun: command not found: tool\0zz\n", exitCode: 1 },
+  });
+});

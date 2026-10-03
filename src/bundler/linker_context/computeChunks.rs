@@ -695,12 +695,19 @@ pub(crate) fn compute_chunks(
             };
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
             let dir: &[u8] = 'dir: {
-                let Ok(dir_file) = bun_sys::File::openat(
-                    bun_sys::Fd::cwd(),
-                    dir_path,
-                    bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-                    0,
-                ) else {
+                // A path with a NUL byte names no directory: the open would act on the bytes before it.
+                let opened = if strings::contains_char(dir_path, 0) {
+                    None
+                } else {
+                    bun_sys::File::openat(
+                        bun_sys::Fd::cwd(),
+                        dir_path,
+                        bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+                        0,
+                    )
+                    .ok()
+                };
+                let Some(dir_file) = opened else {
                     break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
                         dir_path,
                         &mut real_path_buf.0,

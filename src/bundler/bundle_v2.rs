@@ -5628,6 +5628,25 @@ pub mod bv2_impl {
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
+            // Checked before either metafile is written. With no outdir the output is `Saved` at its path,
+            // so a read of it would open the bytes before the NUL.
+            let metafile_paths = [
+                self.linker.options.metafile_json_path,
+                self.linker.options.metafile_markdown_path,
+            ];
+            if metafile_paths.iter().any(|path| !path.is_empty()) {
+                let with_nul = core::iter::once(&outdir[..])
+                    .chain(metafile_paths)
+                    .find_map(options::nul_in_output_path);
+                if let Some(err) = with_nul {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("{err}"),
+                    );
+                    return Err(crate::Error::BuildFailed);
+                }
+            }
             if !self.linker.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(

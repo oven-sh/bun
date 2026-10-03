@@ -1,4 +1,5 @@
 import assert from "assert";
+import type { BuildConfig, BunPlugin } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
@@ -472,6 +473,206 @@ describe("Bun.build", () => {
         sourcemap: "invalid",
       } as any),
     ).toThrow();
+  });
+
+  // A C string ends at the first NUL byte, so a syscall on such a path would act on the bytes before it.
+  describe("a path with a NUL byte", () => {
+    const fixture = {
+      "e.mjs": "export default 1;",
+      "split-a.mjs": `import("./shared.mjs");`,
+      "split-b.mjs": `import("./shared.mjs");`,
+      "shared.mjs": "export default 2;",
+      "asset.mjs": `import logo from "./logo.png"; console.log(logo);`,
+      "logo.png": "png",
+      "plugin-asset.mjs": `import logo from "virtual-logo"; console.log(logo);`,
+      // These exist so that an open of the bytes before the NUL in "sub\0zz" and "virt\0x" would succeed.
+      "sub/keep": "",
+      "virt/keep": "",
+    };
+    const out = (dir: string) => join(dir, "out");
+    const listing = (dir: string) => readdirSync(dir, { recursive: true }).sort();
+    const virtual: BunPlugin = {
+      name: "virtual",
+      setup(build) {
+        build.onResolve({ filter: /^virtual:/ }, ({ path }) => ({
+          path: path.slice("virtual:".length),
+          namespace: "virtual",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export default 3;", loader: "ts" }));
+        build.onResolve({ filter: /^virtual-logo$/ }, () => ({ path: "logo\0x.png", namespace: "virtual-asset" }));
+        build.onLoad({ filter: /.*/, namespace: "virtual-asset" }, () => ({ contents: "png", loader: "file" }));
+      },
+    };
+
+    // Serial: every build runs on the one bundle thread, so concurrent rows would wait for each other inside their own timeout.
+    test.each<[string, (dir: string) => object, RegExp]>([
+      [
+        "outdir",
+        dir => ({ outdir: join(dir, "out\0-REQUESTED") }),
+        /^Output path ".*out\\u0000-REQUESTED" must not contain null bytes$/,
+      ],
+      [
+        "naming",
+        dir => ({ outdir: out(dir), naming: "a\0b-[name].[ext]" }),
+        /^Output path ".*a\\u0000b-e\.js" must not contain null bytes$/,
+      ],
+      [
+        "naming.entry",
+        dir => ({ outdir: out(dir), naming: { entry: "a\0b-[name].[ext]" } }),
+        /^Output path ".*a\\u0000b-e\.js" must not contain null bytes$/,
+      ],
+      [
+        "naming.chunk",
+        dir => ({
+          outdir: out(dir),
+          entrypoints: [join(dir, "split-a.mjs"), join(dir, "split-b.mjs")],
+          splitting: true,
+          naming: { chunk: "ch\0unk-[hash].[ext]" },
+        }),
+        /^Output path ".*ch\\u0000unk-[a-z0-9]+\.js" must not contain null bytes$/,
+      ],
+      [
+        "naming.asset",
+        dir => ({ outdir: out(dir), entrypoints: [join(dir, "asset.mjs")], naming: { asset: "as\0set-[name].[ext]" } }),
+        /^Output path ".*as\\u0000set-logo\.png" must not contain null bytes$/,
+      ],
+      [
+        "metafile",
+        dir => ({ outdir: out(dir), metafile: "meta\0.json" }),
+        /^Output path "meta\\u0000\.json" must not contain null bytes$/,
+      ],
+      [
+        "metafile.json",
+        dir => ({ outdir: out(dir), metafile: { json: "meta\0.json" } }),
+        /^Output path "meta\\u0000\.json" must not contain null bytes$/,
+      ],
+      [
+        "metafile.markdown",
+        dir => ({ outdir: out(dir), metafile: { markdown: "meta\0.md" } }),
+        /^Output path "meta\\u0000\.md" must not contain null bytes$/,
+      ],
+      [
+        "metafile.json of a build with no outdir",
+        () => ({ metafile: { json: "meta\0.json" } }),
+        /^Output path "meta\\u0000\.json" must not contain null bytes$/,
+      ],
+      [
+        "metafile.markdown of a build with no outdir",
+        () => ({ metafile: { markdown: "meta\0.md" } }),
+        /^Output path "meta\\u0000\.md" must not contain null bytes$/,
+      ],
+      [
+        "the [dir] of a `files` key",
+        dir => ({
+          outdir: out(dir),
+          entrypoints: [join(dir, "virt\0x", "in.mjs")],
+          files: { [join(dir, "virt\0x", "in.mjs")]: "export default 4;" },
+          naming: "[dir]/[name].[ext]",
+        }),
+        /^Output path ".*virt\\u0000x.*in\.js" must not contain null bytes$/,
+      ],
+      [
+        "an entry point path from a plugin",
+        dir => ({ outdir: out(dir), entrypoints: ["virtual:a\0b.ts"], plugins: [virtual] }),
+        /^Output path ".*virtual:a\\u0000b\.js" must not contain null bytes$/,
+      ],
+      [
+        "an asset path from a plugin",
+        dir => ({ outdir: out(dir), entrypoints: [join(dir, "plugin-asset.mjs")], plugins: [virtual] }),
+        /^Output path ".*logo\\u0000x-[a-z0-9]+\.png" must not contain null bytes$/,
+      ],
+      [
+        "compile.outfile",
+        dir => ({ compile: { outfile: join(dir, "app\0zz") } }),
+        /^Output path ".*app\\u0000zz(\.exe)?" must not contain null bytes$/,
+      ],
+      [
+        "the compile.outfile taken from the entry point",
+        dir => ({ outdir: out(dir), compile: true, entrypoints: ["virtual:de\0rived.ts"], plugins: [virtual] }),
+        /^Output path ".*virtual:de\\u0000rived(\.exe)?" must not contain null bytes$/,
+      ],
+      [
+        "compile.bytecodeOrder",
+        dir => ({
+          bytecode: true,
+          format: "cjs",
+          compile: { outfile: join(dir, "app"), bytecodeOrder: join(dir, "e.mjs") + "\0.order" },
+        }),
+        /^cannot read the bytecode order file .*e\.mjs\0\.order: ENOENT/,
+      ],
+    ])("%s fails the build and creates nothing", async (_, config, message) => {
+      using dir = tempDir("bun-build-nul", fixture);
+      const base = String(dir);
+      const before = listing(base);
+      const options = { entrypoints: [join(base, "e.mjs")], ...config(base) } as BuildConfig;
+
+      const result = await Bun.build({ ...options, throw: false });
+      expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+        success: false,
+        logs: [expect.stringMatching(message)],
+      });
+      expect(listing(base)).toEqual(before);
+    });
+
+    test("in outdir rejects the build when `throw` is not false", async () => {
+      using dir = tempDir("bun-build-nul", fixture);
+      const base = String(dir);
+      const before = listing(base);
+
+      await expect(
+        Bun.build({ entrypoints: [join(base, "e.mjs")], outdir: join(base, "out\0-REQUESTED") }),
+      ).rejects.toMatchObject({
+        message: "Bundle failed",
+        errors: [
+          { message: expect.stringMatching(/^Output path ".*out\\u0000-REQUESTED" must not contain null bytes$/) },
+        ],
+      });
+      expect(listing(base)).toEqual(before);
+    });
+
+    test.each<[string, (dir: string) => object, (dir: string) => string]>([
+      [
+        "root",
+        dir => ({ outdir: out(dir), root: join(dir, "sub") + "\0zz" }),
+        dir => `ENOENT: failed to open root directory: ${join(dir, "sub")}\0zz`,
+      ],
+      [
+        "compile.executablePath",
+        dir => ({ compile: { outfile: join(dir, "app"), executablePath: process.execPath + "\0zz" } }),
+        () => "executablePath must be a valid path to a Bun executable",
+      ],
+      [
+        "compile.windows.icon",
+        dir => ({ compile: { outfile: join(dir, "app"), windows: { icon: join(dir, "e.mjs") + "\0.ico" } } }),
+        () => "windows.icon must be a valid path to an ico file",
+      ],
+    ])("%s throws from the call and creates nothing", async (_, config, message) => {
+      using dir = tempDir("bun-build-nul", fixture);
+      const base = String(dir);
+      const before = listing(base);
+
+      let thrown: unknown;
+      let build: Promise<unknown> | undefined;
+      try {
+        build = Bun.build({ entrypoints: [join(base, "e.mjs")], throw: false, ...config(base) } as BuildConfig);
+      } catch (error) {
+        thrown = error;
+      }
+      // A build that did not throw finishes before the directory is removed.
+      await build;
+
+      expect(thrown).toMatchObject({ message: message(base) });
+      expect(listing(base)).toEqual(before);
+    });
+
+    test("in a name of a build with no outdir is kept", async () => {
+      using dir = tempDir("bun-build-nul", fixture);
+      const result = await Bun.build({ entrypoints: [join(String(dir), "e.mjs")], naming: "a\0b-[name].[ext]" });
+      expect({ success: result.success, paths: result.outputs.map(output => output.path) }).toEqual({
+        success: true,
+        paths: ["./a\0b-e.js"],
+      });
+    });
   });
 
   test("returns errors properly", async () => {

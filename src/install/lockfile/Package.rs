@@ -2696,12 +2696,10 @@ impl Package<u64> {
                             debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
-                                value: bin::Value {
-                                    map: ExternalStringList::new(
-                                        current_len as u32,
-                                        extern_strings.len() as u32,
-                                    ),
-                                },
+                                value: bin::Value::init_map(ExternalStringList::new(
+                                    current_len as u32,
+                                    extern_strings.len() as u32,
+                                )),
                                 ..Default::default()
                             };
                         }
@@ -2713,9 +2711,9 @@ impl Package<u64> {
                     if !stri.data.is_empty() {
                         self.bin = Bin {
                             tag: bin::Tag::File,
-                            value: bin::Value {
-                                file: string_builder.append::<String>(&stri.data),
-                            },
+                            value: bin::Value::init_file(
+                                string_builder.append::<String>(&stri.data),
+                            ),
                             ..Default::default()
                         };
                         break 'bin;
@@ -2736,9 +2734,7 @@ impl Package<u64> {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
-                                value: bin::Value {
-                                    dir: string_builder.append::<String>(str_),
-                                },
+                                value: bin::Value::init_dir(string_builder.append::<String>(str_)),
                                 ..Default::default()
                             };
                             break 'bin;

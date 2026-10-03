@@ -39,19 +39,13 @@ pub struct Bin {
     pub tag: Tag,
     pub(crate) _padding_tag: [u8; 3],
 
-    // Largest member must be zero initialized
+    // Copied byte for byte into bun.lockb and the npm manifest cache.
     pub(crate) value: Value,
 }
 
 impl Default for Bin {
     fn default() -> Self {
-        Bin {
-            tag: Tag::None,
-            _padding_tag: [0; 3],
-            value: Value {
-                map: ExternalStringList::default(),
-            },
-        }
+        Bin::init()
     }
 }
 
@@ -101,8 +95,8 @@ impl Bin {
         unsafe {
             match l.tag {
                 Tag::None => true,
-                Tag::File => l.value.file.eql(r.value.file, l_buf, r_buf),
-                Tag::Dir => l.value.dir.eql(r.value.dir, l_buf, r_buf),
+                Tag::File => l.value.file.eql(*r.value.file, l_buf, r_buf),
+                Tag::Dir => l.value.dir.eql(*r.value.dir, l_buf, r_buf),
                 Tag::NamedFile => {
                     l.value.named_file[0].eql(r.value.named_file[0], l_buf, r_buf)
                         && l.value.named_file[1].eql(r.value.named_file[1], l_buf, r_buf)
@@ -238,9 +232,7 @@ impl Bin {
                 return Ok(Bin {
                     tag: Tag::File,
                     _padding_tag: [0; 3],
-                    value: Value {
-                        file: buf.append(str_)?,
-                    },
+                    value: Value::init_file(buf.append(str_)?),
                 });
             }
         }
@@ -290,9 +282,10 @@ impl Bin {
                 return Ok(Bin {
                     tag: Tag::Map,
                     _padding_tag: [0; 3],
-                    value: Value {
-                        map: ExternalStringList::init(extern_strings.as_slice(), new),
-                    },
+                    value: Value::init_map(ExternalStringList::init(
+                        extern_strings.as_slice(),
+                        new,
+                    )),
                 });
             }
         }
@@ -307,9 +300,7 @@ impl Bin {
             return Ok(Bin {
                 tag: Tag::Dir,
                 _padding_tag: [0; 3],
-                value: Value {
-                    dir: buf.append(bin_str)?,
-                },
+                value: Value::init_dir(buf.append(bin_str)?),
             });
         }
         Ok(Bin::default())
@@ -455,8 +446,8 @@ impl Bin {
     }
 
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union whose members all span its 16 bytes; reading
+    // the wrong variant is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;
@@ -478,17 +469,45 @@ pub enum ToJsonStyle {
 // `bin_real::StringBuilder` paths still resolve.
 pub use bun_semver::StringBuilder;
 
+/// An 8-byte `Value` member, widened to the 16 bytes of the union. A union
+/// literal stores only the bytes of the member it names, and a `Bin` is copied
+/// byte for byte into bun.lockb and the npm manifest cache, so a narrower
+/// member would put bytes that nothing stored into those files.
+///
+/// `v` comes first: a pointer to the member is a pointer to its `T`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Padded<T: Copy> {
+    v: T,
+    _padding: [u8; 8],
+}
+
+impl<T: Copy> Padded<T> {
+    #[inline]
+    const fn new(v: T) -> Self {
+        Padded {
+            v,
+            _padding: [0; 8],
+        }
+    }
+}
+
+impl<T: Copy> core::ops::Deref for Padded<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.v
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union Value {
-    /// no "bin", or empty "bin"
-    pub none: (),
-
     /// "bin" is a string
     /// ```json
     /// "bin": "./bin/foo",
     /// ```
-    pub(crate) file: String,
+    pub(crate) file: Padded<String>,
 
     // Single-entry map
     ///```json
@@ -504,7 +523,7 @@ pub union Value {
     ///     "bin": "./bin",
     /// }
     ///```
-    pub(crate) dir: String,
+    pub(crate) dir: Padded<String>,
     // "bin" is a map
     ///```json
     /// "bin": {
@@ -512,39 +531,43 @@ pub union Value {
     ///     "babel-cli": "./cli.js",
     /// }
     ///```
-    pub(crate) map: ExternalStringList,
+    pub(crate) map: Padded<ExternalStringList>,
 }
 
+// Every member spans the whole union, so every `Value` literal stores all of it.
+const _: () = assert!(size_of::<Padded<String>>() == size_of::<Value>());
+const _: () = assert!(size_of::<[String; 2]>() == size_of::<Value>());
+const _: () = assert!(size_of::<Padded<ExternalStringList>>() == size_of::<Value>());
+
 impl Value {
-    /// To avoid undefined memory between union values, we must zero initialize the union first.
+    /// no "bin", or empty "bin"
     #[inline]
     pub(crate) fn init_none() -> Value {
-        // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        Value {
+            named_file: [String::EMPTY; 2],
+        }
     }
     #[inline]
     pub(crate) fn init_file(file: String) -> Value {
-        let mut v = Self::init_none();
-        v.file = file;
-        v
+        Value {
+            file: Padded::new(file),
+        }
     }
     #[inline]
     pub(crate) fn init_named_file(named_file: [String; 2]) -> Value {
-        let mut v = Self::init_none();
-        v.named_file = named_file;
-        v
+        Value { named_file }
     }
     #[inline]
     pub(crate) fn init_dir(dir: String) -> Value {
-        let mut v = Self::init_none();
-        v.dir = dir;
-        v
+        Value {
+            dir: Padded::new(dir),
+        }
     }
     #[inline]
     pub(crate) fn init_map(map: ExternalStringList) -> Value {
-        let mut v = Self::init_none();
-        v.map = map;
-        v
+        Value {
+            map: Padded::new(map),
+        }
     }
 }
 

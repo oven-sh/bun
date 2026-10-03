@@ -521,3 +521,142 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
   expect(code).not.toBe(0);
 });
+
+// Packages are stored as columns. The `bin` column sits after name (8),
+// name_hash (8), resolution (72), dependencies (8), resolutions (8) and meta
+// (88) per package. A bin is 20 bytes: a tag, 3 bytes of padding, then a
+// 16-byte value.
+function packageBins(lockb: Buffer): string[] {
+  const N = Number(lockb.readBigUInt64LE(86));
+  const begin = Number(lockb.readBigUInt64LE(110));
+  const binsStart = begin + N * (8 + 8 + 72 + 8 + 8 + 88);
+  return Array.from({ length: N }, (_, i) => {
+    const at = binsStart + i * 20;
+    return [
+      lockb.toString("hex", at, at + 4),
+      lockb.toString("hex", at + 4, at + 12),
+      lockb.toString("hex", at + 12, at + 20),
+    ].join(" ");
+  });
+}
+
+// One workspace member per shape of "bin". Every string is 8 bytes or shorter,
+// so the bin stores it inline and its bytes are the same on every run.
+const binShapes = {
+  "no-bin": {},
+  "file": { bin: "./cli.js" },
+  "named": { bin: { nm: "./n.js" } },
+  "map": { bin: { a: "./a.js", b: "./b.js" } },
+  "dir": { directories: { bin: "./bin" } },
+};
+const binShapeFiles = {
+  "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+  ...Object.fromEntries(
+    Object.entries(binShapes).map(([name, fields]) => [
+      `packages/${name}/package.json`,
+      JSON.stringify({ name, version: "1.0.0", ...fields }),
+    ]),
+  ),
+};
+const binShapeImporters = Object.keys(binShapes)
+  .map(name => `  packages/${name}: {}\n`)
+  .join("\n");
+// The bin of the root and of each member, sorted. A value shorter than 16
+// bytes ends in zeroes.
+const noBin = "00000000 0000000000000000 0000000000000000";
+const binShapeRows = [
+  noBin, // the root
+  noBin, // "no-bin"
+  "01000000 2e2f636c692e6a73 0000000000000000", // "file": "./cli.js"
+  "02000000 6e6d000000000000 2e2f6e2e6a730000", // "named": "nm", then "./n.js"
+  "03000000 2e2f62696e000000 0000000000000000", // "dir": "./bin"
+  "04000000 0000000004000000 0000000000000000", // "map": 4 strings at offset 0
+];
+
+it("bun pm migrate stores every byte of each bin in bun.lockb", async () => {
+  // Nothing is fetched: no package has a dependency.
+  const files = {
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
+    "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${binShapeImporters}`,
+    ...binShapeFiles,
+  };
+  const migrate = async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false }, files });
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { packageDir, err, code };
+  };
+  const [first, second] = await Promise.all([migrate(), migrate()]);
+
+  expect(first.err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect(second.err).toContain("migrated lockfile from pnpm-lock.yaml");
+  const lockb = Buffer.from(await file(join(first.packageDir, "bun.lockb")).arrayBuffer());
+  expect(packageBins(lockb).sort()).toEqual(binShapeRows);
+  // The same project gives the same file.
+  expect(Buffer.from(await file(join(second.packageDir, "bun.lockb")).arrayBuffer()).equals(lockb)).toBe(true);
+  expect([first.code, second.code]).toEqual([0, 0]);
+});
+
+it("bun pm trust stores every byte of each bin when it migrates into bun.lockb", async () => {
+  // `bun pm trust` with no bun lockfile migrates pnpm-lock.yaml in memory,
+  // runs the script of the package on disk, then saves the lockfile.
+  const integrity = "sha512-+frsFSxvy+pkm5fjAsAHptt2NiMMMnU07dan43rZO1yCqxy8vU0X8wNTOYlgkViD7HCHT/bIpPhoki935Nc2pg==";
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "lifecycle-postinstall": "1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lifecycle-postinstall:
+        specifier: 1.0.0
+        version: 1.0.0
+
+${binShapeImporters}
+packages:
+
+  lifecycle-postinstall@1.0.0:
+    resolution: {integrity: ${integrity}}
+
+snapshots:
+
+  lifecycle-postinstall@1.0.0: {}
+`,
+      "node_modules/lifecycle-postinstall/package.json": JSON.stringify({
+        name: "lifecycle-postinstall",
+        version: "1.0.0",
+        scripts: { postinstall: "exit 0" },
+      }),
+      ...binShapeFiles,
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "trust", "lifecycle-postinstall"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect(out).toContain("1 script ran across 1 package");
+  const lockb = Buffer.from(await file(join(packageDir, "bun.lockb")).arrayBuffer());
+  // The registry package has no "bin".
+  expect(packageBins(lockb).sort()).toEqual([noBin, ...binShapeRows]);
+  expect(code).toBe(0);
+});

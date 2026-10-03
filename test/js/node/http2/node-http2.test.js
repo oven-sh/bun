@@ -14,6 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { collect as collectSentInfoHeaders } from "./http2-sent-info-headers.fixture.js";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
@@ -888,7 +889,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
               ":scheme": "https",
             });
             expect(req.sentTrailers).toBeUndefined();
-            expect(req.sentInfoHeaders.length).toBe(0);
+            expect(req.sentInfoHeaders).toBeUndefined();
             expect(req.scheme).toBe("https");
             let response_headers = null;
             req.on("response", (headers, flags) => {
@@ -1829,6 +1830,57 @@ it("Symbol keys of the headers object are not sent as headers", async () => {
   } finally {
     server.close();
     client?.close?.();
+  }
+});
+
+// node's getter returns the slot as is, and only a block that additionalHeaders() sends creates
+// the array (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2192-L2194).
+// The fixture collects the value at each point of a stream's life. Bun runs it in this process
+// and Node.js runs it as a script: both must produce the same document.
+it("stream.sentInfoHeaders lists only the 1xx blocks that were sent, like Node.js", async () => {
+  const unset = { afterRequest: "undefined", atClose: "undefined" };
+  const info = [{ ":status": 102 }];
+  const expected = [
+    {
+      path: "/plain",
+      client: unset,
+      server: { onStream: "undefined", additionalHeaders: [], afterRespond: "undefined", atClose: "undefined" },
+    },
+    {
+      path: "/invalid",
+      client: unset,
+      server: {
+        onStream: "undefined",
+        additionalHeaders: [{ result: "ERR_INVALID_HTTP_TOKEN", sentInfoHeaders: "undefined" }],
+        afterRespond: "undefined",
+        atClose: "undefined",
+      },
+    },
+    {
+      path: "/info-then-invalid",
+      client: unset,
+      server: {
+        onStream: "undefined",
+        additionalHeaders: [
+          { result: "sent", sentInfoHeaders: info },
+          { result: "ERR_INVALID_HTTP_TOKEN", sentInfoHeaders: info },
+        ],
+        afterRespond: info,
+        atClose: info,
+      },
+    },
+  ];
+
+  expect(await collectSentInfoHeaders()).toEqual(expected);
+
+  const node = nodeExe();
+  if (node) {
+    const fixture = path.join(import.meta.dir, "http2-sent-info-headers.fixture.js");
+    await using proc = Bun.spawn({ cmd: [node, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash leaves stdout empty. Show stderr in the failure then.
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual(expected);
+    expect(exitCode).toBe(0);
   }
 });
 

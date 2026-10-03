@@ -542,6 +542,63 @@ describe("bundler", async () => {
         },
       });
     }
+
+    // An empty data file is `{}`, as it is under `bun run`. The enclosing
+    // package.json "type" only applies to JavaScript files; it used to turn
+    // these into `export default undefined`.
+    for (const type of ["module", "commonjs"] as const) {
+      itBundled(`bun/loader-empty-data-files-type-${type}`, {
+        target: "bun",
+        files: {
+          "/entry.ts": /* js */ `
+            import toml from "./empty.toml";
+            import yaml from "./empty.yaml";
+            import jsonc from "./empty.jsonc";
+            import json5 from "./empty.json5";
+            import spaces from "./spaces.toml";
+            const dynamic = await import("./empty.yaml");
+            console.write(JSON.stringify([toml, yaml, jsonc, json5, spaces, dynamic.default]));
+          `,
+          "/package.json": JSON.stringify({ type }),
+          "/empty.toml": "",
+          "/empty.yaml": "",
+          "/empty.jsonc": "",
+          "/empty.json5": "",
+          "/spaces.toml": "  \n\n",
+        },
+        run: { stdout: "[{},{},{},{},{},{}]" },
+      });
+    }
+
+    // `JSON.parse("")` throws, and `bun run` rejects an empty `.json` import.
+    // The bundler used to emit `{}` (or `undefined` under "type": "module").
+    itBundled("bun/loader-empty-json-file-is-an-error", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./empty.json";
+          console.write(JSON.stringify(data));
+        `,
+        "/empty.json": "",
+      },
+      bundleErrors: {
+        "/empty.json": ["Unexpected end of file in JSON"],
+      },
+    });
+    itBundled("bun/loader-whitespace-json-file-is-an-error", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          const { default: data } = await import("./spaces.json");
+          console.write(JSON.stringify(data));
+        `,
+        "/package.json": JSON.stringify({ type: "module" }),
+        "/spaces.json": " \n\t\n",
+      },
+      bundleErrors: {
+        "/spaces.json": ["Unexpected end of file in JSON"],
+      },
+    });
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

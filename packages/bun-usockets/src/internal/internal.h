@@ -367,6 +367,9 @@ struct us_socket_t {
   unsigned char ssl_pending_close_code : 2;
   /* The deferred close armed the socket's timeout itself (its holder had none). */
   unsigned char ssl_close_timeout_armed : 1;
+  /* us_internal_ssl_close sent the close_notify and waits for the peer's: the
+   * socket's timeout ends that wait too. */
+  unsigned char ssl_close_awaits_peer : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

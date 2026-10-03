@@ -1720,6 +1720,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
   s->ssl_close_timeout_armed = 0;
+  s->ssl_close_awaits_peer = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2036,10 +2037,10 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
  * the default idle timeout of Bun.serve. */
 #define US_SSL_CLOSE_DRAIN_TIMEOUT 10
 
-/* A close that cannot finish before the peer takes bytes ends at the socket's
- * timeout (us_internal_ssl_on_timeout), with the same code. */
-static void ssl_close_ends_at_timeout(struct us_socket_t *s, int code) {
-  s->ssl_pending_close_code = (unsigned char) code;
+/* A close that cannot finish before the peer takes bytes must not wait for
+ * ever: when its holder armed no timeout, the close arms one. The timeout
+ * ends the wait (us_internal_ssl_on_timeout). */
+static void ssl_close_arm_timeout(struct us_socket_t *s) {
   if (s->timeout == 255) {
     s->ssl_close_timeout_armed = 1;
     us_socket_timeout(s, US_SSL_CLOSE_DRAIN_TIMEOUT);
@@ -2060,7 +2061,8 @@ static int ssl_close_waits_for_out_queue(struct us_socket_t *s, int code, void *
   s->ssl_close_after_spill = 1;
   /* Resume with the SAME code: a graceful close must not come back as a
    * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
-  ssl_close_ends_at_timeout(s, code);
+  s->ssl_pending_close_code = (unsigned char) code;
+  ssl_close_arm_timeout(s);
   return 1;
 }
 
@@ -2142,10 +2144,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       return s;
     }
     if (!shutdown_complete) {
+      s->ssl_close_awaits_peer = 1;
+      s->ssl_pending_close_code = (unsigned char) code;
       /* The close_notify went out behind bytes the kernel still holds for a
        * peer that does not read: its reply is as far away as they are. */
-      if (s->flags.last_write_failed && !reason) {
-        ssl_close_ends_at_timeout(s, code);
+      if (s->flags.last_write_failed) {
+        ssl_close_arm_timeout(s);
       }
       return s;
     }
@@ -2347,11 +2351,11 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
-  if (!s->ssl_close_after_spill && !s->ssl_close_timeout_armed) {
+  if (!s->ssl_close_after_spill && !s->ssl_close_awaits_peer) {
     return us_dispatch_timeout(s);
   }
-  /* The peer took nothing in time: the close stops waiting for the queue to
-   * drain, and for a reply to a close_notify. */
+  /* A close of this socket already waits, for the queue to drain or for the
+   * reply to its close_notify. It stops waiting. */
   ssl_release_out_queue(s->group->loop, s);
   return us_internal_socket_close_raw(s, s->ssl_pending_close_code, NULL);
 }
@@ -2398,10 +2402,6 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     }
     if (s->ssl_close_after_spill) {
       s->ssl_close_after_spill = 0;
-      if (s->ssl_close_timeout_armed) {
-        s->ssl_close_timeout_armed = 0;
-        us_socket_timeout(s, 0);
-      }
       return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
     }
   }

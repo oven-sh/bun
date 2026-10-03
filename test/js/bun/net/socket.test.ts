@@ -1662,50 +1662,64 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
   });
 });
 
-it("a TLS close that waits for ciphertext the peer never takes ends at the socket's timeout", async () => {
+describe.concurrent("a TLS end() whose peer stopped reading closes at the socket's timeout", () => {
   // end() closes the socket once the ciphertext that write() already counted
-  // has reached the kernel. The peer stops reading here, so it never does,
-  // and the socket's timeout is what ends the wait.
-  const step = Buffer.alloc(1024 * 1024, "a");
-  const closed = Promise.withResolvers<void>();
-  const server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: {
-      data(peer) {
-        peer.pause();
-      },
-      close() {},
-      error() {},
+  // has reached the kernel and the peer has answered the close_notify. The
+  // peer stops reading here, so that never happens, and the socket's timeout
+  // is what ends the wait.
+  it.each([
+    ["with ciphertext the kernel did not take", true],
+    ["with everything sent", false],
+  ])(
+    "%s",
+    async (_, fillKernel) => {
+      const step = Buffer.alloc(1024 * 1024, "a");
+      const peerPaused = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          data(peer) {
+            peer.pause();
+            peerPaused.resolve();
+          },
+          close() {},
+          error() {},
+        },
+      });
+      let client: Socket | undefined;
+      try {
+        client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: { ...tls, rejectUnauthorized: false },
+          socket: {
+            handshake(s) {
+              if (!fillKernel) return void s.write("a");
+              for (let wrote = step.length; wrote === step.length; ) wrote = s.write(step);
+            },
+            close() {
+              closed.resolve();
+            },
+            data() {},
+            error() {},
+          },
+        });
+        await peerPaused.promise;
+        client.timeout(1);
+        client.end();
+        await closed.promise;
+      } finally {
+        client?.terminate();
+        server.stop(true);
+      }
     },
-  });
-  let client: Socket | undefined;
-  try {
-    client = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port,
-      tls: { ...tls, rejectUnauthorized: false },
-      socket: {
-        handshake(s) {
-          for (let wrote = step.length; wrote === step.length; ) wrote = s.write(step);
-          s.timeout(1);
-          s.end();
-        },
-        close() {
-          closed.resolve();
-        },
-        data() {},
-        error() {},
-      },
-    });
-    await closed.promise;
-  } finally {
-    client?.terminate();
-    server.stop(true);
-  }
-  // The timeout fires on a 4 second tick.
-}, 15_000);
+    // The timeout fires on a 4 second tick.
+    15_000,
+  );
+});
 
 describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
   // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /

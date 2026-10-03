@@ -1383,26 +1383,23 @@ describe("bunx installs with the project's install config", () => {
   });
 
   // `bun add` skips a bunfig.toml it finds but cannot read. Root reads any file.
-  it.skipIf(isWindows || process.getuid?.() === 0)(
-    "skips a project bunfig.toml that it cannot read",
-    async () => {
-      using registry = prefixRegistry();
-      using bunxUser = user(registry);
-      using bunxProject = project(layouts["the project root"], {
-        "bunfig.toml": `[install]\nregistry = "${registry.url("UNREADABLE")}"\n`,
-        ".npmrc": `registry=${registry.url("PROJECT")}\n`,
-      });
-      chmodSync(join(bunxProject.root, "bunfig.toml"), 0o000);
+  it.skipIf(isWindows || process.getuid?.() === 0)("skips a project bunfig.toml that it cannot read", async () => {
+    using registry = prefixRegistry();
+    using bunxUser = user(registry);
+    using bunxProject = project(layouts["the project root"], {
+      "bunfig.toml": `[install]\nregistry = "${registry.url("UNREADABLE")}"\n`,
+      ".npmrc": `registry=${registry.url("PROJECT")}\n`,
+    });
+    chmodSync(join(bunxProject.root, "bunfig.toml"), 0o000);
 
-      const bunx = await run(["x", "px-probe"], bunxProject.cwd, bunxUser.env());
+    const bunx = await run(["x", "px-probe"], bunxProject.cwd, bunxUser.env());
 
-      expect({ used: registry.used(), stdout: bunx.stdout }).toEqual({
-        used: [{ prefix: "PROJECT", authorization: null }],
-        stdout: "SERVED-BY-PROJECT",
-      });
-      expect(bunx.exitCode).toBe(0);
-    },
-  );
+    expect({ used: registry.used(), stdout: bunx.stdout }).toEqual({
+      used: [{ prefix: "PROJECT", authorization: null }],
+      stdout: "SERVED-BY-PROJECT",
+    });
+    expect(bunx.exitCode).toBe(0);
+  });
 
   it.concurrent("does not read config files in the bunx cache directory", async () => {
     using registry = prefixRegistry();

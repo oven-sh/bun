@@ -101,7 +101,9 @@ describe("bun create installs the template with the project's install config", (
     },
   };
   const configs = {
-    "a bunfig.toml scope": (url: string) => ({ "bunfig.toml": `[install.scopes]\nbun13247test = { url = "${url}" }\n` }),
+    "a bunfig.toml scope": (url: string) => ({
+      "bunfig.toml": `[install.scopes]\nbun13247test = { url = "${url}" }\n`,
+    }),
     "an .npmrc scope": (url: string) => ({ ".npmrc": `@bun13247test:registry=${url}\n` }),
   };
 

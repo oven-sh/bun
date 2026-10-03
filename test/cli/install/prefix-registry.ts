@@ -65,9 +65,7 @@ export function prefixRegistry(options: PrefixRegistryOptions = {}) {
     hostname: "127.0.0.1",
     tls: options.tls,
     fetch(req) {
-      const [prefix, ...rest] = decodeURIComponent(new URL(req.url).pathname)
-        .split("/")
-        .filter(Boolean);
+      const [prefix, ...rest] = decodeURIComponent(new URL(req.url).pathname).split("/").filter(Boolean);
       requests.push({ prefix, authorization: req.headers.get("authorization") });
       if (rest.at(-1) === "pkg.tgz") {
         return new Response(packageTarball(rest.slice(0, -1).join("/"), version, cli(prefix, version)));

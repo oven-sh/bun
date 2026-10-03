@@ -1577,8 +1577,8 @@ pub fn init(
             //
             // probably wont matter as if package.json isn't writable, it's likely that
             // the underlying directory and node_modules isn't either.
-            let need_write = !read_only_walk
-                && (subcommand != Subcommand::Install || cli.positionals.len() > 1);
+            let need_write =
+                !read_only_walk && (subcommand != Subcommand::Install || cli.positionals.len() > 1);
 
             loop {
                 let mut package_json_path_buf = bun_paths::path_buffer_pool::get();

@@ -2150,7 +2150,12 @@ declare module "bun" {
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
-       * If writing to a PathLike, set the permissions of the file.
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal). It has no effect
+       * when the destination is a file descriptor.
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
        */
       mode?: number;
       /**
@@ -2181,6 +2186,15 @@ declare module "bun" {
     input: Response | Request,
     options?: {
       /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal). It has no effect
+       * when the destination is a file descriptor.
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
+       */
+      mode?: number;
+      /**
        * If `true`, create the parent directory if it doesn't exist.
        *
        * If `false`, the write throws an error when the directory doesn't exist.
@@ -2205,6 +2219,15 @@ declare module "bun" {
     destinationPath: PathLike,
     input: Response | Request,
     options?: {
+      /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal). It has no effect
+       * when the destination is a file descriptor.
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
+       */
+      mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist.
        *

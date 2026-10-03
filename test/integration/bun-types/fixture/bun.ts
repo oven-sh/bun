@@ -99,3 +99,9 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+tsd.expectType(Bun.write("out.txt", "data", { mode: 0o600 })).is<Promise<number>>();
+tsd.expectType(Bun.write("out.txt", new Response("data"), { mode: 0o600 })).is<Promise<number>>();
+tsd
+  .expectType(Bun.write(Bun.file("out.txt"), new Response("data"), { mode: 0o600, createPath: false }))
+  .is<Promise<number>>();

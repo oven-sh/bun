@@ -1578,3 +1578,250 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
+  const modeOf = p => fs.statSync(p).mode & 0o777;
+  const large = Buffer.alloc(512 * 1024, "a").toString();
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello"));
+        controller.close();
+      },
+    });
+
+  // Factories, because a stream source can only be consumed once.
+  for (const [label, make] of [
+    ["small string", () => "hello"],
+    ["empty string", () => ""],
+    ["small Uint8Array", () => new Uint8Array([1, 2, 3])],
+    ["large string (async path)", () => large],
+    ["large Uint8Array (async path)", () => new Uint8Array(512 * 1024)],
+    ["Blob", () => new Blob(["hello"])],
+    ["empty Blob", () => new Blob([])],
+    ["ReadableStream", stream],
+    ["Response with a streaming body", () => new Response(stream())],
+  ]) {
+    test(`sets permissions on new file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", {});
+      const dest = join(String(dir), "out.txt");
+      await Bun.write(dest, make(), { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+
+    test(`sets permissions on existing file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+      const dest = join(String(dir), "out.txt");
+      // The seed file's mode depends on the umask; pin it so the precondition holds.
+      fs.chmodSync(dest, 0o644);
+      expect(modeOf(dest)).not.toBe(0o600);
+      await Bun.write(dest, make(), { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+  }
+
+  test("sets permissions when destination is a Bun.file()", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(Bun.file(dest), "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when parent directory must be created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when source is a Response body", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, new Response("hello"), { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("accepts mode 0", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o000 });
+    expect(modeOf(dest)).toBe(0o000);
+  });
+
+  // NaN and 0.5 used to convert to 0 and write the file with mode 000.
+  for (const [mode, reason] of [
+    [NaN, "It must be an integer"],
+    [0.5, "It must be an integer"],
+    [384.5, "It must be an integer"],
+    [Infinity, "It must be an integer"],
+    [-Infinity, "It must be an integer"],
+    [-1, "It must be >= 0 and <= 511"],
+    [0o1000, "It must be >= 0 and <= 511"],
+  ]) {
+    test(`rejects mode ${mode} and leaves the destination alone`, async () => {
+      using dir = tempDir("bun-write-mode", { "src.txt": "source", "existing.txt": "old" });
+      const existing = join(String(dir), "existing.txt");
+      const created = join(String(dir), "created.txt");
+      fs.chmodSync(existing, 0o644);
+
+      for (const make of [() => "hello", () => Bun.file(join(String(dir), "src.txt"))]) {
+        for (const dest of [existing, created]) {
+          // The async wrapper turns a synchronous throw into a rejection.
+          const write = async () => await Bun.write(dest, make(), { mode });
+          await expect(write()).rejects.toMatchObject({
+            name: "RangeError",
+            code: "ERR_OUT_OF_RANGE",
+            message: expect.stringContaining(reason),
+          });
+        }
+      }
+
+      expect(fs.existsSync(created)).toBe(false);
+      expect({ mode: modeOf(existing), content: fs.readFileSync(existing, "utf8") }).toEqual({
+        mode: 0o644,
+        content: "old",
+      });
+    });
+  }
+
+  // 0o646's group/other write bits are cleared by a typical umask, so only a
+  // post-open chmod can produce it. This is the path createPath recovery uses.
+  test("mode is not masked by the umask when the parent directory is created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, new Blob([]), { mode: 0o646 });
+    expect(modeOf(dest)).toBe(0o646);
+  });
+
+  test("omitted mode leaves default permissions", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    const baseline = join(String(dir), "baseline.txt");
+    await Bun.write(baseline, "x");
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(modeOf(baseline));
+  });
+
+  test("omitted mode leaves an existing file's permissions alone", async () => {
+    using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+    const dest = join(String(dir), "out.txt");
+    fs.chmodSync(dest, 0o751);
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(0o751);
+  });
+
+  // chmod fails for a file the caller can write but does not own. The child creates the
+  // files as root, then drops root, so it needs no other user that can run bun.
+  test.skipIf(process.getuid?.() !== 0)("a refused chmod leaves the destination as it was", async () => {
+    using dir = tempDir("bun-write-mode-eperm", {});
+    fs.chmodSync(String(dir), 0o777);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const stream = () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("NEW"));
+                controller.close();
+              },
+            });
+          const sources = {
+            string: () => "NEW",
+            largeBuffer: () => new Uint8Array(512 * 1024),
+            blob: () => new Blob(["NEW"]),
+            emptyBlob: () => new Blob([]),
+            stream,
+            streamingResponse: () => new Response(stream()),
+          };
+          for (const name in sources) {
+            fs.writeFileSync(name, "OLD");
+            fs.chmodSync(name, 0o666);
+          }
+          process.setgroups([]);
+          process.setgid(65534);
+          process.setuid(65534);
+          const results = {};
+          for (const name in sources) {
+            let outcome;
+            try {
+              await Bun.write(name, sources[name](), { mode: 0o600 });
+              outcome = "resolved";
+            } catch (e) {
+              outcome = e.code;
+            }
+            const mode = (fs.statSync(name).mode & 0o777).toString(8);
+            results[name] = [outcome, fs.readFileSync(name, "utf8"), mode];
+          }
+          console.log(JSON.stringify(results));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const untouched = ["EPERM", "OLD", "666"];
+    expect(JSON.parse(stdout)).toEqual({
+      string: untouched,
+      largeBuffer: untouched,
+      blob: untouched,
+      emptyBlob: untouched,
+      stream: untouched,
+      streamingResponse: untouched,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The truncation that follows the chmod must not reject what O_TRUNC accepts.
+  test.skipIf(process.getuid?.() !== 0)("a mode is accepted for a destination that is not a regular file", async () => {
+    const mode = modeOf("/dev/null");
+    const written = [
+      await Bun.write("/dev/null", "hello", { mode }),
+      await Bun.write("/dev/null", new Blob(["hello"]), { mode }),
+      await Bun.write("/dev/null", stream(), { mode }),
+    ];
+    expect({ written, mode: modeOf("/dev/null") }).toEqual({ written: [5, 5, 5], mode });
+  });
+
+  // umask is process-global, so this runs in a child with umask 0 to make the
+  // raw create mode observable. Every path must match fs.writeFileSync (0o666).
+  test("default create mode does not depend on the payload size or write path", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.umask(0);
+          await Bun.write("small.txt", "x");
+          await Bun.write("large.bin", new Uint8Array(512 * 1024));
+          const writer = Bun.file("writer.txt").writer();
+          writer.write("x");
+          await writer.end();
+          fs.writeFileSync("node.txt", "x");
+          const modeOf = p => (fs.statSync(p).mode & 0o777).toString(8);
+          console.log(JSON.stringify({
+            small: modeOf("small.txt"),
+            large: modeOf("large.bin"),
+            writer: modeOf("writer.txt"),
+            node: modeOf("node.txt"),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ small: "666", large: "666", writer: "666", node: "666" });
+    expect(exitCode).toBe(0);
+  });
+});

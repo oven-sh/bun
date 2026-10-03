@@ -726,21 +726,8 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
-        // SAFETY: caller passes an EntryStore-owned pointer valid for the
-        // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path
-        };
-
+        // NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname` may
+        // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
         let base = &base_[0..base_.len() - extname.len()];
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
@@ -847,12 +834,12 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+            // SAFETY: caller passes an EntryStore-owned pointer valid for the
+            // process lifetime; no other live `&mut` to it during this call.
+            let entry_r = unsafe { &*entry };
+            // `fill` runs under the per-entry mutex, like every cached-`Entry` rewrite.
+            let Ok(entry_abs_path) = entry_r.abs_path_or_try_fill(|| {
+                let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
@@ -868,13 +855,10 @@ impl Route {
                     }
                 });
 
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry_r.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
@@ -902,7 +886,7 @@ impl Route {
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             );
-                            return None;
+                            return Err(());
                         }
                     }
                     FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
@@ -921,19 +905,20 @@ impl Route {
                                 bstr::BStr::new(abs_path_str)
                             ),
                         );
-                        return None;
+                        return Err(());
                     }
                 };
 
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
-
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
-            }
+                Ok(Interned::from_static(
+                    FileSystem::instance()
+                        .dirname_store()
+                        .append(_abs)
+                        .expect("unreachable"),
+                ))
+            }) else {
+                return None;
+            };
+            let abs_path_str = entry_abs_path.as_bytes();
 
             #[cfg(windows)]
             let abs_path: AbsPath = {
@@ -957,8 +942,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry_r.base(), b'\\').is_some());
             }
 
             Some(Route {

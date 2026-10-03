@@ -50,6 +50,7 @@ const MIRI_CRATES = [
   "bun_md",
   "bun_ptr",
   "bun_resolve_builtins",
+  "bun_resolver",
   "bun_shell_parser",
   "bun_threading",
   "bun_url",

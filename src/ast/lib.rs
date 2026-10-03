@@ -1301,8 +1301,8 @@ impl Log {
 
     pub fn append_to(&mut self, other: &mut Log) {
         other.msgs.append(&mut core::mem::take(&mut self.msgs));
-        other.warnings += self.warnings;
-        other.errors += self.errors;
+        other.warnings += core::mem::take(&mut self.warnings);
+        other.errors += core::mem::take(&mut self.errors);
         // See `reset` — the scan cache goes with the messages.
         self.line_column_tracker = None;
     }
@@ -3333,7 +3333,10 @@ mod msg_ownership_tests {
         assert_eq!((to.msgs.len(), to.errors, to.warnings), (3, 2, 1));
 
         from.append_to(&mut to);
-        assert_eq!(from.msgs.len(), 0);
+        assert_eq!((from.msgs.len(), from.errors, from.warnings), (0, 0, 0));
+        assert_eq!((to.msgs.len(), to.errors, to.warnings), (5, 3, 2));
+
+        from.append_to(&mut to);
         assert_eq!((to.msgs.len(), to.errors, to.warnings), (5, 3, 2));
 
         let texts: Vec<&[u8]> = to.msgs.iter().map(|msg| &*msg.data.text).collect();

@@ -38,7 +38,6 @@ pub(crate) struct ClientContext {
 // uncontended atomic op is free on the single HTTP client thread.
 static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
-static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
@@ -75,7 +74,6 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(quic::global_init);
         // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
         let qctx = unsafe {
             quic::Context::create_client(

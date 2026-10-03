@@ -1964,6 +1964,71 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   });
 });
 
+// lsquic_global_init allocates the SSL ex_data index through which every TLS
+// callback finds its QUIC session, so a second call breaks every session that
+// is still in its handshake. Each case runs in a fresh process, where the
+// node:quic session is the first lsquic user, and then starts another lsquic
+// user (an HTTP/3 server or a fetch over HTTP/3) before the handshake completes.
+describe.concurrent("lsquic is initialized once per process", () => {
+  const clientFixture = `
+import { connect, QuicEndpoint } from "node:quic";
+const port = Number(process.env.PORT);
+const endpoint = new QuicEndpoint();
+const client = await connect("127.0.0.1:" + port, {
+  endpoint,
+  servername: "localhost",
+  verifyPeer: "manual",
+  transportParams: { maxIdleTimeout: 5 },
+  onerror() {},
+});
+client.closed.catch(() => {});
+// connect() resolves in a microtask, so the session exists and no packet from
+// the server has been processed yet when the other lsquic user starts.
+const other =
+  process.env.OTHER === "serve"
+    ? Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false, fetch: () => new Response("x") })
+    : fetch("https://127.0.0.1:" + port + "/hello", { protocol: "http3", tls: { rejectUnauthorized: false } }).then(r => r.text());
+await client.opened;
+let status = "";
+const stream = await client.createBidirectionalStream({
+  headers: { ":method": "GET", ":path": "/hello", ":scheme": "https", ":authority": "localhost" },
+  onheaders(received) {
+    status = received[":status"];
+  },
+});
+stream.closed.catch(() => {});
+for await (const _ of stream) {
+}
+client.close().catch(() => {});
+console.log("status=" + status);
+if (process.env.OTHER === "serve") other.stop(true);
+else console.log("fetch=" + (await other));
+process.exit(0);
+`;
+
+  test.each([
+    ["an HTTP/3 server", "serve", "status=200\n"],
+    ["a fetch over HTTP/3", "fetch", "status=200\nfetch=hello over h3\n"],
+  ])("a node:quic handshake survives %s that starts during it", async (_, other, stdout) => {
+    await withServer(async port => {
+      using dir = tempDir("h3-init-once", { "client.mjs": clientFixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "client.mjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, PORT: String(port), OTHER: other },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: out, stderr: err.replace(/^.*ExperimentalWarning.*\n.*\n/, ""), exitCode }).toEqual({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});
+
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The

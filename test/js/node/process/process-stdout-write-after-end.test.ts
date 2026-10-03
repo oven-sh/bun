@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import path from "path";
 
@@ -90,3 +91,54 @@ test.concurrent.each(["stdout", "stderr"] as const)(
     }
   },
 );
+
+// An O_PATH descriptor on a FIFO cannot be polled (epoll_ctl reports EBADF), so Bun.file(fd).writer() throws and
+// process.stdout / process.stderr have no FileSink. The stream must reset after a failed write, as it does after
+// end() above. If it does not, every later write stays in the buffer with no callback.
+// Not concurrent: more debug-build children at once push the tests above toward their timeout.
+describe.skipIf(!isLinux)("process.stdout/stderr on a descriptor that cannot get a FileSink", () => {
+  const script = /* js */ `
+    const fs = require("fs");
+    const [which, fifo] = process.argv.slice(1);
+    const fd = which === "stdout" ? 1 : 2;
+    fs.closeSync(fd);
+    const O_PATH = 0o10000000;
+    if (fs.openSync(fifo, O_PATH) !== fd) throw new Error("the fifo did not land on fd " + fd);
+    const stream = process[which];
+    const callbacks = [], errors = [];
+    const write = chunk => stream.write(chunk, e => callbacks.push(e?.code ?? null));
+    // Write again only after the stream has reported the first failure. A write made while the first one is
+    // still in flight fails together with it, on every build.
+    stream.on("error", e => {
+      if (errors.push(e.code) === 1) for (let i = 0; i < 5; i++) write("y");
+    });
+    write("x");
+    process.on("exit", () => {
+      const report = { callbacks, errors, writableLength: stream.writableLength };
+      fs.writeSync(fd === 1 ? 2 : 1, JSON.stringify(report) + "\\n");
+    });
+  `;
+
+  test.each(["stdout", "stderr"] as const)("process.%s - every write gets its callback", async which => {
+    using dir = tempDir("stdio-no-sink", {});
+    const fifo = path.join(String(dir), "fifo");
+    mkfifo(fifo);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, which, fifo],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The report is on the other stream. A debug build prints other lines on stderr too. With no report, show them all.
+    const output = which === "stdout" ? stderr : stdout;
+    const report = output.split("\n").find(line => line.startsWith('{"callbacks":'));
+    expect(report === undefined ? output : JSON.parse(report)).toEqual({
+      callbacks: ["EBADF", "EBADF", "EBADF", "EBADF", "EBADF", "EBADF"],
+      errors: ["EBADF", "EBADF"],
+      writableLength: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

@@ -1237,9 +1237,9 @@ describe.concurrent(() => {
   // report the eden figure only, so it did not change when a full collection
   // freed memory. Each child disables Bun's GC timer so that the only
   // collections are the ones it requests. Bun.gc(true) and bun:jsc's edenGC()
-  // return the figure measured by the collection they ran, which is what
-  // heapUsed has to report afterwards.
-  describe("process.memoryUsage().heapUsed reports the most recent collection", () => {
+  // return the survivor size. Warm lazy Process initialization before checking
+  // that heapUsed resets to that size without intervening allocations.
+  describe("process.memoryUsage().heapUsed resets at each collection", () => {
     async function reportedBy(script, env = {}) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
@@ -1257,6 +1257,7 @@ describe.concurrent(() => {
       const { collections, heapUsed } = await reportedBy(`
         const { edenGC } = require("bun:jsc");
         const heapUsed = () => process.memoryUsage().heapUsed;
+        heapUsed();
 
         // The objects hang off the global object so that the eden collection
         // counts them whatever the JIT keeps in registers. The array is built in
@@ -1300,8 +1301,10 @@ describe.concurrent(() => {
     it("when every collection is a full collection", async () => {
       const { full, heapUsed } = await reportedBy(
         `
+          process.memoryUsage();
           const full = Bun.gc(true);
-          console.log(JSON.stringify({ full, heapUsed: process.memoryUsage().heapUsed }));
+          const heapUsed = process.memoryUsage().heapUsed;
+          console.log(JSON.stringify({ full, heapUsed }));
         `,
         { BUN_JSC_useJIT: "false" },
       );
@@ -1310,13 +1313,12 @@ describe.concurrent(() => {
       expect(heapUsed).toBe(full);
     });
 
-    // Nothing requests a collection while Bun starts up, so there is no figure
-    // yet. Nothing has been freed yet either, so the whole heap counts as used.
-    it("counts the whole heap as used before the first collection", async () => {
+    it("reports allocated bytes within capacity before the first collection", async () => {
       const { heapTotal, heapUsed } = await reportedBy(`console.log(JSON.stringify(process.memoryUsage()))`);
 
       expect(heapTotal).toBeGreaterThan(0);
-      expect(heapUsed).toBe(heapTotal);
+      expect(heapUsed).toBeGreaterThan(0);
+      expect(heapUsed).toBeLessThanOrEqual(heapTotal);
     });
   });
 

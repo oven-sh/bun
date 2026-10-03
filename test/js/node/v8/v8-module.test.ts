@@ -131,3 +131,44 @@ describe("v8.GCProfiler", () => {
     });
   });
 });
+
+describe("heap usage between collections", () => {
+  test.concurrent("counts newly retained array storage in v8 and process statistics", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+        Bun.gc(true);
+        const before = { v8: getHeapStatistics(), process: process.memoryUsage() };
+        globalThis.retained = Array.from({ length: 16 * 1024 * 1024 }, () => 37);
+        const allocated = { v8: getHeapStatistics(), process: process.memoryUsage() };
+        assert(allocated.v8.used_heap_size > before.v8.used_heap_size + 100 * 1024 * 1024);
+        assert(allocated.process.heapUsed > before.process.heapUsed + 100 * 1024 * 1024);
+        assert(allocated.v8.total_heap_size >= allocated.v8.used_heap_size);
+        assert(allocated.process.heapTotal >= allocated.process.heapUsed);
+        const spaceUsed = getHeapSpaceStatistics().reduce((sum, space) => sum + space.space_used_size, 0);
+        assert(spaceUsed > before.v8.used_heap_size + 100 * 1024 * 1024);
+        assert.equal(retained[0] + retained.at(-1), 74);
+        globalThis.retained = null;
+        Bun.gc(true);
+        const released = { v8: getHeapStatistics(), process: process.memoryUsage() };
+        assert(released.v8.used_heap_size < before.v8.used_heap_size + 32 * 1024 * 1024);
+        assert(released.process.heapUsed < before.process.heapUsed + 32 * 1024 * 1024);
+        console.log("retained and released array storage accounted");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "retained and released array storage accounted\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -785,16 +785,19 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).toContain("copied pnpm.patchedDependencies to patchedDependencies in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": "patches/no-deps.patch",\n  }`);
 
+      // The versioned key only goes to the root; pnpm keeps reading the bare key from its own block.
       const packageJson = await Bun.file(join(packageDir, "package.json")).json();
       expect(packageJson).toStrictEqual({
         name: "patch-path-in-package-json",
         dependencies: { "no-deps": "^1.0.0" },
+        pnpm: { patchedDependencies: { "no-deps": "patches/no-deps.patch" } },
         patchedDependencies: { "no-deps@1.0.1": "patches/no-deps.patch" },
       });
 
@@ -805,6 +808,55 @@ snapshots:
       expect(await Bun.file(join(packageDir, "node_modules/no-deps/index.js")).text()).toStartWith(
         "globalThis.patchedByMigration = true;\n",
       );
+    });
+
+    // `bun update` prints the root package.json again after the install, from the tree the migration left in the
+    // cache. The pnpm block and the root-level copies both have to survive that second print.
+    test("bun update straight from pnpm-lock.yaml keeps the pnpm block and the root copies", async () => {
+      const pnpm = {
+        patchedDependencies: { "no-deps": "patches/no-deps.patch" },
+        overrides: { "a-dep": "1.0.1" },
+      };
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "update-after-migration",
+            dependencies: { "no-deps": "^1.0.0" },
+            pnpm,
+          }),
+          "patches/no-deps.patch": NO_DEPS_INDEX_PATCH,
+          "pnpm-lock.yaml": bareHashNoDepsLockfile("no-deps").replace(
+            "importers:",
+            "overrides:\n  a-dep: 1.0.1\n\nimporters:",
+          ),
+        },
+      });
+
+      const update = await run(packageDir, "update");
+
+      expect(update.stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies in package.json",
+      );
+      expect(update.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(update.stderr).not.toContain("error:");
+      expect(update.stdout).toContain("no-deps@1.0.1");
+      expect(update.exitCode).toBe(0);
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+        name: "update-after-migration",
+        dependencies: { "no-deps": "^1.0.1" },
+        pnpm,
+        overrides: pnpm.overrides,
+        patchedDependencies: { "no-deps@1.0.1": "patches/no-deps.patch" },
+      });
+      expect(await Bun.file(join(packageDir, "node_modules/no-deps/index.js")).text()).toStartWith(
+        "globalThis.patchedByMigration = true;\n",
+      );
+
+      const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
     });
 
     test("versioned lockfile key falls back to the bare config key", async () => {
@@ -2495,6 +2547,76 @@ snapshots:
     });
   });
 
+  // `bun update -i` runs the migration twice (once to list the outdated packages, once when it installs). The second
+  // pass finds the root-level copies the first pass wrote and merges into them; the pnpm block survives both passes.
+  test("bun update -i migrates twice without duplicating the copies or touching the pnpm block", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "update-interactive",
+          dependencies: { "no-deps": "^1.0.0" },
+          pnpm: { overrides: { "a-dep": "1.0.1" } },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a" }),
+        "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  a-dep: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/a: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "-i"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("a\r");
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("no-deps");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+      name: "update-interactive",
+      dependencies: { "no-deps": "^1.1.0" },
+      pnpm: { overrides: { "a-dep": "1.0.1" } },
+      overrides: { "a-dep": "1.0.1" },
+      workspaces: ["packages/*"],
+    });
+    expect(existsSync(join(packageDir, "bun.lock"))).toBe(true);
+
+    const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
   describe("overrides", () => {
     function overridesLockfile(overrides: string) {
       return `lockfileVersion: '9.0'
@@ -2516,7 +2638,7 @@ importers:
       return bunLock.slice(start, end + "\n  },".length);
     }
 
-    // pnpm/pnpm#5928 (`-` removes the dependency) is warned once, with a location, when bun install reads the moved package.json overrides; pnpm/pnpm#6774 (`name@range` keys) migrates as ranged rules
+    // pnpm/pnpm#5928 (`-` removes the dependency) is warned once, with a location, when bun install reads the copied package.json overrides; pnpm/pnpm#6774 (`name@range` keys) migrates as ranged rules
     test.concurrent("removal values are dropped; name@range keys migrate as ranged rules", async () => {
       const overrides = {
         "left-pad": "-",
@@ -2539,12 +2661,13 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).not.toContain("warn:");
-      expect(stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
         name: "overrides-unsupported",
+        pnpm: { overrides },
         overrides,
       });
 
@@ -2573,6 +2696,76 @@ importers:
       expect(install.stderr).toMatch(/package\.json:\d+:\d+/);
       expect(install.stderr.split("warn:").length - 1).toBe(1);
       expect(install.exitCode).toBe(0);
+    });
+
+    // pnpm reads `pnpm.overrides` and `pnpm.patchedDependencies` from package.json and ignores the root-level
+    // fields, so removing them from the `pnpm` block breaks `pnpm install --frozen-lockfile` for everyone still on
+    // pnpm (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH). The block has to survive the migration as it was.
+    test.concurrent("the pnpm block in package.json is left as it was", async () => {
+      const pnpm = {
+        overrides: { "no-deps": "1.0.0" },
+        patchedDependencies: { "one-dep@1.0.0": "patches/one-dep.patch" },
+        onlyBuiltDependencies: ["one-dep"],
+      };
+      using dir = tempDir("pnpm-v9-pnpm-block-kept", {
+        "package.json": JSON.stringify({ name: "pnpm-block-kept", private: true, pnpm }),
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0"),
+      });
+      using onlyMigratedKeys = tempDir("pnpm-v9-pnpm-block-only-migrated-keys", {
+        "package.json": JSON.stringify({ name: "pnpm-block-only-migrated-keys", pnpm: { overrides: pnpm.overrides } }),
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0"),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies in package.json",
+      );
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "pnpm-block-kept",
+        private: true,
+        pnpm,
+        overrides: pnpm.overrides,
+        patchedDependencies: pnpm.patchedDependencies,
+      });
+
+      const onlyMigrated = await migrate(String(onlyMigratedKeys));
+
+      expect(onlyMigrated.stderr).toContain("copied pnpm.overrides to overrides in package.json");
+      expect(onlyMigrated.exitCode).toBe(0);
+      expect(await Bun.file(join(String(onlyMigratedKeys), "package.json")).json()).toStrictEqual({
+        name: "pnpm-block-only-migrated-keys",
+        pnpm: { overrides: pnpm.overrides },
+        overrides: pnpm.overrides,
+      });
+    });
+
+    // pnpm 10 merges `pnpm.overrides` with the `overrides` of pnpm-workspace.yaml, and the lockfile records the
+    // merged set. The yaml entries belong in the root-level copy only.
+    test.concurrent("pnpm-workspace.yaml overrides go into the root copy, not into the pnpm block", async () => {
+      using dir = tempDir("pnpm-v9-overrides-package-json-and-workspace-yaml", {
+        "package.json": JSON.stringify({
+          name: "overrides-package-json-and-workspace-yaml",
+          pnpm: { overrides: { "no-deps": "1.0.0" } },
+        }),
+        "pnpm-workspace.yaml": "overrides:\n  a-dep: 1.0.1\n",
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0\n  a-dep: 1.0.1"),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm-workspace.yaml overrides to overrides in package.json",
+      );
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "overrides-package-json-and-workspace-yaml",
+        pnpm: { overrides: { "no-deps": "1.0.0" } },
+        overrides: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      });
     });
 
     test.concurrent("parent selectors become nested rules", async () => {
@@ -2612,7 +2805,7 @@ importers:
       const deep = await migrate(String(tooDeep));
 
       expect(deep.stderr).not.toContain("warn:");
-      expect(deep.stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(deep.stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(deep.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(deep.exitCode).toBe(0);
       expect(await bunLockOf(String(tooDeep))).not.toContain("a>b");
@@ -2804,7 +2997,7 @@ importers:
 
     const { stderr, exitCode } = await run(packageDir, "add", "no-deps@1.0.0");
 
-    expect(stderr).toContain("moved pnpm-workspace.yaml to workspaces");
+    expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces");
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(stderr).not.toContain("error:");
     expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({

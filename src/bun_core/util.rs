@@ -4114,85 +4114,27 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
-// `bun.which` lives in the `bun_which` crate (tier-2, full Windows PATHEXT
-// support). bun_core cannot re-export it (bun_which → bun_core dep cycle), so
-// callers import `bun_which::which` directly. See `src/bun.rs` for the
-// `bun::which` re-export.
-//
-// A POSIX-only copy is kept here because `spawn_sync_inherit` (below) needs
-// PATH resolution at tier-0 and cannot reach up to `bun_which`. This is a
-// load-bearing duplicate; do NOT dedup against `src/which/lib.rs`.
-/// Tier-0 POSIX `which`. Resolves `bin` against `cwd` and each `PATH` entry
-/// for an executable named `bin`; returns the NUL-terminated match written
-/// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
-/// `bun_which` (tier-2).
+/// One `$PATH` entry of `spawn_sync_inherit`'s walk (`bun_which` is above tier-0):
+/// `dir/bin` written NUL-terminated into `buf`, if it fits and `access(X_OK)` passes.
+/// This only filters out misses. A directory passes too, so execve has the final say.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn which<'a>(
-    buf: &'a mut PathBuffer,
-    path: &[u8],
-    cwd: &[u8],
-    bin: &[u8],
-) -> Option<&'a ZStr> {
-    if bin.is_empty() {
+fn which_in_dir<'a>(buf: &'a mut PathBuffer, dir: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+    if dir.is_empty() || bin.is_empty() || dir.len() + 1 + bin.len() + 1 > buf.0.len() {
         return None;
     }
-    // If `bin` contains a separator, resolve relative to cwd only.
-    let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
-    let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
-        let mut n = 0usize;
-        if !dir.is_empty() {
-            if dir.len() + 1 + bin.len() + 1 > buf.0.len() {
-                return None;
-            }
-            buf.0[..dir.len()].copy_from_slice(dir);
-            n = dir.len();
-            if buf.0[n - 1] != b'/' {
-                buf.0[n] = b'/';
-                n += 1;
-            }
-        }
-        if n + bin.len() + 1 > buf.0.len() {
-            return None;
-        }
-        buf.0[n..n + bin.len()].copy_from_slice(bin);
-        n += bin.len();
-        buf.0[n] = 0;
-        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
-        // valid NUL-terminated C string for `access(2)`.
-        unsafe {
-            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
-                return Some(n);
-            }
-        }
-        None
-    };
-    // Absolute `bin` → probe it directly without joining `cwd`.
-    if crate::path_sep::is_absolute_native(bin) {
-        return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
+    buf.0[..dir.len()].copy_from_slice(dir);
+    let mut n = dir.len();
+    if buf.0[n - 1] != b'/' {
+        buf.0[n] = b'/';
+        n += 1;
     }
-    if has_sep {
-        // Relative with separator → resolve against cwd only; trim
-        // trailing '/' from cwd and strip a leading "./" from bin.
-        let cwd = {
-            let mut c = cwd;
-            while let [rest @ .., b'/'] = c {
-                c = rest;
-            }
-            c
-        };
-        let bin = bin.strip_prefix(b"./").unwrap_or(bin);
-        return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
-    }
-    // Bare names go straight to PATH — do NOT consult cwd.
-    for dir in crate::strings::split(path, b":") {
-        if dir.is_empty() {
-            continue;
-        }
-        if let Some(n) = check(buf, dir, bin) {
-            return Some(ZStr::from_buf(&buf.0, n));
-        }
-    }
-    None
+    buf.0[n..n + bin.len()].copy_from_slice(bin);
+    n += bin.len();
+    buf.0[n] = 0;
+    let candidate = ZStr::from_buf(&buf.0, n);
+    // SAFETY: `candidate` is NUL-terminated.
+    let may_execute = unsafe { libc::access(candidate.as_ptr(), libc::X_OK) } == 0;
+    may_execute.then_some(candidate)
 }
 
 // ── auto_reload_on_crash / reload_process group ───────────────────────────
@@ -4581,46 +4523,33 @@ fn spawn_sync_inherit_impl(
         let environ = c_environ();
 
         // Linux/FreeBSD: route through Bun's vfork-based posix_spawn_bun.
-        // It uses execve (no PATH search), so resolve argv[0] via $PATH first
-        // to preserve the `posix_spawnp`-like contract callers expect (e.g.
-        // crash_handler spawning `llvm-symbolizer` by bare name).
+        // It uses execve (no PATH search), so a bare argv[0] is tried on each
+        // $PATH entry in turn, like `posix_spawnp` does (e.g. crash_handler
+        // spawning `llvm-symbolizer` by bare name).
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
-            let arg0 = argv[0].as_ref();
-            let mut pathbuf = PathBuffer::ZEROED;
-            let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
-                // Contains a separator → use as-is (execve resolves relative
-                // to cwd, matching posix_spawnp semantics for non-bare names).
-                ptrs[0]
-            } else {
-                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
-                match which(&mut pathbuf, path_env, b".", arg0) {
-                    Some(z) => z.as_ptr(),
-                    None => return Err(crate::CrateError::FileNotFound),
-                }
-            };
-
             // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
             // clears CLOEXEC and bumps the close-range floor past stdio. An
             // empty actions list would start the close-range at fd 1.
-            // StdinBehavior::Ignore swaps the fd-0 action for an Open of
-            // /dev/null (posix_spawn_bun: open(path, flags, mode) → dup2 onto
-            // fds[0]).
             let mut inherit_stdio: [spawn_ffi::Action; 3] =
                 core::array::from_fn(|fd| spawn_ffi::Action {
                     kind: spawn_ffi::FileActionType::Dup2,
                     fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
                     ..Default::default()
                 });
-            if stdin == StdinBehavior::Ignore {
-                inherit_stdio[0] = spawn_ffi::Action {
-                    kind: spawn_ffi::FileActionType::Open,
-                    path: c"/dev/null".as_ptr(),
-                    fds: [0, 0],
-                    flags: libc::O_RDONLY,
-                    mode: 0,
-                };
-            }
+            // StdinBehavior::Ignore dups /dev/null onto fd 0. The parent opens
+            // it: a child-side Open could fail with the errnos that the $PATH
+            // walk below takes as execve's.
+            let devnull: core::ffi::c_int = if stdin == StdinBehavior::Ignore {
+                let fd = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
+                if fd < 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                inherit_stdio[0].fds[0] = fd;
+                fd
+            } else {
+                -1
+            };
             let req = spawn_ffi::BunSpawnRequest {
                 actions: spawn_ffi::ActionsList {
                     ptr: inherit_stdio.as_ptr(),
@@ -4629,17 +4558,52 @@ fn spawn_sync_inherit_impl(
                 ..Default::default()
             };
             let mut pid: core::ffi::c_int = 0;
-            // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
-            let rc = spawn_ffi::posix_spawn_bun(
-                &raw mut pid,
-                exe,
-                &raw const req,
-                ptrs.as_ptr(),
-                environ,
-            );
-            if rc != 0 {
-                return Err(crate::CrateError::Unexpected);
+            let mut spawn = |exe: *const core::ffi::c_char| {
+                // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
+                spawn_ffi::posix_spawn_bun(
+                    &raw mut pid,
+                    exe,
+                    &raw const req,
+                    ptrs.as_ptr(),
+                    environ,
+                )
+            };
+            let arg0 = argv[0].as_ref();
+            let spawned = 'spawned: {
+                if crate::strings::contains_char(arg0, b'/') {
+                    // Contains a separator → use as-is (execve resolves relative
+                    // to cwd, matching posix_spawnp semantics for non-bare names).
+                    break 'spawned match spawn(ptrs[0]) {
+                        0 => Ok(()),
+                        _ => Err(crate::CrateError::Unexpected),
+                    };
+                }
+                // Bare names go straight to PATH — do NOT consult cwd.
+                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
+                let mut pathbuf = PathBuffer::ZEROED;
+                let mut refused = false;
+                for dir in crate::strings::split(path_env, b":") {
+                    let Some(exe) = which_in_dir(&mut pathbuf, dir, arg0) else {
+                        continue;
+                    };
+                    match spawn(exe.as_ptr()) as core::ffi::c_int {
+                        0 => break 'spawned Ok(()),
+                        // execve refused this candidate (a directory, a dead
+                        // `#!`). posix_spawnp goes on to the next entry.
+                        libc::EACCES | libc::ENOENT | libc::ENOTDIR => refused = true,
+                        _ => break 'spawned Err(crate::CrateError::Unexpected),
+                    }
+                }
+                Err(if refused {
+                    crate::CrateError::Unexpected
+                } else {
+                    crate::CrateError::FileNotFound
+                })
+            };
+            if devnull >= 0 {
+                libc::close(devnull);
             }
+            spawned?;
             pid as libc::pid_t
         };
         // macOS: Apple's posix_spawnp is a kernel fast-path (no fork); keep it

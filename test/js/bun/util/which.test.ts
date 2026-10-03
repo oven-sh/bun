@@ -1,7 +1,7 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { isArm64, isIntelMacOS, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -268,6 +268,28 @@ if (isWindows) {
       process.chdir(origDir);
       rmSync(basedir, { recursive: true, force: true });
     }
+  });
+
+  // musl defines O_EXEC as O_PATH, and an open(O_PATH) probe accepts every path that exists.
+  test.skipIf(!isLinux)("which skips a directory and a file that is not executable on PATH", () => {
+    using dir = tempDir("which-not-executable", {
+      "a/tool": {},
+      "b/tool": "#!/bin/sh\n",
+      "c/data": "not executable\n",
+    });
+    const base = String(dir);
+    chmodSync(join(base, "b/tool"), 0o755);
+    chmodSync(join(base, "c/data"), 0o644);
+
+    expect({
+      directory_then_tool: which("tool", { PATH: `${join(base, "a")}:${join(base, "b")}` }),
+      directory: which("tool", { PATH: join(base, "a") }),
+      not_executable: which("data", { PATH: join(base, "c") }),
+    }).toEqual({
+      directory_then_tool: join(base, "b/tool"),
+      directory: null,
+      not_executable: null,
+    });
   });
 }
 

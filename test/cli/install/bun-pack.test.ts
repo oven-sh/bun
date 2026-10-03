@@ -3,7 +3,7 @@ import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { readdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, substDrive, tempDir } from "harness";
 import { join } from "path";
 
 // Runs `bun pm pack` for the package in `dir`, from `cwd`.
@@ -134,6 +134,30 @@ test.concurrent("in subdirectory", async () => {
   const second = await runPack(dir, [], join(dir, "subdir1"));
   expect(second).toEqual(first);
   expect(readTarball(join(dir, "pack-from-subdir-7.7.7.tgz"))).toEqual(firstTarball);
+});
+
+// https://github.com/oven-sh/bun/issues/29273
+// `C:` is the current directory of drive C, it is not the root `C:\`.
+test.concurrent.skipIf(!isWindows)("in the root of a drive", async () => {
+  using dir = tempDir("pack-drive-root", {
+    "package.json": JSON.stringify({
+      name: "pack-drive-root",
+      version: "1.2.3",
+      scripts: { prepack: "touch prepack.txt" },
+    }),
+    "index.js": indexJs,
+  });
+  using drive = substDrive(dir);
+
+  // The script runs in the root, and the root is the directory that is packed.
+  const { err, exitCode } = await runPack(drive.root);
+  expect(err).toBe("$ touch prepack.txt");
+  expect(exitCode).toBe(0);
+  expect(tarballEntries(join(drive.root, "pack-drive-root-1.2.3.tgz"))).toEqual([
+    "package/package.json",
+    "package/index.js",
+    "package/prepack.txt",
+  ]);
 });
 
 describe.concurrent("package.json names and versions", () => {

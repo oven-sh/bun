@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv as bunEnv_, bunExe, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
 const bunEnv = {
@@ -327,6 +327,36 @@ describe.concurrent("bun run", () => {
     expect(stdout).toMatch(/subdir/);
     // The exit code will not be 1 if it panics.
     expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29273
+  // `C:` is the current directory of drive C, it is not the root `C:\`.
+  it.skipIf(!isWindows)("runs a script of a package.json in the root of a drive", async () => {
+    using dir = tempDir("bun-run-drive-root", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "0.0.0",
+        scripts: { prehello: "echo pre", hello: "pwd" },
+      }),
+      "subdir/.keep": "",
+    });
+    using drive = substDrive(String(dir));
+
+    for (const cwd of [drive.root, join(drive.root, "subdir")]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "hello"],
+        cwd,
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ cwd, stderr }).toEqual({ cwd, stderr: "$ echo pre\n$ pwd\n" });
+      expect(stdout.replaceAll("\r\n", "\n")).toBe(`pre\n${drive.root}\n`);
+      expect(exitCode).toBe(0);
+    }
   });
 
   describe("--cwd longer than the OS path limit", () => {

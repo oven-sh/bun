@@ -513,20 +513,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         );
     }
 
-    // may or may not be the package json we are editing
-    let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-
-    let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
+    // One spelling with `original_package_json_path`: the package.json cache is keyed by path.
+    let mut root_package_json_path_buf: Vec<u8> = FileSystem::instance().top_level_dir().to_vec();
+    super::push_package_json(&mut root_package_json_path_buf);
     let root_package_json_path: &ZStr = 'root_package_json_path: {
-        root_package_json_path_buf[..top_level_dir_without_trailing_slash.len()]
-            .copy_from_slice(top_level_dir_without_trailing_slash);
-        root_package_json_path_buf[top_level_dir_without_trailing_slash.len()..]
-            [..b"/package.json".len()]
-            .copy_from_slice(b"/package.json");
-        let root_package_json_path_len =
-            top_level_dir_without_trailing_slash.len() + b"/package.json".len();
-        root_package_json_path_buf[root_package_json_path_len] = 0;
+        let root_package_json_path_len = root_package_json_path_buf.len() - 1;
         let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.

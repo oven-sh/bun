@@ -1,6 +1,6 @@
 use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_core::Global;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
@@ -114,7 +114,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;

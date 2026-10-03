@@ -3439,6 +3439,79 @@ it.concurrent(
   20_000,
 );
 
+describe.concurrent("TLS: a close by the server does not wait for the peer", () => {
+  // A peer that sends one request and then never closes: when the server's
+  // close_notify arrives it keeps its side open and sends no close_notify back.
+  async function connectPeerThatNeverCloses(port: number) {
+    const events: string[] = [];
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { rejectUnauthorized: false },
+      allowHalfOpen: true,
+      socket: {
+        handshake(socket) {
+          socket.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        },
+        data() {},
+        end() {
+          events.push("end");
+        },
+        error(_, error) {
+          events.push(`error: ${error.code}`);
+        },
+        close() {},
+      },
+    });
+    return { socket, events };
+  }
+
+  it("at the idle timeout", async () => {
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      idleTimeout: 1,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        await aborted.promise;
+        return new Response("aborted");
+      },
+    });
+    const peer = await connectPeerThatNeverCloses(server.port);
+    try {
+      await aborted.promise;
+    } finally {
+      peer.socket.terminate();
+    }
+  }, 15_000);
+
+  it("when a request arrives behind a pending response", async () => {
+    const dispatched = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      // No timer ends the wait here.
+      idleTimeout: 0,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        dispatched.resolve();
+        await aborted.promise;
+        return new Response("aborted");
+      },
+    });
+    const peer = await connectPeerThatNeverCloses(server.port);
+    try {
+      await dispatched.promise;
+      peer.socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await aborted.promise;
+    } finally {
+      peer.socket.terminate();
+    }
+  });
+});
+
 it.concurrent(
   "TLS: reaps every zero-byte pre-handshake connection in a burst",
   async () => {

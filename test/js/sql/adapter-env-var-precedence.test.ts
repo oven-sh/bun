@@ -424,6 +424,98 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.sslMode).toBe(2);
       expect(options.options.tls).toBeTypeOf("object");
     });
+
+    // The TLS_ variable name asks for at least `require`. It is a floor for PGSSLMODE, not a ceiling.
+    describe.each(["TLS_DATABASE_URL", "TLS_POSTGRES_DATABASE_URL"])("next to a URL from %s", urlVariable => {
+      const url = "postgres://user@host:5432/db";
+
+      test.each([
+        ["PGSSLMODE", "disable", 2],
+        ["PGSSLMODE", "allow", 2],
+        ["PGSSLMODE", "prefer", 2],
+        ["PGSSLMODE", "require", 2],
+        ["PGSSLMODE", "verify-ca", 3],
+        ["PGSSLMODE", "verify-full", 4],
+        ["PG_SSLMODE", "prefer", 2],
+        ["PG_SSLMODE", "verify-ca", 3],
+        ["PG_SSLMODE", "verify-full", 4],
+      ])("%s=%s selects sslMode %d", (modeVariable, mode, expected) => {
+        process.env[urlVariable] = url;
+        process.env[modeVariable] = mode;
+
+        expect(new SQL().options).toMatchObject({
+          adapter: "postgres",
+          hostname: "host",
+          sslMode: expected,
+          tls: { serverName: "host" },
+        });
+      });
+
+      test.each([
+        ["a ?ssl=true in the URL", "?ssl=true", {}],
+        ["an explicit tls: true", "", { tls: true }],
+        ["an explicit tls: {}", "", { tls: {} }],
+        ["an explicit adapter", "", { adapter: "postgres" }],
+      ] as const)("PGSSLMODE=verify-full applies with %s", (_, query, options) => {
+        process.env[urlVariable] = url + query;
+        process.env.PGSSLMODE = "verify-full";
+
+        expect(new SQL(options).options).toMatchObject({ sslMode: 4, tls: { serverName: "host" } });
+      });
+
+      test.each([
+        ["?sslmode=disable", 0],
+        ["?sslmode=prefer", 1],
+        ["?sslmode=require", 2],
+        ["?sslmode=verify-ca", 3],
+        ["?ssl=false", 0],
+      ])("a URL %s overrides PGSSLMODE=verify-full", (query, expected) => {
+        process.env[urlVariable] = url + query;
+        process.env.PGSSLMODE = "verify-full";
+
+        expect(new SQL().options.sslMode).toBe(expected);
+      });
+
+      test.each([
+        ["tls: false", { tls: false }, 0],
+        ["ssl: 'prefer'", { ssl: "prefer" }, 1],
+      ] as const)("an explicit %s overrides PGSSLMODE=verify-full", (_, options, expected) => {
+        process.env[urlVariable] = url;
+        process.env.PGSSLMODE = "verify-full";
+
+        expect(new SQL(options).options.sslMode).toBe(expected);
+      });
+
+      test("PGSSLMODE=verify-ca is kept when the options give a CA", () => {
+        process.env[urlVariable] = url;
+        process.env.PGSSLMODE = "verify-ca";
+
+        // verify-ca already checks the chain, so the CA does not raise the mode to verify-full.
+        expect(new SQL({ tls: { ca: "x" } }).options.sslMode).toBe(3);
+      });
+
+      test("an invalid PGSSLMODE throws", () => {
+        process.env[urlVariable] = url;
+        process.env.PGSSLMODE = "bogus";
+
+        expect(() => new SQL()).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("sslmode") }),
+        );
+      });
+    });
+
+    test.each([
+      ["TLS_MYSQL_DATABASE_URL", "mysql://user@host:3306/db", "mysql"],
+      ["TLS_MARIADB_DATABASE_URL", "mariadb://user@host:3306/db", "mariadb"],
+      ["TLS_DATABASE_URL", "mysql://user@host:3306/db", "mysql"],
+    ])("PGSSLMODE is not read next to %s=%s", (urlVariable, url, adapter) => {
+      process.env[urlVariable] = url;
+
+      for (const mode of ["verify-full", "bogus"]) {
+        process.env.PGSSLMODE = mode;
+        expect(new SQL().options).toMatchObject({ adapter, sslMode: 2 });
+      }
+    });
   });
 
   describe("TLS settings from the connection URL query string", () => {

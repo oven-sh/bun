@@ -1861,10 +1861,14 @@ function parseOptions(
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
-  if (sslMode === SSLMode.disable) {
+  if (adapter === "postgres") {
     // libpq honours PGSSLMODE as the default; a URL ?sslmode= below overrides it.
-    const envSslMode = adapter === "postgres" ? env.PG_SSLMODE || env.PGSSLMODE : undefined;
-    if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
+    const envSslMode = env.PG_SSLMODE || env.PGSSLMODE;
+    if (envSslMode) {
+      // A TLS_* URL variable is a floor of `require`: PGSSLMODE raises the mode, it does not lower it.
+      const envMode = normalizeSSLMode(envSslMode);
+      if (envMode > sslMode) sslMode = envMode;
+    }
   }
 
   let url = _url;

@@ -10,8 +10,8 @@ use super::flow_control::{RecvWindow, SendWindow};
 use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
+use super::stream_table::StreamTable;
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
-use bun_collections::HashMap;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
 
@@ -322,7 +322,7 @@ pub(crate) struct Connection {
 
     pub hpack: hpack::Coder,
 
-    pub streams: HashMap<u32, Stream>,
+    pub streams: StreamTable<Stream>,
 
     /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3): `Some` from a HEADERS or
     /// PUSH_PROMISE without END_HEADERS until the CONTINUATION carrying END_HEADERS.
@@ -377,7 +377,7 @@ impl Connection {
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
             hpack: hpack::Coder::new(local.header_table_size),
-            streams: HashMap::new(),
+            streams: StreamTable::default(),
             header_block_in_flight: None,
             header_block: Vec::new(),
             data_in_flight: None,
@@ -480,7 +480,7 @@ impl Connection {
         );
         // MadeYouReset cancels a delivered request. A late frame on a closed stream cancels nothing.
         let delivered = |s: &Stream| s.recv_final_headers && s.state != State::Closed;
-        if self.streams.get(&stream_id).is_some_and(delivered) {
+        if self.streams.get(stream_id).is_some_and(delivered) {
             self.note_reset(ResetBy::Us);
         }
     }
@@ -645,11 +645,11 @@ impl Connection {
         for (id, s) in self.streams.iter_mut() {
             if s.state != State::Closed
                 && s.recv_window.needs_update()
-                && sink.is_stream_reading(*id)
+                && sink.is_stream_reading(id)
             {
                 let inc = s.recv_window.take_update();
                 if inc > 0 {
-                    buf.push((*id, inc));
+                    buf.push((id, inc));
                 }
             }
         }
@@ -666,11 +666,11 @@ impl Connection {
         evict.clear();
         for (id, s) in self.streams.iter() {
             if s.state == State::Closed {
-                evict.push(*id);
+                evict.push(id);
             }
         }
-        for id in evict.iter() {
-            self.streams.remove(id);
+        for &id in evict.iter() {
+            self.streams.take(id);
         }
         self.evict_buf = evict;
     }
@@ -965,7 +965,7 @@ impl Connection {
             // same as handle_data's Rst path, so the JS stream learns it was reset and the
             // entry is evicted.
             self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
-            if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+            if let Some(s) = self.streams.get_mut(hdr.stream_id) {
                 s.state = State::Closed;
             }
             sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
@@ -981,11 +981,11 @@ impl Connection {
                 );
                 return true;
             }
-        } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+        } else if let Some(s) = self.streams.get_mut(hdr.stream_id) {
             // 6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                if let Some(s) = self.streams.get_mut(hdr.stream_id) {
                     s.state = State::Closed;
                 }
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
@@ -1037,7 +1037,7 @@ impl Connection {
         // window by the PEER's (§6.9.2).
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let is_new = !self.streams.contains_key(&hdr.stream_id);
+        let is_new = !self.streams.contains_key(hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
         // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
         // checked here: a client legitimately receives HEADERS on even promised ids that are
@@ -1059,8 +1059,7 @@ impl Connection {
         if !refused {
             let s = self
                 .streams
-                .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init));
+                .get_or_insert_with(hdr.stream_id, || Stream::new(send_init, recv_init));
             if is_new {
                 s.opened_after_goaway = sink.goaway_sent();
             }
@@ -1071,11 +1070,7 @@ impl Connection {
                 stream::Event::RecvHeaders
             };
             match stream::transition(cur_state, ev) {
-                Ok(next) => {
-                    if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                        s.state = next;
-                    }
-                }
+                Ok(next) => s.state = next,
                 Err(stream::TransitionError::Protocol) => {
                     self.send_go_away(
                         sink,
@@ -1221,7 +1216,7 @@ impl Connection {
             && disposition == BlockDisposition::Deliver
             && self
                 .streams
-                .get(&target)
+                .get(target)
                 .is_some_and(|s| s.recv_final_headers);
         let mut rejected = false;
         let mut malformed = is_trailer && !end_stream;
@@ -1361,7 +1356,7 @@ impl Connection {
                 // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
                 // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
                 self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-                if let Some(s) = self.streams.get_mut(&target) {
+                if let Some(s) = self.streams.get_mut(target) {
                     s.state = State::Closed;
                 }
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
@@ -1386,7 +1381,7 @@ impl Connection {
             };
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
-            if let Some(s) = self.streams.get_mut(&target) {
+            if let Some(s) = self.streams.get_mut(target) {
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
@@ -1412,7 +1407,7 @@ impl Connection {
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
             // is not delivered to the application.
             self.send_rst_stream(sink, target, ErrorCode::ProtocolError);
-            if let Some(s) = self.streams.get_mut(&target) {
+            if let Some(s) = self.streams.get_mut(target) {
                 s.state = State::Closed;
             }
             sink.on_stream_reset(target, ErrorCode::ProtocolError.as_u32());
@@ -1423,7 +1418,7 @@ impl Connection {
             // Refuse the oversized header list with a stream error (matches the legacy engine and
             // node's ENHANCE_YOUR_CALM behavior).
             self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
-            if let Some(s) = self.streams.get_mut(&target) {
+            if let Some(s) = self.streams.get_mut(target) {
                 s.state = State::Closed;
             }
             sink.on_stream_reset(target, ErrorCode::EnhanceYourCalm.as_u32());
@@ -1432,13 +1427,13 @@ impl Connection {
         }
         if push_parent.is_none()
             && !informational
-            && let Some(s) = self.streams.get_mut(&target)
+            && let Some(s) = self.streams.get_mut(target)
         {
             s.recv_final_headers = true;
         }
         sink.on_headers_complete(target, end_stream, flags);
         if end_stream {
-            let state = self.streams.get(&target).map(|s| s.state as u8);
+            let state = self.streams.get(target).map(|s| s.state as u8);
             if let Some(state) = state {
                 sink.on_stream_end(target, state);
             }
@@ -1482,7 +1477,7 @@ impl Connection {
             return StreamedDataStart::Fatal;
         }
 
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
+        if !self.streams.contains_key(hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
@@ -1493,7 +1488,7 @@ impl Connection {
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let mut discard = false;
-        match self.streams.get_mut(&hdr.stream_id) {
+        match self.streams.get_mut(hdr.stream_id) {
             None => {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
@@ -1502,7 +1497,7 @@ impl Connection {
             Some(st) => {
                 if !stream::can_receive_data(st.state) {
                     self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                    if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                    if let Some(st2) = self.streams.get_mut(hdr.stream_id) {
                         st2.state = State::Closed;
                     }
                     sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
@@ -1556,7 +1551,7 @@ impl Connection {
             if self.enforce_content_length(sink, inflight.stream_id) {
                 return;
             }
-            let state = match self.streams.get_mut(&inflight.stream_id) {
+            let state = match self.streams.get_mut(inflight.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
                         s.state = next;
@@ -1622,7 +1617,7 @@ impl Connection {
         }
         // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
         // here so it isn't mistaken for a closed/idle stream.
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
+        if !self.streams.contains_key(hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
@@ -1632,7 +1627,7 @@ impl Connection {
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
-        let decision = match self.streams.get_mut(&hdr.stream_id) {
+        let decision = match self.streams.get_mut(hdr.stream_id) {
             // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
@@ -1652,7 +1647,7 @@ impl Connection {
         let stream_inc = match decision {
             DataDecision::Rst(code) => {
                 self.send_rst_stream(sink, hdr.stream_id, code);
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                if let Some(s) = self.streams.get_mut(hdr.stream_id) {
                     s.state = State::Closed;
                 }
                 // Surface the stream error (e.g. a peer protocol violation) to the embedder.
@@ -1687,7 +1682,7 @@ impl Connection {
             if self.enforce_content_length(sink, hdr.stream_id) {
                 return false;
             }
-            let state = match self.streams.get_mut(&hdr.stream_id) {
+            let state = match self.streams.get_mut(hdr.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
                         s.state = next;
@@ -1710,7 +1705,7 @@ impl Connection {
         if !self.is_server {
             return false;
         }
-        let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
+        let mismatch = self.streams.get(stream_id).is_some_and(|s| {
             s.content_length
                 .is_some_and(|declared| declared != s.recv_body_bytes)
         });
@@ -1718,7 +1713,7 @@ impl Connection {
             return false;
         }
         self.send_rst_stream(sink, stream_id, ErrorCode::ProtocolError);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
+        if let Some(s) = self.streams.get_mut(stream_id) {
             s.state = State::Closed;
         }
         sink.on_stream_reset(stream_id, ErrorCode::ProtocolError.as_u32());
@@ -1730,7 +1725,7 @@ impl Connection {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         let mut charged = false;
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
+        let mut on_idle = match self.streams.get_mut(hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
                 // nghttp2 exempts every reset after its GOAWAY, but it opens no stream after it.
                 let exempt = sink.goaway_sent() && !s.opened_after_goaway;
@@ -1747,8 +1742,7 @@ impl Connection {
             let recv_init = self.local_settings.initial_window_size;
             let s = self
                 .streams
-                .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init));
+                .get_or_insert_with(hdr.stream_id, || Stream::new(send_init, recv_init));
             s.state = State::Closed;
             on_idle = false;
         }
@@ -1834,8 +1828,19 @@ impl Connection {
         ]) & 0x7fff_ffff;
         off += 4;
         // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
-        // cannot be reused.
-        if promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised) {
+        // cannot be reused. A valid id is reserved by the lookup that finds it unused.
+        let send_init = self.remote_settings.initial_window_size;
+        let recv_init = self.local_settings.initial_window_size;
+        let mut reserved = false;
+        if promised != 0 && promised & 1 == 0 {
+            self.streams.get_or_insert_with(promised, || {
+                reserved = true;
+                let mut stream = Stream::new(send_init, recv_init);
+                stream.state = State::ReservedRemote;
+                stream
+            });
+        }
+        if !reserved {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -1843,15 +1848,6 @@ impl Connection {
             );
             return true;
         }
-
-        // Reserve the promised (even) stream.
-        let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
-        let entry = self
-            .streams
-            .entry(promised)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
-        entry.state = State::ReservedRemote;
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
@@ -1980,8 +1976,7 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let s = self
             .streams
-            .entry(stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
+            .get_or_insert_with(stream_id, || Stream::new(send_init, recv_init));
         let ev = if end_stream {
             stream::Event::SendHeadersEndStream
         } else {
@@ -2008,7 +2003,7 @@ impl Connection {
         let conn_avail = self.send_window.available();
         let stream_avail = self
             .streams
-            .get(&stream_id)
+            .get(stream_id)
             .map(|s| s.send_window.available())
             .unwrap_or(0);
         let max_frame = self.remote_settings.max_frame_size as i64;
@@ -2028,7 +2023,7 @@ impl Connection {
         };
         self.write_frame(sink, FrameType::Data, flags, stream_id, &data[..to_send]);
         self.send_window.consume(to_send as i64);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
+        if let Some(s) = self.streams.get_mut(stream_id) {
             s.send_window.consume(to_send as i64);
             if end_stream && send_all {
                 if let Ok(next) = stream::transition(s.state, stream::Event::SendEndStream) {
@@ -2047,14 +2042,14 @@ impl Connection {
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
     /// answer) and a late HEADERS re-opens a fresh entry.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
-        self.streams.remove(&stream_id);
+        self.streams.take(stream_id);
     }
 
     /// Replenish a single stream's receive window now (the embedder's reader resumed after a
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
-        let inc = match self.streams.get_mut(&stream_id) {
+        let inc = match self.streams.get_mut(stream_id) {
             Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
             }
@@ -2108,8 +2103,7 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let s = self
             .streams
-            .entry(promised_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
+            .get_or_insert_with(promised_id, || Stream::new(send_init, recv_init));
         s.state = State::ReservedLocal;
         if promised_id > self.last_stream_id {
             self.last_stream_id = promised_id;
@@ -2298,7 +2292,7 @@ mod tests {
         assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
         assert_eq!(
-            c.streams.get(&1).map(|s| s.state),
+            c.streams.get(1).map(|s| s.state),
             Some(State::HalfClosedRemote)
         );
     }
@@ -2317,7 +2311,7 @@ mod tests {
         // HEADERS without END_STREAM -> stream stays open for DATA.
         let h = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block);
         c.receive(&sink, &h);
-        assert_eq!(c.streams.get(&1).map(|s| s.state), Some(State::Open));
+        assert_eq!(c.streams.get(1).map(|s| s.state), Some(State::Open));
 
         let d = frame(FrameType::Data, wire::flags::END_STREAM, 1, b"hello");
         let fed = c.receive(&sink, &d);
@@ -2325,7 +2319,7 @@ mod tests {
         assert_eq!(*sink.data.borrow(), vec![(1, b"hello".to_vec())]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
         assert_eq!(
-            c.streams.get(&1).map(|s| s.state),
+            c.streams.get(1).map(|s| s.state),
             Some(State::HalfClosedRemote)
         );
     }
@@ -2359,7 +2353,7 @@ mod tests {
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
-            client.streams.get(&1).map(|s| s.state),
+            client.streams.get(1).map(|s| s.state),
             Some(State::HalfClosedLocal)
         );
 
@@ -2400,7 +2394,7 @@ mod tests {
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
-            server.streams.get(&2).map(|s| s.state),
+            server.streams.get(2).map(|s| s.state),
             Some(State::ReservedLocal)
         );
 
@@ -2420,7 +2414,7 @@ mod tests {
                 .any(|(id, n, v)| *id == 2 && n == b":path" && v == b"/pushed")
         );
         assert_eq!(
-            client.streams.get(&2).map(|s| s.state),
+            client.streams.get(2).map(|s| s.state),
             Some(State::ReservedRemote)
         );
     }
@@ -2451,7 +2445,7 @@ mod tests {
         assert!(c.encode_header(b":method", b"POST", false));
         c.send_header_block(&sink, 1, false);
         sink.out.borrow_mut().clear();
-        if let Some(s) = c.streams.get_mut(&1) {
+        if let Some(s) = c.streams.get_mut(1) {
             s.send_window = SendWindow::new(4);
         }
         c.send_window = SendWindow::new(4);

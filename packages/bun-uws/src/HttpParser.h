@@ -741,33 +741,30 @@ struct HttpResponseData;
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
         /* The limit is STATE_SIZE_MASK, not UINT64_MAX: remainingStreamingBytes shares its top bits with the chunked state flags. */
-        static HttpParserError parseContentLength(std::string_view str, uint64_t &value, bool acceptLong) {
+        static HttpParserError parseContentLength(std::string_view str, uint64_t &value) {
             uint64_t result = 0;
             if (str.length() > 18) [[unlikely]] {
-                /* Only leading zeros keep a longer value at or below the limit. llhttp accepts them. */
-                if (!acceptLong) {
-                    return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
-                }
+                /* Never accepted. Like llhttp, a non-digit that comes before the overflow is an invalid character. */
                 for (char c : str) {
                     if (c < '0' || c > '9') {
                         return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
                     }
                     result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
                     if (result > STATE_SIZE_MASK) {
-                        return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
+                        break;
                     }
                 }
-            } else {
-                /* 18 digits stay below 2^63, so one check after the loop is enough. */
-                for (char c : str) {
-                    if (c < '0' || c > '9') {
-                        return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
-                    }
-                    result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
+                return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
+            }
+            /* 18 digits stay below 2^63, so one check after the loop is enough. */
+            for (char c : str) {
+                if (c < '0' || c > '9') {
+                    return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
                 }
-                if (result > STATE_SIZE_MASK) {
-                    return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
-                }
+                result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
+            }
+            if (result > STATE_SIZE_MASK) {
+                return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
             }
             value = result;
             return HTTP_PARSER_ERROR_NONE;
@@ -1327,7 +1324,7 @@ struct HttpResponseData;
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH);
                         }
                         if (contentLengthString.data() == nullptr) {
-                            if (HttpParserError contentLengthError = parseContentLength(h->value, contentLength, IsNodeHttp)) [[unlikely]] {
+                            if (HttpParserError contentLengthError = parseContentLength(h->value, contentLength)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, contentLengthError);
                             }
                             contentLengthString = h->value;

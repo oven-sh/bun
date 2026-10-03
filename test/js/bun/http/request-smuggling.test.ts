@@ -353,7 +353,7 @@ test("rejects empty-valued Content-Length followed by smuggled Content-Length", 
   expect(seen).not.toContain("GET /admin");
 });
 
-// RFC 9110 8.6: Content-Length = 1*DIGIT, so each zero-padded value below is 5.
+// An 18-byte limit and 2^59 - 1 cap both servers (node has no length limit). Each zero-padded value below is 5.
 test.each([
   [18, "HTTP/1.1 200", "000000000000000005", ["hello"]],
   [19, "HTTP/1.1 400", "0000000000000000005", []],
@@ -385,37 +385,25 @@ test.each([
   expect(seen).toEqual(bodies);
 });
 
-test("node:http frames a zero-padded Content-Length by its digits (llhttp parity)", async () => {
-  const hits: { url: string; body: string }[] = [];
-  await using server = createServer((req, res) => {
-    let body = "";
-    req.on("data", d => (body += d));
-    req.on("end", () => {
-      hits.push({ url: req.url!, body });
-      res.end("ok");
-    });
+test("node:http reports a 19-byte zero-padded Content-Length as an overflow", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<object>();
+  await using server = createServer(req => reject(new Error(`request ${req.url} was dispatched`)));
+  server.on("clientError", (err: any, socket) => {
+    socket.destroy();
+    resolve({ code: err.code, reason: err.reason });
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const port = (server.address() as net.AddressInfo).port;
 
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
   const client = net.connect(port, "127.0.0.1", () => {
-    client.write(
-      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello" +
-        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
-    );
+    client.write("POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello");
   });
-  let raw = "";
-  client.on("data", data => (raw += data));
-  client.on("error", reject);
-  client.on("close", () => resolve(raw));
-  const response = await promise;
-
-  expect(hits.sort((a, b) => a.url.localeCompare(b.url))).toEqual([
-    { url: "/a", body: "hello" },
-    { url: "/b", body: "" },
-  ]);
-  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+  client.on("error", () => {});
+  try {
+    expect(await promise).toEqual({ code: "HPE_INVALID_CONTENT_LENGTH", reason: "Content-Length overflow" });
+  } finally {
+    client.destroy();
+  }
 });
 
 test("accepts valid Transfer-Encoding: chunked", async () => {

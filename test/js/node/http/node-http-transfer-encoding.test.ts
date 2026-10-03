@@ -850,6 +850,7 @@ describe("bad Content-Length fires clientError with node's code and reason", () 
     ["signed value", "Host: x\r\nContent-Length: +5\r\n", invalid, badChar],
     ["two numbers", "Host: x\r\nContent-Length: 5 5\r\n", invalid, badChar],
     ["23-digit value", "Host: x\r\nContent-Length: 99999999999999999999999\r\n", invalid, overflow],
+    ["20 bytes with a non-digit", "Host: x\r\nContent-Length: 0000000000000000005x\r\n", invalid, badChar],
     ["second field, other value", "Host: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n", duplicate, repeated],
     ["second field, non-digit", "Host: x\r\nContent-Length: 5\r\nContent-Length: x\r\n", duplicate, repeated],
     ["second field, empty", "Host: x\r\nContent-Length: 5\r\nContent-Length:\r\n", invalid, empty],
@@ -866,11 +867,9 @@ describe("bad Content-Length fires clientError with node's code and reason", () 
   });
 });
 
-// Bun's limit is 2^59 - 1 (node's is 2^64 - 1). The second row reaches it with 19 bytes.
-test.each([
-  ["576460752303423487", "576460752303423488"],
-  ["0576460752303423487", "0576460752303423488"],
-])("Content-Length %s is dispatched and %s overflows", async (atLimit, pastLimit) => {
+// Bun's limits are 2^59 - 1 and 18 bytes. Node's limit is 2^64 - 1, with any number of leading zeros.
+test("Content-Length 576460752303423487 is dispatched, and a larger or longer value overflows", async () => {
+  const atLimit = "576460752303423487";
   const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
   await using server = createServer(req => resolve(req.headers["content-length"]));
   server.on("clientError", (err: any, socket) => {
@@ -890,11 +889,13 @@ test.each([
     socket.destroy();
   }
 
-  expect(await clientErrorFor(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${pastLimit}\r\n\r\n`)).toMatchObject({
-    dispatched: [],
-    code: "HPE_INVALID_CONTENT_LENGTH",
-    reason: "Content-Length overflow",
-  });
+  for (const value of ["576460752303423488", "0576460752303423487"]) {
+    expect(await clientErrorFor(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${value}\r\n\r\n`)).toMatchObject({
+      dispatched: [],
+      code: "HPE_INVALID_CONTENT_LENGTH",
+      reason: "Content-Length overflow",
+    });
+  }
 });
 
 describe("clientError carries llhttp's reason where the parser error maps to one", () => {

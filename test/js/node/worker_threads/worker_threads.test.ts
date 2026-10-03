@@ -28,7 +28,7 @@ import wt, {
 setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 test("support eval in worker", async () => {
-  const worker = new Worker(`postMessage(1 + 1)`, {
+  const worker = new Worker(`require("worker_threads").parentPort.postMessage(1 + 1)`, {
     eval: true,
   });
   const result = await new Promise(resolve => {
@@ -268,7 +268,9 @@ test("you can override globalThis.postMessage", async () => {
 });
 
 test("support require in eval", async () => {
-  const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
+  const worker = new Worker(`require('worker_threads').parentPort.postMessage(require('process').argv[0])`, {
+    eval: true,
+  });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
@@ -285,7 +287,9 @@ test("support require in eval for a file", async () => {
   const realpath = relative(cwd, testfile).replaceAll("\\", "/");
   console.log("realpath", realpath);
   expect(() => fs.accessSync(join(cwd, realpath))).not.toThrow();
-  const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
+  const worker = new Worker(`require('worker_threads').parentPort.postMessage(require('./${realpath}').argv[0])`, {
+    eval: true,
+  });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
@@ -295,7 +299,10 @@ test("support require in eval for a file", async () => {
 });
 
 test("support require in eval for a file that doesnt exist", async () => {
-  const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
+  const worker = new Worker(
+    `require('worker_threads').parentPort.postMessage(require('./fixture-invalid.js').argv[0])`,
+    { eval: true },
+  );
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
@@ -1050,15 +1057,15 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
 });
 
 // In a node worker only parentPort receives what the parent posts; the global
-// scope's `self.onmessage` is not a channel there (as in node). Libraries that
-// install both a parentPort listener and self.onmessage as a node/web shim
-// must see one delivery, not two.
-test("a parent message reaches parentPort only, not self.onmessage, in a node worker", async () => {
+// scope is not a channel there (as in node). A worker that listens on both must
+// see one delivery, not two. The global scope has no addEventListener of its own
+// in a node worker, but EventTarget.prototype's still takes it as the receiver.
+test("a parent message reaches parentPort only, not a listener on the global scope, in a node worker", async () => {
   const w = new Worker(
     `const { parentPort } = require("node:worker_threads");
      let count = 0;
      parentPort.on("message", () => { count++; });
-     self.onmessage = () => { count += 100; };
+     EventTarget.prototype.addEventListener.call(globalThis, "message", () => { count += 100; });
      parentPort.on("message", () => setImmediate(() => parentPort.postMessage(count)));`,
     { eval: true },
   );
@@ -1066,6 +1073,168 @@ test("a parent message reaches parentPort only, not self.onmessage, in a node wo
   const [count] = await once(w, "message");
   await w.terminate();
   expect(count).toBe(1);
+});
+
+// Node defines none of the Web Worker globals in a worker_threads worker. Bun
+// used to define all of them there, so a library that feature-detects a browser
+// worker (workerpool, web-worker) took that branch and never received a task:
+// the global postMessage reached the parent, but the parent's messages reached
+// parentPort only (#43459, #11005). The last four names were never defined in
+// a node worker. They are here so that the whole scope stays absent.
+test("a node worker has no Web Worker globals", async () => {
+  const names = [
+    "self",
+    "postMessage",
+    "addEventListener",
+    "removeEventListener",
+    "dispatchEvent",
+    "onmessage",
+    "onerror",
+    "onmessageerror",
+    "close",
+    "name",
+    "importScripts",
+  ];
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     const names = ${JSON.stringify(names)};
+     parentPort.postMessage(Object.fromEntries(names.map(k => [k, k in globalThis])));`,
+    { eval: true },
+  );
+  const [present] = await once(w, "message");
+  await w.terminate();
+  expect(present).toEqual(Object.fromEntries(names.map(k => [k, false])));
+});
+
+test("a bare postMessage() in a node worker throws ReferenceError, as in node", async () => {
+  const w = new Worker(`postMessage("ready")`, { eval: true });
+  // Whichever comes first: a worker that has the global sends "ready" and never fails.
+  const first = await new Promise<any>(resolve => {
+    w.once("error", resolve);
+    w.once("message", resolve);
+  });
+  await w.terminate();
+  expect(first).toBeInstanceOf(ReferenceError);
+  expect(first.message).toBe("postMessage is not defined");
+});
+
+// workerpool 10.0.3 (src/worker.js) picks its channel with this detection: the
+// browser branch when `self`, `postMessage` and `addEventListener` exist,
+// otherwise parentPort. The worker names its branch in the first message, so a
+// wrong branch fails here at once and does not wait for an echo that never comes.
+test("workerpool's channel detection picks parentPort in a node worker, and messages go both ways", async () => {
+  const w = new Worker(
+    `const worker = {};
+     if (typeof self !== 'undefined' && typeof postMessage === 'function' && typeof addEventListener === 'function') {
+       worker.path = "browser";
+       worker.on = (event, callback) => addEventListener(event, message => callback(message.data));
+       worker.send = message => postMessage(message);
+     } else {
+       const { parentPort } = require("worker_threads");
+       worker.path = "worker_threads";
+       worker.send = parentPort.postMessage.bind(parentPort);
+       worker.on = parentPort.on.bind(parentPort);
+     }
+     worker.on("message", request => worker.send({ echo: request }));
+     worker.send({ ready: worker.path });`,
+    { eval: true },
+  );
+  try {
+    const [ready] = await once(w, "message");
+    expect(ready).toEqual({ ready: "worker_threads" });
+    w.postMessage({ a: 1 });
+    const [echo] = await once(w, "message");
+    expect(echo).toEqual({ echo: { a: 1 } });
+  } finally {
+    await w.terminate();
+  }
+});
+
+// The child uses the Web Worker idiom on its global scope. Node has no such
+// globals in a worker, so the child throws and the parent exits with that error.
+// Bun 1.4.0 to 1.4.2 printed "ready" and then waited forever: the global
+// postMessage() reached the parent, and nothing came back. The spawn timeout is
+// shorter than this file's test timeout, so a child that waits is killed and
+// the failure is the diff below.
+test("the Web Worker idiom in a node worker fails as in node, it does not hang", async () => {
+  using dir = tempDir("node-worker-global-scope", {
+    "main.mjs": `import { Worker } from "node:worker_threads";
+const w = new Worker(new URL("./child.mjs", import.meta.url));
+w.on("message", (m) => {
+    console.log(JSON.stringify(m));
+    if (m === "ready") w.postMessage("hi");
+    else w.terminate();
+});
+`,
+    "child.mjs": `addEventListener("message", (e) => postMessage({ echo: e.data }));
+postMessage("ready");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: isDebug ? 60_000 : 8_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    error: stderr.match(/^\w*Error: .*$/m)?.[0],
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: "",
+    error: "ReferenceError: addEventListener is not defined",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+// The two channels that worked before the Web Worker globals left the node
+// worker, with the same handshake as the report: they must not change.
+test("a node worker that uses parentPort only still hears its parent", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.on("message", m => parentPort.postMessage({ echo: m }));
+     parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  try {
+    const [ready] = await once(w, "message");
+    w.postMessage("hi");
+    const [echo] = await once(w, "message");
+    expect({ ready, echo }).toEqual({ ready: "ready", echo: { echo: "hi" } });
+  } finally {
+    await w.terminate();
+  }
+});
+
+test.each([
+  ["self.onmessage", `self.onmessage = e => self.postMessage({ echo: e.data }); self.postMessage("ready");`],
+  [
+    "the global addEventListener() and postMessage()",
+    `addEventListener("message", (e) => postMessage({ echo: e.data })); postMessage("ready");`,
+  ],
+])("a Web Worker that uses %s still hears its parent", async (_, source) => {
+  const url = URL.createObjectURL(new Blob([source]));
+  const w = new globalThis.Worker(url);
+  try {
+    const received: unknown[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    w.onerror = e => reject(new Error(e.message));
+    w.onmessage = e => {
+      received.push(e.data);
+      if (e.data === "ready") w.postMessage("hi");
+      else resolve();
+    };
+    await promise;
+    expect(received).toEqual(["ready", { echo: "hi" }]);
+  } finally {
+    w.terminate();
+    URL.revokeObjectURL(url);
+  }
 });
 
 // node's setupPortReferencing tracks 'message' listeners only: a 'messageerror'
@@ -2065,6 +2234,36 @@ test("workerData is not unwrapped for a non-node globalThis.Worker", async () =>
   expect({ workerData: out.workerData, stderr, exitCode }).toEqual({
     workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 },
     stderr,
+    exitCode: 0,
+  });
+});
+
+// node:worker_threads passes its Worker instance as a hidden third argument to the
+// native constructor. A user's own third argument must not select the node kind:
+// the process 'worker' event receives the Web Worker, not that argument, and the
+// worker keeps the Web Worker globals.
+test("a 3-argument globalThis.Worker is still a Web Worker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const src = 'const { parentPort, isMainThread } = require("worker_threads");' +
+         'self.onmessage = e => self.postMessage({ echo: e.data, postMessage: typeof postMessage, parentPort: parentPort === null, isMainThread });';
+       const url = URL.createObjectURL(new Blob([src]));
+       let workerEvent;
+       process.once("worker", x => { workerEvent = x === w ? "web worker" : x; });
+       const w = new globalThis.Worker(url, {}, { not: "a node worker" });
+       w.onerror = e => { console.error(e.message || e); process.exit(1); };
+       w.onmessage = e => { console.log(JSON.stringify({ ...e.data, workerEvent })); w.terminate(); };
+       w.postMessage("ping");`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    out: { echo: "ping", postMessage: "function", parentPort: false, isMainThread: false, workerEvent: "web worker" },
+    stderr: "",
     exitCode: 0,
   });
 });

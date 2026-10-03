@@ -7,6 +7,13 @@ use bun_core::env_var;
 use bun_core::{self, Environment, Global};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
+#[unsafe(export_name = "Bun__Process__captureNativeStack")]
+unsafe extern "C" fn capture_native_stack(addresses: *mut usize, capacity: usize) -> usize {
+    // SAFETY: the report builder passes its writable array and its element count.
+    let addresses = unsafe { core::slice::from_raw_parts_mut(addresses, capacity) };
+    bun_core::capture_stack_trace(bun_core::return_address(), addresses)
+}
+
 // Both materialize the array on first access through `Bun__Process__createArgv`
 // / `createExecArgv` below, which return zero with the exception pending.
 unsafe extern "C" {

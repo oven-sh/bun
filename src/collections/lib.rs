@@ -6,10 +6,9 @@
     unsized_const_params,
     const_cmp,
     const_trait_impl,
-    core_intrinsics,
     allocator_api
 )]
-#![allow(incomplete_features, internal_features)]
+#![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
 pub mod hive_array;
@@ -59,14 +58,6 @@ pub trait PriorityCompare<T> {
 pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
     pub(crate) context: C,
-}
-impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            context: C::default(),
-        }
-    }
 }
 impl<T, C> PriorityQueue<T, C> {
     pub fn init(context: C) -> Self {
@@ -266,7 +257,6 @@ impl<T, const N: usize> Extend<T> for SmallList<T, N> {
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl<T, const N: usize> SmallList<T, N> {
     // ── constructors ───────────────────────────────────────────────────────
     #[inline]
@@ -479,5 +469,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

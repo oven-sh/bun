@@ -2,7 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
 // lints would create a dependency cycle. `output`/`Progress`/`Global` here ARE
@@ -54,14 +54,12 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
-    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
+    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
+    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
+    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 
@@ -71,9 +69,7 @@ pub use string::{StringPointer, Tag, slice_to_nul};
 // merge would otherwise cycle). The original crates re-export these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod external_shared;
-pub use external_shared::{
-    ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString,
-};
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, WTFString};
 pub mod bounded_array;
 pub use bounded_array::{BoundedArray, BoundedArrayAligned};
 
@@ -244,9 +240,13 @@ pub mod os {
     }
 }
 
+pub mod code_generation;
 pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
+pub use code_generation::{
+    CodeGenerationFromStrings, code_generation_from_strings, disallow_code_generation_from_strings,
+};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
@@ -590,7 +590,6 @@ bun_dispatch::link_interface! {
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_flush(qw: &mut output::QuietWriter);
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
         fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
@@ -1010,13 +1009,6 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
     &mut dest[..off]
 }
 
-/// Back-compat alias for the original `u8`-only buffer-concat. New code should
-/// call [`concat_into`] directly.
-#[inline]
-pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
-    concat_into(buf, parts)
-}
-
 /// Tagged-union field projection — `data.file`, `chunk.content.javascript`.
 ///
 /// Consolidates ~20 identical
@@ -1082,12 +1074,9 @@ macro_rules! enum_unwrap {
     };
 }
 
-/// Unwrap a `Result`, calling `outOfMemory()` on
-/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
-/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
-/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
-/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+/// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
+/// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
+/// crate sits *above* `bun_core` in the dep graph).
 #[inline]
 #[track_caller]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
@@ -1098,15 +1087,8 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 }
 
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
-/// `Result<T, E>`. The *loose* idiom
-/// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// narrowing version see `bun_crash_handler::HandleOom`.
-///
-/// This is intentionally a blanket `impl<T, E>` — it matches the
-/// existing `bun_core::handle_oom` free fn and the two pre-existing local
-/// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
-/// instead.
+/// `Result<T, E>`, treating **any** `Err` as OOM. For the `AllocError`-only
+/// version see `bun_crash_handler::handle_oom`.
 pub trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;
@@ -1352,13 +1334,18 @@ pub(crate) mod strings_impl {
         debug_assert!(!b.is_empty());
         debug_assert!(!a.is_empty());
 
+        // Miri has no shim for either libc call, and `bun_url`'s unit tests reach this.
+        #[cfg(miri)]
+        {
+            a.eq_ignore_ascii_case(&b[..a.len()])
+        }
         // SAFETY: a.len() <= b.len() here; strncasecmp reads at most a.len() bytes from each.
-        #[cfg(not(windows))]
+        #[cfg(all(not(miri), not(windows)))]
         unsafe {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
-        #[cfg(windows)]
+        #[cfg(all(not(miri), windows))]
         unsafe {
             unsafe extern "C" {
                 fn _strnicmp(
@@ -2343,14 +2330,6 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub(crate) mod debug_allocator_data {
-    /// Only referenced from `debug_assert!` — dead in release builds.
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn deinit_ok() -> bool {
-        true
-    }
-}
 
 pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
@@ -2436,6 +2415,37 @@ pub mod ffi {
     #[inline]
     pub fn cached_uname() -> &'static libc::utsname {
         UTSNAME.get_or_init(uname)
+    }
+
+    /// A borrowed `&'a [T]` in C layout (`struct { const T* ptr; size_t len; }`)
+    /// for passing slices *into* `extern "C"` functions by value. Carries the
+    /// borrow's lifetime, so an import taking `FfiSlice<'_, T>` can be declared
+    /// `safe fn`: the callee may read `len` elements at `ptr` for the duration
+    /// of the call and nothing else.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct FfiSlice<'a, T = u8> {
+        ptr: *const T,
+        len: usize,
+        _borrow: core::marker::PhantomData<&'a [T]>,
+    }
+
+    impl<'a, T> FfiSlice<'a, T> {
+        #[inline]
+        pub const fn new(s: &'a [T]) -> Self {
+            Self {
+                ptr: s.as_ptr(),
+                len: s.len(),
+                _borrow: core::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {
+        #[inline]
+        fn from(s: &'a [T]) -> Self {
+            Self::new(s)
+        }
     }
 
     /// Slice up to (excluding) the first NUL byte;
@@ -2832,6 +2842,7 @@ pub mod asan {
         safe fn __asan_describe_address(ptr: *const c_void);
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+        safe fn __lsan_ignore_object(ptr: *const c_void);
     }
 
     #[inline]
@@ -2876,6 +2887,14 @@ pub mod asan {
         __lsan_unregister_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
+    }
+    /// Exclude the allocation at `ptr` from leak reports.
+    #[inline]
+    pub fn ignore_object(ptr: *const c_void) {
+        #[cfg(bun_asan)]
+        __lsan_ignore_object(ptr);
+        #[cfg(not(bun_asan))]
+        let _ = ptr;
     }
 }
 

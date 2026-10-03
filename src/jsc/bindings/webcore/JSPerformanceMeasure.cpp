@@ -27,14 +27,17 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
 #include "JSDOMConvertAny.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -48,6 +51,7 @@ using namespace JSC;
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMeasureConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMeasure_detail);
+static JSC_DECLARE_HOST_FUNCTION(jsPerformanceMeasurePrototypeFunction_toJSON);
 
 class JSPerformanceMeasurePrototype final : public JSC::JSNonFinalObject {
 public:
@@ -100,6 +104,7 @@ template<> void JSPerformanceMeasureDOMConstructor::initializeProperties(VM& vm,
 static const HashTableValue JSPerformanceMeasurePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasureConstructor, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasure_detail, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceMeasurePrototypeFunction_toJSON, 0 } },
 };
 
 const ClassInfo JSPerformanceMeasurePrototype::s_info = { "PerformanceMeasure"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMeasurePrototype) };
@@ -163,6 +168,33 @@ static inline JSValue jsPerformanceMeasure_detailGetter(JSGlobalObject& lexicalG
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceMeasure>::get<jsPerformanceMeasure_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+// PerformanceEntry.prototype.toJSON does not know about `detail`; Node's mark and
+// measure entries include it (lib/internal/perf/usertiming.js).
+static inline EncodedJSValue jsPerformanceMeasurePrototypeFunction_toJSONBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, JSPerformanceMeasure* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    PerformanceEntry& impl = castedThis->wrapped();
+    auto* result = constructEmptyObject(lexicalGlobalObject);
+    auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
+    auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "entryType"_s, entryTypeValue);
+    Bun::putDirectNamed(vm, result, "startTime"_s, jsNumber(impl.startTime()));
+    Bun::putDirectNamed(vm, result, "duration"_s, jsNumber(impl.duration()));
+    auto detailValue = jsPerformanceMeasure_detailGetter(*lexicalGlobalObject, *castedThis);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "detail"_s, detailValue);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceMeasurePrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSPerformanceMeasure>::call<jsPerformanceMeasurePrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)

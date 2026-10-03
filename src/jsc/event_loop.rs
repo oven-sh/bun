@@ -28,7 +28,6 @@ pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
-pub use bun_event_loop::ManagedTask;
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};
@@ -37,7 +36,9 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
-pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
+#[cfg(unix)]
+pub use crate::posix_signal_handle::PosixSignalHandle;
+pub use crate::posix_signal_handle::PosixSignalTask;
 
 bun_core::declare_scope!(EventLoop, hidden);
 
@@ -87,11 +88,10 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
-    #[cfg(windows)]
-    // `?*uws.Loop` FFI handle.
+    /// The uws loop this `EventLoop` runs on: the process loop for the VM's
+    /// embedded loops, a private one for a spawnSync loop. Set by
+    /// `ensure_waker` / `__bun_spawn_sync_create_event_loop`.
     pub uws_loop: Option<NonNull<uws::Loop>>,
-    #[cfg(not(windows))]
-    pub uws_loop: (),
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
@@ -110,8 +110,6 @@ pub struct EventLoop {
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
-    #[cfg(not(unix))]
-    pub signal_handler: (),
 }
 
 impl Default for EventLoop {
@@ -132,17 +130,12 @@ impl Default for EventLoop {
             #[cfg(not(windows))]
             holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
-            #[cfg(windows)]
             uws_loop: None,
-            #[cfg(not(windows))]
-            uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
-            #[cfg(not(unix))]
-            signal_handler: (),
         }
     }
 }
@@ -288,6 +281,14 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
         // lifetime; short-lived `&mut` only.
         unsafe { (*self.loop_).exit_without_checkpoint() };
     }
+}
+
+/// What [`EventLoop::enter_js`] found.
+enum EnterJs<'a> {
+    /// The callback may be called, inside this scope (none for [`ContextId::NONE`](crate::ContextId::NONE)).
+    Entered(Option<crate::virtual_machine::ContextScope<'a>>),
+    /// The callback must not be called now.
+    CannotEnter,
 }
 
 impl EventLoop {
@@ -464,11 +465,31 @@ impl EventLoop {
         Ok(())
     }
 
+    /// `run_callback*`'s way in: whether a callback may be called at all, and if so the scope it
+    /// is called inside of. Not with an exception pending. `context` is entered for
+    /// the call; [`ContextId::NONE`](crate::ContextId::NONE) enters nothing.
+    #[inline]
+    fn enter_js<'a>(context: crate::ContextId, global_object: &'a JSGlobalObject) -> EnterJs<'a> {
+        if global_object.has_exception() {
+            return EnterJs::CannotEnter;
+        }
+        EnterJs::Entered(
+            (context != crate::ContextId::NONE)
+                .then(|| global_object.bun_vm().enter_context(context)),
+        )
+    }
+
     /// When you call a JavaScript function from outside the event loop task
     /// queue, it has to be wrapped in `runCallback` to ensure that microtasks
     /// are drained and errors are handled.
+    ///
+    /// `context`: whose script `callback` continues, as a task says it. The call is made inside
+    /// that context (a stopped one is called for nobody: `JSValue::call`). [`ContextId::NONE`](crate::ContextId::NONE): no context of
+    /// the caller's to enter (nothing owns the callback, or it carries its own: one stored with
+    /// `with_async_context_if_needed`).
     pub fn run_callback(
         &mut self,
+        context: crate::ContextId,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -480,9 +501,9 @@ impl EventLoop {
         // exception already pending — a prior callback's microtasks can request
         // termination (worker.terminate()), and entering JS then would trip
         // executeCallImpl's `assertNoException`.
-        if global_object.has_exception() {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
-        }
+        };
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -510,17 +531,18 @@ impl EventLoop {
         // Note: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
     }
 
+    /// `context`: as for [`run_callback`](Self::run_callback).
     pub fn run_callback_with_result(
         &mut self,
+        context: crate::ContextId,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        // Same gate as `run_callback`.
-        if global_object.has_exception() {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
-        }
+        };
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
@@ -555,6 +577,17 @@ impl EventLoop {
     /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
+    }
+
+    /// Other threads have posted work that this loop's next drain will pick up.
+    pub(crate) fn has_concurrent_tasks(&self) -> bool {
+        !self.concurrent_tasks.is_empty()
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| !m.concurrent_tasks.is_empty())
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -586,14 +619,20 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
+        let start_count = self.tasks.readable_length();
+        if let Some(macro_loop) = self.macro_loop_if_not_running() {
+            macro_loop.apply_concurrent_ref_delta();
+            let batch = macro_loop.concurrent_tasks.pop_batch();
+            self.take_concurrent_tasks(batch);
+        }
+
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
-            return 0;
+            return self.tasks.readable_length() - start_count;
         }
 
         let mut iter = concurrent.iterator();
-        let start_count = self.tasks.readable_length();
         let _ = self.tasks.ensure_unused_capacity(count);
 
         // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
@@ -629,20 +668,39 @@ impl EventLoop {
         self.tasks.readable_length() - start_count
     }
 
+    /// The macro loop, when this is the regular loop and no macro is running.
+    /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
+    /// its completion and keep-alive release there, but that loop only ticks
+    /// while a macro is being waited on; whatever finishes after the macro
+    /// returned is this loop's to run, and the platform loop both share stays
+    /// alive for it until then.
+    fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
+        // projects to sibling fields without materializing a
+        // `&VirtualMachine` that would alias the `&mut self` callers hold.
+        unsafe {
+            (core::ptr::addr_of!((*vm).has_enabled_macro_mode).read()
+                && !core::ptr::addr_of!((*vm).macro_mode).read()
+                && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
+            .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
+        }
+    }
+
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
-    /// (here, or from another thread through `VmHandle`) into the platform
-    /// loop's keep-alive count. Runs at the top of every tick,
-    /// and once more from a worker's shutdown after its stop phase (which unrefs
+    /// (here, or from another thread through `VmHandle`) into this loop's
+    /// keep-alive count. Runs at the top of every tick, and once more from a
+    /// worker's shutdown after its stop phase (which unrefs
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
+    ///
+    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: `Bun.spawnSync`
+    /// points the latter at its private loop, and a GC inside it still refs
+    /// this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
-        // Do NOT silently drop the swapped delta when the handle is
-        // missing — queued refs would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        let loop_ = self
-            .vm_ref()
-            .platform_loop_opt()
-            .expect("event_loop_handle");
+        // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
+        let loop_ = unsafe { &mut *self.native_loop() };
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -667,37 +725,24 @@ impl EventLoop {
         }
     }
 
-    /// Walk `self.virtual_machine.event_loop_handle` via raw-pointer
-    /// projection without materializing a `&VirtualMachine` (the VM may be
-    /// mutably borrowed elsewhere on the JS thread when libuv completion
-    /// callbacks reach for the loop).
-    #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
-        // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
-        // owning per-thread singleton; non-null and live for the VM lifetime.
-        // `addr_of!` projects to the field place without forming an
-        // intermediate `&VirtualMachine` that would assert no-alias.
-        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }.expect("event_loop_handle")
+    /// The uws loop this `EventLoop` runs on.
+    pub fn usockets_loop(&self) -> *mut uws::Loop {
+        self.uws_loop
+            .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
+            .as_ptr()
     }
 
-    pub fn usockets_loop(&self) -> *mut uws::Loop {
-        // Panic on null rather than returning it — callers immediately
-        // materialize `&mut *`, so a null return would be instant UB instead
-        // of a clean panic.
-        #[cfg(windows)]
-        {
-            return self
-                .uws_loop
-                .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
-                .as_ptr();
-        }
-        #[cfg(not(windows))]
-        {
-            self.vm_ref().event_loop_handle.expect(
-                "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
-            )
-        }
+    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
+    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
+    #[inline]
+    pub fn native_loop(&self) -> *mut crate::PlatformEventLoop {
+        Async::uws_to_native(self.usockets_loop())
+    }
+
+    #[cfg(windows)]
+    #[inline]
+    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
+        self.native_loop()
     }
 
     #[inline]
@@ -716,7 +761,7 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
     }
 
     pub fn tick(&mut self) {
@@ -838,14 +883,17 @@ impl EventLoop {
         }
     }
 
-    /// Move whatever other threads posted (`concurrent_tasks`) into
+    /// Move a batch other threads posted (`concurrent_tasks`) into
     /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
     /// over `self.tasks` releases everything. Called by `release_queued_tasks`
     /// in teardown, after `join_child_workers()` (every child has posted its
     /// close task by then) and before the JSC VM is destroyed (so captured
     /// `Ref<>`s in queued C++ lambdas drop against a live heap).
-    fn take_concurrent_tasks(&mut self) {
-        let mut iter = self.concurrent_tasks.pop_batch().iterator();
+    fn take_concurrent_tasks(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) {
+        let mut iter = batch.iterator();
         loop {
             let node = iter.next();
             if node.is_null() {
@@ -867,7 +915,8 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
+        let batch = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_tasks(batch);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
@@ -1012,11 +1061,13 @@ impl EventLoop {
 
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
+        if self.uws_loop.is_none() {
+            // The VM's embedded loops run on the thread's loop, the one
+            // `vm.event_loop_handle` names below.
+            debug_assert_eq!(Async::uws_to_native(uws::Loop::get()), Async::Loop::get());
+            self.uws_loop = NonNull::new(uws::Loop::get());
+        }
         if self.vm_ref().event_loop_handle.is_none() {
-            #[cfg(windows)]
-            {
-                self.uws_loop = NonNull::new(uws::Loop::get());
-            }
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
@@ -1027,12 +1078,6 @@ impl EventLoop {
                 let gc: *mut GarbageCollectionController =
                     core::ptr::addr_of_mut!((*vm).gc_controller);
                 (*gc).init(&mut *vm);
-            }
-        }
-        #[cfg(windows)]
-        {
-            if self.uws_loop.is_none() {
-                self.uws_loop = NonNull::new(uws::Loop::get());
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
@@ -1052,7 +1097,7 @@ impl EventLoop {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn perform_gc(&mut self) {
-        self.vm_ref().as_mut().gc_controller.perform_gc();
+        self.vm_ref().as_mut().gc_controller.perform_gc(false);
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
@@ -1102,23 +1147,9 @@ impl EventLoop {
     }
 
     pub fn wakeup(&self) {
-        #[cfg(windows)]
-        {
-            if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
-            }
-            return;
-        }
-        #[cfg(not(windows))]
-        {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
-            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
-                loop_.wakeup();
-            }
+        if let Some(loop_) = self.uws_loop {
+            // SAFETY: uws_loop is a valid live uws::Loop handle
+            unsafe { (*loop_.as_ptr()).wakeup() };
         }
     }
 
@@ -1197,25 +1228,24 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            self.vm_ref()
-                .platform_loop_opt()
-                .expect("event_loop_handle")
-                .tick();
+            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
+            unsafe { (*self.native_loop()).tick() };
         }
     }
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
+    /// `context`: as for [`run_callback`](Self::run_callback).
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
+        context: crate::ContextId,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Same gate as `run_callback`.
-        if global_object.has_exception() {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return Ok(JSValue::UNDEFINED);
-        }
+        };
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
@@ -1331,7 +1361,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 8);
+    let result = JSValue::create_empty_object(global_object, 9);
     result.put(
         global_object,
         b"activeTasks",
@@ -1382,6 +1412,12 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         b"numPolls",
         JSValue::js_number(num_polls as f64),
     );
+    result.put(
+        global_object,
+        b"iteration",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
+    );
     Ok(result)
 }
 
@@ -1398,10 +1434,14 @@ pub fn event_loop_run_callback2(
     arg0: JSValue,
     arg1: JSValue,
 ) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0, arg1]);
+    // The webview backends' callbacks: a WebView has no context of its own.
+    global.bun_vm().event_loop_mut().run_callback(
+        crate::ContextId::NONE,
+        callback,
+        global,
+        this_value,
+        &[arg0, arg1],
+    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)
@@ -1437,9 +1477,6 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 // JS thread.
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
-        // Reads the EventLoop's own `uws_loop` field; on
-        // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
-        // code paths. Route through `usockets_loop()`.
         iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
         // same VM.
@@ -1515,22 +1552,14 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *vm.cast::<VirtualMachine>() }
 }
 
-/// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
-/// `uws_loop` in `event_loop.uws_loop`.
+/// Heap-allocate a fresh `EventLoop` bound to `vm`, running on `uws_loop`.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);
     let mut el = Box::new(EventLoop::default());
     el.global = NonNull::new(vm.global);
     el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
-    #[cfg(windows)]
-    {
-        el.uws_loop = NonNull::new(uws_loop);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = uws_loop;
-    }
+    el.uws_loop = NonNull::new(uws_loop);
     let el = bun_core::heap::into_raw(el);
     // SAFETY: `el` is the stable heap address the poster targets until destroy.
     unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };
@@ -1576,13 +1605,6 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
     vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
-    // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
-    // `regular_event_loop`/`macro_event_loop`).
-    vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
 }
 
 #[unsafe(no_mangle)]

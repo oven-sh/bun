@@ -8,6 +8,7 @@ use bun_collections::StringArrayHashMap;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;
+use bun_semver::query::token::Wildcard;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
@@ -17,6 +18,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -776,20 +778,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let path_str = sbuf!(lockfile).append(importer_path)?;
             lockfile.workspace_paths.put(name_hash, path_str)?;
 
-            if let Some(version_expr) = value.get(b"version") {
-                let Some(version_raw) = as_string(&version_expr) else {
-                    return Err(invalid_pnpm_lockfile());
-                };
+            if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
-
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
-                if !parsed.valid {
-                    return Err(invalid_pnpm_lockfile());
+                if parsed.valid && parsed.wildcard == Wildcard::None {
+                    lockfile
+                        .workspace_versions
+                        .put(name_hash, parsed.version.min())?;
                 }
-
-                lockfile
-                    .workspace_versions
-                    .put(name_hash, parsed.version.min())?;
             }
         }
 
@@ -1621,6 +1617,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
 
+    lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
@@ -2732,36 +2729,14 @@ fn update_package_json_after_migration(
     }
 
     if needs_update {
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
-            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-
-        if bun_js_printer::print_json(
-            &mut package_json_writer,
-            json,
-            &root_pkg_json.source,
-            bun_js_printer::PrintJsonOptions {
-                indent: root_pkg_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return Ok(());
+        print_package_json_into_cache_entry(root_pkg_json, json);
+        // The edits above spliced `Store`-allocated nodes into the cached tree,
+        // and the next `initialize_store()` recycles them. Re-parse so the entry
+        // owns its tree again before `bun add` prints it after the install.
+        if let Err(err) = root_pkg_json.reparse_root(log) {
+            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+            bun_core::Global::crash();
         }
-
-        if package_json_writer.flush().is_err() {
-            return Err(AllocError);
-        }
-
-        root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer
-                .ctx
-                .written_without_trailing_zero()
-                .to_vec(),
-        );
 
         // Write the updated package.json
         if sys::File::write_file(

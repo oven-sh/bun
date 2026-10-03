@@ -3,7 +3,6 @@ use bun_collections::HashMap;
 use bun_core::Output;
 
 use crate::DependencyID;
-use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
@@ -49,6 +48,10 @@ fn start_manifest_task(
     is_required: bool,
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
+    // best-effort metadata backfill: nothing to do without the network
+    if manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(());
+    }
     let task_id = Task::Id::for_manifest(pkg_name);
     if run_tasks::has_created_network_task(manager, task_id, is_required) {
         return Ok(());
@@ -113,6 +116,7 @@ impl RunTasksCallbacks for ManifestsOnlyCallbacks {
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
 /// direct dependencies of the `root_pkg_ids` are populated. If `root_pkg_ids` has length 0
 /// all packages in the lockfile will have their manifests fetched if necessary.
+/// A dependency that is queued before or during the call resolves inside it.
 pub fn populate_manifest_cache(
     manager: &mut PackageManager,
     packages: Packages<'_>,
@@ -188,7 +192,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
@@ -243,7 +246,6 @@ pub fn populate_manifest_cache(
                         cache_ctx,
                         scope.get(),
                         package_name,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,
                     );
                     if cached.is_none() {
@@ -281,7 +283,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     package_name,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
@@ -335,6 +336,11 @@ pub fn populate_manifest_cache(
 
                 run_tasks::pending_task_count(manager) == 0
             }
+        }
+
+        // `run_tasks` names the bar when a manifest download completes, and `start_manifest_task` starts none when every name is cached or already requested by a queued row.
+        if log_level.show_progress() {
+            manager.start_progress_bar_if_none();
         }
 
         // Derive the raw provenance root first so both `sleep_until` and the

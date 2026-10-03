@@ -121,7 +121,8 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
+/* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
+int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
@@ -138,12 +139,21 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
+    if (!loop->data.wakeup_async) {
+        us_free(loop->data.recv_buf);
+        us_free(loop->data.send_buf);
+#ifdef LIBUS_USE_LIBUV
+        us_timer_close(loop->data.sweep_timer, 0);
+#endif
+        return -1;
+    }
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");
     }
 #endif
+    return 0;
 }
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
@@ -264,11 +274,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
                 s->timeout = 255;
                 us_dispatch_timeout(s);
             }
-            /* A timeout handler may have closed every socket and the owner may
-             * have deinit'd the embedding group in response (release builds —
-             * deinit() asserts iterator==NULL in debug). loop_data->iterator
-             * would have been advanced past `group` by unlink_group(); if so,
-             * `group` is freed storage and we must not touch it again. */
+            /* An owner must not deinit the embedding group from a timeout handler
+             * (see us_socket_group_deinit). Survive one that closed every socket
+             * and did it anyway: loop_data->iterator would have been advanced past
+             * `group` by unlink_group(); if so, `group` is freed storage and we
+             * must not touch it again. */
             if (loop_data->iterator != group) goto outer_continue;
 
             if (group->iterator == s && long_ticks == s->long_timeout) {
@@ -291,6 +301,32 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
+
+    /* Sockets parked in the low-priority queue are unlinked from head_sockets
+     * (the queue reuses prev/next), so the walk above never visits them. On an
+     * idle loop the queue drains only as fast as loop iterations occur, so a
+     * burst of pre-handshake TLS accepts can still be parked when the single
+     * tick their s->timeout stamp matches passes, after which the exact-match
+     * test above can never fire again. Sweep the parked set here against each
+     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
+     * close_raw/detach advance iteration past a socket they unlink, same as
+     * group->iterator does for head_sockets. */
+    for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
+        struct us_socket_t *s = loop_data->low_prio_iterator;
+        unsigned char stamp = s->group->timestamp;
+        unsigned char long_stamp = s->group->long_timestamp;
+        if (stamp == s->timeout) {
+            s->timeout = 255;
+            us_dispatch_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        if (long_stamp == s->long_timeout) {
+            s->long_timeout = 255;
+            us_dispatch_long_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        loop_data->low_prio_iterator = s->next;
+    }
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
@@ -306,6 +342,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
         /* Unlink this socket from the low-priority queue */
+        if (s == loop_data->low_prio_iterator) loop_data->low_prio_iterator = s->next;
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
@@ -317,6 +354,13 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         }
 
         us_internal_socket_group_link_socket(s->group, s);
+        if (s->flags.is_paused) {
+            /* us_socket_pause found the reads already off and only set the flag. Hand back an
+             * ordinary paused socket: us_socket_resume arms the reads, and the readable dispatch
+             * gates it again. */
+            s->flags.low_prio_state = 0;
+            continue;
+        }
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
@@ -389,36 +433,8 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
-    /* Escalate paused sockets whose peer FIN was deferred behind buffered
-     * data and whose peer has since reset (poll_cb consumed the only
-     * DISCONNECT report on the FIN; AFD has no event left to deliver the
-     * abort to a read-less poll). Zero cost unless such sockets exist;
-     * closing unlinks the socket, so restart the walk after each close. */
-    while (cb->loop->data.fin_deferred_count > 0) {
-        struct us_socket_t *victim = 0;
-        for (struct us_socket_group_t *g = cb->loop->data.head; g && !victim; g = g->next) {
-            for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
-                if (s->fin_deferred && !s->flags.is_closed
-                    && (us_socket_get_error(s) != 0
-                        || us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p)))) {
-                    victim = s;
-                    break;
-                }
-            }
-        }
-        if (!victim) {
-            break;
-        }
-        victim->fin_deferred = 0;
-        cb->loop->data.fin_deferred_count--;
-        us_internal_socket_close_raw(victim, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-    }
 }
 #endif
-
-__attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop_t *loop) {
-    return loop->data.iteration_nr;
-}
 
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
@@ -513,7 +529,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        if (us_poll_start_rc(accepted_p, loop, LIBUS_SOCKET_READABLE) != 0) {
+                        if (us_poll_start_rc(accepted_p, loop, listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) != 0) {
                             /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
                              * peer sees a RST instead of a connection that silently
                              * never answers. */
@@ -532,14 +548,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
-                        s->flags.is_paused = 0;
+                        s->flags.is_paused = listen_socket->accept_paused;
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
-                        s->fin_deferred = 0;
+                        s->hangup_closes_unsent = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -617,7 +633,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
             }
 
-            if (events & LIBUS_SOCKET_READABLE) {
+            /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD
+             * abort) is the connection's death and this dispatch closes the socket with
+             * it below. The kernel keeps the receive queue on a reset, so the tail of the
+             * peer's stream may still be queued ahead of the error, and closing without
+             * reading would discard it (a streamed response cut short although every
+             * byte arrived, #39846). So the read loop runs for an error even when this
+             * event carried no READABLE bit or the socket is paused: a pause is flow
+             * control, and there is no later for a dead connection to flow into. recv()
+             * then returns the data and after it the error, which is what libuv reports
+             * to node as well. A socket parked in the low-priority queue is not linked
+             * where on_data expects it and takes the plain error close. */
+            const int drain_for_error = error && !s->read_eof && s->flags.low_prio_state != 1;
+            if ((events & LIBUS_SOCKET_READABLE) || drain_for_error) {
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
@@ -626,7 +654,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * non-SSL arm dispatched a full vtable lookup just to read
                  * NULL — no Zig handler defines isLowPrio and every C++ vtable
                  * sets is_low_prio = nullptr — so it's been dropped. */
-                if (s->ssl && us_internal_ssl_is_low_prio(s)) {
+                if (!error && s->ssl && us_internal_ssl_is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {
                         flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
                     } else if (loop->data.low_prio_budget > 0) {
@@ -760,7 +788,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * buffer. This is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN. */
-                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && (eof || error)) {
+                        if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
                             continue;
                         }
                         /* Stop if on_data paused us (us_socket_pause from the data
@@ -792,7 +820,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * a large response on Windows only). recv() returning
                          * 0 or WSAEWOULDBLOCK ends the loop, so this is
                          * bounded by the kernel receive buffer. */
-                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && (eof || error)) {
+                        if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
                             continue;
                         }
                         /* Windows AFD_POLL_ABORT is not level-triggered the way
@@ -852,9 +880,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * left behind it. This includes sockets we already shut down (a client
              * that end()ed before reading the reply), the case that truncated; once
              * read_eof is set there is nothing left to drain and deferring would only
-             * lose the close. Error-flagged events keep the error path. */
+             * lose the close. Error-flagged events keep the error path. A hangup
+             * takes the write side down too, so a hangup_closes_unsent socket does
+             * not wait when the write this event retried failed again. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
-            if (eof_deferrable && s->flags.is_paused) {
+            const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
+            if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
@@ -874,14 +905,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 eof = 0;
             }
             if (eof && error && !read_fin) {
-                /* An error event whose read loop did not reach a FIN (the socket is
-                 * paused, or on_data paused it mid-drain): the eof hint next to the
-                 * error flag is the reset taking both directions down (EPOLLHUP beside
-                 * EPOLLERR; EV_EOF with the error in fflags), not an end of stream, so
-                 * it must not take the end path below. That path dispatched on_end for
-                 * a reset, and a TLS socket's on_end closes with a clean code itself,
-                 * so the error close never ran. A FIN this dispatch did read still
-                 * delivers its end first; the error close follows either way. */
+                /* The eof hint next to an error flag is the reset taking both directions
+                 * down (EPOLLHUP beside EPOLLERR; EV_EOF with the error in fflags), not an
+                 * end of stream, so it must not take the end path below (a TLS socket's
+                 * on_end closes with a clean code itself, and the error would be lost). A
+                 * FIN this dispatch did read still delivers its end first; the error
+                 * close follows either way. */
                 eof = 0;
             }
             if(eof && s) {

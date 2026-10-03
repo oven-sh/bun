@@ -54,7 +54,6 @@
 #include "JSJsonWebKey.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
@@ -95,7 +94,9 @@ static std::optional<SubtleCrypto::KeyFormat> parseKeyFormatFromString(const Str
 // stringified value, not the WebIDL enum-listing TypeError.
 static void throwInvalidKeyFormatError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& valueString, ASCIILiteral functionName)
 {
-    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, makeString("Failed to execute '"_s, functionName, "' on 'SubtleCrypto': 1st argument '"_s, valueString, "' is not a valid enum value of type KeyFormat."_s));
+    Bun::MessageBuilder message;
+    message.append("Failed to execute '"_s, functionName, "' on 'SubtleCrypto': 1st argument '"_s, valueString, "' is not a valid enum value of type KeyFormat."_s);
+    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt);
@@ -810,38 +811,8 @@ void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7SubtleCrypto@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore12SubtleCryptoE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<SubtleCrypto>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7SubtleCrypto@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore12SubtleCryptoE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // SubtleCrypto has subclasses. If SubtleCrypto has subclasses that get passed
-        // to toJS() we currently require SubtleCrypto you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 

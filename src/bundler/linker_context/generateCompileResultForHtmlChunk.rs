@@ -293,12 +293,25 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 ));
             }
-            if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(self.chunks) {
+            if let Some(js_chunk_index) = self.chunk.get_js_chunk_index_for_html(self.chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
                 array.push(format!(
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",
-                    BStr::new(js_chunk.unique_key)
+                    BStr::new(self.chunks[js_chunk_index].unique_key)
                 ));
+                if self.linker.module_preload() {
+                    let closure = bun_core::handle_oom(Chunk::reachable_chunks(
+                        self.chunks,
+                        js_chunk_index as u32,
+                        &[bun_ast::ImportKind::Stmt],
+                    ));
+                    for &other in &closure[1..] {
+                        array.push(format!(
+                            "<link rel=\"modulepreload\" crossorigin href=\"{}\">",
+                            BStr::new(self.chunks[other as usize].unique_key)
+                        ));
+                    }
+                }
             }
         }
         array

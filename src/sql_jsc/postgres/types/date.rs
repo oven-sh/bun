@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -42,13 +42,29 @@ pub(crate) fn parse_infinity(bytes: &[u8]) -> Option<f64> {
 /// without this they'd go through JS `Date.parse` and be read as local time on
 /// non-UTC hosts. Returns `None` for anything that isn't this exact shape
 /// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
-/// `Date.parse`. `timestamptz` and `date` already decode correctly via
-/// `Date.parse` and must NOT be routed here.
+/// `Date.parse`.
 pub(crate) fn timestamp_text_to_ms_utc(
     global_object: &JSGlobalObject,
     bytes: &[u8],
 ) -> Option<f64> {
     let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
+    components_to_ms_utc(global_object, &parsed)
+}
+
+/// Same for `timestamptz` text, whose trailing `±HH[:MM[:SS]]` offset is applied here.
+pub(crate) fn timestamptz_text_to_ms_utc(
+    global_object: &JSGlobalObject,
+    bytes: &[u8],
+) -> Option<f64> {
+    let (parsed, offset_seconds) = crate::shared::datetime_text::parse_postgres_timestamptz(bytes)?;
+    let wall_clock_as_utc = components_to_ms_utc(global_object, &parsed)?;
+    Some(wall_clock_as_utc - f64::from(offset_seconds) * 1000.0)
+}
+
+fn components_to_ms_utc(
+    global_object: &JSGlobalObject,
+    parsed: &crate::shared::datetime_text::DateTimeText,
+) -> Option<f64> {
     global_object
         .gregorian_date_time_to_ms_utc(
             i32::from(parsed.year),
@@ -68,9 +84,8 @@ pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResul
     } else if value.is_number() {
         value.as_number()
     } else if value.is_string() {
-        let mut str =
-            bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
-        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
+        let str = value.to_bun_string(global_object).expect("unreachable");
+        bun_string_jsc::parse_date(&str, global_object)?
     } else {
         return Ok(0);
     };

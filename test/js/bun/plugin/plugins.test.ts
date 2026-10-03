@@ -626,6 +626,87 @@ describe("object loader with a throwing exports getter", () => {
   });
 });
 
+describe("object loader with a throwing getter on an export", () => {
+  // The "exports" object itself is fine; one of its own properties is a getter
+  // that throws while the exports are copied into the module namespace. The
+  // error must reach the importer as-is, not become an `undefined` export.
+  const throwingExportResult = `
+    const exported = { before: 1 };
+    Object.defineProperty(exported, "boom", {
+      enumerable: true,
+      get() {
+        throw globalThis.sentinel;
+      },
+    });
+    exported.after = 2;
+    return { exports: exported, loader: "object" };
+  `;
+
+  async function expectSentinel(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `globalThis.sentinel = new Error("export getter threw");\n${code}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("failed with sentinel\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  const report = `
+    catch (e) {
+      console.log(e === globalThis.sentinel ? "failed with sentinel" : "failed with " + e);
+    }
+  `;
+
+  it.concurrent("rejects import() of a build.module result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = await import("virt-mod");
+        console.log("imported boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+
+  it.concurrent("throws from require() of a build.module result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = require("virt-mod");
+        console.log("required boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+
+  it.concurrent("rejects import() of a build.onLoad result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "virtns" }, args => ({ path: args.path, namespace: "virtns" }));
+          build.onLoad({ filter: /.*/, namespace: "virtns" }, () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = await import("virtns:mod");
+        console.log("imported boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+});
+
 it("require(...).default without __esModule", () => {
   {
     const { default: mod } = require("my-virtual-module-with-default");
@@ -839,6 +920,34 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr: "", exitCode: 0 });
   });
 
+  it("an onResolve error propagates out of a static import in a later-loaded module", async () => {
+    using dir = tempDir("onresolve-throws-static", {
+      "entry.mjs": `import "./dep.custom"; export default 1;`,
+      "main.mjs": `
+        Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.custom$/ }, () => { throw new Error("resolve boom"); }); } });
+        try {
+          await import("./entry.mjs");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught=" + e.message);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "caught=resolve boom",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
     const { stdout, stderr, exitCode } = await run(`
       Bun.plugin({
@@ -936,3 +1045,113 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     });
   });
 });
+
+it("object loader: an error thrown by a getter on the exports object rejects the require()", () => {
+  const boom = new Error("boom");
+  plugin({
+    name: "object loader with throwing __esModule",
+    setup(build) {
+      build.module("object-loader-throwing-esmodule", () => ({
+        exports: {
+          get __esModule() {
+            throw boom;
+          },
+          a: 1,
+        },
+        loader: "object",
+      }));
+    },
+  });
+  expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
+});
+
+it.concurrent("build.module() of a module whose import() is still loading its dependencies", async () => {
+  using dir = tempDir("plugin-module-import-in-flight", {
+    "a.ts": `import "./dependency"; export const from = "file";`,
+    "dependency.ts": `export {};`,
+    "entry.ts": `
+      import { join } from "node:path";
+      const dependencyRequested = Promise.withResolvers<void>();
+      const dependencyMayLoad = Promise.withResolvers<void>();
+      Bun.plugin({
+        name: "hold the dependency's load open",
+        setup(build) {
+          build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+            dependencyRequested.resolve();
+            await dependencyMayLoad.promise;
+            return { contents: "export {}", loader: "ts" };
+          });
+        },
+      });
+
+      const a = join(import.meta.dir, "a.ts");
+      const inFlight = import(a);
+      await dependencyRequested.promise;
+      Bun.plugin({
+        name: "replace a.ts",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      dependencyMayLoad.resolve();
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in flight: file\nnext: build.module()\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The loader resolves a path that import() has resolved twice more, so onResolve is fed its own results: a → b → c → d.
+// That leaves d.mjs registered under a key other than the one it was asked for by, which is what this is about.
+it.concurrent(
+  "import() after delete require.cache of a module that onResolve redirected a resolved path to",
+  async () => {
+    using dir = tempDir("plugin-onresolve-chain-removed", {
+      "a.mjs": `export const from = "a.mjs";`,
+      "b.mjs": `export const from = "b.mjs";`,
+      "c.mjs": `export const from = "c.mjs";`,
+      "d.mjs": `export const from = "d.mjs, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+      "entry.ts": `
+      import { basename, join } from "node:path";
+      const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
+      Bun.plugin({
+        name: "redirect a path that is already resolved, again and again",
+        setup(build) {
+          build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
+        },
+      });
+
+      const a = join(import.meta.dir, "a.mjs");
+      console.log("first:", (await import(a)).from);
+      console.log("deleted:", delete require.cache[join(import.meta.dir, "d.mjs")]);
+      console.log("again:", (await import(a)).from);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "first: d.mjs, evaluation 1\ndeleted: true\nagain: d.mjs, evaluation 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

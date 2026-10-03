@@ -256,7 +256,6 @@ fn print_js<'a>(
             .collect(),
     );
     let print_opts = bun_js_printer::Options {
-        transform_only: true,
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,

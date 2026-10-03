@@ -5,6 +5,9 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
+# The root of the crate graph the native build plans (scripts/build/rust.ts), and a library like every other crate:
+# the link takes each crate's rlib beside the C/C++ objects. No crate is a "final" Rust artifact, so nothing copies
+# every crate into one archive.
 
 [lints]
 workspace = true
@@ -36,6 +39,7 @@ bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
 bun_lsquic_sys.workspace = true
 bun_alloc.workspace = true
+bun_platform.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true

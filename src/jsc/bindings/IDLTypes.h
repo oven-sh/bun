@@ -31,10 +31,8 @@
 #include <type_traits>
 #include <variant>
 #include <wtf/Brigand.h>
-#include <wtf/Markable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
-#include <wtf/WallTime.h>
 
 namespace JSC {
 class ArrayBuffer;
@@ -67,16 +65,6 @@ struct IDLType {
     static bool isNullValue(const NullableType& value) { return !value; }
     static ImplementationType extractValueFromNullable(const NullableType& value) { return value.value(); }
     static ImplementationType extractValueFromNullable(NullableType&& value) { return std::move(value.value()); }
-
-    template<typename Traits> using NullableTypeWithLessPadding = Markable<ImplementationType, Traits>;
-    template<typename Traits>
-    static NullableTypeWithLessPadding<Traits> nullValue() { return std::nullopt; }
-    template<typename Traits>
-    static bool isNullType(const NullableTypeWithLessPadding<Traits>& value) { return !value; }
-    template<typename Traits>
-    static ImplementationType extractValueFromNullable(const NullableTypeWithLessPadding<Traits>& value) { return value.value(); }
-    template<typename Traits>
-    static ImplementationType extractValueFromNullable(NullableTypeWithLessPadding<Traits>&& value) { return std::move(value.value()); }
 };
 
 // IDLNull is a special type for use as a subtype in an IDLUnion that is nullable.
@@ -325,15 +313,6 @@ template<typename T> struct IDLTypedArray : IDLBufferSource<T> {
 //       implementation type, e.g. IDLUint8Array is IDLTypedArray<JSC::Uint8Array>
 
 // Non-WebIDL extensions
-
-struct IDLDate : IDLType<WallTime> {
-    using ConversionResultType = WallTime;
-    using NullableConversionResultType = WallTime;
-    using NullableType = WallTime;
-    static WallTime nullValue() { return WallTime::nan(); }
-    static bool isNullValue(WallTime value) { return value.isNaN(); }
-    static WallTime extractValueFromNullable(WallTime value) { return value; }
-};
 
 template<typename T> struct IDLEventListener : IDLWrapper<T> {
 };

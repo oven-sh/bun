@@ -22,7 +22,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 // TextEncoderStreamEncoder.rs
 extern "C" void* TextEncoderStreamEncoder__createForStream();
@@ -161,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    Bun::putDirectNamed(vm, data, "encoding"_s, jsNontrivialString(vm, "utf-8"_s));
+    Bun::putDirectNamed(vm, data, "encoding"_s, Bun::commonStrings(vm).utf8WithDashString());
     Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
     Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
@@ -237,7 +236,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding, (JSGlobalO
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
-    return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
+    return JSValue::encode(Bun::commonStrings(vm).utf8WithDashString());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -277,43 +276,38 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
 }
 
 // Abrupt completions from encode (ToString runs user JS) OR enqueue become a rejected
-// promise — a transform algorithm must never throw synchronously into
-// ProcessWrite/ProcessClose. When a native JSSink is attached (m_nativeSinkPtr), the
+// promise (a transform algorithm returns a promise; a throw is its rejection, never a synchronous
+// throw into ProcessWrite/ProcessClose). When a native JSSink is attached (m_nativeSinkPtr), the
 // encoder writes straight to it via its reusable scratch buffer (no JSUint8Array).
 static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk, bool flush)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue thrown;
-    bool sinkBackpressure = false;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool sinkBackpressure = false;
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             JSValue wrote = JSValue::decode(flush
                     ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
                     : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
-            if (!catchScope.exception())
-                sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         } else {
             JSValue buffer = JSValue::decode(flush
                     ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
                     : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
-            if (!catchScope.exception() && !buffer.isEmpty())
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!buffer.isEmpty()) {
                 enqueueIfNonEmptyView(globalObject, controller, buffer);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
         }
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (sinkBackpressure) {
-        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
-        return ready;
-    }
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        if (sinkBackpressure) {
+            auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
+            stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
+            return ready;
+        }
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)

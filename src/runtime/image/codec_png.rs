@@ -35,6 +35,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn spng_get_png_buffer(ctx: *mut spng_ctx, len: *mut usize, err: *mut c_int) -> *mut u8;
     fn spng_set_option(ctx: *mut spng_ctx, opt: c_int, value: c_int) -> c_int;
+    fn spng_set_crc_action(ctx: *mut spng_ctx, critical: c_int, ancillary: c_int) -> c_int;
     /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
     /// the pixels for every colour type (including indexed). `spng_get_iccp`
     /// returns non-zero when the source has no iCCP (or the chunk was
@@ -70,7 +71,9 @@ struct Ihdr {
     interlace_method: u8,
 }
 
+const SPNG_CTX_IGNORE_ADLER32: c_int = 1;
 const SPNG_CTX_ENCODER: c_int = 2;
+const SPNG_CRC_USE: c_int = 2;
 const SPNG_FMT_RGBA8: c_int = 1;
 const SPNG_FMT_PNG: c_int = 256;
 const SPNG_DECODE_TRNS: c_int = 1; // apply tRNS chunk so paletted/grey get real alpha
@@ -98,8 +101,9 @@ struct Trns {
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+    // Skip adler32 and chunk-CRC verification (as libvips and stb_image do); they only cost decode time.
     // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(0) };
+    let ctx = unsafe { spng_ctx_new(SPNG_CTX_IGNORE_ADLER32) };
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
@@ -108,6 +112,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         unsafe { spng_ctx_free(c) }
     });
 
+    // SAFETY: ctx is valid.
+    let _ = unsafe { spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE) };
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);

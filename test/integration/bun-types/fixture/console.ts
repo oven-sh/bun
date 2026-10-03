@@ -1,5 +1,6 @@
 import c2 from "console";
 import c1 from "node:console";
+import { expectType } from "./utilities";
 
 c1.log();
 c2.log();
@@ -22,3 +23,7 @@ async () => {
 
   return null;
 };
+
+const written = console.write("hello world!", "\n");
+expectType(written).is<number | Promise<number>>();
+expectType(await console.write(new Uint8Array(1))).is<number>();

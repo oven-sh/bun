@@ -1,14 +1,14 @@
 #include "EncodeURIComponent.h"
 
+#include <wtf/HexNumber.h>
+
 // from JSGlobalObjectFunctions.cpp
 
 namespace JSC {
 
 template<typename CharacterType>
-static WebCore::ExceptionOr<void> encode(VM& vm, const WTF::BitSet<256>& doNotEscape, std::span<const CharacterType> characters, StringBuilder& builder)
+static WebCore::ExceptionOr<void> encode(const WTF::BitSet<256>& doNotEscape, std::span<const CharacterType> characters, StringBuilder& builder)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     // 18.2.6.1.1 Runtime Semantics: Encode ( string, unescapedSet )
     // https://tc39.github.io/ecma262/#sec-encode
 
@@ -81,21 +81,21 @@ static WebCore::ExceptionOr<void> encode(VM& vm, const WTF::BitSet<256>& doNotEs
     return {};
 }
 
-static WebCore::ExceptionOr<void> encode(VM& vm, WTF::StringView view, const WTF::BitSet<256>& doNotEscape, StringBuilder& builder)
+static WebCore::ExceptionOr<void> encode(WTF::StringView view, const WTF::BitSet<256>& doNotEscape, StringBuilder& builder)
 {
     if (view.is8Bit())
-        return encode(vm, doNotEscape, view.span8(), builder);
-    return encode(vm, doNotEscape, view.span16(), builder);
+        return encode(doNotEscape, view.span8(), builder);
+    return encode(doNotEscape, view.span16(), builder);
 }
 
-WebCore::ExceptionOr<void> encodeURIComponent(VM& vm, WTF::StringView source, StringBuilder& builder)
+WebCore::ExceptionOr<void> encodeURIComponent(VM&, WTF::StringView source, StringBuilder& builder)
 {
     static constexpr auto doNotEscapeWhenEncodingURIComponent = makeLatin1CharacterBitSet(
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789"
         "!'()*-._~");
-    return encode(vm, source, doNotEscapeWhenEncodingURIComponent, builder);
+    return encode(source, doNotEscapeWhenEncodingURIComponent, builder);
 }
 
 }

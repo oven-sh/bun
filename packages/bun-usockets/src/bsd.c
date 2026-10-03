@@ -23,6 +23,7 @@
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -62,6 +63,12 @@ static void init_debug_logging() {
 
 #if defined(__APPLE__)
 extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
+/* XNU's sosend() only skips waiting for buffer space for MSG_NBIO (private, 0x20000); MSG_DONTWAIT alone still blocks there. */
+#define LIBUS_SEND_DONTWAIT (MSG_DONTWAIT | 0x20000)
+#elif defined(_WIN32)
+#define LIBUS_SEND_DONTWAIT 0
+#else
+#define LIBUS_SEND_DONTWAIT MSG_DONTWAIT
 #endif
 
 #if defined(_WIN32)
@@ -272,44 +279,6 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     }
     buf->num = count;
     return count;
-#endif
-}
-
-// this one is needed for knowing the destination addr of udp packet
-// an udp socket can only bind to one port, and that port never changes
-// this function returns ONLY the IP address, not any port
-int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip) {
-#if defined(_WIN32) || defined(__APPLE__)
-    return 0; // not supported
-#else
-    struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-        // ipv6 or ipv4
-        if (cmsg->cmsg_level == IPPROTO_IP) {
-#if defined(IP_PKTINFO)
-            if (cmsg->cmsg_type == IP_PKTINFO) {
-                struct in_pktinfo *pi = (struct in_pktinfo *) CMSG_DATA(cmsg);
-                memcpy(ip, &pi->ipi_addr, 4);
-                return 4;
-            }
-#endif
-#if defined(IP_RECVDSTADDR)
-            if (cmsg->cmsg_type == IP_RECVDSTADDR) {
-                memcpy(ip, (struct in_addr *) CMSG_DATA(cmsg), 4);
-                return 4;
-            }
-#endif
-        }
-
-        if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
-            struct in6_pktinfo *pi6 = (struct in6_pktinfo *) CMSG_DATA(cmsg);
-            memcpy(ip, &pi6->ipi6_addr, 16);
-            return 16;
-        }
-    }
-
-    return 0; // no length
-
 #endif
 }
 
@@ -939,6 +908,29 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     }
 }
 
+int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Windows has no MSG_DONTWAIT. Every socket uSockets owns there is already
+     * non-blocking, which is what bsd_recv relies on too. */
+#ifdef _WIN32
+    const int peek_flags = MSG_PEEK;
+#else
+    const int peek_flags = MSG_PEEK | MSG_DONTWAIT;
+#endif
+    char byte;
+    ssize_t ret;
+    do {
+        ret = recv(fd, &byte, 1, peek_flags);
+    } while (UNLIKELY(IS_EINTR(ret)));
+
+    if (ret > 0) {
+        return LIBUS_QUEUED_INPUT_DATA;
+    }
+    if (ret == 0) {
+        return LIBUS_QUEUED_INPUT_EOF;
+    }
+    return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
+}
+
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
     ssize_t injected = 0; int unused = 0;
@@ -956,20 +948,46 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 }
 #endif
 
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+/* Every write to a stream socket uses these, vectored or not. */
+#define BSD_SEND_FLAGS (MSG_NOSIGNAL | LIBUS_SEND_DONTWAIT)
+
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+/* sendmsg, not writev: writev takes no flags, so a reset peer would raise SIGPIPE on Linux. */
 ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
-    ssize_t injected = 0; int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
-    (void)unused;
-    /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
+    /* sendmsg fails with EMSGSIZE above IOV_MAX (1024 on Linux/macOS); cap and
      * let the caller's partial-write handling carry the remainder. */
     if (count > 1024) {
         count = 1024;
     }
+    struct msghdr msg = {0};
+    msg.msg_iov = (struct iovec *)iov;
+    msg.msg_iovlen = count;
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    /* A "short" rule keeps the first `clamp` bytes of the list. */
+    struct iovec clamped[1024];
+    ssize_t injected = 0; int clamp = INT_MAX;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, clamp)) return injected;
+    if (clamp != INT_MAX) {
+        size_t left = (size_t)clamp;
+        int kept = 0;
+        for (; kept < count && left; kept++) {
+            clamped[kept].iov_base = iov[kept].iov_base;
+            clamped[kept].iov_len = iov[kept].iov_len < left ? iov[kept].iov_len : left;
+            left -= clamped[kept].iov_len;
+        }
+        msg.msg_iov = clamped;
+        msg.msg_iovlen = kept;
+    }
+#endif
+
     while (1) {
-        ssize_t written = writev(fd, (const struct iovec *)iov, count);
+        ssize_t written = sendmsg(fd, &msg, BSD_SEND_FLAGS);
         if (UNLIKELY(IS_EINTR(written))) {
             continue;
         }
@@ -978,25 +996,8 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
 }
 
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t injected = 0; int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
-    (void)unused;
-    struct iovec chunks[2];
-
-    chunks[0].iov_base = (char *)header;
-    chunks[0].iov_len = header_length;
-    chunks[1].iov_base = (char *)payload;
-    chunks[1].iov_len = payload_length;
-
-    while (1) {
-        ssize_t written = writev(fd, chunks, 2);
-
-        if (UNLIKELY(IS_EINTR(written))) {
-            continue;
-        }
-
-        return written;
-    }
+    struct us_iovec_t chunks[2] = {{(void *)header, (size_t)header_length}, {(void *)payload, (size_t)payload_length}};
+    return bsd_writev(fd, chunks, 2);
 }
 #else
 ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
@@ -1025,14 +1026,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     ssize_t injected = 0;
     if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
-    // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
-
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-
-        // use TCP_NOPUSH
-        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
+        ssize_t rc = send(fd, buf, length, BSD_SEND_FLAGS);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -1059,7 +1053,7 @@ ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int fl
     if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected;
     (void)unused;
     while (1) {
-        ssize_t rc = sendmsg(fd, msg, flags);
+        ssize_t rc = sendmsg(fd, msg, flags | MSG_NOSIGNAL | LIBUS_SEND_DONTWAIT);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -1896,37 +1890,6 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
         return -1;
     }
 }
-
-// int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
-
-// #if defined(_WIN32) || defined(__APPLE__)
-//     errno = ENOSYS;
-//     return -1;
-// #else
-//     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
-//     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-//     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-//         // do we need to get TOS from ipv6 also?
-//         if (cmsg->cmsg_level == IPPROTO_IP) {
-//             if (cmsg->cmsg_type == IP_TOS) {
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-
-//         if (cmsg->cmsg_level == IPPROTO_IPV6) {
-//             if (cmsg->cmsg_type == IPV6_TCLASS) {
-//                 // is this correct?
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-//     }
-// #endif
-
-//     //printf("We got no ECN!\n");
-//     return 0; // no ecn defaults to 0
-// }
 
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {

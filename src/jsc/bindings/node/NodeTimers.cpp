@@ -2,6 +2,9 @@
 
 #include "ErrorCode.h"
 #include "headers.h"
+#include "ZigGlobalObject.h"
+#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/GetterSetter.h>
 
 namespace Bun {
 
@@ -53,14 +56,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -110,14 +113,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
     }
 #endif
 
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -163,7 +166,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     }
 
-    return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
@@ -178,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -200,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -222,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -230,6 +233,59 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 #endif
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
+}
+
+static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return timersPromisesExport(globalObject, "setTimeout"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return timersPromisesExport(globalObject, "setInterval"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return timersPromisesExport(globalObject, "setImmediate"_s);
+}
+
+static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, NativeFunction function, NativeFunction promisifyCustomGetter)
+{
+    auto* globalObject = owner->globalObject();
+    auto* timerFunction = JSFunction::create(vm, globalObject, 1, name, function, ImplementationVisibility::Public);
+    // Node's lib/timers.js shape: an enumerable, non-configurable, getter-only accessor. A CustomAccessor getter is cached per Structure, so each timer needs its own GetterSetter.
+    auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, promisifyCustomGetter, ImplementationVisibility::Public);
+    timerFunction->putDirectAccessor(globalObject,
+        Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),
+        GetterSetter::create(vm, globalObject, getter, jsUndefined()),
+        PropertyAttribute::Accessor | PropertyAttribute::DontDelete | 0);
+    return timerFunction;
+}
+
+JSValue createSetTimeoutFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setTimeout"_s, functionSetTimeout, setTimeoutPromisifyCustomGetter);
+}
+
+JSValue createSetIntervalFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setInterval"_s, functionSetInterval, setIntervalPromisifyCustomGetter);
+}
+
+JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setImmediate"_s, functionSetImmediate, setImmediatePromisifyCustomGetter);
 }
 
 } // namespace Bun

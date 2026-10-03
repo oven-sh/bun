@@ -1,7 +1,7 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
-import { describe, expect, it, jest } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -15,9 +15,11 @@ import {
   tempDir,
   tls,
 } from "harness";
+import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
-import { createSecureContext, connect as tlsConnect } from "node:tls";
+import { Duplex } from "node:stream";
+import { createSecureContext, connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -1748,6 +1750,178 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // libuv reports a missing pipe from the connect callback, not from
+  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // writer, so closing the writer reported no close, and the native context
+  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
+  // stayed alive once per failed attempt.
+  it.concurrent.each([
+    ["plain", "", 0],
+    ["tls", "tls: true,", 1],
+  ])(
+    "a connect that fails asynchronously (%s) releases the native context",
+    async (_name, tlsOption, sslCtxPerAttempt) => {
+      const attempts = 8;
+      const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
+      const src = /* js */ `
+        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
+        const contextsBefore = namedPipeInternals.liveCount();
+        const sslCtxBefore = sslCtxLiveCount();
+
+        let connectErrors = 0;
+        let closes = 0;
+        let firstAttempt = null;
+        const outcomes = new Set();
+
+        for (let i = 0; i < ${attempts}; i++) {
+          try {
+            await Bun.connect({
+              unix: ${JSON.stringify(pipePrefix)} + i,
+              ${tlsOption}
+              socket: {
+                data() {},
+                open() {},
+                close() { closes++; },
+                error() {},
+                connectError(_socket, err) {
+                  connectErrors++;
+                  outcomes.add("connectError:" + err.code);
+                  // This attempt's context is still alive while it reports the failure.
+                  firstAttempt ??= {
+                    contexts: namedPipeInternals.liveCount() - contextsBefore,
+                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
+                  };
+                },
+              },
+            });
+            outcomes.add("resolved");
+          } catch (err) {
+            outcomes.add("rejected:" + err.code);
+          }
+        }
+
+        // Finalizing the wrappers must not touch a socket its context already released.
+        Bun.gc(true);
+        // A context frees itself from a task it queues when its last ref drops.
+        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+
+        console.log(JSON.stringify({
+          connectErrors,
+          closes,
+          outcomes: [...outcomes].sort(),
+          firstAttempt,
+          leaked: {
+            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sslCtx: sslCtxLiveCount() - sslCtxBefore,
+          },
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the child died before reporting, the diff shows its raw output.
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ result, stderr, exitCode }).toEqual({
+        result: {
+          connectErrors: attempts,
+          closes: 0,
+          outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
+          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
+          leaked: { contexts: 0, sslCtx: 0 },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+// A socket over a Windows named pipe frees its native context from a task
+// that is queued when the socket closes. A handler can close the socket and
+// then spin the event loop before it returns (`expect().resolves` blocks on
+// the promise and runs queued tasks), so the context is gone by the time the
+// libuv read callback that invoked the handler gets control back. The
+// callback must keep the context alive until it is done with it.
+describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
+  // `trigger` is the server handler that tears the socket down: "end" runs
+  // from the EOF read callback, "data" from the data read callback.
+  function fixture(trigger: "end" | "data") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
+      const serverOpened = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+
+      function closeAndSpinEventLoop(socket) {
+        socket.end();
+        // Blocks until the promise settles. Every queued task, including the
+        // one that frees the native context of this socket, runs before this returns.
+        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          open() { serverOpened.resolve(); },
+          data(socket) { ${trigger === "data" ? "closeAndSpinEventLoop(socket);" : ""} },
+          end(socket) { ${trigger === "end" ? "closeAndSpinEventLoop(socket);" : ""} },
+          close() { serverClosed.resolve(); },
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          open() {},
+          data() {},
+          close() { clientClosed.resolve(); },
+          error() {},
+        },
+      });
+      await serverOpened.promise;
+
+      ${trigger === "data" ? 'client.write("x");' : "client.end();"}
+
+      await serverClosed.promise;
+      await clientClosed.promise;
+      console.log("OK");
+    `;
+  }
+
+  it.each(["end", "data"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -3576,6 +3750,718 @@ Reo=
       expect(t.serverReceived.join("")).toBe("client-app-data\n");
     });
   });
+
+  // A test that times out runs no `finally`. What it left open would hold the
+  // spill slot of the loop for the tests that follow.
+  const leftOpen = new Set<() => void>();
+  afterAll(() => {
+    for (const close of leftOpen) close();
+  });
+
+  // A connection that the peer answers: what was written before it has been
+  // read by the time it resolves.
+  async function pendingReadsDone() {
+    const server = net.createServer(socket => socket.end("x"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+    server.close();
+  }
+
+  // Starts a relay in front of `port` that holds the server's flight until
+  // the client's FIN arrived, and never closes a connection by itself.
+  async function relayHoldingServerFlight(port: number, onFlightForwarded = () => {}) {
+    const relayed: net.Socket[] = [];
+    const relay = net.createServer({ allowHalfOpen: true }, downstream => {
+      const upstream = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      relayed.push(downstream, upstream);
+      const held: Buffer[] = [];
+      let sawClientFin = false;
+      downstream.on("data", data => upstream.write(data));
+      downstream.on("end", () => {
+        sawClientFin = true;
+        for (const data of held.splice(0)) downstream.write(data, onFlightForwarded);
+      });
+      upstream.on("data", data => (sawClientFin ? downstream.write(data, onFlightForwarded) : held.push(data)));
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+      downstream.on("close", () => upstream.destroy());
+      upstream.on("close", () => downstream.destroy());
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    const close = () => {
+      leftOpen.delete(close);
+      for (const socket of relayed) socket.destroy();
+      relay.close();
+    };
+    leftOpen.add(close);
+    return { port: (relay.address() as net.AddressInfo).port, close };
+  }
+
+  // A rejecting TLS 1.2 server calls shutdown() while the handshake runs. It
+  // still owes the client a flight when its handshake completes, and that
+  // flight can no longer leave. The trusted client is the control.
+  async function rejectingTls12Server(trusted: boolean) {
+    const events: string[] = [];
+    const handshake = Promise.withResolvers<{
+      successArg: boolean;
+      authorizedGetter: boolean;
+      error: string | null;
+    }>();
+    const serverClosed = Promise.withResolvers<void>();
+    const rawClosed = Promise.withResolvers<void>();
+    let serverSocket: Socket | undefined;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true },
+      socket: {
+        open(socket) {
+          serverSocket = socket;
+        },
+        handshake(socket, success, authorizationError) {
+          events.push("handshake");
+          handshake.resolve({
+            successArg: success,
+            authorizedGetter: socket.authorized,
+            error: authorizationError?.message ?? null,
+          });
+        },
+        data() {},
+        close() {
+          events.push("close");
+          serverClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    const closeRaw = () => {
+      leftOpen.delete(closeRaw);
+      raw.destroy();
+    };
+    leftOpen.add(closeRaw);
+    raw.on("error", err => {
+      handshake.reject(err);
+      serverClosed.reject(err);
+    });
+    raw.on("close", () => rawClosed.resolve());
+    const held: Buffer[] = [];
+    let sawServerFin = false;
+    let sentClientHello = false;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        if (!sentClientHello || sawServerFin) raw.write(chunk);
+        else held.push(chunk);
+        sentClientHello = true;
+        callback();
+      },
+    });
+    raw.once("data", () => serverSocket!.shutdown());
+    raw.on("data", data => transport.push(data));
+    raw.on("end", () => {
+      sawServerFin = true;
+      raw.write(Buffer.concat(held.splice(0)));
+    });
+    const client = tlsConnect({
+      socket: transport,
+      servername: "localhost",
+      rejectUnauthorized: false,
+      ...(trusted ? { key: SERVER_KEY, cert: SERVER_CRT } : { key: ROGUE_KEY, cert: ROGUE_CRT }),
+      maxVersion: "TLSv1.2",
+    });
+    client.on("error", () => {});
+    try {
+      expect(await handshake.promise).toEqual(
+        trusted
+          ? { successArg: true, authorizedGetter: true, error: null }
+          : { successArg: true, authorizedGetter: false, error: UNTRUSTED_MESSAGE },
+      );
+      if (trusted) {
+        // The server keeps this client: it does not close by itself.
+        await pendingReadsDone();
+        expect(events).toEqual(["handshake"]);
+      } else {
+        // The client did nothing to close the connection so far.
+        await serverClosed.promise;
+      }
+      raw.end();
+      await Promise.all([rawClosed.promise, serverClosed.promise]);
+      expect(events).toEqual(["handshake", "close"]);
+    } finally {
+      client.destroy();
+      closeRaw();
+    }
+  }
+
+  // Runs `body` while the ciphertext of one socket waits for a slow reader. No
+  // other socket on the loop batches its records in that time.
+  async function whileAnotherSocketWaitsForASlowReader(body: () => Promise<void>) {
+    let writer: Socket | undefined;
+    const writerReady = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+      socket: {
+        open() {},
+        handshake(socket) {
+          writer = socket;
+          writerReady.resolve();
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    // The slow reader stops reading when its handshake is done.
+    const slowReader = net.connect({ port: server.port, host: "127.0.0.1" });
+    slowReader.on("error", () => {});
+    const reader = tlsConnect({ socket: slowReader, servername: "localhost", rejectUnauthorized: false });
+    reader.on("error", () => {});
+    let writing = true;
+    const stop = () => {
+      leftOpen.delete(stop);
+      writing = false;
+      reader.destroy();
+      slowReader.destroy();
+      writer?.terminate();
+    };
+    leftOpen.add(stop);
+    try {
+      await Promise.all([once(reader, "secureConnect"), writerReady.promise]);
+      reader.pause();
+      slowReader.pause();
+      // Write on each turn of the loop, so that a new short write follows each
+      // drain. The first short write leaves ciphertext that waits for the reader.
+      const chunk = Buffer.alloc(1024 * 1024, "x");
+      const firstShortWrite = Promise.withResolvers<void>();
+      const keepWriting = () => {
+        if (!writing) return;
+        if (writer!.write(chunk) < chunk.length) firstShortWrite.resolve();
+        setImmediate(keepWriting);
+      };
+      keepWriting();
+      await firstShortWrite.promise;
+      await body();
+    } finally {
+      stop();
+    }
+  }
+
+  // A sent FIN says nothing about the peer's certificate, and the socket keeps
+  // reading, so the handshake still completes and still has to check it. The
+  // tests hold the peer's flight until the FIN arrived, so the order does not
+  // depend on timing.
+  describe.concurrent("shutdown() while the handshake runs", () => {
+    for (const trusted of [false, true]) {
+      it(`a client reads the check of ${trusted ? "a trusted" : "an untrusted"} server certificate`, async () => {
+        const handshake = Promise.withResolvers<{
+          successArg: boolean;
+          authorizedGetter: boolean;
+          callbackCode: string | null;
+          getterCode: string | null;
+        }>();
+        const closed = Promise.withResolvers<void>();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: trusted ? { key: SERVER_KEY, cert: SERVER_CRT } : { key: ROGUE_KEY, cert: ROGUE_CRT },
+          socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+        });
+        const relay = await relayHoldingServerFlight(server.port);
+        try {
+          using _client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: relay.port,
+            tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
+            socket: {
+              // The ClientHello leaves when `open` returns.
+              open(socket) {
+                setImmediate(() => socket.shutdown());
+              },
+              handshake(socket, success, authorizationError) {
+                handshake.resolve({
+                  successArg: success,
+                  authorizedGetter: socket.authorized,
+                  callbackCode: (authorizationError as NodeJS.ErrnoException | null)?.code ?? null,
+                  getterCode: (socket.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null,
+                });
+              },
+              data() {},
+              close() {
+                closed.resolve();
+              },
+              error(_socket, err) {
+                handshake.reject(err);
+              },
+              connectError(_socket, err) {
+                handshake.reject(err);
+                closed.reject(err);
+              },
+            },
+          });
+          expect(await handshake.promise).toEqual(
+            trusted
+              ? { successArg: true, authorizedGetter: true, callbackCode: null, getterCode: null }
+              : {
+                  successArg: true,
+                  authorizedGetter: false,
+                  callbackCode: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+                  getterCode: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+                },
+          );
+        } finally {
+          relay.close();
+        }
+        await closed.promise;
+      });
+
+      for (const pieces of [1, 2]) {
+        const certificate = trusted ? "a trusted" : "an untrusted";
+        it(`a rejecting server reads the check of ${certificate} client certificate that arrives in ${pieces} read(s)`, async () => {
+          const handshake = Promise.withResolvers<{
+            successArg: boolean;
+            authorizedGetter: boolean;
+            error: string | null;
+          }>();
+          const serverClosed = Promise.withResolvers<void>();
+          const serverData = Promise.withResolvers<string>();
+          const serverReceived: string[] = [];
+          let serverSocket: Socket | undefined;
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true },
+            socket: {
+              open(socket) {
+                serverSocket = socket;
+              },
+              handshake(socket, success, authorizationError) {
+                handshake.resolve({
+                  successArg: success,
+                  authorizedGetter: socket.authorized,
+                  error: authorizationError?.message ?? null,
+                });
+              },
+              data(_socket, data) {
+                serverReceived.push(data.toString());
+                serverData.resolve(data.toString());
+              },
+              close() {
+                serverClosed.resolve();
+              },
+              error() {},
+            },
+          });
+
+          // The client sends its ClientHello, then holds its certificate until
+          // the server's FIN arrived. The server half-closes as soon as its own
+          // flight is out, like a server that ends its idle connections.
+          const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+          raw.on("error", handshake.reject);
+          const held: Buffer[] = [];
+          let sawServerFin = false;
+          let sentClientHello = false;
+          const transport = new Duplex({
+            read() {},
+            write(chunk, _encoding, callback) {
+              if (!sentClientHello || sawServerFin) raw.write(chunk);
+              else held.push(chunk);
+              sentClientHello = true;
+              callback();
+            },
+          });
+          raw.once("data", () => serverSocket!.shutdown());
+          raw.on("data", data => transport.push(data));
+          raw.on("end", async () => {
+            const flight = Buffer.concat(held.splice(0));
+            const size = Math.ceil(flight.length / pieces);
+            for (let offset = 0; offset < flight.length; offset += size) {
+              if (offset > 0) await pendingReadsDone();
+              raw.write(flight.subarray(offset, offset + size));
+            }
+            sawServerFin = true;
+            for (const chunk of held.splice(0)) raw.write(chunk);
+          });
+          const client = tlsConnect({
+            socket: transport,
+            servername: "localhost",
+            rejectUnauthorized: false,
+            ...(trusted ? { key: SERVER_KEY, cert: SERVER_CRT } : { key: ROGUE_KEY, cert: ROGUE_CRT }),
+            minVersion: "TLSv1.3",
+          });
+          client.on("error", () => {});
+          client.on("secureConnect", () => client.write("client-app-data\n"));
+
+          try {
+            if (trusted) {
+              expect(await handshake.promise).toEqual({ successArg: true, authorizedGetter: true, error: null });
+              expect(await serverData.promise).toBe("client-app-data\n");
+            } else {
+              expect(await handshake.promise).toEqual({
+                successArg: true,
+                authorizedGetter: false,
+                error: UNTRUSTED_MESSAGE,
+              });
+              await serverClosed.promise;
+              expect(serverReceived).toEqual([]);
+            }
+          } finally {
+            client.destroy();
+            raw.destroy();
+          }
+        });
+      }
+    }
+
+    // The client's last flight is sealed after its FIN, so it can never leave.
+    // It must not keep the socket open, and it must not hold up the handshake
+    // of another half-closed socket on the same loop.
+    it("two clients finish their handshakes and close while the peers stay open", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+      });
+      const relay = await relayHoldingServerFlight(server.port);
+      const connectAndShutDown = async () => {
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: relay.port,
+          tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
+          socket: {
+            open(socket) {
+              setImmediate(() => socket.shutdown());
+            },
+            handshake(socket, success) {
+              events.push(`handshake success=${success} authorized=${socket.authorized}`);
+              socket.end();
+            },
+            data() {},
+            close() {
+              events.push("close");
+              closed.resolve();
+            },
+            error(_socket, err) {
+              closed.reject(err);
+            },
+            connectError(_socket, err) {
+              closed.reject(err);
+            },
+          },
+        });
+        await closed.promise;
+        return events;
+      };
+      try {
+        expect(await Promise.all([connectAndShutDown(), connectAndShutDown()])).toEqual([
+          ["handshake success=true authorized=false", "close"],
+          ["handshake success=true authorized=false", "close"],
+        ]);
+      } finally {
+        relay.close();
+      }
+    });
+
+    for (const trusted of [false, true]) {
+      it(`a rejecting TLS 1.2 server ${trusted ? "keeps a trusted client" : "closes on an untrusted client"}`, () =>
+        rejectingTls12Server(trusted));
+    }
+
+    // A record that the socket seals before its handshake completes is dropped
+    // as well: a TLS 1.2 client seals ClientKeyExchange to Finished after its FIN.
+    it("a TLS 1.2 client that shut down after its ClientHello closes when it is ended", async () => {
+      const server = tlsCreateServer({ key: ROGUE_KEY, cert: ROGUE_CRT, maxVersion: "TLSv1.2" }, socket =>
+        socket.on("error", () => {}),
+      );
+      server.on("tlsClientError", () => {});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const flightForwarded = Promise.withResolvers<void>();
+      const relay = await relayHoldingServerFlight((server.address() as net.AddressInfo).port, flightForwarded.resolve);
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: relay.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          open(socket) {
+            setImmediate(() => socket.shutdown());
+          },
+          handshake(_socket, success) {
+            events.push(`handshake success=${success}`);
+          },
+          data() {},
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+          error() {},
+          connectError(_socket, err) {
+            closed.reject(err);
+          },
+        },
+      });
+      try {
+        await flightForwarded.promise;
+        await pendingReadsDone();
+        // The server waits for the client's flight, so the handshake is still pending.
+        expect(events).toEqual([]);
+        client.end();
+        await closed.promise;
+        expect(events).toEqual(["handshake success=false", "close"]);
+      } finally {
+        client.terminate();
+        relay.close();
+        server.close();
+      }
+    });
+
+    // The flush for another socket: the handshake callback writes to a second
+    // TLS socket while the flight of its own socket is still held.
+    it("a client that shut down writes to a second TLS socket from its handshake callback", async () => {
+      const received = Promise.withResolvers<string>();
+      using secondServer = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake() {},
+          data: (_socket, data) => received.resolve(data.toString()),
+          close() {},
+          error() {},
+        },
+      });
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+      });
+      const established = Promise.withResolvers<void>();
+      using second = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: secondServer.port,
+        tls: { rejectUnauthorized: false },
+        socket: { open() {}, handshake: () => established.resolve(), data() {}, close() {}, error() {} },
+      });
+      await established.promise;
+      const relay = await relayHoldingServerFlight(server.port);
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      try {
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: relay.port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            open(socket) {
+              setImmediate(() => socket.shutdown());
+            },
+            handshake(socket) {
+              events.push("handshake", `wrote ${second.write("to the second socket")}`);
+              socket.end();
+            },
+            data() {},
+            close() {
+              events.push("close");
+              closed.resolve();
+            },
+            error(_socket, err) {
+              closed.reject(err);
+            },
+            connectError(_socket, err) {
+              closed.reject(err);
+            },
+          },
+        });
+        expect(await received.promise).toBe("to the second socket");
+        await closed.promise;
+        expect(events).toEqual(["handshake", "wrote 20", "close"]);
+      } finally {
+        relay.close();
+      }
+    });
+
+    it("a rejecting client closes when its handshake fails with no error", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      // Never answers, and keeps the connection open after the client's FIN.
+      const peer = net.createServer({ allowHalfOpen: true }, socket => socket.on("error", () => {}));
+      await once(peer.listen(0, "127.0.0.1"), "listening");
+      try {
+        using _client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: (peer.address() as net.AddressInfo).port,
+          tls: true,
+          socket: {
+            // Before the ClientHello, so the handshake never starts.
+            open(socket) {
+              socket.shutdown();
+            },
+            handshake(_socket, success, authorizationError) {
+              events.push(`handshake success=${success} error=${authorizationError?.message ?? null}`);
+            },
+            data() {},
+            close() {
+              events.push("close");
+              closed.resolve();
+            },
+            error() {},
+            connectError(_socket, err) {
+              closed.reject(err);
+            },
+          },
+        });
+        await closed.promise;
+        expect(events).toEqual(["handshake success=false error=null", "close"]);
+      } finally {
+        peer.close();
+      }
+    });
+
+    // The SSL has no certificate to judge when the peer never sent one. That
+    // must not replace the reason the handshake reported.
+    it("getAuthorizationError() keeps the reason a handshake failed", async () => {
+      const handshake = Promise.withResolvers<{
+        successArg: boolean;
+        callbackCode: string | null;
+        getterCode: string | null;
+      }>();
+      // Answers the ClientHello with bytes that are not TLS.
+      const plain = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.write("HTTP/1.1 400 Bad Request\r\n\r\n"));
+      });
+      await once(plain.listen(0, "127.0.0.1"), "listening");
+      try {
+        using _client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: (plain.address() as net.AddressInfo).port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            open() {},
+            handshake(socket, success, authorizationError) {
+              handshake.resolve({
+                successArg: success,
+                callbackCode: (authorizationError as NodeJS.ErrnoException | null)?.code ?? null,
+                getterCode: (socket.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null,
+              });
+            },
+            data() {},
+            close() {},
+            error() {},
+            connectError(_socket, err) {
+              handshake.reject(err);
+            },
+          },
+        });
+        expect(await handshake.promise).toEqual({ successArg: false, callbackCode: "EPROTO", getterCode: "EPROTO" });
+      } finally {
+        plain.close();
+      }
+    });
+
+    it("getAuthorizationError() agrees with a handshake that failed with no error", async () => {
+      const handshake = Promise.withResolvers<{
+        successArg: boolean;
+        callbackCode: string | null;
+        getterCode: string | null;
+      }>();
+      // Never answers, and keeps the connection open after the client's FIN.
+      const peer = net.createServer({ allowHalfOpen: true }, socket => socket.on("error", () => {}));
+      await once(peer.listen(0, "127.0.0.1"), "listening");
+      try {
+        using client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: (peer.address() as net.AddressInfo).port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            // Before the ClientHello, so the handshake never starts.
+            open(socket) {
+              socket.shutdown();
+            },
+            handshake(socket, success, authorizationError) {
+              handshake.resolve({
+                successArg: success,
+                callbackCode: (authorizationError as NodeJS.ErrnoException | null)?.code ?? null,
+                getterCode: (socket.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null,
+              });
+            },
+            data() {},
+            close() {},
+            error() {},
+            connectError(_socket, err) {
+              handshake.reject(err);
+            },
+          },
+        });
+        expect(await handshake.promise).toEqual({ successArg: false, callbackCode: null, getterCode: null });
+        // This client does not reject, and its peer did not close: the socket is still open.
+        expect(client.getAuthorizationError()).toBeNull();
+      } finally {
+        peer.close();
+      }
+    });
+  });
+
+  // The slow reader takes the spill slot of the loop.
+  describe.serial("shutdown() while the handshake runs and another socket waits for a slow reader", () => {
+    // One test at a time here, so what a test left open is released before the next one.
+    afterEach(() => {
+      for (const close of [...leftOpen]) close();
+    });
+
+    it("a client finishes its handshake", () =>
+      whileAnotherSocketWaitsForASlowReader(async () => {
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+          socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+        });
+        const relay = await relayHoldingServerFlight(server.port);
+        const handshake = Promise.withResolvers<string>();
+        try {
+          using _client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: relay.port,
+            tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
+            socket: {
+              open(socket) {
+                setImmediate(() => socket.shutdown());
+              },
+              handshake(socket, success) {
+                handshake.resolve(`handshake success=${success} authorized=${socket.authorized}`);
+              },
+              data() {},
+              close() {
+                handshake.reject(new Error("closed with no handshake report"));
+              },
+              error() {},
+              connectError(_socket, err) {
+                handshake.reject(err);
+              },
+            },
+          });
+          expect(await handshake.promise).toBe("handshake success=true authorized=false");
+        } finally {
+          relay.close();
+        }
+      }));
+
+    for (const trusted of [false, true]) {
+      it(`a rejecting TLS 1.2 server ${trusted ? "keeps a trusted client" : "closes on an untrusted client"}`, () =>
+        whileAnotherSocketWaitsForASlowReader(() => rejectingTls12Server(trusted)));
+    }
+  });
 });
 
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd
@@ -4087,17 +4973,109 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   });
 });
 
-// A paused socket polls for nothing. epoll reports the reset anyway (EPOLLERR cannot be
-// masked); kqueue only reports it through the read knote that epoll_kqueue.c keeps
-// registered while reads are off. Before that, the pause left a one-shot writable event
-// behind and nothing else: a reset that landed after it was consumed was never reported,
-// and the socket stayed paused for good. The greeting round trip below guarantees the
-// one-shot has been consumed before the reset is sent. The node:net and node:tls shapes
-// of this scenario are in test/js/node/tls/node-tls-server.test.ts.
+// A paused socket must not wake the event loop for data it is not going to read. epoll and
+// AFD do not report data without readable interest; kqueue keeps a read knote registered on a
+// non-reading socket so the peer's FIN/RST still arrive, and that knote used to fire once per
+// incoming segment. The paused socket lives in a child so nothing else turns its loop: it
+// samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
+// then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
+// does not reports the handful caused by our two control lines.
+it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+  const SEGMENTS = 200;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      let socket;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            socket = s;
+            s.pause();
+            process.stdout.write("port " + server.port + "\\n");
+          },
+          data() {
+            process.stdout.write("data while paused\\n");
+          },
+          close() {},
+          drain() {},
+        },
+      });
+      process.stdout.write("port " + server.port + "\\n");
+      let before;
+      for await (const line of console) {
+        if (line === "start") {
+          before = getEventLoopStats().iteration;
+          process.stdout.write("started\\n");
+        } else if (line === "stop") {
+          process.stdout.write("iterations " + (getEventLoopStats().iteration - before) + "\\n");
+          server.stop(true);
+          process.exit(0);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  async function line() {
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return buffered;
+      buffered += new TextDecoder().decode(value);
+    }
+    const i = buffered.indexOf("\n");
+    const out = buffered.slice(0, i);
+    buffered = buffered.slice(i + 1);
+    return out;
+  }
+  const port = Number((await line()).split(" ")[1]);
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {}, open() {}, close() {}, drain() {} },
+  });
+  expect(await line()).toBe(`port ${port}`); // open() ran: the socket is paused
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  expect(await line()).toBe("started");
+  for (let i = 0; i < SEGMENTS; i++) {
+    peer.write("x");
+    peer.flush();
+    // Separate segments need separate event-loop turns on our side; this paces the sender,
+    // it is not waiting for a condition in the child.
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  child.stdin.write("stop\n");
+  await child.stdin.flush();
+  const result = await line();
+  peer.end();
+  expect(result).toMatch(/^iterations \d+$/);
+  // Two stdin lines and process bookkeeping account for a few turns; per-segment wakeups
+  // would put this near SEGMENTS.
+  expect(Number(result.split(" ")[1])).toBeLessThan(SEGMENTS / 4);
+  expect(await child.exited).toBe(0);
+});
+
+// A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
+// regardless of interest; kqueue keeps a read knote registered while reads are off, see
+// epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
+// anything: the data queued ahead of the reset is delivered, then the socket closes with read
+// ECONNRESET. Closing without reading discarded that data (a streamed body cut short although
+// every byte arrived, #39846). Windows discards the receive queue on a reset itself. The
+// node:net and node:tls shapes are in test/js/node/tls/node-tls-server.test.ts.
 describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
-  it("closes with read ECONNRESET while still paused and delivers none of the unread data", async () => {
+  it("delivers the data queued ahead of the reset, then closes with read ECONNRESET, while still paused", async () => {
     const closedWith = Promise.withResolvers<Error | undefined>();
-    let dataCalls = 0;
+    let received = "";
     const pauseAndGreet = (socket: Socket) => {
       socket.pause();
       socket.write("greeting");
@@ -4115,8 +5093,8 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
           if (success) pauseAndGreet(socket);
           else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
         },
-        data() {
-          dataCalls++;
+        data(_socket, chunk) {
+          received += chunk.toString();
         },
         close(_socket, error) {
           closedWith.resolve(error);
@@ -4138,21 +5116,65 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
     });
     const peer = await greeted.promise;
     peer.write("queued behind the pause");
+    peer.flush();
     peer.terminate();
 
     const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
     expect({
+      received: isWindows ? "" : received,
       reported: error instanceof Error,
       syscall: error?.syscall,
-      dataCalls,
       code: error?.code,
     }).toEqual({
+      received: isWindows ? "" : "queued behind the pause",
       reported: true,
       syscall: "read",
-      dataCalls: 0,
       code: "ECONNRESET",
     });
   });
+});
+
+// A paused socket with a backpressured write of its own must also close on the reset: an owner
+// that resumes only after 'drain' (node:http's flood guard) would otherwise wait forever.
+it("a paused socket with a backpressured write still closes when its peer resets", async () => {
+  const closedWith = Promise.withResolvers<Error | undefined>();
+  let backpressured!: () => void;
+  const isBackpressured = new Promise<void>(resolve => (backpressured = resolve));
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.pause();
+        // The peer never reads, so this fills both kernel buffers and is refused part-way.
+        while (socket.write(big) === big.length) {}
+        backpressured();
+      },
+      drain(socket) {
+        while (socket.write(big) === big.length) {}
+      },
+      data() {},
+      close(_socket, error) {
+        closedWith.resolve(error);
+      },
+    },
+  });
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.pause();
+      },
+      data() {},
+      close() {},
+    },
+  });
+  await isBackpressured;
+  peer.terminate();
+  const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+  expect(error?.code).toBe("ECONNRESET");
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets
@@ -4353,4 +5375,48 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
     expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
+});
+
+it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
+  // Each end() sends close_notify and defers its fd close for the peer's
+  // reply. The reply arrives without a FIN, so the ZERO_RETURN path has to
+  // complete the deferred close instead of keeping the socket half-open.
+  const serverOpen = Promise.withResolvers<Socket>();
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const serverShake = Promise.withResolvers<void>();
+  const clientShake = Promise.withResolvers<void>();
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    tls: { key: tls.key, cert: tls.cert },
+    socket: {
+      open: s => serverOpen.resolve(s),
+      handshake: () => serverShake.resolve(),
+      data() {},
+      close: () => serverClosed.resolve(),
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    allowHalfOpen: true,
+    tls: { ca: tls.cert },
+    socket: {
+      handshake: () => clientShake.resolve(),
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+
+  const serverSock = await serverOpen.promise;
+  await Promise.all([serverShake.promise, clientShake.promise]);
+
+  // Both sides end before either reads the peer's close_notify.
+  client.end();
+  serverSock.end();
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
 });

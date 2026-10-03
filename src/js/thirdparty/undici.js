@@ -1,6 +1,4 @@
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -65,7 +63,7 @@ class BodyReadable extends ReadableFromWeb {
   constructor(response, options = {}) {
     // A response with no body (204, HEAD) still gets a body, as in undici:
     // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
-    super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
+    super({ ...options, responseBody: true }, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;
@@ -194,16 +192,6 @@ async function request(
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
-  }
-
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    // TODO: Streaming via ReadableStream?
-    let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
-      data += chunk;
-    }
-    inputBody = new TextEncoder().encode(data);
   }
 
   if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {

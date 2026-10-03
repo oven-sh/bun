@@ -1438,6 +1438,164 @@ describe("postMessage transfer list", () => {
   });
 });
 
+// Serializing the message runs user code (the getters below), which can invalidate an entry
+// of the transfer list after the list was checked. The transfer must then fail as a whole:
+// node reports the DataCloneError with every listed ArrayBuffer still intact. Bun used to
+// detach the buffers first and reject the port afterwards, so the caller got an error and
+// lost its data.
+describe("transfer list invalidated while the message is serialized", () => {
+  const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
+
+  // `first` is serialized, then the getter closes `transferred`, then `last`.
+  function messageClosingListedPort(transferred: MessagePort) {
+    const first = new ArrayBuffer(8);
+    const last = new ArrayBuffer(8);
+    const message = {
+      first,
+      get closeIt() {
+        transferred.close();
+        return 1;
+      },
+      transferred,
+      last,
+    };
+    return { message, transfer: [first, transferred, last], buffers: [first, last] };
+  }
+
+  test("port.postMessage: a getter closing a listed port leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { message, transfer, buffers } = messageClosingListedPort(transferred);
+    expect(() => port1.postMessage(message, transfer)).toThrow(dataClone);
+    expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    peer.close();
+  });
+
+  test("worker.postMessage: a getter closing a listed port leaves the listed buffers intact", async () => {
+    const worker = new Worker("", { eval: true });
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => worker.postMessage(message, transfer)).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker.terminate();
+      peer.close();
+    }
+  });
+
+  test("new Worker: a workerData getter closing a listed port leaves the listed buffers intact", async () => {
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    let worker: Worker | undefined;
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => {
+        worker = new Worker("", { eval: true, workerData: message, transferList: transfer });
+      }).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker?.terminate();
+      peer.close();
+    }
+  });
+
+  // The invalidated port is only in the transfer list, not in the message, so only the
+  // post-serialization check can notice it.
+  test("port.postMessage: a getter transferring a listed port elsewhere leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { port1: elsewhere, port2: elsewherePeer } = new MessageChannel();
+    const buffer = new ArrayBuffer(8);
+    const message = {
+      buffer,
+      get moveIt() {
+        elsewhere.postMessage(null, [transferred]);
+        return 1;
+      },
+    };
+    expect(() => port1.postMessage(message, [buffer, transferred])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(8);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    elsewhere.close();
+    elsewherePeer.close();
+    peer.close();
+  });
+
+  // A mark applied by a getter counts like one applied before the call: the buffer is not
+  // detached. (Node also refuses, as a TypeError raised by the detach itself.)
+  function expectMarkDuringSerializationToBeHonored(send: (message: object, transfer: ArrayBuffer[]) => unknown) {
+    const buffer = new ArrayBuffer(16);
+    const message = {
+      get markIt() {
+        markAsUntransferable(buffer);
+        return 1;
+      },
+      buffer,
+    };
+    expect(() => send(message, [buffer])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(16);
+  }
+
+  test("structuredClone honors markAsUntransferable applied during serialization", () => {
+    expectMarkDuringSerializationToBeHonored((message, transfer) => structuredClone(message, { transfer }));
+  });
+
+  test("port.postMessage honors markAsUntransferable applied during serialization", () => {
+    const { port1, port2 } = new MessageChannel();
+    expectMarkDuringSerializationToBeHonored((message, transfer) => port1.postMessage(message, transfer));
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+  });
+
+  test("worker.postMessage honors markAsUntransferable applied during serialization", async () => {
+    const worker = new Worker("", { eval: true });
+    try {
+      expectMarkDuringSerializationToBeHonored((message, transfer) => worker.postMessage(message, transfer));
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // The other direction of the same rule: once the buffers are detached, the listed ports go
+  // with them even though the message itself is dropped because the sending port is closed.
+  // Node performs the transfer for a closed sender too; bun used to leave the port usable.
+  test.each([
+    ["before the call", true],
+    ["by a getter during serialization", false],
+  ])("port.postMessage on a port closed %s still detaches the listed port", async (_name, closeBeforeCall) => {
+    const { port1: sender, port2: senderPeer } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { promise: peerSawClose, resolve } = Promise.withResolvers<void>();
+    peer.on("close", () => resolve());
+    const buffer = new ArrayBuffer(8);
+    if (closeBeforeCall) sender.close();
+    const message = {
+      buffer,
+      get closeSender() {
+        sender.close();
+        return 1;
+      },
+      transferred,
+    };
+    expect(() => sender.postMessage(message, [buffer, transferred])).not.toThrow();
+    expect(buffer.byteLength).toBe(0);
+    const { port1: other, port2: otherPeer } = new MessageChannel();
+    expect(() => other.postMessage(null, [transferred])).toThrow("MessagePort in transfer list is already detached");
+    // The transferred endpoint had no receiver, which closes the channel from the peer's view.
+    await peerSawClose;
+    peer.close();
+    senderPeer.close();
+    other.close();
+    otherPeer.close();
+  });
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");
@@ -2097,6 +2255,55 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   expect(replies).toEqual(["got hi", "got bye"]);
 });
 
+// parentPort is a MessagePort: it queues what the parent posts until a 'message' listener is
+// attached, and again while none is, as in Node — unlike the Web Worker global scope, which drops
+// a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
+// parent posts everything, then says "go", so the listener is attached strictly afterwards.
+describe("parentPort queues messages until a 'message' listener is attached", () => {
+  async function run(workerSrc: string, batch: unknown[]) {
+    const { port1, port2 } = new MessageChannel();
+    const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
+    w.postMessage("early");
+    const replies: unknown[] = [];
+    w.on("message", m => {
+      if (m !== "started") return replies.push(m);
+      for (const item of batch) w.postMessage(item);
+      port1.postMessage("go");
+    });
+    const [code] = await once(w, "exit");
+    port1.close();
+    return { replies, code };
+  }
+
+  test("listener attached after a top-level await", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // All five are queued before the first listener exists, so one drain batch holds them; removing
+  // the listener after the first must put the rest back, in order, for the next one.
+  test("removing the last listener pauses delivery until one is attached again", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       const first = m => { parentPort.postMessage("first:" + m); parentPort.off("message", first); setImmediate(() => parentPort.on("message", second)); };
+       const second = m => { parentPort.postMessage("second:" + m); if (m === 3) process.exit(0); };
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", first);`,
+      [0, 1, 2, 3],
+    );
+    expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+});
+
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
@@ -2123,7 +2330,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 });
 
 // Static imports that are still being read/transpiled are loading, not a
-// top-level await: 'online' and message delivery wait for the graph to execute.
+// top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
@@ -2136,6 +2343,42 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   w.postMessage("hi");
   expect(await reply).toBe("got hi 0");
   await w.terminate();
+});
+
+// node posts 'online' before it evaluates the entry, so it always precedes a
+// message the entry's top-level code posts (#41375: @discordjs/ws attaches its
+// 'message' listener only after `once(worker, "online")`).
+describe("'online' precedes the worker's first message", () => {
+  test("in event order", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("message", m => order.push("message:" + m));
+    const [code] = await once(w, "exit");
+    expect(order).toEqual(["online", "message:ready"]);
+    expect(code).toBe(0);
+  });
+
+  test("a 'message' listener attached after 'online' sees it", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    await once(w, "online");
+    const ready = new Promise<string>(resolve => w.on("message", resolve));
+    const exited = once(w, "exit").then(() => "exited first");
+    expect(await Promise.race([ready, exited])).toBe("ready");
+    await exited;
+  });
+
+  test("a worker whose entry does not resolve reports 'online' then 'error'", async () => {
+    using dir = tempDir("worker-online-missing-entry", {});
+    const w = new Worker(join(String(dir), "missing.js"));
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("error", e => order.push("error:" + (e as any).code));
+    // not events.once(): it rejects on the 'error' event this test expects
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
+    expect(code).toBe(1);
+  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────
@@ -2269,8 +2512,8 @@ describe("terminate with work in flight", () => {
   });
 });
 
-// A JS preload's modules are not the entry: the worker counts as started (online,
-// parent messages delivered) only once its own entry graph has executed.
+// A JS preload's modules are not the entry: parent messages are delivered only
+// once the worker's own entry graph has executed.
 test("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,

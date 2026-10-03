@@ -403,10 +403,23 @@ pub(crate) fn install_hoisted_packages(
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
-                destination_dir_subpath_buf: bun_paths::PathBuffer::uninit(),
-                folder_path_buf: bun_paths::PathBuffer::uninit(),
+                destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
+                folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                copy_trees: {
+                    let self_contained = this.lockfile.self_contained_workspace_ids();
+                    let mut set = Bitset::init_empty(trees_count)?;
+                    if !self_contained.is_empty() {
+                        for tid in 0..trees_count {
+                            let owner = this.lockfile.owning_workspace_of_tree(tid as tree::Id);
+                            if owner != 0 && self_contained.contains(&owner) {
+                                set.set(tid);
+                            }
+                        }
+                    }
+                    set
+                },
             };
         };
 

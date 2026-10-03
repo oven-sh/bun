@@ -104,41 +104,39 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    // m_isClosing: the close is pending under a DispatchScope. Node drops these posts too.
-    if (!isEntangled() || m_isClosing)
-        return {};
-
+    // create() already detached the buffers, so (as in node) a message dropped below still consumes the listed ports.
     Vector<TransferredMessagePort> transferredPorts;
+    bool targetsEntangledPeer = false;
     if (!ports.isEmpty()) {
         // Posting a port's own entangled peer targets the message at itself.
         // (The source port itself was rejected before serialization above.)
-        bool targetsEntangledPeer = false;
         for (auto& port : ports) {
             if (port->pipe() == m_pipe.ptr()) {
                 targetsEntangledPeer = true;
                 break;
             }
         }
-        // Detach every transfer-list port up front: transfer is atomic in node, so a
-        // third-party port must not stay usable even when the message is dropped below.
         auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangled.hasException())
             return disentangled.releaseException();
         transferredPorts = disentangled.releaseReturnValue();
+    }
 
-        if (targetsEntangledPeer) {
-            // Posting the port's own entangled peer: node warns and loses the channel
-            // rather than throwing. Transferables were already detached above; drop the
-            // message and close so the dead channel stops reffing the loop.
-            Bun__Process__emitWarning(defaultGlobalObject(&state),
-                JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
-                JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
-                JSC::JSValue::encode(JSC::jsUndefined()),
-                JSC::JSValue::encode(JSC::jsUndefined()));
-            CLEAR_IF_EXCEPTION(warnScope);
-            close();
-            return {};
-        }
+    // m_isClosing: the close is pending under a DispatchScope. Node drops these posts too.
+    if (!isEntangled() || m_isClosing)
+        return {};
+
+    if (targetsEntangledPeer) {
+        // Node warns and loses the channel instead of throwing; close() stops the dead channel from reffing the loop.
+        Bun__Process__emitWarning(defaultGlobalObject(&state),
+            JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
+            JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
+            JSC::JSValue::encode(JSC::jsUndefined()),
+            JSC::JSValue::encode(JSC::jsUndefined()));
+        CLEAR_IF_EXCEPTION(warnScope);
+        close();
+        RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
+        return {};
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
@@ -173,7 +171,7 @@ void MessagePort::start()
     ASSERT(context);
     // From the pipe's point of view "attached" means "ready to have drains
     // scheduled on my behalf" — that is exactly what start() promises.
-    m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+    m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
 void MessagePort::flushQueuedMessagesBeforeClose()
@@ -381,8 +379,17 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         return;
     }
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
+    // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
-    dispatchEvent(event.event);
+    if (scope.exception()) [[unlikely]] {
+        if (vm->hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        return;
+    }
+    dispatchEvent(event->event);
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
@@ -536,7 +543,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         // pause re-schedules the drain for messages buffered meanwhile.
         if (m_started && isEntangled()) {
             if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
@@ -544,7 +551,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             // Record our context with the pipe so the peer's close() can deliver a
             // 'close' event even if we never started (no 'message' listener).
             if (auto* context = scriptExecutionContext())
-                m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);

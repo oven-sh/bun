@@ -507,6 +507,21 @@ impl<T: JsSinkType> JSSink<T> {
         Ok(value)
     }
 
+    /// `get_this`, then the sink's pending error.
+    #[inline(always)]
+    fn resolve<'a>(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<Option<&'a mut JSSink<T>>> {
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(None);
+        };
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+        Ok(Some(this))
+    }
+
     /// `${abi_name}__write` host-fn body.
     pub(crate) fn js_write(
         global: &crate::webcore::jsc::JSGlobalObject,
@@ -515,33 +530,15 @@ impl<T: JsSinkType> JSSink<T> {
         let cx = global.js_thread_of_caller(frame);
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
-        let Some(this) = Self::get_this(global, frame)? else {
-            return Ok(JSValue::js_number(0.0));
-        };
-
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
-        if frame.arguments_count() == 0 {
-            return Err(global.throw_value(global.to_type_error(
-                bun_jsc::ErrorCode::MISSING_ARGS,
-                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
-            )));
-        }
 
         let arg = frame.argument(0);
         arg.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(arg);
 
-        if arg.is_empty_or_undefined_or_null() {
-            return Err(global.throw_value(global.to_type_error(
-                bun_jsc::ErrorCode::STREAM_NULL_VALUES,
-                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
-            )));
-        }
-
         if let Some(buffer) = arg.as_array_buffer(global) {
+            let Some(this) = Self::resolve(global, frame)? else {
+                return Ok(JSValue::js_number(0.0));
+            };
             let slice = buffer.slice();
             if slice.is_empty() {
                 return Ok(JSValue::js_number(0.0));
@@ -555,13 +552,14 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         if !arg.is_string() {
-            return Err(global.throw_value(global.to_type_error(
-                bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
-            )));
+            return Self::write_argument_error(global, frame, arg);
         }
 
+        // A String object's conversion runs user JS that can free the sink.
         let view = arg.to_js_string_view(global)?;
+        let Some(this) = Self::resolve(global, frame)? else {
+            return Ok(JSValue::js_number(0.0));
+        };
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
@@ -581,6 +579,30 @@ impl<T: JsSinkType> JSSink<T> {
             .sink
             .write_latin1(&streams::Result::Temporary(data))
             .to_js(&cx))
+    }
+
+    /// The `write()` error tail. Resolves `this` first, so its error wins.
+    #[cold]
+    #[inline(never)]
+    fn write_argument_error(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+        arg: crate::webcore::jsc::JSValue,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        if Self::resolve(global, frame)?.is_none() {
+            return Ok(crate::webcore::jsc::JSValue::js_number(0.0));
+        }
+        let code = if frame.arguments_count() == 0 {
+            bun_jsc::ErrorCode::MISSING_ARGS
+        } else if arg.is_empty_or_undefined_or_null() {
+            bun_jsc::ErrorCode::STREAM_NULL_VALUES
+        } else {
+            bun_jsc::ErrorCode::INVALID_ARG_TYPE
+        };
+        Err(global.throw_value(global.to_type_error(
+            code,
+            format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
+        )))
     }
 
     /// `${abi_name}__flush` host-fn body.

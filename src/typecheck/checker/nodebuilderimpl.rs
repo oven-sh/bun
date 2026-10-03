@@ -1007,7 +1007,7 @@ impl NodeBuilderImpl {
                     specifier = self.get_specifier_for_module_symbol(c, root, swapped_mode);
                     if bun_core::strings::contains(&specifier, b"/node_modules/") {
                         // Still unreachable :(
-                        specifier = old_specifier.clone();
+                        specifier.clone_from(&old_specifier);
                     } else {
                         let mut mode_str: &[u8] = b"require";
                         if swapped_mode == ModuleKind::ES_NEXT {
@@ -2179,7 +2179,6 @@ impl NodeBuilderImpl {
                 .f(c)
                 .new_token(a.kind(mapped_declaration.question_token));
         }
-        let appropriate_constraint_type_node: NodeId;
         let mut new_type_variable = NodeId::NIL;
         let mut template_type = c.get_template_type_from_mapped_type(t);
         let type_parameter = c.get_type_parameter_from_mapped_type(t);
@@ -2200,7 +2199,9 @@ impl NodeBuilderImpl {
                     let constraint = c.get_constraint_of_type_parameter(constraint_type);
                     !constraint.is_nil() && c.types[constraint].flags.intersects(TypeFlags::INDEX)
                 });
-        if c.is_mapped_type_with_keyof_constraint_declaration(t) {
+        let appropriate_constraint_type_node = if c
+            .is_mapped_type_with_keyof_constraint_declaration(t)
+        {
             if generate_names
                 && self.is_homomorphic_mapped_type_with_non_homomorphic_instantiation(c, t)
             {
@@ -2224,19 +2225,18 @@ impl NodeBuilderImpl {
                 let modifiers_type = c.get_modifiers_type_from_mapped_type(t);
                 index_target = self.type_to_type_node(c, modifiers_type);
             }
-            appropriate_constraint_type_node = self
-                .f(c)
-                .new_type_operator_node(Kind::KeyOfKeyword, index_target);
+            self.f(c)
+                .new_type_operator_node(Kind::KeyOfKeyword, index_target)
         } else if needs_modifier_preserving_wrapper {
             let new_symbol = c.new_symbol(SymbolFlags::TYPE_PARAMETER, b"T");
             let new_param = c.new_type_parameter(new_symbol);
             let name = self.type_parameter_to_name(c, new_param);
             new_type_variable = self.f(c).new_type_reference_node(name, NodeListId::NIL);
-            appropriate_constraint_type_node = new_type_variable;
+            new_type_variable
         } else {
             let constraint_type = c.get_constraint_type_from_mapped_type(t);
-            appropriate_constraint_type_node = self.type_to_type_node(c, constraint_type);
-        }
+            self.type_to_type_node(c, constraint_type)
+        };
         // typeParameterToDeclarationWithConstraint and the template and name types are built in the scope of the mapped type's own parameter.
         let scope_type_parameter = c.get_type_parameter_from_mapped_type(t);
         let cleanup = self.enter_new_scope(
@@ -2610,18 +2610,17 @@ impl NodeBuilderImpl {
         let old_suppress_report_inference_fallback = self.ctx(c).suppress_report_inference_fallback;
         self.ctx_mut(c).suppress_report_inference_fallback = true;
         let type_predicate = c.get_type_predicate_of_signature(signature);
-        let return_type_node;
-        if !type_predicate.is_nil() {
+        let return_type_node = if !type_predicate.is_nil() {
             let mapper = self.ctx(c).mapper;
             let predicate = if !mapper.is_nil() {
                 c.instantiate_type_predicate(type_predicate, mapper)
             } else {
                 type_predicate
             };
-            return_type_node = self.type_predicate_to_type_predicate_node_helper(c, predicate);
+            self.type_predicate_to_type_predicate_node_helper(c, predicate)
         } else {
-            return_type_node = self.type_to_type_node(c, return_type);
-        }
+            self.type_to_type_node(c, return_type)
+        };
         self.ctx_mut(c).suppress_report_inference_fallback = old_suppress_report_inference_fallback;
         return_type_node
     }
@@ -2735,7 +2734,7 @@ impl NodeBuilderImpl {
 
         let mut modifiers: Vec<NodeId> = Vec::new();
         if let Some(options) = options {
-            modifiers = options.modifiers.clone();
+            modifiers.clone_from(&options.modifiers);
         }
         if kind == Kind::ConstructorType && signature_flags.intersects(SignatureFlags::ABSTRACT) {
             let flags = modifiers_to_flags(a, &modifiers);

@@ -764,6 +764,29 @@ impl BunxCommand {
         }
     }
 
+    /// True when the nearest existing ancestor of `path` is a directory this
+    /// user may write, so `path` could be created. Reads only.
+    #[cfg(unix)]
+    fn can_create(path: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut dir = bun_paths::dirname(path);
+        while let Some(d) = dir {
+            if d.is_empty() || d.len() >= buf.len() {
+                return false;
+            }
+            buf[..d.len()].copy_from_slice(d);
+            buf[d.len()] = 0;
+            match bun_sys::access(ZStr::from_buf(&buf[..], d.len()), libc::W_OK | libc::X_OK) {
+                Ok(()) => return true,
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                    dir = bun_paths::dirname(d).filter(|parent| parent.len() < d.len());
+                }
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
     #[cfg(unix)]
     fn join_cache_root(base: &[u8], name: &[u8]) -> CacheRoot {
         let base = strings::without_trailing_slash(base);
@@ -808,13 +831,18 @@ impl BunxCommand {
                 root.from_install_cache = true;
                 root
             }
-            // Not there yet. A run that installs creates it, and takes the
-            // temp directory only if it cannot: one run that had no usable
-            // cache directory must not send later runs to the shared
-            // directory.
+            // Not there yet. Whether this run may create it decides, not
+            // whether an earlier run left a temp root behind: a home that
+            // cannot be written always takes the temp root, so its warm runs
+            // find what its cold run installed, and a home that can be written
+            // never does.
             CacheRootState::Missing => {
-                root.from_install_cache = true;
-                root
+                if Self::can_create(&root.path) {
+                    root.from_install_cache = true;
+                    root
+                } else {
+                    Self::temp_cache_root(temp_dir)
+                }
             }
             // Somebody else's, reported world-writable by the filesystem
             // (drvfs, ntfs-3g, CIFS without `uid=`), or not statable. Each
@@ -1545,6 +1573,9 @@ impl BunxCommand {
             bun_core::warn!(
                 "bunx is installing into the shared temp directory because no cache directory of your own is usable. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
             );
+            // macOS replaces this process with the tool (`execve`), which
+            // drops whatever is still buffered.
+            Output::flush();
         }
         // The root exists and is 0700; this creates the package directory.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;

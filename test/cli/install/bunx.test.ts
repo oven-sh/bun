@@ -1936,3 +1936,52 @@ it.concurrent.skipIf(isWindows)("does not keep using the temp directory once a c
   await run({ ...env, HOME: home });
   expect(statSync(join(home, ".bun", "install", "cache", `.bunx-${uid}`, `${pkg}@latest`)).isDirectory()).toBe(true);
 });
+
+// A home that cannot be written (a read-only container, a service account)
+// has no cache directory of its own. bunx decides that before it looks for a
+// cached binary, not after a failed install, so the second run finds what the
+// first one installed and needs no network. Root may write anywhere, so this
+// cannot be set up as root.
+it.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+  "serves warm runs from the temp directory when the cache directory cannot be created",
+  async () => {
+    const { x_dir, env } = setup();
+    const uid = process.getuid!();
+    delete env.BUN_INSTALL_CACHE_DIR;
+    delete env.BUN_INSTALL;
+    delete env.XDG_CACHE_HOME;
+    using home = tempDir("bunx-readonly-home", {});
+    chmodSync(String(home), 0o555);
+    env.HOME = String(home);
+
+    const pkg = "bunx-readonly-home-fixture";
+    const tgzDir = await packFixture(pkg, `#!/bin/sh\necho readonly-home-ok\n`);
+    using registry = fixtureRegistry(pkg, tgzDir);
+
+    const run = async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "x", pkg],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: { ...env, npm_config_registry: registry.url },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("readonly-home-ok");
+      expect(exitCode).toBe(0);
+      return stderr;
+    };
+
+    expect(await run()).toContain("shared temp directory");
+    expect(statSync(join(env.TMPDIR, `.bunx-${uid}`, `${pkg}@latest`)).isDirectory()).toBe(true);
+
+    registry.reset();
+    await run();
+    expect(registry.requests).toBe(0);
+
+    // And with the registry gone.
+    registry.server.stop(true);
+    await run();
+  },
+);

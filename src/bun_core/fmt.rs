@@ -272,8 +272,9 @@ impl Display for RedactedNpmUrlFormatter<'_> {
             }
 
             // Emit the run of bytes up to the next position where a uuid/npm
-            // secret could possibly start, so multi-byte UTF-8 sequences are
-            // written intact (raw bytes, not Latin-1→UTF-8 chars).
+            // secret could possibly start. Runs split only at ASCII bytes, so
+            // multi-byte sequences stay intact, and `BStr` turns invalid UTF-8
+            // into U+FFFD (the URL is package metadata).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
@@ -286,7 +287,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 }
                 next += 1;
             }
-            write_bytes(f, &self.url[i..next])?;
+            write!(f, "{}", bstr::BStr::new(&self.url[i..next]))?;
             i = next;
         }
         Ok(())
@@ -3472,7 +3473,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
                 cursor = i + len;
                 continue;
             }
-            self.f.write_str(&s[start..i])?;
+            write_bytes(self.f, &bytes[start..i])?;
             match code_point {
                 _ if self.mode == EscapeControlCharsMode::Json => {
                     write!(self.f, "\\u{:04x}", code_point)?
@@ -3486,7 +3487,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
             start = i + len;
             cursor = start;
         }
-        self.f.write_str(&s[start..])
+        write_bytes(self.f, &bytes[start..])
     }
 }
 

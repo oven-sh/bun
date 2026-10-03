@@ -666,8 +666,8 @@ impl<'a> Resolver<'a> {
     /// (`abs_buf*`, `normalize_buf`, `dirname_store`, `filename_store`,
     /// `top_level_dir`). Preferred over `unsafe { &mut *self.fs() }` whenever
     /// the callee takes `&self` — avoids materializing a `&mut FileSystem`
-    /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` /
-    /// `&mut *query.entry` tag derived from the same allocation.
+    /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` tag
+    /// derived from the same allocation.
     #[inline(always)]
     pub(crate) fn fs_ref(&self) -> &Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the process-global FileSystem singleton

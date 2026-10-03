@@ -1143,6 +1143,10 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
   SSL_set_verify(s_ssl(s), SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
+  s->ssl_first_flight_before_fin = 1;
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also
@@ -1714,6 +1718,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
+  s->ssl_first_flight_before_fin = 0;
+  s->ssl_shutdown_after_first_flight = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2227,6 +2233,12 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
   ssl_update_handshake(result, 1);
+  if (ssl_gone(result)) return result;
+  result->ssl_first_flight_before_fin = 0;
+  if (result->ssl_shutdown_after_first_flight) {
+    result->ssl_shutdown_after_first_flight = 0;
+    us_internal_ssl_shutdown(result);
+  }
   return result;
 }
 
@@ -2818,6 +2830,10 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return;
+  if (s->ssl_first_flight_before_fin) {
+    s->ssl_shutdown_after_first_flight = 1;
+    return;
+  }
 
   /* Spilled ciphertext is data the layers above already count as written;
    * a FIN/close_notify now would cut it off. Finish the shutdown from the

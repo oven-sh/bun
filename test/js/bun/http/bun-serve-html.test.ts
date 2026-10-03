@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles, tls } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1119,6 +1119,86 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
   expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
   expect(exitCode).toBe(0);
+});
+
+// A `{ dir, style }` route registers no handler of its own. The dev server
+// serves it through a catch-all, over HTTP/1 only, and only a dev server that
+// started with such a route has that catch-all. Bun.serve still counted the
+// route as the handler of "/*" and registered no fallback. Where the catch-all
+// did not exist, a request that matched no route got a closed connection
+// (HTTP/1) or an empty 404 (HTTP/3) in place of `fetch`.
+describe('a framework router route at "/*" leaves the fallback in place', () => {
+  const files = {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body></body></html>`,
+    "pages/index.tsx": `export default function Page() { return <h1>page</h1>; }`,
+    // What the built-in React framework resolves when a dev server with a router starts. No page is bundled here.
+    "node_modules/react-refresh/package.json": `{ "name": "react-refresh", "version": "0.0.0" }`,
+    "node_modules/react-refresh/runtime.js": `export {};`,
+    "node_modules/react-server-dom-bun/package.json": `{ "name": "react-server-dom-bun", "version": "0.0.0" }`,
+    "node_modules/react-server-dom-bun/server.js": `export {};`,
+  };
+
+  test.concurrent.each([
+    ["has a dev server", `{ "/": html }`],
+    ["has no dev server", `{}`],
+  ])("when server.reload() adds it to a server that %s", async (_, routesAtStart) => {
+    using dir = tempDir("bun-serve-reload-adds-framework-router", {
+      ...files,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        const routes = ${routesAtStart};
+        const server = Bun.serve({ port: 0, development: true, routes, fetch: () => new Response("start") });
+        server.reload({
+          development: true,
+          routes: { ...routes, "/*": { dir: "./pages", style: "nextjs-pages" } },
+          fetch: () => new Response("reloaded"),
+        });
+        const res = await fetch(new URL("/unmatched", server.url));
+        console.log(JSON.stringify({ status: res.status, body: await res.text() }));
+        server.stop(true);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ status: 200, body: "reloaded" }),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("over HTTP/3", async () => {
+    using dir = tempDir("bun-serve-http3-framework-router", {
+      ...files,
+      "serve.ts": /*ts*/ `
+        const server = Bun.serve({
+          port: 0,
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          development: true,
+          routes: { "/*": { dir: "./pages", style: "nextjs-pages" } },
+          fetch: () => new Response("fetch"),
+        });
+        const answers = {};
+        for (const protocol of ["http1.1", "http3"]) {
+          const res = await fetch("https://127.0.0.1:" + server.port + "/unmatched", {
+            protocol,
+            tls: { rejectUnauthorized: false },
+          });
+          answers[protocol] = { status: res.status, body: await res.text() };
+        }
+        console.log(JSON.stringify(answers));
+        await server.stop(true);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        "http1.1": { status: 200, body: "fetch" },
+        "http3": { status: 200, body: "fetch" },
+      }),
+      exitCode: 0,
+    });
+  });
 });
 
 test("wildcard static routes", async () => {

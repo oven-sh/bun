@@ -1,12 +1,3 @@
-10-02_16:04:03 anon=3MB pids=27 load=817.21 top=runc:[2:INIT]:9MB
-10-02_16:04:38 anon=78MB pids=33 load=866.51 top=python3:82MB
-10-02_16:05:15 anon=88MB pids=37 load=892.46 top=python3:81MB
-10-02_16:05:50 anon=95MB pids=32 load=897.65 top=python3:98MB
-10-02_16:06:26 anon=47MB pids=33 load=890.15 top=python3:49MB
-10-02_16:07:06 anon=91MB pids=37 load=949.30 top=python3:93MB
-10-02_16:07:47 anon=1565MB pids=42 load=935.08 top=cachegrind-amd6:382MB
-10-02_16:08:26 anon=832MB pids=56 load=942.23 top=cachegrind-amd6:325MB
-10-02_16:08:59 anon=286MB pids=46 load=927.38 top=cachegrind-amd6:309MB
 10-02_16:09:36 anon=1011MB pids=42 load=892.32 top=cachegrind-amd6:268MB
 10-02_16:10:15 anon=569MB pids=54 load=853.47 top=cachegrind-amd6:323MB
 10-02_16:10:52 anon=4MB pids=37 load=881.99 top=cachegrind-amd6:30MB
@@ -398,3 +389,12 @@
 10-03_04:40:47 anon=3MB pids=32 load=1107.76 top=postgres:12MB
 10-03_04:41:32 anon=3MB pids=27 load=1026.07 top=postgres:12MB
 10-03_04:44:21 anon=9MB pids=33 load=1516.62 top=git:46MB
+10-03_04:46:00 anon=35MB pids=34 load=1188.20 top=git:82MB
+10-03_04:48:09 anon=3MB pids=40 load=1365.85 top=postgres:12MB
+10-03_04:49:34 anon=21MB pids=34 load=1271.85 top=python3:23MB
+10-03_04:50:32 anon=3MB pids=34 load=1098.49 top=postgres:12MB
+10-03_04:51:10 anon=5MB pids=31 load=917.07 top=postgres:12MB
+10-03_04:52:14 anon=8MB pids=32 load=1106.05 top=git:21MB
+10-03_04:52:55 anon=9MB pids=32 load=1030.77 top=postgres:12MB
+10-03_04:53:46 anon=5MB pids=29 load=1040.09 top=postgres:12MB
+10-03_04:55:34 anon=4MB pids=29 load=1235.73 top=postgres:12MB

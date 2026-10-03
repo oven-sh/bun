@@ -2964,6 +2964,114 @@ describe("bundler", () => {
     });
   }
 
+  // The JSX call is `jsx(type, props, key)`, so the key runs after the props
+  // and the children. Lowering put the key first, and a key with a name (a
+  // dependency of a memo block, an operand ahead of a statement) ran first.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/JsxKeyRunsAfterThePropsAndChildren-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form({ n: 2 }).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          export function StatementInALaterAttribute(p) {
+            const r = { n: p.n };
+            const el = <a key={\`k\${r.n}\`} title={(() => {
+              r.n = 10;
+              return r.n;
+            })()} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function KeyIsTheLastAttribute(p) {
+            const r = { n: p.n };
+            const el = <a title={(() => {
+              r.n = 10;
+              return r.n;
+            })()} key={r.n} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function StatementInAChild(p) {
+            const r = { n: p.n };
+            const el = <a key={\`k\${r.n}\`}>{(() => {
+              r.n = 10;
+              return r.n;
+            })()}{r.n}</a>;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function CallInTheKey(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const el = <a key={bump()} title={r.n} id={[r.n]} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function StoreInTheKey(p) {
+            const r = { n: p.n };
+            const el = <a key={++r.n} title={[r.n, p.n]} id={r.n} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          // The parser inlines the object into the props, where this \`key\` stays. Such a function is not compiled.
+          export function KeyInAnInlinedSpread(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const el = <a {...{ key: bump(), title: r.n }} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function KeyAndAKeyInAnInlinedSpread(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const el = <a key={bump()} {...{ key: bump(), title: r.n }} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props, key) => ({ type, props, key });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        // A function that stays uncompiled prints the same values. A compiled one starts with its memo cache.
+        const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
+        expect(Array.from(compiled, match => match[1]).sort()).toEqual([
+          "CallInTheKey",
+          "KeyIsTheLastAttribute",
+          "StatementInAChild",
+          "StatementInALaterAttribute",
+          "StoreInTheKey",
+        ]);
+      },
+      run: {
+        stdout: `
+          CallInTheKey=[3,{"title":2,"id":[2]}]
+          KeyAndAKeyInAnInlinedSpread=[4,{"key":3,"title":3}]
+          KeyInAnInlinedSpread=[null,{"key":3,"title":3}]
+          KeyIsTheLastAttribute=[10,{"title":10}]
+          StatementInAChild=["k10",{"children":[10,10]}]
+          StatementInALaterAttribute=["k10",{"title":10}]
+          StoreInTheKey=[3,{"title":[2,2],"id":2}]
+        `,
+      },
+    });
+  }
+
   // The fbt transform rejects a variable in place of a nested fbt.param()
   // call, so the call stays inside the fbt() call. The value given to
   // fbt.param() can be a variable, and it keeps its place ahead of a statement.

@@ -352,7 +352,7 @@ impl WebSocketProxyTunnel {
         if let Some(ws) = connected_websocket {
             let ws = ws.this_ptr();
             let _guard = RefPtr::from_this(ws);
-            ws.fail(ErrorCode::Ended);
+            ws.handle_tunnel_close();
             return;
         }
 

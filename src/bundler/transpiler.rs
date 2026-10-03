@@ -3046,11 +3046,7 @@ impl<'a> Transpiler<'a> {
             }
         };
 
-        // The `ParserOptions.logger` `NonNull<Log>` borrow is
-        // dropped when `sheet`/`opts` go out of scope at the end of
-        // this arm, before any other `log_mut()` reborrow above.
-        let mut opts = bun_css::ParserOptions::default(None);
-        opts.logger = Some(core::ptr::NonNull::new(self.log).unwrap());
+        let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
         const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
         let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
             && strings::eql_comptime(
@@ -3066,7 +3062,7 @@ impl<'a> Transpiler<'a> {
         // the CSS AST it backs is dropped before this fn returns
         // (only `result.code: Vec<u8>` escapes, which is
         // global-heap). `'static` matches the crate-wide erasure
-        // on `StyleSheet`/`ParserOptions` (see the css_parser.rs
+        // on `StyleSheet` (see the css_parser.rs
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 

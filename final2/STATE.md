@@ -23,3 +23,26 @@ Update (fourth container), verification of 0490760d6d on the debug build:
 - earlier: 293 trace/quic/exit files: 288 pass after the termination fix
 - measurements added to the body: GC cells, host functions, rt_sigaction
 - second self-review run id 66f961832a57 (resumed once); after it: open the PR with final2/pr-body.md
+
+Second self-review (run 66f961832a57, 97 agents, finished with container deaths): wanted-in-a-different-shape (0.87),
+pr_disposition rework, disposition restructure.
+- The need is real: main differs from node on 9 of 12 emitter-contract probes, the branch matches node on all and
+  prints node's output for the #12918 programs.
+- Only #12918 has a human reporter (label `confirmed bug`). It can be fixed in the native emit sites of today's
+  emitter at no startup cost: open PR #32228 does that for 'exit' and 'beforeExit' (it has merge conflicts now).
+- The other 19 behaviour changes and the deletion of the native emitter come from fuzz-found issues, flip 0 of 609
+  node tests, have no maintainer's yes, and cost 10,486 -> 1,466,055 instructions at the first process.on() without
+  node:events. `.claude/docs/landing-prs.md` ("the common case pays zero", "must not regress ANY measured case")
+  does not allow that without an explicit exception.
+- One 35-file PR is the wrong shape: take the process.emit routing now (#32228), land #41588 and #42032 on their
+  own, and let a maintainer decide the emitter swap separately with the cost table. No finding says to drop the swap.
+- Also raised: a Worker whose 'exit' listener throws ends with exit code 1 (node 0, #42032 does node's), conflicts
+  with 12 of 14 open PRs on these files, never ran in CI, the Windows signal hooks were compiled but not run.
+
+Action taken: no PR opened. The decision was put to the Slack thread with the cost table. The branch
+robobun/cd14648e/process-events-emitter (0490760d6d) stays as the built swap. #41830 stays open as the
+no-startup-cost repair of three ledger symptoms.
+If a maintainer says yes to the swap: rebase the branch on main after #32228, #41588 and #42032 (drop the lines
+they own), open the PR with final2/pr-body.md (update the numbers' commit), assign Jarred-Sumner.
+If no: continue with native repairs (next: errorMonitor and the rest are in #41830; 'removeListener' event,
+rawListeners wrappers, emit('error') with no listener, throw propagation are not covered by any open PR).

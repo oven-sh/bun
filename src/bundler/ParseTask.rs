@@ -2490,6 +2490,7 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
+        opts.top_level_var = topts.top_level_var;
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows

@@ -3663,6 +3663,14 @@ describe("expect()", () => {
       expect({ a: { 0: 1 } }).not.toMatchObject({ a: [1] });
     });
 
+    test("an asymmetric matcher passed as the whole expected value is applied", () => {
+      expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }));
+      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ a: 2 }));
+      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ c: 1 }));
+      expect([1]).toMatchObject(expect.any(Array));
+      expect({ a: 1 }).not.toMatchObject(expect.any(Array));
+    });
+
     test("an expected object reused under several keys is matched under each", () => {
       const shared = { x: 1 };
       expect({ a: shared, b: shared }).toMatchObject({ a: shared, b: { x: 1 } });

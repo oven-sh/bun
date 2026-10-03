@@ -29,12 +29,12 @@ describe("Valid spot checks", () => {
   it.each([
     // ports
     ["http://[::1]:", { host: "[::1]", hostname: "::1", port: null, path: "/", href: "http://[::1]/" }], // trailing colons are ignored
-    ["http://[::1]:1", { host: "[::1]", hostname: "::1", port: "1", path: "/", href: "http://[::1]/" }],
+    ["http://[::1]:1", { host: "[::1]:1", hostname: "::1", port: "1", path: "/", href: "http://[::1]:1/" }],
 
     // unicast
     ["http://[::0]", { host: "[::0]", path: "/" }],
     ["http://[::f]", { host: "[::f]", path: "/" }],
-    ["http://[::F]", { host: "[::F]", path: "/" }],
+    ["http://[::F]", { host: "[::f]", path: "/" }], // the host is lowercased
     // these are technically invalid unicast addresses but url.parse allows them
     ["http://[::7]", { host: "[::7]", path: "/" }],
     // ["http://[::z]",       { host: "[::7]",       path: "/" }],
@@ -42,9 +42,9 @@ describe("Valid spot checks", () => {
 
     // full form-ish
     ["https://[::1:2:3:4:5]", { host: "[::1:2:3:4:5]", path: "/" }],
-    ["[0:0:0:1:2:3:4:5]", { host: "[0:0:0:1:2:3:4:5]", path: "/" }],
+    ["[0:0:0:1:2:3:4:5]", { host: null, path: "[0:0:0:1:2:3:4:5]" }], // w/o a protocol, it's treated as a path
   ])("Parsing '%s' succeeds", (input, expected) => {
-    expect(url.parse(input)).toMatchObject(expect.objectContaining(expected));
+    expect(url.parse(input)).toMatchObject(expected);
   });
 }); // </Valid spot checks>
 

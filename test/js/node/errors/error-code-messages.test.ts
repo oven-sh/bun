@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import child_process from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -36,7 +37,14 @@ test("table-driven ERR_* codes keep their exact messages", () => {
     'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["bad header"]',
   );
   expect(capture(() => tls.createSecureContext({ minVersion: "TLSv9" as any }))).toBe(
-    "ERR_TLS_INVALID_PROTOCOL_VERSION | TypeError | TLSv9 is not a valid minimum TLS protocol version",
+    'ERR_TLS_INVALID_PROTOCOL_VERSION | TypeError | "TLSv9" is not a valid minimum TLS protocol version',
+  );
+  // Node formats the value with %j: strings are quoted and escaped, numbers are bare.
+  expect(capture(() => tls.createSecureContext({ minVersion: 'a"b' as any }))).toBe(
+    'ERR_TLS_INVALID_PROTOCOL_VERSION | TypeError | "a\\"b" is not a valid minimum TLS protocol version',
+  );
+  expect(capture(() => tls.createSecureContext({ minVersion: 0 as any }))).toBe(
+    "ERR_TLS_INVALID_PROTOCOL_VERSION | TypeError | 0 is not a valid minimum TLS protocol version",
   );
   expect(capture(() => child_process.fork("x", { stdio: ["pipe", "pipe", "pipe"] }))).toBe(
     "ERR_CHILD_PROCESS_IPC_REQUIRED | Error | Forked processes must have an IPC channel, missing value 'ipc' in options.stdio",
@@ -231,3 +239,70 @@ test(
   },
   replTimeout,
 );
+
+test("secureProtocol conflicts with minVersion and maxVersion", () => {
+  expect(capture(() => tls.createSecureContext({ minVersion: "TLSv1.2", secureProtocol: "TLSv1_2_method" }))).toBe(
+    'ERR_TLS_PROTOCOL_VERSION_CONFLICT | TypeError | TLS protocol version "TLSv1.2" conflicts with secureProtocol "TLSv1_2_method"',
+  );
+  expect(capture(() => tls.createSecureContext({ maxVersion: "TLSv1.3", secureProtocol: "TLS_method" }))).toBe(
+    'ERR_TLS_PROTOCOL_VERSION_CONFLICT | TypeError | TLS protocol version "TLSv1.3" conflicts with secureProtocol "TLS_method"',
+  );
+  expect(capture(() => new tls.Server({ minVersion: "TLSv1.2", secureProtocol: "TLS_method" }))).toBe(
+    'ERR_TLS_PROTOCOL_VERSION_CONFLICT | TypeError | TLS protocol version "TLSv1.2" conflicts with secureProtocol "TLS_method"',
+  );
+  expect(capture(() => https.createServer({ ...tlsCert, maxVersion: "TLSv1.2", secureProtocol: "TLS_method" }))).toBe(
+    'ERR_TLS_PROTOCOL_VERSION_CONFLICT | TypeError | TLS protocol version "TLSv1.2" conflicts with secureProtocol "TLS_method"',
+  );
+  expect(capture(() => tls.createSecureContext({ minVersion: 5 as any, secureProtocol: "TLS_method" }))).toBe(
+    'ERR_TLS_PROTOCOL_VERSION_CONFLICT | TypeError | TLS protocol version 5 conflicts with secureProtocol "TLS_method"',
+  );
+  expect(capture(() => tls.createSecureContext({ minVersion: null as any, secureProtocol: "TLS_method" }))).toBe(
+    "no throw",
+  );
+  // tls.Server drops a falsy minVersion/maxVersion before it builds the context.
+  expect(capture(() => new tls.Server({ minVersion: "" as any, secureProtocol: "TLS_method" }))).toBe("no throw");
+  expect(capture(() => new tls.Server({ maxVersion: "" as any, secureProtocol: "TLS_method" }))).toBe("no throw");
+  expect(capture(() => https.createServer({ ...tlsCert, minVersion: "" as any, secureProtocol: "TLS_method" }))).toBe(
+    "no throw",
+  );
+});
+
+test("ERR_HTTP_SOCKET_ASSIGNED message", () => {
+  const socket = new EventEmitter();
+  new http.ServerResponse({} as any).assignSocket(socket as any);
+  expect(capture(() => new http.ServerResponse({} as any).assignSocket(socket as any))).toBe(
+    "ERR_HTTP_SOCKET_ASSIGNED | Error | ServerResponse has an already assigned socket",
+  );
+});
+
+test("ERR_IPC_CHANNEL_CLOSED message", async () => {
+  using dir = tempDir("ipc-channel-closed", { "child.js": "// exits at once\n" });
+  const child = child_process.fork(`${dir}/child.js`);
+  const exited = new Promise(resolve => child.once("exit", resolve));
+  child.disconnect();
+  const { promise, resolve } = Promise.withResolvers<(Error & { code?: string }) | null>();
+  expect(child.send("x", resolve)).toBe(false);
+  const err = await promise;
+  expect(`${err?.code} | ${err?.name} | ${err?.message}`).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed");
+  await exited;
+});
+
+test("ERR_IPC_CHANNEL_CLOSED message from process.send() in the child", async () => {
+  using dir = tempDir("ipc-channel-closed-child", {
+    "child.js": `
+      process.disconnect();
+      process.send("x", e => console.log(e.code + " | " + e.name + " | " + e.message));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    ipc() {},
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed\n");
+  expect(exitCode).toBe(0);
+});

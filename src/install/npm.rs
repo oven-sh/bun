@@ -535,6 +535,47 @@ pub mod registry {
         NotFound,
     }
 
+    /// Cap on `Cache-Control: max-age` for a cached packument (registry.npmjs.org sends 300).
+    pub(crate) const MANIFEST_MAX_AGE_SECONDS: u32 = 300;
+
+    /// Seconds a packument stays fresh before the next install revalidates it
+    /// with `If-None-Match`. `None` when the response has no `Cache-Control`.
+    fn manifest_max_age(headers: &picohttp::HeaderList) -> Option<u32> {
+        let cache_control = headers.get(b"cache-control")?;
+        let mut max_age: Option<u32> = None;
+        for directive in strings::split(cache_control, b",") {
+            let directive = directive.trim_ascii();
+            if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
+                || strings::eql_case_insensitive_ascii(directive, b"no-store", true)
+            {
+                return Some(0);
+            }
+            if strings::has_prefix_case_insensitive(directive, b"max-age=") {
+                // RFC 9111 §4.2.1: a repeated `max-age` makes the freshness stale.
+                if max_age.is_some() {
+                    return Some(0);
+                }
+                let value = directive[b"max-age=".len()..].trim_ascii_start();
+                let value = value.strip_prefix(b"\"").unwrap_or(value);
+                let value = value.strip_suffix(b"\"").unwrap_or(value);
+                max_age = Some(match bun_core::parse_int::<u64>(value, 10) {
+                    Ok(seconds) => seconds.min(MANIFEST_MAX_AGE_SECONDS as u64) as u32,
+                    Err(_) => 0,
+                });
+            }
+        }
+        Some(max_age.unwrap_or(0))
+    }
+
+    /// Stamps the expiry from a 200 or 304. A 304 without `Cache-Control` reuses the stored max-age.
+    pub(crate) fn refresh_manifest_expiry(pkg: &mut NpmPackage, headers: &picohttp::HeaderList) {
+        if let Some(max_age) = manifest_max_age(headers) {
+            pkg.max_age_seconds = max_age;
+        }
+        let now = u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32;
+        pkg.public_max_age = now.saturating_add(pkg.max_age_seconds.min(MANIFEST_MAX_AGE_SECONDS));
+    }
+
     pub(crate) fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
@@ -567,16 +608,17 @@ pub mod registry {
             new_etag = &new_etag_buf[..new_etag.len()];
         }
 
-        if let Some(package) = PackageManifest::parse(
+        if let Some(mut package) = PackageManifest::parse(
             scope,
             log,
             body,
             package_name,
             newly_last_modified,
             new_etag,
-            (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32) + 300,
+            0,
             is_extended_manifest,
         )? {
+            refresh_manifest_expiry(&mut package.pkg, &response.headers);
             if package_manager.options.enable.manifest_cache() {
                 package_manifest::Serializer::save_async(
                     &package,
@@ -845,14 +887,10 @@ pub struct NpmPackage {
 
     /// "modified" in the JSON
     pub(crate) modified: SemverString,
+    /// Unix time at which the cached copy stops being fresh.
     pub(crate) public_max_age: u32,
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=120, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
-    pub(crate) _padding_after_max_age: [u8; 4],
+    /// Capped `Cache-Control: max-age` of the last 200. Was padding: older cache files read 0.
+    pub(crate) max_age_seconds: u32,
 
     pub(crate) name: ExternalString,
 
@@ -868,18 +906,17 @@ pub struct NpmPackage {
     pub(crate) _padding_tail: [u8; 7],
 }
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
-// initialized bytes). Mirrors the per-field-gap check documented in
-// `padding_checker.rs`.
+// Compile-time proof that `NpmPackage` has no implicit padding gaps (so
+// `&NpmPackage as &[u8]` reads only initialized bytes). Mirrors the
+// per-field-gap check documented in `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
-    // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
+    // `public_max_age` (u32, ends at 28) + `max_age_seconds` reach `name` (align 8 → 32)
     assert!(
-        offset_of!(NpmPackage, _padding_after_max_age)
+        offset_of!(NpmPackage, max_age_seconds)
             == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
     );
-    assert!(offset_of!(NpmPackage, name) == offset_of!(NpmPackage, _padding_after_max_age) + 4);
+    assert!(offset_of!(NpmPackage, name) == offset_of!(NpmPackage, max_age_seconds) + 4);
     // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
     assert!(
         offset_of!(NpmPackage, _padding_tail)

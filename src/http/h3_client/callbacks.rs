@@ -20,6 +20,7 @@ use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
 use crate::h3_client as H3;
+use bun_http_types::parse_status_pseudo_header;
 use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
@@ -222,6 +223,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     stream.decoded_headers.clear();
     stream.decoded_headers.reserve(n as usize);
     let mut status: u16 = 0;
+    let mut seen_status = false;
     let mut i: c_uint = 0;
     while i < n {
         let Some(h) = s.header(i) else {
@@ -232,7 +234,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
+                // A repeated `:status` is malformed, so a valid one cannot replace a bad one.
+                status = match parse_status_pseudo_header(value) {
+                    Some(code) if !seen_status => code,
+                    _ => 0,
+                };
+                seen_status = true;
             }
             i += 1;
             continue;

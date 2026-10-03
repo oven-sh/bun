@@ -614,15 +614,9 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
                 continue;
             }
             seen_status = true;
-            // RFC 9110 §15: status-code is a 3-digit integer. Header values
-            // are octets, not guaranteed UTF-8.
-            status = if result.value.len() == 3 {
-                bun_core::parse_unsigned::<u32>(result.value, 10).unwrap_or(0)
-            } else {
-                0
-            };
-            if status < 100 || status > 999 {
-                malformed = true;
+            match bun_http_types::parse_status_pseudo_header(result.value) {
+                Some(code) => status = u32::from(code),
+                None => malformed = true,
             }
             continue;
         }

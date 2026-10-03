@@ -40,9 +40,11 @@ const hpackLit = (name: string, value: string) =>
 type RawSock = nodetls.TLSSocket;
 type StreamCb = (socket: RawSock, streamId: number, connIndex: number) => void;
 type PrefaceCb = (socket: RawSock, connIndex: number) => void;
+/** `rst` holds every RST_STREAM that arrived ahead of this PING ACK. */
+type PingAckCb = (socket: RawSock, rst: ReadonlyArray<{ id: number; code: number }>) => void;
 
 async function withAdversarialServer(
-  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; settingsPayload?: Buffer | null },
+  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; onPingAck?: PingAckCb; settingsPayload?: Buffer | null },
   fn: (url: string, state: { connections: number; rst: Array<{ id: number; code: number }> }) => Promise<void>,
 ) {
   const state = { connections: 0, rst: [] as Array<{ id: number; code: number }> };
@@ -76,6 +78,7 @@ async function withAdversarialServer(
         if (type === 4 && !(flags & 1) && opts.settingsPayload !== null) socket.write(frame(4, 1, 0));
         if (type === 1) opts.onStream?.(socket, id, connIndex);
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
+        if (type === 6 && flags & 1) opts.onPingAck?.(socket, state.rst);
       }
     });
     socket.on("error", () => {});
@@ -263,6 +266,60 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         const r = await fetch(url, h2);
         expect(r.status).toBe(200);
         expect(await r.text()).toBe("");
+      },
+    );
+  });
+
+  // 1f. RFC 9113 section 8.6: HTTP/2 does not support 101 (Switching Protocols).
+  //     A 101 block is malformed. It is not an interim response to wait behind.
+  //     The origin holds the final response until the client acknowledges the
+  //     PING that follows the 1xx block, so a reset that arrived by then is for
+  //     that block alone.
+  test.each([
+    ["103", { status: 200, body: "final" }, []],
+    ["101", { err: "HTTP2ProtocolError" }, [{ id: 1, code: 1 }]],
+  ])(":status %s ahead of the final response", async (interim, expected, expectedRst) => {
+    const rstAtPingAck = Promise.withResolvers<Array<{ id: number; code: number }> | string>();
+    let streamId = 0;
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streamId = id;
+          // A client that fails the connection never sends the ACK. Report that, do not wait for it.
+          socket.once("close", () => rstAtPingAck.resolve("the connection closed ahead of the PING ACK"));
+          socket.write(Buffer.concat([frame(1, 0x4, id, hpackStatus(interim)), frame(6, 0, 0, Buffer.alloc(8))]));
+        },
+        onPingAck: (socket, rst) => {
+          rstAtPingAck.resolve([...rst]);
+          socket.write(
+            Buffer.concat([frame(1, 0x4, streamId, hpackStatus200), frame(0, 0x1, streamId, Buffer.from("final"))]),
+          );
+        },
+      },
+      async url => {
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        expect({ out, rst: await rstAtPingAck.promise }).toEqual({ out: expected, rst: expectedRst });
+      },
+    );
+  });
+
+  // 1g. A response `:status` is three digits from 100 to 999, as nghttp2 takes
+  //     it. Any other value makes the response malformed.
+  test.each([
+    ["99", "HTTP2ProtocolError"],
+    ["099", "HTTP2ProtocolError"],
+    ["1000", "HTTP2ProtocolError"],
+    ["+20", "HTTP2ProtocolError"],
+    ["2e2", "HTTP2ProtocolError"],
+    ["999", 999],
+  ])("a final :status of %j gives %p", async (status, expected) => {
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(frame(1, 5, id, hpackStatus(status))) },
+      async url => {
+        expect(await fetch(url, h2).then(r => r.status, errcode)).toBe(expected);
       },
     );
   });

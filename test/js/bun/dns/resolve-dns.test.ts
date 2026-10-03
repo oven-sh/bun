@@ -487,6 +487,44 @@ describe("dns", () => {
       });
     });
 
+    // kDNSServiceErr_NoAuth. The daemon reports a question it refuses to start with no record type.
+    const refused: Answer = { rrtype: 0, error: -65555 };
+
+    test.concurrent("lookup() waits for the other family when the daemon refuses one question", async () => {
+      const answers = {
+        "host.corp.example 1": [refused],
+        "host.corp.example 28": [aaaa(0xfd00, 0x10, { after: "second.test" })],
+        "first.test 1": [a(10, 0, 0, 1)],
+        "second.test 1": [a(10, 0, 0, 2)],
+      };
+      // The answer for first.test is behind the refusal on the socket, so the refusal has been read once it resolves.
+      const script = `
+        const host = Bun.dns.lookup("host.corp.example").catch(e => e.code);
+        await Bun.dns.lookup("first.test");
+        await Bun.dns.lookup("second.test");
+        console.log(JSON.stringify(await host));
+      `;
+      expect(await exchange(answers, script)).toEqual({
+        printed: [{ address: "fd00::10", family: 6, ttl: 60 }],
+        requests: ["host.corp.example", "first.test", "second.test"].flatMap(name =>
+          queries(name, baseFlags | suppressUnusable),
+        ),
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("lookup() reports ENOTFOUND when the daemon refuses both questions", async () => {
+      const answers = { "host.corp.example 1": [refused], "host.corp.example 28": [refused] };
+      expect(await exchange(answers, lookup("host.corp.example"))).toEqual({
+        printed: "DNS_ENOTFOUND",
+        requests: [
+          ...queries("host.corp.example", baseFlags | suppressUnusable),
+          ...queries("host.corp.example", baseFlags),
+        ],
+        exitCode: 0,
+      });
+    });
+
     test.concurrent("lookup() asks once more without SuppressUnusable before it reports ENOTFOUND", async () => {
       expect(await exchange({}, lookup("host.corp.example"))).toEqual({
         printed: "DNS_ENOTFOUND",

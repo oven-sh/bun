@@ -16,6 +16,8 @@ export type Answer = {
   error?: number;
   ifindex?: number;
   ttl?: number;
+  /** Held back until a query for this name arrives. */
+  after?: string;
 };
 /** Keyed by `${name} ${rrtype}`. A query with no entry gets kDNSServiceErr_NoSuchRecord. */
 export type Answers = Record<string, Answer[]>;
@@ -90,7 +92,7 @@ function receive(fd: number) {
 function reply(op: number, context: Buffer, name: string, qtype: number) {
   const fullname = Buffer.from((name.endsWith(".") ? name : name + ".") + "\0");
   const list = answers[`${name} ${qtype}`] ?? [{ rrtype: qtype, error: ERR_NO_SUCH_RECORD }];
-  return list.map(({ rrtype, rdata = [], flags = FLAGS_ADD, error = 0, ifindex = 0, ttl = 60 }) => {
+  return list.map(({ rrtype, rdata = [], flags = FLAGS_ADD, error = 0, ifindex = 0, ttl = 60, after }) => {
     const body = Buffer.alloc(12 + fullname.length + 6 + rdata.length + 4);
     body.writeUInt32BE(flags, 0);
     body.writeUInt32BE(ifindex, 4);
@@ -106,7 +108,7 @@ function reply(op: number, context: Buffer, name: string, qtype: number) {
     header.writeUInt32BE(body.length, 4);
     header.writeUInt32BE(op, 12);
     context.copy(header, 16);
-    return Buffer.concat([header, body]);
+    return { after, bytes: Buffer.concat([header, body]) };
   });
 }
 
@@ -126,6 +128,7 @@ function tlvs(data: Buffer, at: number) {
 }
 
 const requests: object[] = [];
+let held: { conn: number; after: string; bytes: Buffer }[] = [];
 
 function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) {
   const op = header.readUInt32BE(12);
@@ -142,10 +145,12 @@ function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) 
   // Byte 0 is the empty control path that marks a request whose status goes to a descriptor of its own.
   const flags = data.readUInt32BE(1);
   const ifindex = data.readUInt32BE(5);
-  const replies: Buffer[] = [];
+  const replies: ReturnType<typeof reply> = [];
   if (ops[op] === "query") {
     const { value: name, next } = cstring(data, 9);
     const rrtype = data.readUInt16BE(next);
+    for (const { conn, bytes } of held.filter(({ after }) => after === name)) writeSync(conn, bytes);
+    held = held.filter(({ after }) => after !== name);
     requests.push({ op: "query", name, rrtype, flags, ifindex, tlvs: hasTLVs ? tlvs(data, next + 4) : {} });
     replies.push(...reply(QUERY_REPLY, context, name, rrtype));
   } else if (ops[op] === "addrinfo") {
@@ -163,7 +168,10 @@ function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) 
   if (errorFd === undefined) throw new Error(`request with op ${op} came without a descriptor for its status`);
   writeSync(errorFd, status);
   closeSync(errorFd);
-  if (replies.length) writeSync(conn, Buffer.concat(replies));
+  for (const { after, bytes } of replies) {
+    if (after === undefined) writeSync(conn, bytes);
+    else held.push({ conn, after, bytes });
+  }
 }
 
 const listener = listenOn(socketPath);

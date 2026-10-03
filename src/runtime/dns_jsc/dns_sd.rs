@@ -23,9 +23,7 @@ const TYPE_AAAA: u16 = 28;
 const CLASS_IN: u16 = 1;
 
 pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
-pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
 pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
-const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
 
 type QueryRecordReply = unsafe extern "C" fn(
     sd_ref: DNSServiceRef,
@@ -198,13 +196,11 @@ fn address_from_record(
 pub(crate) struct QueryState {
     sd_refs: FamilyRefs,
     pub(crate) results: bun_dns::ResultList,
-    /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
-    pub(crate) sd_error: DNSServiceErrorType,
     /// A family timed out: an unsuppressed reissue would only wait out the timeout again.
     saw_timeout: bool,
     /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
     awaiting_more: bool,
-    /// Protocol bits with no reply yet; any family-tagged callback clears its bit.
+    /// Protocol bits with no reply yet; an address record or any error for a family's question clears its bit.
     pub(crate) pending_proto: DNSServiceProtocol,
     stragglers: Stragglers,
     attempt: Attempt,
@@ -217,7 +213,6 @@ impl QueryState {
         Self {
             sd_refs: [ptr::null_mut(); 2],
             results: Default::default(),
-            sd_error: 0,
             saw_timeout: false,
             awaiting_more: false,
             pending_proto: protocol,
@@ -246,15 +241,13 @@ impl QueryState {
 
     /// A suppressed query that returned nothing at all gets one unsuppressed retry.
     fn should_retry_unsuppressed(&self) -> bool {
-        self.attempt == Attempt::Suppressed
-            && self.results.is_empty()
-            && self.sd_error == 0
-            && !self.saw_timeout
+        self.attempt == Attempt::Suppressed && self.results.is_empty() && !self.saw_timeout
     }
 
-    /// Absorb one callback.
+    /// Absorb one callback for the question `sd_ref`.
     fn record_reply(
         &mut self,
+        sd_ref: DNSServiceRef,
         flags: DNSServiceFlags,
         interface_index: u32,
         error_code: DNSServiceErrorType,
@@ -263,12 +256,14 @@ impl QueryState {
         ttl: u32,
     ) {
         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
-        // An A/AAAA reply (negatives are typed too) retires its family's bit; a CNAME on the way there retires nothing.
-        self.pending_proto &= !match rrtype {
-            TYPE_A => PROTOCOL_IPV4,
-            TYPE_AAAA => PROTOCOL_IPV6,
-            _ => 0,
-        };
+        // As in libinfo, any error ends only its own family. The daemon's refusals carry no rrtype, so `sd_ref` names the family.
+        if error_code != ERR_NO_ERROR || matches!(rrtype, TYPE_A | TYPE_AAAA) {
+            self.pending_proto &= !if sd_ref == self.sd_refs[0] {
+                PROTOCOL_IPV4
+            } else {
+                PROTOCOL_IPV6
+            };
+        }
         match error_code {
             ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
                 if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
@@ -278,9 +273,7 @@ impl QueryState {
                     });
                 }
             }
-            ERR_NO_ERROR | ERR_NO_SUCH_RECORD => {}
             ERR_TIMEOUT => self.saw_timeout = true,
-            _ if self.sd_error == 0 => self.sd_error = error_code,
             _ => {}
         }
         self.stragglers = match (self.only_stragglers_left(), self.stragglers) {
@@ -297,9 +290,7 @@ impl QueryState {
     }
 
     pub(crate) fn is_ready(&self) -> bool {
-        self.sd_error != 0
-            || self.stragglers == Stragglers::GaveUp
-            || (self.pending_proto == 0 && !self.awaiting_more)
+        self.stragglers == Stragglers::GaveUp || (self.pending_proto == 0 && !self.awaiting_more)
     }
 
     /// Deadline for giving up on stragglers (a silent second family, or a dangling `MoreComing`).
@@ -342,6 +333,13 @@ impl Inflight {
         }
     }
 
+    fn complete(self) {
+        match self {
+            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
+            Inflight::Internal(r) => internal::dns_sd_complete(r),
+        }
+    }
+
     /// SAFETY: the request behind `self` is live (pinned in `inflight`);
     /// the `&mut` derives from the stored raw pointer, not from a borrow.
     unsafe fn query<'a>(self) -> &'a mut QueryState {
@@ -357,7 +355,7 @@ impl Inflight {
 
 /// Records a reply; `on_readable` completes. SAFETY: `context` is a live request of the `INTERNAL` kind; `rdata` spans `rdlen` bytes.
 unsafe extern "C" fn on_reply<const INTERNAL: bool>(
-    _sd_ref: DNSServiceRef,
+    sd_ref: DNSServiceRef,
     flags: DNSServiceFlags,
     interface_index: u32,
     error_code: DNSServiceErrorType,
@@ -378,7 +376,16 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
     // SAFETY: caller contract; the slice is only read before this callback returns.
     let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
     // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
-    unsafe { owner.query() }.record_reply(flags, interface_index, error_code, rrtype, rdata, ttl);
+    let query = unsafe { owner.query() };
+    query.record_reply(
+        sd_ref,
+        flags,
+        interface_index,
+        error_code,
+        rrtype,
+        rdata,
+        ttl,
+    );
 }
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
@@ -592,7 +599,7 @@ impl SharedConnection {
             let ready = core::mem::take(&mut this.inflight);
             let detached = SHARED.replace(ptr::null_mut());
             for inf in ready {
-                Self::finish(inf, Some(rc));
+                Self::fail(inf);
             }
             // SAFETY: `detached` was just removed from SHARED and drained.
             unsafe { Self::destroy(detached) };
@@ -601,7 +608,7 @@ impl SharedConnection {
         let ready = this.take_ready(|q| q.is_ready());
         this.arm_early_out();
         for inf in ready {
-            Self::finish(inf, None);
+            Self::finish(inf);
         }
     }
 
@@ -685,7 +692,7 @@ impl SharedConnection {
             ready
         };
         for inf in ready {
-            Self::finish(inf, None);
+            Self::finish(inf);
         }
     }
 
@@ -711,21 +718,23 @@ impl SharedConnection {
         drop(conn);
     }
 
-    /// `force_err` drops partial results so teardown rejects instead of resolving.
-    fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
+    fn finish(inf: Inflight) {
         // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
         q.deallocate_refs();
-        if let Some(e) = force_err {
-            q.results.clear();
-            q.sd_error = e;
-        } else if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
+        if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
             return;
         }
-        match inf {
-            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
-            Inflight::Internal(r) => internal::dns_sd_complete(r),
-        }
+        inf.complete();
+    }
+
+    /// The connection is going away: drops partial results so the request rejects instead of resolving.
+    fn fail(inf: Inflight) {
+        // SAFETY: `inf` is a live heap request just removed from `inflight`.
+        let q = unsafe { inf.query() };
+        q.deallocate_refs();
+        q.results.clear();
+        inf.complete();
     }
 
     /// Reissue `inf`'s query without SuppressUnusable; `false` if it couldn't be reissued.
@@ -773,7 +782,7 @@ impl SharedConnection {
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
-                Inflight::Jsc(_) => Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION)),
+                Inflight::Jsc(_) => Self::fail(inf),
             }
         }
         // SAFETY: `this` is detached and drained.

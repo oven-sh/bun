@@ -388,8 +388,7 @@ fn native_binlink_target(
         return None;
     }
     let replacement_pkg_id = PostinstallOptimizer::get_native_binlink_replacement_package_id(
-        pkgs.items_resolutions()[package_id as usize]
-            .get(lockfile.buffers.resolutions.as_slice()),
+        pkgs.items_resolutions()[package_id as usize].get(lockfile.buffers.resolutions.as_slice()),
         pkgs.items_meta(),
         manager.options.cpu,
         manager.options.os,

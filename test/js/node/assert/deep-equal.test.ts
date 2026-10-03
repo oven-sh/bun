@@ -70,6 +70,12 @@ function withOwnConstructor(prototype: object | null, constructor: unknown) {
   return Object.create(prototype, { constructor: { value: constructor } });
 }
 
+function withReportedLength(array: unknown[], length: unknown) {
+  return new Proxy(array, {
+    get: (target, key, receiver) => (key === "length" ? length : Reflect.get(target, key, receiver)),
+  });
+}
+
 function seventyProperties<T extends Record<string, unknown>>(object: T): T {
   for (let i = 0; i < 70; i++) (object as Record<string, unknown>)["k" + i] = i;
   return object;
@@ -405,6 +411,45 @@ const cases: Case[] = [
     strict: true,
     loose: true,
     looseBug: "reports not equal",
+  },
+  {
+    name: "a Proxy of [1, 2, 3] and [1, 2, 3]",
+    a: () => new Proxy([1, 2, 3], {}),
+    b: () => [1, 2, 3],
+    strict: true,
+    loose: true,
+  },
+  // node reads an array's length with [[Get]], so a Proxy's get trap decides it.
+  {
+    name: "a Proxy of [1, 2, 3] whose get trap reports length 7 and [1, 2, 3]",
+    a: () => withReportedLength([1, 2, 3], 7),
+    b: () => [1, 2, 3],
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "[1, 2, 3] and a Proxy of [1, 2, 3] whose get trap reports length 7",
+    a: () => [1, 2, 3],
+    b: () => withReportedLength([1, 2, 3], 7),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a Proxy of [1, 2, 3] whose get trap reports length '3' and [1, 2, 3]",
+    a: () => withReportedLength([1, 2, 3], "3"),
+    b: () => [1, 2, 3],
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "two Proxies of [1, 2, 3] whose get traps report length 7",
+    a: () => withReportedLength([1, 2, 3], 7),
+    b: () => withReportedLength([1, 2, 3], 7),
+    strict: true,
+    loose: true,
   },
   {
     name: "own constructor: Uint8Array on objects with different prototypes",

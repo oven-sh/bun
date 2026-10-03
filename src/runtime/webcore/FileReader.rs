@@ -397,19 +397,27 @@ impl FileReader {
                 self.waiting_for_on_reader_done.set(true);
             }
             self.reader().set_limit(self.max_size);
-            let start_result = if let Some(offset) = self.start_offset {
+            // `open_file_blob` presumes that whatever it opened with `O_NONBLOCK` is pollable.
+            #[cfg(unix)]
+            let watched = pollable && self.reader().start_presumed_pollable(self.fd.get());
+            #[cfg(windows)]
+            let watched = true;
+            let start_result = if cfg!(unix) && pollable {
+                Ok(())
+            } else if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
+            // No callback comes for an fd that is not watched.
+            if need_io_ref && (start_result.is_err() || !watched) {
+                self.waiting_for_on_reader_done.set(false);
+                let parent = self.parent();
+                // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
+                let _ = unsafe { Source::decrement_count(parent) };
+            }
             if let Err(e) = start_result {
-                if need_io_ref {
-                    self.waiting_for_on_reader_done.set(false);
-                    let parent = self.parent();
-                    // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
-                    let _ = unsafe { Source::decrement_count(parent) };
-                }
                 return streams::Start::Err(e);
             }
         } else {

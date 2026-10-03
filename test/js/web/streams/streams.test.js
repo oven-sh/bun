@@ -2664,6 +2664,48 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   });
 });
 
+// The event loop has no readiness to report for these devices and refuses to
+// watch them (epoll with EPERM, kqueue with EINVAL). Their reads do not wait.
+describe.skipIf(isWindows)("Bun.file().stream() over a device the event loop cannot watch", () => {
+  it("/dev/null ends without a chunk", async () => {
+    const chunks = [];
+    for await (const chunk of Bun.file("/dev/null").stream()) chunks.push(chunk);
+    expect({
+      chunks,
+      stream: await Bun.readableStreamToText(Bun.file("/dev/null").stream()),
+      body: await Bun.readableStreamToText(new Response(Bun.file("/dev/null")).body),
+    }).toEqual({ chunks: [], stream: "", body: "" });
+  });
+
+  it.each([8, 300_000])("/dev/zero yields the %d bytes of a slice", async length => {
+    const bytes = await Bun.readableStreamToBytes(
+      Bun.file("/dev/zero")
+        .slice(3, 3 + length)
+        .stream(),
+    );
+    expect(bytes).toEqual(new Uint8Array(length));
+  });
+
+  it("the process exits with a stream left unfinished", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        console.log(JSON.stringify(await Bun.readableStreamToText(Bun.file("/dev/null").stream())));
+        const { value } = await Bun.file("/dev/zero").stream().getReader().read();
+        console.log(value.length > 0);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('""\ntrue\n');
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

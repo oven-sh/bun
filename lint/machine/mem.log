@@ -1,9 +1,3 @@
-10-02_15:41:51 anon=2993MB pids=77 load=505.13 top=ld.lld:3214MB
-10-02_15:42:24 anon=3109MB pids=79 load=476.23 top=ld.lld:3298MB
-10-02_15:42:55 anon=3276MB pids=74 load=456.96 top=ld.lld:3506MB
-10-02_15:43:26 anon=62MB pids=40 load=414.39 top=llvm-objdump:80MB
-10-02_15:43:58 anon=547MB pids=47 load=421.93 top=rustc:635MB
-10-02_15:44:29 anon=1112MB pids=73 load=391.96 top=ld.lld:1570MB
 10-02_15:45:01 anon=3447MB pids=82 load=405.36 top=ld.lld:3908MB
 10-02_15:45:39 anon=4133MB pids=79 load=529.30 top=ld.lld:4634MB
 10-02_15:46:17 anon=4348MB pids=83 load=625.39 top=ld.lld:4899MB
@@ -398,3 +392,10 @@
 10-03_03:55:34 anon=3MB pids=27 load=1412.88 top=postgres:12MB
 10-03_03:56:27 anon=5MB pids=40 load=1539.25 top=postgres:12MB
 10-03_03:58:24 anon=3MB pids=29 load=1718.84 top=postgres:12MB
+10-03_04:02:02 anon=36MB pids=38 load=2409.72 top=git:83MB
+10-03_04:03:39 anon=3MB pids=29 load=1792.11 top=postgres:12MB
+10-03_04:04:14 anon=3MB pids=27 load=1472.42 top=postgres:12MB
+10-03_04:04:45 anon=3MB pids=27 load=1178.17 top=postgres:12MB
+10-03_04:05:19 anon=3MB pids=27 load=1001.35 top=postgres:12MB
+10-03_04:05:56 anon=3MB pids=27 load=872.70 top=postgres:12MB
+10-03_04:07:32 anon=4MB pids=31 load=1044.19 top=postgres:12MB

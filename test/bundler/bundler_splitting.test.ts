@@ -841,6 +841,20 @@ describe("bundler", () => {
       {},
     ],
     [
+      "HasImportCallWithOptionsThatRunCode",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("./settings.js", globalThis.opts);`,
+      },
+      {},
+    ],
+    [
+      "HasImportCallWithComputedSpecifierAndOptionsThatRunCode",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = lang => import("./locales/" + lang + ".js", globalThis.opts);`,
+      },
+      {},
+    ],
+    [
       "HasRequireWithComputedSpecifier",
       { "/setup.js": `export {}; globalThis.APP = { name: "app" }; globalThis.load = lang => require("./" + lang);` },
       {},

@@ -101,8 +101,8 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
-    /// An `import()`, `require()` or `require.resolve()` whose argument is no string literal. It resolves at runtime, from the file that holds it.
-    pub has_computed_specifier: bool,
+    /// An `import()`, `require()` or `require.resolve()` that is left to the runtime, which resolves it from the file that holds it.
+    pub has_runtime_specifier: bool,
     pub import_meta_ref: Ref,
 }
 
@@ -148,7 +148,7 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
-            has_computed_specifier: false,
+            has_runtime_specifier: false,
             import_meta_ref: Ref::NONE,
         }
     }

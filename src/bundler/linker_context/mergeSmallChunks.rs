@@ -826,7 +826,7 @@ fn entry_files_ahead_of_parent(
         let mut can_move = flags[file as usize].wrap == WrapKind::None
             && !ast_flags[file as usize].intersects(
                 crate::bundled_ast::Flags::HAS_IMPORT_META
-                    | crate::bundled_ast::Flags::HAS_COMPUTED_SPECIFIER,
+                    | crate::bundled_ast::Flags::HAS_RUNTIME_SPECIFIER,
             )
             && !module_scopes[file as usize].contains_direct_eval
             && asset_keys[file as usize].is_empty()

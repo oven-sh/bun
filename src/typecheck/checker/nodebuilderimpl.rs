@@ -1,10 +1,10 @@
 // checker/nodebuilderimpl.go: how types, symbols and signatures become synthetic nodes. The receiver `b` is the unit handle plus the checker, whose field `node_builder.impl_` holds the state.
 use crate::ast::{
     Ast, CheckFlags, INTERNAL_SYMBOL_NAME_DEFAULT, INTERNAL_SYMBOL_NAME_EXPORT_EQUALS,
-    INTERNAL_SYMBOL_NAME_PREFIX, Kind, ModifierFlags, ModifierListId, NodeFlags, NodeId,
-    NodeListId, SymbolFlags, SymbolId, TokenFlags, can_have_modifiers,
-    create_modifiers_from_modifier_flags, escape_internal_symbol_name, find_ancestor,
-    get_declaration_of_kind, get_first_identifier, get_name_of_declaration,
+    INTERNAL_SYMBOL_NAME_PREFIX, Kind, ModifierFlags, ModifierListId, NodeFactory as _, NodeFlags,
+    NodeId, NodeListId, NodeSink as _, NodeUpdater as _, SymbolFlags, SymbolId, TokenFlags,
+    can_have_modifiers, create_modifiers_from_modifier_flags, escape_internal_symbol_name,
+    find_ancestor, get_declaration_of_kind, get_first_identifier, get_name_of_declaration,
     get_source_file_of_module, get_source_file_of_node, get_symbol_id, has_inferred_type,
     is_accessor, is_ambient_module, is_ambient_module_symbol_name, is_arrow_function,
     is_binary_expression, is_binding_element, is_class_declaration, is_class_expression,
@@ -37,9 +37,10 @@ use crate::checker::{
 };
 use crate::collections::{CopyOnWriteMap, CopyOnWriteSet, Set};
 use crate::core::{
-    LanguageVariant, ModuleKind, ModuleResolutionKind, RESOLUTION_MODE_ESM, RESOLUTION_MODE_NONE,
-    ResolutionMode, new_text_range,
+    LanguageVariant, List, ModuleKind, ModuleResolutionKind, RESOLUTION_MODE_ESM,
+    RESOLUTION_MODE_NONE, ResolutionMode, new_text_range,
 };
+use crate::diagnostics::MessageId;
 use crate::modulespecifiers::{
     ImportModuleSpecifierEndingPreference, ImportModuleSpecifierPreference, ModuleSpecifierOptions,
     UserPreferences, count_path_components, get_module_specifiers,
@@ -211,7 +212,7 @@ impl NodeBuilderImpl {
 
     // `b.f`: the node factory of the emit context, whose hooks mark and link the nodes it makes.
     #[inline]
-    pub(crate) fn f<'c>(self, c: &'c mut Checker<'_>) -> NodeFactory<'c> {
+    pub(crate) fn f<'a, 'c>(self, c: &'c mut Checker<'a>) -> NodeFactory<'a, 'c> {
         new_node_factory(c.ast, &mut c.node_builder.impl_.e)
     }
 
@@ -438,7 +439,6 @@ impl NodeBuilderImpl {
             return self.f(c).new_type_reference_node(name, NodeListId::NIL);
         }
         let any = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
-        let a = c.ast;
         c.node_builder.impl_.e.add_synthetic_leading_comment(
             any,
             Kind::MultiLineCommentTrivia,
@@ -474,7 +474,6 @@ impl NodeBuilderImpl {
     fn new_elision_node(self, c: &mut Checker<'_>, comment: &[u8], text: &[u8]) -> NodeId {
         if self.ctx(c).flags.intersects(Flags::NO_TRUNCATION) {
             let any = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
-            let a = c.ast;
             c.node_builder.impl_.e.add_synthetic_leading_comment(
                 any,
                 Kind::MultiLineCommentTrivia,
@@ -1148,8 +1147,9 @@ impl NodeBuilderImpl {
                     // must collect all results and sort them - exports are randomly iterated
                     let mut results: HashMap<SymbolId, &[u8]> = HashMap::default();
                     let mut result_symbols: Vec<SymbolId> = Vec::new();
-                    for entry in 0..a.table_len(exports) {
-                        let (name, ex) = a.table_entry_at(exports, entry);
+                    let mut position = 0;
+                    while let Some((name, ex)) = a.table_entry_at(exports, position) {
+                        position += 1;
                         if !c.get_symbol_if_same_reference(ex, symbol).is_nil()
                             && !is_late_bound_name(name)
                             && name != INTERNAL_SYMBOL_NAME_EXPORT_EQUALS

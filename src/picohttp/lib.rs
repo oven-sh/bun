@@ -4,6 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
+use bun_core::fmt::shell_word;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -203,28 +204,13 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let header = self.header;
         if header.value_len > 0 {
-            let parts: [&[u8]; 3] = [header.name(), b": ", header.value()];
-            write!(f, "-H {}", CurlArg(&parts))
+            write!(
+                f,
+                "-H {}",
+                shell_word(&[header.name(), b": ", header.value()])
+            )
         } else {
-            write!(f, "-H {}", CurlArg(&[header.name()]))
-        }
-    }
-}
-
-/// One argument of the printed `curl` command: `parts` joined and quoted.
-struct CurlArg<'a>(&'a [&'a [u8]]);
-
-impl fmt::Display for CurlArg<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if cfg!(windows) {
-            // cmd.exe and PowerShell have no quoting rule in common, so Windows keeps the plain form.
-            f.write_str("\"")?;
-            for part in self.0 {
-                write!(f, "{}", BStr::new(part))?;
-            }
-            f.write_str("\"")
-        } else {
-            write!(f, "{}", bun_core::fmt::quote_posix_shell(self.0))
+            write!(f, "-H {}", shell_word(&[header.name()]))
         }
     }
 }
@@ -344,8 +330,9 @@ pub struct RequestCurlFormatter<'a> {
 }
 
 impl<'a> RequestCurlFormatter<'a> {
-    fn is_printable_body(content_type: &[u8]) -> bool {
-        if content_type.is_empty() {
+    fn is_printable_body(content_type: &[u8], body: &[u8]) -> bool {
+        // No argument of a command can hold a NUL.
+        if content_type.is_empty() || body.is_empty() || strings::contains_char(body, 0) {
             return false;
         }
 
@@ -360,7 +347,7 @@ impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let request = self.request;
         let url = [request.path];
-        let url = CurlArg(&url);
+        let url = shell_word(&url);
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
@@ -379,11 +366,7 @@ impl fmt::Display for RequestCurlFormatter<'_> {
         }
 
         if request.method != b"GET" {
-            if cfg!(windows) || request.method.iter().all(u8::is_ascii_alphanumeric) {
-                write!(f, " -X {}", BStr::new(request.method))?;
-            } else {
-                write!(f, " -X {}", CurlArg(&[request.method]))?;
-            }
+            write!(f, " -X {}", shell_word(&[request.method]))?;
         }
 
         if self.ignore_insecure {
@@ -407,17 +390,8 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             }
         }
 
-        if !self.body.is_empty() && Self::is_printable_body(content_type) {
-            f.write_str(" --data-raw ")?;
-            if cfg!(windows) {
-                bun_core::js_printer::write_json_string(
-                    self.body,
-                    f,
-                    bun_core::strings::Encoding::Utf8,
-                )?;
-            } else {
-                write!(f, "{}", CurlArg(&[self.body]))?;
-            }
+        if Self::is_printable_body(content_type, self.body) {
+            write!(f, " --data-raw {}", shell_word(&[self.body]))?;
         }
 
         Ok(())

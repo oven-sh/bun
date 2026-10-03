@@ -3337,33 +3337,6 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// quotePosixShell
-// ───────────────────────────────────────────────────────────────────────────
-
-/// One word of a POSIX shell command: `parts` joined inside `'...'`. The shell expands nothing in it.
-pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
-
-pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
-    QuotePosixShell(parts)
-}
-
-impl Display for QuotePosixShell<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("'")?;
-        for part in self.0 {
-            let mut rest = *part;
-            // `'...'` has no escape for a quote: close it, add `\'`, open it again.
-            while let Some(i) = strings::index_of_char_usize(rest, b'\'') {
-                write!(f, "{}'\\''", bstr::BStr::new(&rest[..i]))?;
-                rest = &rest[i + 1..];
-            }
-            write!(f, "{}", bstr::BStr::new(rest))?;
-        }
-        f.write_str("'")
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -3388,6 +3361,184 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
         remain = &remain[i + 1..];
     }
     write_bytes(writer, remain)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// shellWord
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One argument of a command line that bun prints for a person to paste: the
+/// joined `parts`.
+///
+/// A POSIX shell (sh, bash, zsh) passes exactly these bytes. fish and
+/// PowerShell read quotes differently, so every form below also stays data
+/// there: the argument can arrive changed, it cannot run. cmd.exe has no
+/// single quotes and is not covered.
+///
+/// - letters, digits and `-` only: as is.
+/// - a control character or a byte that is not UTF-8: `$'...'`.
+/// - else `'...'`, with each `'` in a `"..."` of its own.
+pub struct ShellWord<'a>(pub(crate) &'a [&'a [u8]]);
+
+pub fn shell_word<'a>(parts: &'a [&'a [u8]]) -> ShellWord<'a> {
+    ShellWord(parts)
+}
+
+impl Display for ShellWord<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut empty = true;
+        let mut bare = true;
+        let mut ansi_c = false;
+        for part in self.0 {
+            empty &= part.is_empty();
+            for chunk in part.utf8_chunks() {
+                ansi_c |= !chunk.invalid().is_empty();
+                for c in chunk.valid().chars() {
+                    bare &= c.is_ascii_alphanumeric() || c == '-';
+                    // C0, DEL and C1.
+                    ansi_c |= matches!(c, '\0'..='\x1f' | '\x7f'..='\u{9f}');
+                }
+            }
+        }
+
+        if ansi_c {
+            f.write_str("$'")?;
+            self.0
+                .iter()
+                .try_for_each(|part| shell_word_ansi_c(f, part))?;
+            f.write_str("'")
+        } else if empty {
+            f.write_str("''")
+        } else if bare {
+            self.0.iter().try_for_each(|part| shell_word_utf8(f, part))
+        } else {
+            let mut quoted = ShellWordQuoted {
+                f,
+                state: ShellWordIn::Nothing,
+                held_backslash: false,
+            };
+            self.0.iter().try_for_each(|part| quoted.part(part))?;
+            quoted.finish()
+        }
+    }
+}
+
+fn shell_word_utf8(f: &mut Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    f.write_str(core::str::from_utf8(bytes).map_err(|_| fmt::Error)?)
+}
+
+/// The inside of `$'...'`. It is on one line and all ASCII: the terminal gets
+/// no ESC or CR, and in a GBK or Big5 locale no byte can take the backslash of
+/// the escape after it into a two-byte character.
+/// dash and fish do not know `$'...'` and read it as `'...'`, so a `'` is
+/// `\047`, never `\'`, and the rest of the line stays quoted there.
+fn shell_word_ansi_c(f: &mut Formatter<'_>, part: &[u8]) -> fmt::Result {
+    let mut run = 0;
+    for (i, &byte) in part.iter().enumerate() {
+        let escape = match byte {
+            b'\\' => "\\\\",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            b' '..=b'~' if byte != b'\'' => continue,
+            _ => "",
+        };
+        shell_word_utf8(f, &part[run..i])?;
+        if escape.is_empty() {
+            write!(f, "\\{byte:03o}")?;
+        } else {
+            f.write_str(escape)?;
+        }
+        run = i + 1;
+    }
+    shell_word_utf8(f, &part[run..])
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ShellWordIn {
+    Single,
+    Double,
+    Nothing,
+}
+
+/// `'...'` runs, for UTF-8 without a control character.
+struct ShellWordQuoted<'a, 'f> {
+    f: &'a mut Formatter<'f>,
+    state: ShellWordIn,
+    /// fish reads `\\` and `\'` inside `'...'` as escapes. A backslash in front
+    /// of a backslash or of a quote goes outside the quotes, where `\\` is one
+    /// backslash in every shell. It is held until the byte after it is known.
+    held_backslash: bool,
+}
+
+impl ShellWordQuoted<'_, '_> {
+    fn enter(&mut self, next: ShellWordIn) -> fmt::Result {
+        let delimiter = |state| match state {
+            ShellWordIn::Single => "'",
+            ShellWordIn::Double => "\"",
+            ShellWordIn::Nothing => "",
+        };
+        if self.state != next {
+            self.f.write_str(delimiter(self.state))?;
+            self.f.write_str(delimiter(next))?;
+            self.state = next;
+        }
+        Ok(())
+    }
+
+    fn settle_backslash(&mut self, stays_quoted: bool) -> fmt::Result {
+        if !core::mem::take(&mut self.held_backslash) {
+            Ok(())
+        } else if stays_quoted {
+            self.enter(ShellWordIn::Single)?;
+            self.f.write_str("\\")
+        } else {
+            self.enter(ShellWordIn::Nothing)?;
+            self.f.write_str("\\\\")
+        }
+    }
+
+    fn part(&mut self, mut rest: &[u8]) -> fmt::Result {
+        // A backslash, a `'`, or U+2018..=U+201B: PowerShell ends a `'...'` string at those too.
+        fn special(rest: &[u8]) -> Option<(usize, usize)> {
+            let mut from = 0;
+            while let Some(at) = strings::index_of_any_pos(rest, b"\\'\xe2", from) {
+                match &rest[at..] {
+                    [b'\\' | b'\'', ..] => return Some((at, 1)),
+                    [0xe2, 0x80, 0x98..=0x9b, ..] => return Some((at, 3)),
+                    _ => from = at + 1,
+                }
+            }
+            None
+        }
+
+        while let Some((at, len)) = special(rest) {
+            if at > 0 {
+                self.settle_backslash(true)?;
+                self.enter(ShellWordIn::Single)?;
+                shell_word_utf8(self.f, &rest[..at])?;
+            }
+            self.settle_backslash(false)?;
+            if rest[at] == b'\\' {
+                self.held_backslash = true;
+            } else {
+                self.enter(ShellWordIn::Double)?;
+                shell_word_utf8(self.f, &rest[at..at + len])?;
+            }
+            rest = &rest[at + len..];
+        }
+        if !rest.is_empty() {
+            self.settle_backslash(true)?;
+            self.enter(ShellWordIn::Single)?;
+            shell_word_utf8(self.f, rest)?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> fmt::Result {
+        self.settle_backslash(false)?;
+        self.enter(ShellWordIn::Nothing)
+    }
 }
 
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs

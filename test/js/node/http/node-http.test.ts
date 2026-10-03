@@ -1514,6 +1514,28 @@ describe("node:http", () => {
     const err = await promise;
     expect(err.code).toBe("EADDRINUSE");
   });
+
+  test("listen errors include Node-compatible address details", async () => {
+    const occupant = createServer();
+    occupant.listen(0, "127.0.0.1");
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server = createServer();
+    server.listen(port, "127.0.0.1");
+    const [error] = (await once(server, "error")) as [NodeJS.ErrnoException];
+
+    expect(error).toMatchObject({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      address: "127.0.0.1",
+      port,
+    });
+    expect(error.message).toBe(`listen EADDRINUSE: address already in use 127.0.0.1:${port}`);
+
+    occupant.close();
+    await once(occupant, "close");
+  });
 });
 
 describe("node https server", async () => {

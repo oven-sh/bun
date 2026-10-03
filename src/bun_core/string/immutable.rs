@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, MimallocArena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -1354,6 +1354,40 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// `(bytes, None)` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD, and the offset of the first one.
+pub fn replace_invalid_utf8<'a>(
+    bytes: &'a [u8],
+    arena: &'a MimallocArena,
+) -> (&'a [u8], Option<usize>) {
+    if is_valid_utf8(bytes) {
+        return (bytes, None);
+    }
+    const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+    let mut first_invalid = None;
+    let mut out_len = 0;
+    for chunk in bytes.utf8_chunks() {
+        out_len += chunk.valid().len();
+        if !chunk.invalid().is_empty() {
+            first_invalid.get_or_insert(out_len);
+            out_len += REPLACEMENT.len();
+        }
+    }
+    // Not `ArenaVec<u8>`: an instance of its shared generics in this crate replaces the one `bun_ast` inlines.
+    let out = arena.alloc_slice_fill_copy(out_len, 0u8);
+    let mut at = 0;
+    for chunk in bytes.utf8_chunks() {
+        let valid = chunk.valid().as_bytes();
+        out[at..at + valid.len()].copy_from_slice(valid);
+        at += valid.len();
+        if !chunk.invalid().is_empty() {
+            out[at..at + REPLACEMENT.len()].copy_from_slice(REPLACEMENT);
+            at += REPLACEMENT.len();
+        }
+    }
+    debug_assert_eq!(at, out_len);
+    (out, first_invalid)
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

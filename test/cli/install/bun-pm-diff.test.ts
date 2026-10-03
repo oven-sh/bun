@@ -1139,6 +1139,17 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("CSS that is not valid UTF-8 is diffed as text, so a change to one ill-formed byte still shows", async () => {
+    // The CSS parser only takes valid UTF-8. A lossy decode maps 0xE9 and 0xE8 to the same U+FFFD, so the two
+    // re-prints would be equal and the change would read as "formatting only".
+    const sheet = (byte: number) =>
+      Buffer.concat([Buffer.from('.a::before { content: "caf'), Buffer.from([byte]), Buffer.from('"; }\n')]);
+    const { text, exitCode } = await pretty({ "a/latin1.css": sheet(0xe9), "b/latin1.css": sheet(0xe8) });
+    expect(text).toMatch(/\nlatin1\.css ─+ not parsed \+1 -1\n/);
+    expect(text).not.toContain("formatting only");
+    expect(exitCode).toBe(0);
+  });
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",

@@ -758,9 +758,7 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
-/// Whether a plain dependency follows the `npm:` alias that the install knows under its name.
-/// A direct dependency of the root package follows only an alias that the root package.json
-/// declares. The alias of any other manifest, or of a lockfile row, does not re-target it.
+/// A direct dependency of the root package follows only an `npm:` alias that the root package.json declares.
 fn follows_npm_alias(
     lockfile: &Lockfile::Lockfile,
     id: DependencyID,

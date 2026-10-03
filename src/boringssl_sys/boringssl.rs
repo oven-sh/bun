@@ -977,9 +977,8 @@ unsafe extern "C" {
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
 
     // ── Custom BIOs ──────────────────────────────────────────────────────
-    // A method made by `BIO_meth_new` is opaque: set its hooks with
-    // `BIO_meth_set_*`, never through the fields of `BIO_METHOD` above.
     pub safe fn BIO_get_new_index() -> c_int;
+    /// Opaque: set its hooks with `BIO_meth_set_*`, never through the `BIO_METHOD` fields above.
     pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
     pub fn BIO_meth_set_create(
         method: *mut BIO_METHOD,

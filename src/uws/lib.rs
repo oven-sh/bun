@@ -194,47 +194,31 @@ pub mod ssl_wrapper {
     // the network. write passes the encrypted data that we want to send to
     // the network. on_close is triggered when we want the network connection
     // to be closed (remember to flush before closing).
-    //
-    // Notes:
-    //   One BIO is both ends of the SSL. Its two queues are `Ciphertext`.
-    //   receive_data() queues encrypted data, SSL_read() takes it from there.
-    //   SSL_write() queues encrypted data, handle_writing() gives it to `write`.
 
-    /// 64kb nice buffer size for SSL reads, should be enough for most cases.
-    /// We loop until we have no more data to read.
+    /// 64kb buffer for SSL reads. We loop until there is no more data to read.
     const BUFFER_SIZE: usize = 65536;
 
     /// Stack scratch for `SSL_read`.
     type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
 
-    /// A queue that empties with more capacity than this frees its buffer, so
-    /// one large write or read is not held for the life of the connection.
+    /// A queue that empties with more capacity than this frees its buffer.
     const QUEUE_RETAIN_LIMIT: usize = 1024 * 1024;
 
     /// `SSL3_RT_MAX_PLAIN_LENGTH`: the most plaintext one TLS record carries.
     const MAX_RECORD_PLAINTEXT: usize = 16384;
-    /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`: the most
-    /// sealing adds to the plaintext of one record.
+    /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`: the most one record adds.
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
 
-    /// The ciphertext on both sides of the `SSL`: the state of the one BIO that
-    /// is its read BIO and its write BIO. A `BIO_s_mem` moves every unread byte
-    /// to the front after each read, which is quadratic in what is queued. Here
-    /// what comes in is read from the front of a ring, and what goes out is
-    /// taken whole.
-    ///
-    /// No borrow of a queue is live across an `SSL_*` call or a handler:
-    /// BoringSSL calls [`bio_read`] and [`bio_write`] from inside the first, and
-    /// a handler can call back into the wrapper.
+    /// State of the wrapper's BIO. A `BIO_s_mem` moves all unread bytes per read, these do not.
     #[derive(Default)]
     struct Ciphertext {
-        /// Sealed by BoringSSL, not yet given to `Handlers::write`. One buffer,
-        /// because the handler gets it as one slice.
+        /// Sealed by BoringSSL, not yet given to `Handlers::write`, which gets it as one slice.
         outgoing: RefCell<Vec<u8>>,
         /// From the peer, not yet read by BoringSSL.
         incoming: RefCell<VecDeque<u8>>,
     }
 
+    // No borrow of a queue is held across an `SSL_*` call or a handler: both can re-enter.
     impl Ciphertext {
         fn outgoing_len(&self) -> usize {
             self.outgoing.borrow().len()
@@ -244,8 +228,7 @@ pub mod ssl_wrapper {
             self.incoming.borrow().len()
         }
 
-        /// Room for every record of a `plaintext_len` write, so that the queue
-        /// grows once for a large write and not once per doubling.
+        /// Room for every record of one write, so that the queue grows once.
         fn reserve_outgoing(&self, plaintext_len: usize) {
             let records = plaintext_len / MAX_RECORD_PLAINTEXT + 1;
             self.outgoing
@@ -253,14 +236,12 @@ pub mod ssl_wrapper {
                 .reserve(plaintext_len + records * MAX_RECORD_OVERHEAD);
         }
 
-        /// Detaches what is queued to send. The caller owns those bytes, so a
-        /// write made while it hands them out starts a new queue behind them.
+        /// The caller owns the bytes, so a write made while it hands them out queues behind them.
         fn take_outgoing(&self) -> Vec<u8> {
             core::mem::take(&mut *self.outgoing.borrow_mut())
         }
 
-        /// Gives a buffer from [`Self::take_outgoing`] back for the next write,
-        /// unless a newer queue exists or the buffer is over the retain limit.
+        /// Keeps `buffer` for the next write, unless a newer queue exists or it is over the limit.
         fn recycle_outgoing(&self, mut buffer: Vec<u8>) {
             if buffer.capacity() > QUEUE_RETAIN_LIMIT {
                 return;
@@ -321,12 +302,10 @@ pub mod ssl_wrapper {
             &*boring_sys::BIO_get_data(bio).cast::<Ciphertext>()
         };
         let mut incoming = ciphertext.incoming.borrow_mut();
-        // The front run of the ring. BoringSSL reads again for what lies past
-        // the point where the ring wraps.
+        // Only the front run of the ring: BoringSSL reads again for what lies past the wrap.
         let (front, _) = incoming.as_slices();
         if front.is_empty() {
-            // Nothing yet, which is not the end of the stream: the caller gets
-            // `SSL_ERROR_WANT_READ`.
+            // Not the end of the stream: the caller gets `SSL_ERROR_WANT_READ`.
             // SAFETY: `bio` is live.
             unsafe { boring_sys::BIO_set_retry_read(bio) };
             return -1;
@@ -342,8 +321,7 @@ pub mod ssl_wrapper {
         c_int::try_from(count).unwrap_or(len)
     }
 
-    /// `BIO_ctrl` of a wrapper's BIO. BoringSSL flushes the write BIO after each
-    /// flight and fails the write if that reports 0. A queue has nothing to flush.
+    /// BoringSSL flushes the write BIO after each flight and fails the write if this reports 0.
     unsafe extern "C" fn bio_ctrl(
         _: *mut boring_sys::BIO,
         cmd: c_int,
@@ -358,8 +336,7 @@ pub mod ssl_wrapper {
         static INIT: std::sync::Once = std::sync::Once::new();
         static METHOD: AtomicPtr<boring_sys::BIO_METHOD> = AtomicPtr::new(core::ptr::null_mut());
         INIT.call_once(|| {
-            // Its own type: openssl.c tells a socket's `SSL` from a wrapper's by
-            // the type of the write BIO (`us_ssl_is_socket`).
+            // A type of its own: `us_ssl_is_socket` in openssl.c tells a socket's BIO by its type.
             let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
             // SAFETY: the name is a static C string; the hooks match the
             // signatures `bio.h` declares.
@@ -723,7 +700,7 @@ pub mod ssl_wrapper {
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
-            // SAFETY: `ssl` and its BIO are live; the box outlives both, `deinit` frees `ssl` first.
+            // SAFETY: `ssl` and its BIO are live. The box outlives them, `deinit` frees `ssl` first.
             unsafe {
                 boring_sys::BIO_set_data(
                     bio.as_ptr(),
@@ -946,24 +923,20 @@ pub mod ssl_wrapper {
                     return false;
                 }
             }
-            // SSL_shutdown only queues close_notify; nothing else hands it to
-            // the owner (duplex / named pipe), so drain it now or the peer never
-            // sees our shutdown.
+            // SSL_shutdown only queues close_notify: drain it, or the peer never sees our shutdown.
             self.handle_writing();
             ret == 1 // truly closed
         }
 
         /// flush buffered data and returns amount of pending data to write
         pub fn flush(&self) -> usize {
-            // handle_traffic may trigger a close callback which frees ssl. The
-            // queues are freed with it, so this reads 0 then.
+            // handle_traffic may close the wrapper, which frees the queues: this reads 0 then.
             self.handle_traffic();
             self.ciphertext.outgoing_len()
         }
 
         /// Return if we have pending data to be read or write. Covers both
-        /// queues and `SSL_pending` — decrypted bytes of a partially-returned
-        /// record are buffered inside the SSL, invisible to either queue.
+        /// queues and `SSL_pending`: decrypted bytes of a partly returned record stay in the SSL.
         pub fn has_pending_data(&self) -> bool {
             let Some(ssl) = self.ssl.get() else {
                 return false;
@@ -975,8 +948,7 @@ pub mod ssl_wrapper {
                 || self.ciphertext.incoming_len() > 0
         }
 
-        /// Return if ciphertext from the peer is queued, not necessarily will
-        /// return data to read. This dont reflect SSL_pending().
+        /// True if ciphertext from the peer is queued. This does not reflect SSL_pending().
         fn has_pending_read(&self) -> bool {
             self.ciphertext.incoming_len() > 0
         }
@@ -1064,7 +1036,7 @@ pub mod ssl_wrapper {
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
             if let Some(ssl) = self.ssl.take() {
-                // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees its BIO.
+                // SAFETY: self owns ssl, created by SSL_new; SSL_free also frees its BIO.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
             self.ciphertext.free();
@@ -1180,8 +1152,7 @@ pub mod ssl_wrapper {
                 && unsafe { boring_sys::SSL_get_verify_result(ssl.as_ptr()) } != 0
             {
                 boring_sys::ERR_clear_error();
-                // Discard, not only skip the flush below: a re-entered
-                // `handle_traffic` flushes the queue and never gets here.
+                // Discard now: a re-entered `handle_traffic` flushes the queue and never gets here.
                 self.ciphertext.discard_outgoing();
                 // The peer never gets our Finished, so it cannot read a close_notify.
                 self.flags.set_fatal_error(true);
@@ -1392,11 +1363,7 @@ pub mod ssl_wrapper {
             true
         }
 
-        /// Gives the owner all the ciphertext queued to send, in one `write`.
-        ///
-        /// This frame owns the bytes it hands out. A write made from inside the
-        /// handler queues behind them, and the call that made it gives those
-        /// bytes to `write` before this one returns, so the order holds.
+        /// One `write` with everything queued. This frame owns it: a nested write queues behind it.
         fn handle_writing(&self) {
             while self.ssl.get().is_some() {
                 let pending = self.ciphertext.take_outgoing();

@@ -1154,7 +1154,7 @@ test.skipIf(isASAN)("a pooled HTTPS proxy tunnel does not keep the memory of a l
       Bun.gc(true);
       retained = Math.min(retained, process.memoryUsage.rss() - before);
     }
-    console.log(JSON.stringify({ retainedMiB: Math.round(retained / ${MiB}) }));
+    console.log(JSON.stringify({ retainedMiB: retained / ${MiB} }));
   `;
   httpProxyServer.log.length = 0;
   await using proc = Bun.spawn({

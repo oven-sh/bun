@@ -1062,8 +1062,11 @@ describe("large writes and reads of a TLSSocket over a Duplex transport", () => 
 
     const received = receive(client, payload.length);
     let next = 0;
+    let pushedFromData = 0;
     client.on("data", () => {
-      for (let pushed = 0; pushed < 4 && next < pieces.length; pushed++) clientSide.push(pieces[next++]);
+      for (let pushed = 0; pushed < 4 && next < pieces.length; pushed++, pushedFromData++) {
+        clientSide.push(pieces[next++]);
+      }
     });
     clientSide.push(wire.subarray(0, cut));
     while (next < pieces.length) clientSide.push(pieces[next++]);
@@ -1071,10 +1074,11 @@ describe("large writes and reads of a TLSSocket over a Duplex transport", () => 
     client.end();
     await once(client, "close");
 
-    expect({ length: plaintext.length, intact: plaintext.equals(payload) }).toEqual({
-      length: payload.length,
-      intact: true,
-    });
+    expect({
+      somePiecesCameFromData: pushedFromData > 0,
+      length: plaintext.length,
+      intact: plaintext.equals(payload),
+    }).toEqual({ somePiecesCameFromData: true, length: payload.length, intact: true });
   });
 });
 

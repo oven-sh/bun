@@ -344,12 +344,11 @@ impl UpgradedDuplex {
         // `pending_data`, and BoringSSL must not have the slice freed under it.
         let staged = self.pending_data.replace(Vec::new());
         self.reset_timeout();
-        // Feed in bounded slices rather than one concatenated buffer: each JS
-        // chunk was originally delivered on its own, and `receive_data` copies
-        // what it is given into the engine's queue. Re-check the engine each
-        // round: BoringSSL can re-enter and tear it down partway through, and
-        // `teardown()` neuters in place (frees the SSL, keeps the Option
-        // `Some`), so the live signal is the SSL handle, not the Option.
+        // Feed in bounded slices rather than one concatenated buffer. Each JS
+        // chunk was originally delivered on its own. Re-check the engine each round: BoringSSL can
+        // re-enter and tear it down partway through, and `teardown()` neuters
+        // in place (frees the SSL, keeps the Option `Some`), so the live
+        // signal is the SSL handle, not the Option.
         for chunk in staged.chunks(64 * 1024) {
             match self.wrapper_ref() {
                 Some(w) if w.ssl.get().is_some() => w.receive_data(chunk),

@@ -246,6 +246,8 @@ function record(
 }
 
 async function withClient<T>(server: net.Server, body: (client: RawClient) => Promise<T>, secure = false) {
+  // A session that has ended does not listen to its socket. The reset of the client can still arrive.
+  server.on("connection", socket => socket.on("error", () => {}));
   const client = await RawClient.connect(server, secure);
   try {
     return await body(client);

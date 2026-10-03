@@ -5628,8 +5628,6 @@ pub mod bv2_impl {
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
-            // Checked before either metafile is written. With no outdir the output is `Saved` at its path,
-            // so a read of it would open the bytes before the NUL.
             let metafile_paths = [
                 self.linker.options.metafile_json_path,
                 self.linker.options.metafile_markdown_path,

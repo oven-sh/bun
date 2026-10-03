@@ -472,7 +472,7 @@ describe("web worker", () => {
             events.push(e.message.split("\\n").find(line => line.startsWith("error: ")) ?? e.message);
           };
           worker.addEventListener("close", e => resolve({ events, code: e.code }));
-          if (post) worker.postMessage("go");
+          for (const message of Array.isArray(post) ? post : post ? ["go"] : []) worker.postMessage(message);
         });
     `;
     async function runInChildProcess(script: string) {
@@ -547,6 +547,28 @@ describe("web worker", () => {
         );
       `);
       expect(result).toEqual({ events: ["caught"], code: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // The checkpoint that ends the handler reports the error; the close still follows it.
+    test("from a message handler whose microtask throws into an 'uncaughtException' listener, the rest of the batch is dropped", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("uncaughtException", () => postMessage("handled"));
+              self.onmessage = e => {
+                postMessage(e.data);
+                if (e.data === 0) {
+                  self.close();
+                  queueMicrotask(() => { throw new Error("x"); });
+                }
+              };
+            \`, [0, 1, 2, 3, 4]),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: [0, "handled"], code: 0 });
       expect(exitCode).toBe(0);
     });
 

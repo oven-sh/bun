@@ -3156,26 +3156,33 @@ uint8_t GlobalObject::drainMicrotasks()
     };
 
     // Scheduled ticks run first, and processTicksAndRejections runs the microtasks after them.
-    auto* nextTickQueue = this->m_nextTickQueue.get();
-    if (nextTickQueue && !nextTickQueue->isEmpty()) {
-        nextTickQueue->drain(vm, this);
+    auto checkpoint = [&]() ALWAYS_INLINE_LAMBDA -> uint8_t {
+        auto* nextTickQueue = this->m_nextTickQueue.get();
+        if (nextTickQueue && !nextTickQueue->isEmpty()) {
+            nextTickQueue->drain(vm, this);
+            if (auto result = endedByException())
+                return *result;
+        }
+
+        vm.drainMicrotasks();
         if (auto result = endedByException())
             return *result;
-    }
 
-    vm.drainMicrotasks();
-    if (auto result = endedByException())
-        return *result;
+        // A microtask can schedule a tick, and it can create the queue.
+        nextTickQueue = this->m_nextTickQueue.get();
+        if (nextTickQueue && !nextTickQueue->isEmpty()) {
+            nextTickQueue->drain(vm, this);
+            if (auto result = endedByException())
+                return *result;
+        }
+        return 0;
+    };
+    uint8_t result = checkpoint();
+    if (result == 1)
+        return 1;
 
-    // A microtask can schedule a tick, and it can create the queue.
-    nextTickQueue = this->m_nextTickQueue.get();
-    if (nextTickQueue && !nextTickQueue->isEmpty()) {
-        nextTickQueue->drain(vm, this);
-        if (auto result = endedByException())
-            return *result;
-    }
-
-    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack).
+    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack),
+    // whether or not that checkpoint reported an error.
     auto* clientData = WebCore::clientData(vm);
     if (clientData->workerCloseRequested && !vm.entryScope) [[unlikely]] {
         clientData->workerCloseRequested = false;
@@ -3184,7 +3191,7 @@ uint8_t GlobalObject::drainMicrotasks()
         return 1;
     }
 
-    return 0;
+    return result;
 }
 
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the

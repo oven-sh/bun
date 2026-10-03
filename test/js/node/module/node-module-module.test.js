@@ -435,6 +435,54 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs", null, false, { paths: null })).toBe("fs");
   });
 
+  // Script picks how many entries options.paths has, and each one is copied into a native list. A list that
+  // cannot grow must throw a catchable error, never abort the process. The real bound is 77,731,542 entries
+  // (5 GB), so the child runs with a 64 KiB synthetic allocation limit: 2730 entries of 24 bytes.
+  test("options.paths with more entries than the native list holds throws a RangeError", async () => {
+    const LIMIT_BYTES = 64 * 1024;
+    const MAX_PATHS = Math.floor(LIMIT_BYTES / 24);
+    using dir = tempDir("resolve-paths-limit", {
+      "lib/node_modules/limit-pkg/package.json": JSON.stringify({ name: "limit-pkg", main: "index.js" }),
+      "lib/node_modules/limit-pkg/index.js": "module.exports = 1;",
+      "main.cjs": `
+        const path = require("node:path");
+        const Module = require("node:module");
+        const doors = {
+          "require.resolve": paths => require.resolve("limit-pkg", { paths }),
+          "Module._resolveFilename": paths => Module._resolveFilename("limit-pkg", module, false, { paths }),
+        };
+        // Only the last entry holds the package, so a result proves that the whole list reached the resolver.
+        const resolveWith = (resolve, count) => {
+          const paths = new Array(count).fill(path.join(__dirname, "missing"));
+          paths[count - 1] = path.join(__dirname, "lib");
+          try {
+            return path.relative(__dirname, resolve(paths));
+          } catch (e) {
+            return e.name + ": " + e.message;
+          }
+        };
+        const result = {};
+        for (const [name, resolve] of Object.entries(doors)) {
+          result[name] = { atLimit: resolveWith(resolve, ${MAX_PATHS}), onePast: resolveWith(resolve, ${MAX_PATHS + 1}) };
+        }
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resolved = path.join("lib", "node_modules", "limit-pkg", "index.js");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      "require.resolve": { atLimit: resolved, onePast: "RangeError: Out of memory" },
+      "Module._resolveFilename": { atLimit: resolved, onePast: "RangeError: Out of memory" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("createRequire trailing slash", () => {
     const req = createRequire(import.meta.dir + "/");
     expect(req.resolve("./node-module-module.test.js")).toBe(

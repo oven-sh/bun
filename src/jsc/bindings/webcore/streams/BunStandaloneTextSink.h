@@ -45,11 +45,11 @@ struct BunTextAccumulator {
     {
         using Piece = JSC::WriteBarrier<JSC::Unknown>;
         if (flushedRope) {
-            if (pieces.size() >= Bun::maxVectorSize<Piece>() || !pieces.tryAppend(Piece(vm, owner, flushedRope))) [[unlikely]]
+            if (!Bun::tryAppendWithinLimit(pieces, Piece(vm, owner, flushedRope))) [[unlikely]]
                 return false;
             rope.clear();
         }
-        return pieces.size() < Bun::maxVectorSize<Piece>() && pieces.tryAppend(Piece(vm, owner, chunk));
+        return Bun::tryAppendWithinLimit(pieces, Piece(vm, owner, chunk));
     }
 
     // Releases everything accumulated. Called as soon as the final result string has

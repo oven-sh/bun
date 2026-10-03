@@ -1,0 +1,28 @@
+lint-grammar-tests-r4, bottom-up-1a. Round 3, R4 (research, 2026-10-03). Nothing here is in the worktree and nothing was committed.
+HEAD of the worktree: b882bfc32f (round 1 merged with main fa467dcae2). `git diff 2102fb058f HEAD -- src/js_parser src/ast` is empty, so
+the runs of ../bottom-up and ../top-down (made at 2102fb058f) hold for HEAD. Base binary: /workspace/base/bun.f4d755a9c -> bun.fa467dcae
+(`git diff f4d755a9cf fa467dcae2 -- src/js_parser src/ast src/js_printer src/transpiler` is empty).
+This pass stands on ../bottom-up (rows.facts2.json, gen/rust4.mjs, the variants a and m), ../top-down (run.sh, tools/, gen/lists2.mjs,
+data/) and ../../tests-known-differences/bottom-up (rows.json, the oracles). It checked them after the restart and made one generator of the two.
+
+gen/rust5.mjs    THE GENERATOR of src/js_parser/parse/grammar_rows_tests.rs. ROWS: the 366 cases in the order of the four files, a comment
+                 before each of the 37 groups, what tsc makes of each source, and `const _: () = assert!(ROWS.len() == 366)`.
+                 TYPES, RETURN_TYPES, TYPE_PARAMETERS: the type roots of the T and M cases, read alone. KNOWN_DIFFERENCES and a fifth test:
+                 the sources that a lint parse does not read as tsc does, each with what the lint parse makes of it
+                 (--as-without-lint=<cases>: the text and the offset of main's first message, or the tags main keeps; --keeps=<case>:<tags>).
+                 Its four tables are those of ../bottom-up/gen/rust4.mjs byte for byte; the failure type and the third column of
+                 KNOWN_DIFFERENCES are those of ../top-down/gen/rust4.mjs.
+gen/lists3.mjs   ../top-down/gen/lists2.mjs with the sentence about KNOWN_DIFFERENCES: the section of API.md. Runs in /tmp/r4td/bu/gen.
+run.sh           bash run.sh <head|w|z|all>: the scratch of ../top-down/run.sh, root3 (parse_path as on main), the file and the section
+build.sh         sh build.sh <clippy|link> <root2|root3> <file> <tag>: clippy-driver or the test binary of a scratch copy, through the lock
+generated/       the section of API.md for three sets of cases (main named as fa467dcae2)
+results/         cargo-test.head-b882bfc32f.txt: `cargo test -p bun_js_parser --lib` at HEAD, 70 passed (60 minutes: the disk of the
+                 machine was saturated). The runs of build.sh, where they finished.
+
+States of the generated file (each is `bash run.sh <state>`):
+  head   round 1 as it stands with ../top-down/data/import-type-rest.p1.diff: the three exports with `with` on the next line are taken
+         (tsc: TS1005). Equal in its tables to ../bottom-up/grammar_rows_tests.rs.green-at-2102fb058f (75 of 75 passed there).
+  w      head and parse_path as on main: the five sources with an import and `with` on the next line fail as main fails.
+         Equal in its tables to ../bottom-up/grammar_rows_tests.rs.example-main-parse-path (75 of 75 passed there).
+  z      w and the proposal of ../../seam-expressions/top-down/variants/z.diff: the cases 209 and 212 fail as main fails.
+  all    every source as tsc reads it: four tests, no table of differences.

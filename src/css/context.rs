@@ -71,7 +71,10 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 
     pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
-        self.dark.push(property);
+        // A merged block is minified again before its staged rules are collected.
+        if !self.dark.iter().any(|staged| staged.eql(&property)) {
+            self.dark.push(property);
+        }
     }
 
     pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {

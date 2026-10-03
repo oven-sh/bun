@@ -437,11 +437,22 @@ When you use Bun's test runner with an AI coding assistant, you can enable quiet
 
 ### Environment Variables
 
-Set any of the following environment variables to enable AI-friendly output:
+Bun enables AI-friendly output when any of these environment variables is set to a non-empty value:
 
+- `AI_AGENT` - Cross-tool convention. The value names the agent, for example `claude-code_2-1-284_agent` or `crush`
 - `CLAUDECODE=1` - For Claude Code
+- `GEMINI_CLI=1` - For Gemini CLI
+- `CODEX_CI=1` or `CODEX_THREAD_ID` - For Codex
 - `REPL_ID=1` - For Replit
-- `AGENT=1` - Generic AI agent flag
+
+`AGENT` is the explicit override and wins over the variables above. Set it to `1` or to the name of the agent (for example `AGENT=crush`) to force the AI-friendly output. Set it to `0`, `false`, `no`, or `off` to force the normal output inside an agent session:
+
+```bash terminal icon="terminal"
+# Show passing tests again inside Claude Code
+AGENT=0 bun test
+```
+
+When `RUNNER_DEBUG=1` is set (GitHub Actions debug logging), Bun uses the normal output unless `AGENT` turns the AI-friendly output on.
 
 ### Behavior
 

@@ -855,24 +855,24 @@ pub fn is_ai_agent() -> bool {
     static ONCE: std::sync::Once = std::sync::Once::new();
 
     fn evaluate() -> bool {
-        if let Some(env) = env_var::AGENT.get() {
-            return env == b"1";
+        // `AGENT` is the explicit override: any truthy value opts in, "0"/"false" opts out.
+        if let Some(agent) = env_var::AGENT.get() {
+            return agent;
         }
         if is_verbose() {
             return false;
         }
-        // Claude Code.
-        if env_var::CLAUDECODE.get().unwrap_or(false) {
-            return true;
-        }
-        // Replit.
-        if env_var::REPL_ID.get().unwrap_or(false) {
-            return true;
-        }
-        // Other agents we'd like to detect, but which do not appear to set
-        // any identifying environment variables: Gemini, Codex, Cursor
-        // Background Agents. Add checks here if they ever grow one.
-        false
+        // Cross-tool convention.
+        env_var::AI_AGENT.get().unwrap_or(false)
+            // Claude Code.
+            || env_var::CLAUDECODE.get().unwrap_or(false)
+            // Replit.
+            || env_var::REPL_ID.get().unwrap_or(false)
+            // Gemini CLI.
+            || env_var::GEMINI_CLI.get().unwrap_or(false)
+            // Codex.
+            || env_var::CODEX_THREAD_ID.get().unwrap_or(false)
+            || env_var::CODEX_CI.get().unwrap_or(false)
     }
 
     ONCE.call_once(|| VALUE.store(evaluate(), Ordering::Relaxed));

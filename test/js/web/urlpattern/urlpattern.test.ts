@@ -79,6 +79,29 @@ function getExpectedComponentResult(
   return expected_obj;
 }
 
+function getPatternStrings(pattern: URLPattern): Record<Component, string> {
+  return Object.fromEntries(kComponents.map(component => [component, pattern[component]])) as Record<Component, string>;
+}
+
+function getExpectedPatternStrings(entry: TestEntry): Record<Component, string> {
+  return Object.fromEntries(
+    kComponents.map(component => [component, getExpectedPatternString(entry, component)]),
+  ) as Record<Component, string>;
+}
+
+function getExpectedExecResult(entry: TestEntry): URLPatternResult | null {
+  // exec() returns null when the input does not match.
+  if (!entry.expected_match || typeof entry.expected_match !== "object") {
+    return null;
+  }
+
+  const result = { inputs: entry.expected_match.inputs ?? entry.inputs } as URLPatternResult;
+  for (const component of kComponents) {
+    result[component] = getExpectedComponentResult(entry, component);
+  }
+  return result;
+}
+
 describe("URLPattern", () => {
   describe("WPT tests", () => {
     for (const entry of testData as TestEntry[]) {
@@ -92,52 +115,27 @@ describe("URLPattern", () => {
         }
 
         const pattern = new URLPattern(...entry.pattern);
-
-        // Verify compiled pattern properties
-        for (const component of kComponents) {
-          const expected = getExpectedPatternString(entry, component);
-          expect(pattern[component]).toBe(expected);
-        }
+        const inputs = entry.inputs ?? [];
 
         // Test match error
         if (entry.expected_match === "error") {
-          expect(() => pattern.test(...(entry.inputs ?? []))).toThrow(TypeError);
-          expect(() => pattern.exec(...(entry.inputs ?? []))).toThrow(TypeError);
+          expect(getPatternStrings(pattern)).toEqual(getExpectedPatternStrings(entry));
+          expect(() => pattern.test(...inputs)).toThrow(TypeError);
+          expect(() => pattern.exec(...inputs)).toThrow(TypeError);
           return;
         }
 
-        // Test test() method
-        expect(pattern.test(...(entry.inputs ?? []))).toBe(!!entry.expected_match);
-
-        // Test exec() method
-        const exec_result = pattern.exec(...(entry.inputs ?? []));
-
-        if (!entry.expected_match || typeof entry.expected_match !== "object") {
-          expect(exec_result).toBe(entry.expected_match);
-          return;
-        }
-
-        const expected_inputs = entry.expected_match.inputs ?? entry.inputs;
-
-        // Verify inputs
-        expect(exec_result!.inputs.length).toBe(expected_inputs!.length);
-        for (let i = 0; i < exec_result!.inputs.length; i++) {
-          const input = exec_result!.inputs[i];
-          const expected_input = expected_inputs![i];
-          if (typeof input === "string") {
-            expect(input).toBe(expected_input);
-          } else {
-            for (const component of kComponents) {
-              expect(input[component]).toBe(expected_input[component]);
-            }
-          }
-        }
-
-        // Verify component results
-        for (const component of kComponents) {
-          const expected = getExpectedComponentResult(entry, component);
-          expect(exec_result![component]).toEqual(expected);
-        }
+        // Keep this to one expect() per entry. CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1,
+        // which starts a GC after each matcher call. One call per field made this file slow.
+        expect({
+          patternStrings: getPatternStrings(pattern),
+          test: pattern.test(...inputs),
+          exec: pattern.exec(...inputs),
+        }).toStrictEqual({
+          patternStrings: getExpectedPatternStrings(entry),
+          test: !!entry.expected_match,
+          exec: getExpectedExecResult(entry),
+        });
       });
     }
   });
@@ -156,8 +154,17 @@ describe("URLPattern", () => {
     });
 
     test("constructor with undefined arguments", () => {
-      // Should not throw
-      new URLPattern(undefined, undefined);
+      // Both arguments take their defaults, so every component is a wildcard.
+      expect(getPatternStrings(new URLPattern(undefined, undefined))).toEqual({
+        protocol: "*",
+        username: "*",
+        password: "*",
+        hostname: "*",
+        port: "*",
+        pathname: "*",
+        search: "*",
+        hash: "*",
+      });
     });
   });
 

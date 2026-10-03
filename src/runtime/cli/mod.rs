@@ -354,6 +354,8 @@ pub(crate) mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_cache_prune_command.rs"]
+pub(crate) mod pm_cache_prune_command;
 #[path = "pm_diff_command.rs"]
 pub(crate) mod pm_diff_command;
 pub(crate) mod pm_diff_normalize;

@@ -1273,17 +1273,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `false`: `t.objectFlags&ObjectFlagsRequiresWidening == 0`. The flags here come from more
-    /// sources than `getPropagatingFlagsOfTypes` uses.
+    /// `false`: `t.objectFlags&ObjectFlagsRequiresWidening == 0`. A union has the flags of its
+    /// `undefined` and `null` too, which `getPropagatingFlagsOfTypes` leaves out.
     #[inline]
     fn may_require_widening(&self, ty: TypeId) -> bool {
-        let flags = self.types().object_flags(ty);
-        flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL)
-            || flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE)
+        (self.types().object_flags(ty)).intersects(ObjectFlags::REQUIRES_WIDENING)
     }
 
     /// `getWidenedTypeWithContext`. A type that widening leaves entirely unchanged is returned as
-    /// is, because the flags here are conservative.
+    /// is.
     fn get_widened_type_with_context(&mut self, ty: TypeId, context: Option<usize>) -> TypeId {
         if !self.may_require_widening(ty) {
             return ty;

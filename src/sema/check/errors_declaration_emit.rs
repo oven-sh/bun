@@ -3117,16 +3117,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
             // `shouldEmitFunctionProperties`
             if let Decl::Fn(f) = declaration
                 && matches!(hir[f].body, FnBody::None)
+                && !files.decls_of(host).iter().any(|&(file, decl)| {
+                    matches!(decl, Decl::Fn(f) if !matches!(self.c.hir(file)[f].body, FnBody::None))
+                })
             {
-                let last = files
-                    .decls_of(host)
-                    .iter()
-                    .rev()
-                    .find(|(_, decl)| matches!(decl, Decl::Fn(_)))
-                    .copied();
-                if last != Some((file, declaration)) {
-                    continue;
-                }
+                continue;
             }
             // `transformExpandoHost`: it is emitted as a function, replacing the whole statement. A
             // function declaration emits the same when it is visited.

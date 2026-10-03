@@ -1807,6 +1807,81 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
+
+    test("isolatedDeclarations: every property of `export default {} satisfies T` is reported", async () => {
+      using dir = project({
+        "satisfies.ts": `export default { list: ["x"], nested: { list: ["y"] } } satisfies object;
+`,
+      });
+      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
+      expect(stdout).toMatchInlineSnapshot(`
+        "satisfies.ts(1,24): error TS9017: Only const arrays can be inferred with --isolatedDeclarations.
+        satisfies.ts(1,47): error TS9017: Only const arrays can be inferred with --isolatedDeclarations.
+        satisfies.ts(1,57): error TS9037: Default exports can't be inferred with --isolatedDeclarations."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("isolatedDeclarations: a method whose return type is circular needs an annotation", async () => {
+      using dir = project({
+        "recursive.ts": `export class Registry {
+  static next(n: number) {
+    if (n > 3) {
+      return this.next(n - 1);
+    }
+    return n;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
+      expect(stdout).toMatchInlineSnapshot(`
+        "recursive.ts(2,10): error TS7023: 'next' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        recursive.ts(2,10): error TS9008: Method must have an explicit return type annotation with --isolatedDeclarations."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("isolatedDeclarations: a property assigned to an overloaded function makes its value visible", async () => {
+      using dir = project({
+        "overloads.ts": `let hidden = new Date("");
+export function create(): number;
+export function create<T>(): T;
+export function create() {
+  return 1;
+}
+create.extra = hidden;
+`,
+      });
+      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
+      expect(stdout).toMatchInlineSnapshot(`
+        "overloads.ts(1,5): error TS9010: Variable must have an explicit type annotation with --isolatedDeclarations.
+        overloads.ts(7,1): error TS9023: Assigning properties to functions without declaring them is not supported with --isolatedDeclarations. Add an explicit declaration for the properties assigned to this function."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("isolatedDeclarations: a type inferred through a mapped type from a literal does not require widening", async () => {
+      using dir = project({
+        "reverse.ts": `interface Box<A> {
+  a: A;
+}
+declare const str: Box<string>;
+declare function struct<A>(p: { [K in keyof A]: Box<A[K]> }): Box<{ [K in keyof A]: A[K] }>;
+export const outer = struct({ a: str, b: struct({ c: str }) });
+`,
+      });
+      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
+      expect(stdout).toMatchInlineSnapshot(`
+        "reverse.ts(6,14): error TS9010: Variable must have an explicit type annotation with --isolatedDeclarations.
+        reverse.ts(6,34): error TS9013: Expression type can't be inferred with --isolatedDeclarations.
+        reverse.ts(6,42): error TS9013: Expression type can't be inferred with --isolatedDeclarations.
+        reverse.ts(6,54): error TS9013: Expression type can't be inferred with --isolatedDeclarations."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

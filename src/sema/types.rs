@@ -861,6 +861,9 @@ bitflags::bitflags! {
         /// Only meaningful without strictNullChecks. The flags of an interned object literal type do not include it:
         /// `Origin::ObjectLiteral` stores it, and `Checker::contains_widening_type` reads it there.
         const CONTAINS_WIDENING_TYPE = 16;
+        /// `ObjectFlagsRequiresWidening`. `getPropagatingFlagsOfTypes` propagates the two to a
+        /// reference, a union, an intersection and the type of a literal, and to nothing else.
+        const REQUIRES_WIDENING = 8 | 16;
         /// `ObjectFlagsNonInferrableType`. Only stored in `Origin::ObjectLiteral`. `Checker::is_non_inferrable` computes it for
         /// every other type.
         const NON_INFERRABLE_TYPE = 32;
@@ -1564,12 +1567,8 @@ impl<'p> Types<'p> {
                 TypeArguments::Given(actual) => all(actual),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating
                 // flags.
-                TypeArguments::Deferred(deferred) => {
-                    self.mapper_record(deferred.mapper).1.difference(
-                        ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
-                            | ObjectFlags::CONTAINS_WIDENING_TYPE,
-                    )
-                }
+                TypeArguments::Deferred(deferred) => (self.mapper_record(deferred.mapper).1)
+                    .difference(ObjectFlags::REQUIRES_WIDENING),
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..),
@@ -1578,7 +1577,9 @@ impl<'p> Types<'p> {
             // The mapper is omitted at creation unless the origin has enclosing type parameters.
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
+            | TypeData::Cond { mapper, .. } => {
+                (self.mapper_record(*mapper).1).difference(ObjectFlags::REQUIRES_WIDENING)
+            }
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
                     shape.literal,
@@ -1609,6 +1610,9 @@ impl<'p> Types<'p> {
                 for &s in shape.call.iter().chain(&shape.construct) {
                     flags |= self.sig_flags(s);
                 }
+                if is_plain {
+                    flags.remove(ObjectFlags::REQUIRES_WIDENING);
+                }
                 flags
             }
             // `mapped` and `of` always reference the inferred type parameter, which does not make
@@ -1619,20 +1623,25 @@ impl<'p> Types<'p> {
             TypeData::ReverseMapped { source, mapped, of } => {
                 let created_with = self.object_flags(*mapped) | self.object_flags(*of);
                 self.object_flags(*source)
+                    .difference(ObjectFlags::REQUIRES_WIDENING)
                     | (created_with & (ObjectFlags::HAS_UNRESOLVED | ObjectFlags::HAS_MARKER))
                     | ObjectFlags::HAS_REVERSE_MAPPED
             }
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.object_flags(*obj) | self.object_flags(*index)
-            }
+            TypeData::IndexedAccess { obj, index, .. } => (self.object_flags(*obj)
+                | self.object_flags(*index))
+            .difference(ObjectFlags::REQUIRES_WIDENING),
             // `couldContainTypeVariables`: instantiating one resolves it.
             TypeData::Substitution { base, constraint } => {
-                self.object_flags(*base)
-                    | self.object_flags(*constraint)
+                (self.object_flags(*base) | self.object_flags(*constraint))
+                    .difference(ObjectFlags::REQUIRES_WIDENING)
                     | ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
             }
-            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => self.object_flags(*t),
-            TypeData::Template { types, .. } => all(types),
+            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => {
+                (self.object_flags(*t)).difference(ObjectFlags::REQUIRES_WIDENING)
+            }
+            TypeData::Template { types, .. } => {
+                all(types).difference(ObjectFlags::REQUIRES_WIDENING)
+            }
             _ => ObjectFlags::empty(),
         }
     }

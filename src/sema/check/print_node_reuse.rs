@@ -136,9 +136,10 @@ impl<'p> Printer<'_, 'p> {
         // `getReturnTypeOfSignature`: a circular annotation resolves to `anyType`, which is not the
         // annotated type.
         let (p, key) = (self.c.p, (file, func));
-        if (p.fn_return_types.get(&mut self.c.task, &key))
-            .is_some_and(|(_, is_circular)| is_circular)
-            || p.circular_returns.get(&mut self.c.task, &key).is_some()
+        if matches!(pt, Pseudo::Direct(_))
+            && ((p.fn_return_types.get(&mut self.c.task, &key))
+                .is_some_and(|(_, is_circular)| is_circular)
+                || p.circular_returns.get(&mut self.c.task, &key).is_some())
         {
             return None;
         }

@@ -1486,6 +1486,46 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Whether `getTypeOfExpression(of)` returns another type than `ty` each time. It checks the
+    /// expression again, and `checkObjectLiteral` creates a type on every call. Here that type is
+    /// identified by the literal, or by its members if the literal has a spread. An array, a tuple
+    /// or a reference is identified by its type arguments.
+    fn iso_is_created_by_checking(&mut self, file: FileId, of: Node, ty: TypeId) -> bool {
+        let hir = self.hir(file);
+        let mut innermost = hir.data(of);
+        while let NodeData::Expr(e) = innermost {
+            innermost = match hir[e].kind {
+                ExprKind::Satisfies { expr, .. } => hir.data(hir.node(expr)),
+                ExprKind::NonNull(x) | ExprKind::AsConst(x) => hir.data(hir.node(x)),
+                ExprKind::Object(_) => return true,
+                _ => break,
+            };
+        }
+        self.iso_has_type_of_literal_in(file, of, ty)
+    }
+
+    /// Whether `ty` is identified by the type of an object literal in `of`.
+    fn iso_has_type_of_literal_in(&mut self, file: FileId, of: Node, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Anon {
+                origin:
+                    Origin::ObjectLiteral(literal_file, literal, ..)
+                    | Origin::WidenedLiteral(literal_file, literal, ..),
+                ..
+            } => {
+                let hir = self.hir(file);
+                *literal_file == file
+                    && hir.find_ancestor(hir.node(*literal), |n| n == of).is_some()
+            }
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                let arguments = self.type_arguments(ty);
+                (arguments.iter())
+                    .any(|&argument| self.iso_has_type_of_literal_in(file, of, argument))
+            }
+            _ => false,
+        }
+    }
+
     /// `pseudoTypeEquivalentToType`
     pub(super) fn iso_is_equivalent(
         &mut self,
@@ -1499,7 +1539,17 @@ impl<'p> Checker<'p> {
         if self.is_error_type(ty) {
             return true;
         }
-        let from = self.iso_type_of_pseudo(file, pt);
+        let from = match (self.iso_type_of_pseudo(file, pt), pt) {
+            (
+                Some(from),
+                Pseudo::Inferred {
+                    of,
+                    is_signature_return: false,
+                    ..
+                },
+            ) if self.iso_is_created_by_checking(file, *of, from) => None,
+            (from, _) => from,
+        };
         if from == Some(ty) {
             return true;
         }

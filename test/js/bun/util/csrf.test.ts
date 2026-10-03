@@ -197,17 +197,26 @@ describe("Bun.CSRF", () => {
       throw new Error(`expected ${field}: ${String(value)} to throw`);
     }
 
-    test("NaN is treated as an absent option", () => {
-      expect(() => call(NaN)).not.toThrow();
-      expect(CSRF.verify(CSRF.generate(secret, { expiresIn: NaN }), { secret, maxAge: NaN })).toBe(true);
+    test("undefined is treated as an absent option", () => {
+      expect(() => call(undefined)).not.toThrow();
 
       // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
       // the timestamp and the nonce. 0 there means the token never expires.
-      const embeddedExpiresIn = (options?: { expiresIn: number }) =>
+      const embeddedExpiresIn = (options?: { expiresIn?: number }) =>
         Buffer.from(CSRF.generate(secret, options), "base64url").readBigUInt64BE(24);
       expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
-      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(embeddedExpiresIn());
-      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(BigInt(24 * 60 * 60 * 1000));
+      expect(embeddedExpiresIn({ expiresIn: undefined })).toBe(BigInt(24 * 60 * 60 * 1000));
+      expect(embeddedExpiresIn()).toBe(BigInt(24 * 60 * 60 * 1000));
+    });
+
+    // A NaN duration comes from a bug in the caller. It must not select the
+    // 24h default, which can be laxer than the window the caller computed.
+    test("NaN throws RangeError [ERR_OUT_OF_RANGE]", () => {
+      expect(thrown(NaN)).toEqual({
+        constructor: RangeError,
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "${field}" is out of range. It must be an integer. Received NaN`,
+      });
     });
 
     test("out-of-range values throw RangeError [ERR_OUT_OF_RANGE]", () => {

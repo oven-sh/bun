@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -2119,4 +2119,231 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // Directory links. The scan lists each directory once. It does not follow a
+  // link to a directory it covers by itself. It lists any other linked
+  // directory once, under that directory's real path.
+  const named = (name: string) => `import { test } from "bun:test"; test("${name}", () => {});`;
+
+  // `links` maps the path of a link to its target, relative to the link's directory.
+  function linkedTree(files: Record<string, string>, links: Record<string, string>) {
+    const dir = tempDir("scanner-links", files);
+    for (const [at, target] of Object.entries(links)) {
+      const link = join(String(dir), at);
+      mkdirSync(dirname(link), { recursive: true });
+      // A junction needs no privilege on Windows. Its target must be absolute.
+      if (isWindows) symlinkSync(resolve(dirname(link), target), link, "junction");
+      else symlinkSync(target, link);
+    }
+    return dir;
+  }
+
+  async function testLinkedTree(cwd: string, args: string[], endless = false) {
+    const cmd = [bunExe(), "test", ...args];
+    await using proc = Bun.spawn({
+      // `endless`: a scan that lists a directory once per path to it stops only
+      // when no file descriptor is left. The limit makes that a fast failure.
+      cmd: endless && !isWindows ? ["/bin/sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", ...cmd] : cmd,
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const ran = stderr.match(/Ran \d+ tests? across \d+ files?\./)?.[0];
+    return { stderr, ran, signalCode: proc.signalCode, exitCode };
+  }
+
+  // Six directories below a dot-directory. The root holds two links to the
+  // first, and each directory holds two links to the next.
+  const stackedFiles: Record<string, string> = { "t0.test.js": named("t0") };
+  const stackedLinks: Record<string, string> = { a: ".stack/L1", b: ".stack/L1" };
+  for (let level = 1; level <= 6; level++) {
+    stackedFiles[`.stack/L${level}/t${level}.test.js`] = named(`t${level}`);
+    if (level < 6) {
+      stackedLinks[`.stack/L${level}/a`] = `../L${level + 1}`;
+      stackedLinks[`.stack/L${level}/b`] = `../L${level + 1}`;
+    }
+  }
+
+  const v2 = { files: { "packages/v2/v2.test.js": named("v2") }, links: { latest: "packages/v2" } };
+  const ranOne = "Ran 1 test across 1 file.";
+  const ranTwo = "Ran 2 tests across 2 files.";
+
+  const linkRows: {
+    name: string;
+    files: Record<string, string>;
+    links: Record<string, string>;
+    cwd?: string;
+    args?: string[];
+    ran: string;
+    endless?: boolean;
+  }[] = [
+    // Links to a directory the scan covers by itself.
+    {
+      name: "two links to the root",
+      files: { "s.test.js": named("s") },
+      links: { x: ".", y: "." },
+      ran: ranOne,
+      endless: true,
+    },
+    {
+      name: "two links to the root, each two directories down",
+      files: { "src/s.test.js": named("s") },
+      links: { "examples/one/lib": "../..", "examples/two/lib": "../.." },
+      ran: ranOne,
+      endless: true,
+    },
+    {
+      name: "a link to the root and a link to the directory that holds it",
+      files: { "src/s.test.js": named("s") },
+      links: { "a/loop": "..", alias: "a" },
+      ran: ranOne,
+      endless: true,
+    },
+    { name: "one link to the root", files: { "src/s.test.js": named("s") }, links: { "a/loop": ".." }, ran: ranOne },
+    {
+      name: "a link to the root and a link to its own directory",
+      files: { "sub/a.test.js": named("a"), "sub/deeper/b.test.js": named("b") },
+      links: { "sub/loop": "..", "sub/deeper/self": "." },
+      ran: ranTwo,
+    },
+    {
+      name: "two packages that link to each other",
+      files: { "packages/a/a.test.js": named("a"), "packages/b/b.test.js": named("b") },
+      links: { "packages/a/vendor/b": "../../b", "packages/b/vendor/a": "../../a" },
+      ran: ranTwo,
+    },
+    { name: "a link beside its target", ...v2, ran: ranOne },
+    { name: "a link beside its target, filter on the real path", ...v2, args: ["packages/v2/"], ran: ranOne },
+    { name: "a link beside its target, the link as the root", ...v2, args: ["./latest"], ran: ranOne },
+    {
+      name: "a link beside its target, ignore pattern on the link path",
+      ...v2,
+      args: ["--path-ignore-patterns", "latest/*.test.js"],
+      ran: ranOne,
+    },
+    {
+      name: "--isolate",
+      files: { "s.test.js": named("s"), "a/b.test.js": named("b") },
+      links: { "a/loop": ".." },
+      args: ["--isolate"],
+      ran: ranTwo,
+    },
+    {
+      name: "--parallel",
+      files: { "s.test.js": named("s"), "a/b.test.js": named("b") },
+      links: { "a/loop": ".." },
+      args: ["--parallel=2"],
+      ran: ranTwo,
+    },
+    // Links that are the only way to a directory.
+    {
+      name: "a link to a directory outside the root",
+      files: { "outside/o.test.js": named("o") },
+      links: { "proj/shared": "../outside" },
+      cwd: "proj",
+      ran: ranOne,
+    },
+    {
+      name: "a link into a dot-directory",
+      files: { ".store/pkg/p.test.js": named("p") },
+      links: { pkg: ".store/pkg" },
+      ran: ranOne,
+    },
+    {
+      name: "a link inside a linked directory",
+      files: { "outside/o.test.js": named("o"), "further/f.test.js": named("f") },
+      links: { "proj/shared": "../outside", "outside/more": "../further" },
+      cwd: "proj",
+      ran: ranTwo,
+    },
+    {
+      name: "a link to the parent of the root",
+      files: { "base/proj/s.test.js": named("s"), "base/sibling/b.test.js": named("b") },
+      links: { "base/proj/up": ".." },
+      cwd: "base/proj",
+      ran: ranTwo,
+    },
+    {
+      name: "the root is a link, with a link to its parent inside",
+      files: { "packages/v2/v2.test.js": named("v2"), "packages/other/o.test.js": named("o") },
+      links: { latest: "packages/v2", "packages/v2/sub/up": "../.." },
+      args: ["./latest"],
+      ran: ranTwo,
+    },
+    {
+      name: "the root comes from bunfig.toml",
+      files: { "bunfig.toml": `[test]\nroot = "tests"\n`, "tests/a.test.js": named("a"), "lib/l.test.js": named("l") },
+      links: { "tests/up": "..", "tests/lib": "../lib" },
+      ran: ranTwo,
+    },
+    {
+      name: "two roots with a link to the same directory",
+      files: { "outside/o.test.js": named("o") },
+      links: { "a/shared": "../outside", "b/shared": "../outside" },
+      args: ["./a", "./b"],
+      ran: ranOne,
+    },
+    {
+      name: "two links to each of six directories in a row",
+      files: stackedFiles,
+      links: stackedLinks,
+      ran: "Ran 7 tests across 7 files.",
+    },
+  ];
+
+  for (const { name, files, links, cwd = ".", args = [], ran, endless } of linkRows) {
+    test(`directory links: ${name}`, async () => {
+      using dir = linkedTree(files, links);
+      const result = await testLinkedTree(join(String(dir), cwd), args, endless);
+      expect({ ran: result.ran, signalCode: result.signalCode, exitCode: result.exitCode }).toEqual({
+        ran,
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
+  }
+
+  test("directory links: a filter that names only the link path matches nothing", async () => {
+    using dir = linkedTree(v2.files, v2.links);
+    const { stderr, signalCode, exitCode } = await testLinkedTree(String(dir), ["latest/"]);
+    expect(stderr).toContain("did not match any test files");
+    expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 1 });
+  });
+
+  for (const roots of [
+    ["./latest", "./packages/v2"],
+    ["./packages/v2", "./latest"],
+  ]) {
+    test(`directory links: a link and its target as two roots (${roots.join(" ")})`, async () => {
+      using dir = linkedTree(v2.files, v2.links);
+      const { stderr, signalCode, exitCode } = await testLinkedTree(String(dir), roots);
+      expect(stderr).toContain(" 1 pass");
+      expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 0 });
+    });
+  }
+
+  // The order in which a directory lists a link and its target depends on the
+  // filesystem and on which of the two was created first.
+  for (const linksFirst of [false, true]) {
+    test(`directory links: --shard halves run each file once (links created ${linksFirst ? "first" : "last"})`, async () => {
+      const files = { "b_real/t.test.js": named("t"), "d_real/u.test.js": named("u") };
+      const links = { a_link: "b_real", c_link: "d_real" };
+      using dir = linksFirst ? linkedTree({}, links) : linkedTree(files, links);
+      if (linksFirst) {
+        for (const [path, contents] of Object.entries(files)) {
+          mkdirSync(join(String(dir), dirname(path)));
+          writeFileSync(join(String(dir), path), contents);
+        }
+      }
+      const halves = await Promise.all(["1/2", "2/2"].map(shard => testLinkedTree(String(dir), [`--shard=${shard}`])));
+      const passed = halves.flatMap(({ stderr }) => [...stderr.matchAll(/^\(pass\) (\S+)/gm)].map(match => match[1]));
+      expect(passed.sort()).toEqual(["t", "u"]);
+      expect(halves.map(({ signalCode, exitCode }) => ({ signalCode, exitCode }))).toEqual([
+        { signalCode: null, exitCode: 0 },
+        { signalCode: null, exitCode: 0 },
+      ]);
+    });
+  }
 });

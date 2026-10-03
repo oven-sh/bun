@@ -710,8 +710,8 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
-        FilenameStoreAppender, dir_entry,
+        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLink,
+        EntryLookup, FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -1377,6 +1377,7 @@ pub mod fs {
                 kind: EntryKind::File,
                 symlink: Interned::EMPTY,
                 fd: Fd::INVALID,
+                is_link: false,
             };
 
             let combo: [&[u8]; 2] = [dir_, base];
@@ -1414,6 +1415,7 @@ pub mod fs {
                 if !file.is_reparse_point {
                     return Ok(cache);
                 }
+                cache.is_link = true;
 
                 // For the realpath, open the path and let the kernel follow
                 // every hop, then `GetFinalPathNameByHandle` (same as libuv's
@@ -1538,6 +1540,7 @@ pub mod fs {
                 } else {
                     EntryKind::File
                 };
+                cache.is_link = is_symlink;
                 if !symlink.is_empty() {
                     cache.symlink =
                         Interned::from_static(FilenameStore::instance().append_slice(symlink)?);

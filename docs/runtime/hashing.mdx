@@ -252,12 +252,16 @@ hasher.digest();
 // => Uint8Array(32) [ 185, 77, 39, 185, 147, ... ]
 ```
 
+`.digest()` resets the hasher. A later `.digest()` hashes only the data you pass to `.update()` after the reset.
+
 To get the hash as a string, pass an encoding to `.digest()`:
 
 ```ts
+hasher.update("hello world");
 hasher.digest("base64");
 // => "uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek="
 
+hasher.update("hello world");
 hasher.digest("hex");
 // => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 ```

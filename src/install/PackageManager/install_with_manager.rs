@@ -856,6 +856,7 @@ pub fn install_with_manager(
         get_workspace_filters(manager, original_cwd)?;
     // `workspace_filters` drops at end of scope
 
+    let mut linked_hoisted = false;
     let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
@@ -882,7 +883,8 @@ pub fn install_with_manager(
                 },
 
                 NodeLinker::Hoisted => {
-                    let summary = install_hoisted_packages(
+                    linked_hoisted = true;
+                    break 'install_summary install_hoisted_packages(
                         manager,
                         ctx,
                         &workspace_filters,
@@ -890,15 +892,6 @@ pub fn install_with_manager(
                         log_level,
                         None,
                     )?;
-                    if summary.fail == 0
-                        && matches!(
-                            manager.subcommand,
-                            Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
-                        )
-                    {
-                        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
-                    }
-                    break 'install_summary summary;
                 }
 
                 NodeLinker::Isolated => {
@@ -921,6 +914,16 @@ pub fn install_with_manager(
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
+    }
+
+    if linked_hoisted
+        && install_summary.fail == 0
+        && matches!(
+            manager.subcommand,
+            Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+        )
+    {
+        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
 
     let did_meta_hash_change =

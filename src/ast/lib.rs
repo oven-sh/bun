@@ -2020,7 +2020,7 @@ pub struct Source<'a> {
     /// `Cow` because the cached value is produced by
     /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
     /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
-    pub identifier_name: Cow<'static, [u8]>,
+    pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
 }
@@ -2293,19 +2293,23 @@ impl<'a> Source<'a> {
     /// For a holder that stores a `Source` beside the buffers it borrows.
     ///
     /// # Safety
-    /// What `path` and a borrowed `contents` point into must outlive every
-    /// read through the returned `Source`, and every clone of it.
+    /// What `path` and a borrowed `contents` or `identifier_name` point into
+    /// must outlive every read through the returned `Source`, and every clone
+    /// of it.
     pub unsafe fn into_static(self) -> Source<'static> {
-        Source {
-            // SAFETY: caller contract.
-            path: unsafe { self.path.into_static() },
-            contents: match self.contents {
+        let erase = |bytes: Cow<'a, [u8]>| -> Cow<'static, [u8]> {
+            match bytes {
                 // SAFETY: caller contract.
                 Cow::Borrowed(bytes) => Cow::Borrowed(unsafe { bun_ptr::detach_lifetime(bytes) }),
                 Cow::Owned(bytes) => Cow::Owned(bytes),
-            },
+            }
+        };
+        Source {
+            // SAFETY: caller contract.
+            path: unsafe { self.path.into_static() },
+            contents: erase(self.contents),
             contents_is_recycled: self.contents_is_recycled,
-            identifier_name: self.identifier_name,
+            identifier_name: erase(self.identifier_name),
             index: self.index,
         }
     }

@@ -181,8 +181,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
             let source_ref = c.get_source(source_index as u32);
-            // `bun_ast::Source` is not `Clone`
-            // (its `Cow` fields would deep-copy `Owned` data); instead, build a
+            // `clone()` would deep-copy `Owned` data; instead, build a
             // borrowed-field shadow only when the path needs fixing.
             let source_storage: bun_ast::Source;
             let source: &bun_ast::Source = if core::ptr::eq(
@@ -198,17 +197,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 ));
                 source_storage = bun_ast::Source {
                     path: new_path,
-                    // SAFETY: `source_ref` is `&'static Source<'static>`, so re-borrowing its
-                    // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
-                    contents: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
-                    }),
+                    contents: std::borrow::Cow::Borrowed(source_ref.contents.as_ref()),
                     contents_is_recycled: source_ref.contents_is_recycled,
-                    // SAFETY: `source_ref` is `&'static Source<'static>`, so re-borrowing its
-                    // `Cow` payload as `&'static [u8]` is sound regardless of arm.
-                    identifier_name: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
-                    }),
+                    identifier_name: std::borrow::Cow::Borrowed(
+                        source_ref.identifier_name.as_ref(),
+                    ),
                     index: source_ref.index,
                 };
                 &source_storage
@@ -973,8 +966,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // `get_source` returns `&'static Source<'static>` (parse_graph SoA is append-only and
-    // outlives the link step), so it does not borrow `c` — no split-borrow needed
+    // What `get_source` returns does not borrow `c`: no split-borrow needed
     // across the `&mut self` call below.
     let source: &bun_ast::Source = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(

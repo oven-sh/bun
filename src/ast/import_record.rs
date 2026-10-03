@@ -80,33 +80,33 @@ bitflags::bitflags! {
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 
-        const WRAP_WITH_TO_ESM = 1 << 13;
-        const WRAP_WITH_TO_COMMONJS = 1 << 14;
+        const WRAP_WITH_TO_ESM = 1 << 12;
+        const WRAP_WITH_TO_COMMONJS = 1 << 13;
 
         /// "import defer * as ns from 'path'" — defer evaluation of the
         /// imported module until a property on the namespace object is
         /// accessed. Requires `CONTAINS_IMPORT_STAR`.
-        const PHASE_DEFER = 1 << 15;
+        const PHASE_DEFER = 1 << 14;
 
         /// The linker pointed `path` at another output chunk (a split
         /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
-        const IMPORTS_CHUNK = 1 << 16;
+        const IMPORTS_CHUNK = 1 << 15;
 
         /// `import()` / `require()` whose value nothing reads: the linker bound
         /// every name read off it to an export, so it evaluates to `{}`.
-        const NAMESPACE_UNUSED = 1 << 17;
+        const NAMESPACE_UNUSED = 1 << 16;
 
         /// A split `require()` whose target is CommonJS at link time: the
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
-        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 17;
 
         /// Barrel optimization deferred this record: it set `IS_UNUSED` so the
         /// target does not load until an importer requests one of its exports.
         /// Only a record with this flag can be un-deferred. The parser sets
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
-        const IS_BARREL_DEFERRED = 1 << 19;
+        const IS_BARREL_DEFERRED = 1 << 18;
     }
 }
 

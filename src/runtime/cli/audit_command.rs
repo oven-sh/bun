@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
 use bun_collections::{DynamicBitSet, HashMap, StringHashMap, index_sort};
+use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
@@ -1088,9 +1089,13 @@ fn print_severity(severity: &[u8]) {
 }
 
 fn print_package_heading(name: &[u8], installed: &[Box<[u8]>]) {
-    pretty!("<red>{}<r>", BStr::new(name));
+    pretty!("<red>{}<r>", escape_control_chars(name));
     for (i, version) in installed.iter().enumerate() {
-        pretty!("{}{}", if i == 0 { "@" } else { ", " }, BStr::new(version));
+        pretty!(
+            "{}{}",
+            if i == 0 { "@" } else { ", " },
+            escape_control_chars(version)
+        );
     }
     prettyln!("");
 }
@@ -1114,9 +1119,9 @@ fn print_dependency_path(path: &DependencyPath, separator: &str) {
     }
     prettyln!(
         "  <d>{} {}<r> <red>{}<r>",
-        BStr::new(&via),
+        escape_control_chars(&via),
         separator,
-        BStr::new(vulnerable_pkg)
+        escape_control_chars(vulnerable_pkg)
     );
 }
 
@@ -1183,11 +1188,14 @@ fn print_enhanced_audit_report(
                 continue;
             }
             print_severity(&vuln.severity);
-            pretty!(" {}", BStr::new(&vuln.title));
+            pretty!(" {}", escape_control_chars(&vuln.title));
             if !vuln.vulnerable_versions.is_empty() {
-                pretty!(" <d>({})<r>", BStr::new(&vuln.vulnerable_versions));
+                pretty!(
+                    " <d>({})<r>",
+                    escape_control_chars(&vuln.vulnerable_versions)
+                );
             }
-            prettyln!(" - <d>{}<r>", BStr::new(&vuln.url));
+            prettyln!(" - <d>{}<r>", escape_control_chars(&vuln.url));
         }
 
         prettyln!("");

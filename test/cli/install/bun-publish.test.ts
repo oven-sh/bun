@@ -1352,6 +1352,77 @@ test("dist.tarball in the published manifest does not include userinfo from the 
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("basic auth", () => {
+  // Every spelling below makes `bun install` send `Authorization: Basic`, and npm publishes with
+  // all of them. `bun publish` used to stop with "missing authentication" unless a bearer token
+  // was configured, before sending anything. https://github.com/oven-sh/bun/issues/18670
+  const username = "alice";
+  const password = "s3cret";
+  const userPass = Buffer.from(`${username}:${password}`).toString("base64");
+
+  const configs: [name: string, files: (host: string) => Record<string, string>][] = [
+    [".npmrc _auth", host => ({ ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${userPass}\n` })],
+    [
+      ".npmrc username and _password",
+      host => ({
+        ".npmrc": [
+          `registry=http://${host}/`,
+          `//${host}/:username=${username}`,
+          `//${host}/:_password=${Buffer.from(password).toString("base64")}`,
+          "",
+        ].join("\n"),
+      }),
+    ],
+    [".npmrc registry url with userinfo", host => ({ ".npmrc": `registry=http://${username}:${password}@${host}/\n` })],
+    [
+      "bunfig.toml registry username and password",
+      host => ({
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { cache: false, registry: { url: `http://${host}/`, username, password } },
+        }),
+      }),
+    ],
+  ];
+
+  async function publishWith(files: (host: string) => Record<string, string>) {
+    const requests: string[] = [];
+    using mock = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+        return new Response("OK", { status: 200 });
+      },
+    });
+
+    using dir = tempDir("publish-basic-auth", {
+      "package.json": JSON.stringify({ name: "basic-auth-pkg", version: "1.0.0" }),
+      // Empty home directory so the machine's own .npmrc / bunfig.toml cannot supply credentials.
+      "home/.keep": "",
+      ...files(`localhost:${mock.port}`),
+    });
+    const home = join(String(dir), "home");
+
+    const result = await publish({ ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home }, String(dir));
+    return { ...result, requests };
+  }
+
+  test.each(configs)("%s", async (_, files) => {
+    const { out, err, exitCode, requests } = await publishWith(files);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + basic-auth-pkg@1.0.0");
+    expect(requests).toEqual([`PUT /basic-auth-pkg Basic ${userPass}`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("still refuses to publish without any credentials", async () => {
+    const { out, err, exitCode, requests } = await publishWith(host => ({ ".npmrc": `registry=http://${host}/\n` }));
+    expect(err).toContain("error: missing authentication (run `bunx npm login`)");
+    expect(out).not.toContain(" + basic-auth-pkg@1.0.0");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

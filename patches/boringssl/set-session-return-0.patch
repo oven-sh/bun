@@ -1,0 +1,49 @@
+SSL_set_session returns 0 once the handshake has begun.
+
+Upstream documents that a call after the handshake has begun is an error,
+and enforces it with abort(). Bun exposes this function to user JavaScript
+as socket.setSession() (node:tls, Bun.connect, Bun.listen), so a late call
+with a valid session killed the whole process with no catchable error.
+
+This patch refuses the late call with 0 and leaves the SSL unchanged. No
+error is queued: callers that discard the result (lsquic) would leave it
+for an unrelated later call to report. The three checks that decide the
+refusal are the ones upstream uses.
+
+There is no upstream issue to link. Upstream aborts on purpose, so this is a
+fork divergence with nothing to send upstream.
+
+Removal: this diff belongs on oven-sh/boringssl master, beside the other
+BoringSSL divergences. Whoever lands it there deletes this file and the
+`patches:` entry in scripts/build/deps/boringssl.ts in the same PR that moves
+BORINGSSL_COMMIT to the merged SHA. Do not leave that to whichever pin bump
+happens to come next: an open one does not carry it.
+
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -2258,7 +2258,8 @@
+ // `SSL_SESSION_get0_signed_cert_timestamp_list`, and
+ // `SSL_SESSION_get0_ocsp_response`.
+ //
+-// It is an error to call this function after the handshake has begun.
++// Bun: once the handshake has begun, this function returns zero and leaves
++// `ssl` unchanged. Upstream aborts the process on that call.
+ OPENSSL_EXPORT int SSL_set_session(SSL *ssl, SSL_SESSION *session);
+ 
+ // SSL_DEFAULT_SESSION_TIMEOUT is the default lifetime, in seconds, of a
+--- a/ssl/ssl_session.cc
++++ b/ssl/ssl_session.cc
+@@ -1128,10 +1128,12 @@
+ int SSL_set_session(SSL *ssl, SSL_SESSION *session) {
+   auto *ssl_impl = FromOpaque(ssl);
+   // SSL_set_session may only be called before the handshake has started.
++  // Bun: upstream aborts here. User JavaScript reaches this call through
++  // setSession() at any time, so a late call returns 0 instead.
+   if (ssl_impl->s3->initial_handshake_complete ||  //
+       ssl_impl->s3->hs == nullptr ||               //
+       ssl_impl->s3->hs->state != 0) {
+-    abort();
++    return 0;
+   }
+ 
+   ssl_set_session(ssl_impl, session);

@@ -1107,6 +1107,8 @@ impl WebWorker {
             }
         }
         let _ = vm.global().handle_rejected_promises();
+        // What the 'unhandledRejection' listeners queued runs before the 'exit' listeners.
+        let _ = vm.global().drain_microtasks_and_next_ticks();
         if self.has_requested_terminate() {
             return;
         }

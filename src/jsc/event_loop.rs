@@ -807,8 +807,7 @@ impl EventLoop {
                 self.global_ref()
                     .handle_rejected_promises()
                     .map_err(|_| Stopped)?;
-                // A worker's 'unhandledRejection' listener called close(): its checkpoint comes before
-                // the next task, not after it.
+                // A close() from an 'unhandledRejection' listener: its checkpoint precedes the next task.
                 if self.vm_ref().worker.is_some()
                     // SAFETY: a field of the VM's client data, which lives as long as the VM.
                     && unsafe { Zig__GlobalObject__workerCloseRequested(global).read() }

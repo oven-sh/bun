@@ -350,12 +350,21 @@ describe("web worker", () => {
       return new Worker("data:text/javascript," + encodeURIComponent(src));
     }
 
+    // Rejects when the worker reports an error, so a failing run does not wait for the timeout.
+    function errored(worker: Worker): Promise<never> {
+      return new Promise((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
+    }
+
+    async function firstMessage(worker: Worker): Promise<any> {
+      const [event] = await Promise.race([once(worker, "message"), errored(worker)]);
+      return event.data;
+    }
+
     // Resolves with every message the worker posts, in order, once its "close" event fires.
     async function messagesUntilClose(worker: Worker): Promise<{ messages: any[]; code: number }> {
       const messages: any[] = [];
       worker.addEventListener("message", e => messages.push(e.data));
-      const errored = new Promise<never>((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
-      const [close] = await Promise.race([once(worker, "close"), errored]);
+      const [close] = await Promise.race([once(worker, "close"), errored(worker)]);
       return { messages, code: close.code };
     }
 
@@ -363,7 +372,7 @@ describe("web worker", () => {
       const worker = workerFromSource(
         `postMessage({ hasClose: "close" in self, type: typeof self.close, sameAsGlobal: self.close === globalThis.close });`,
       );
-      const [{ data }] = await once(worker, "message");
+      const data = await firstMessage(worker);
       worker.terminate();
       expect(data).toEqual({ hasClose: true, type: "function", sameAsGlobal: true });
     });
@@ -427,8 +436,7 @@ describe("web worker", () => {
 
     test("terminate() still interrupts a script that keeps running after close()", async () => {
       const worker = workerFromSource(`self.close(); postMessage("closing"); while (true) {}`);
-      const [{ data }] = await once(worker, "message");
-      expect(data).toBe("closing");
+      expect(await firstMessage(worker)).toBe("closing");
       worker.terminate();
       // The worker never reached the checkpoint that consumes close(): the parent stopped it, code 0.
       const [close] = await once(worker, "close");
@@ -602,8 +610,8 @@ describe("web worker", () => {
       test(`from a message handler ${when}, the rest of the batch is dropped`, async () => {
         const call = when === "synchronously" ? "self.close()" : "queueMicrotask(() => self.close())";
         const worker = workerFromSource(`self.onmessage = e => { postMessage(e.data); if (e.data === 0) ${call}; };`);
-        const errored = new Promise<never>((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
-        await Promise.race([once(worker, "open"), errored]);
+        const failed = errored(worker);
+        await Promise.race([once(worker, "open"), failed]);
         for (let i = 0; i < 5; i++) worker.postMessage(i);
         const { messages, code } = await messagesUntilClose(worker);
         expect(messages).toEqual([0]);
@@ -617,8 +625,8 @@ describe("web worker", () => {
         port1.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };
         self.onmessage = () => { for (let i = 0; i < 5; i++) port2.postMessage(i); };
       `);
-      const errored = new Promise<never>((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
-      await Promise.race([once(worker, "open"), errored]);
+      const failed = errored(worker);
+      await Promise.race([once(worker, "open"), failed]);
       worker.postMessage("go");
       const { messages, code } = await messagesUntilClose(worker);
       expect(messages).toEqual([0]);
@@ -644,13 +652,13 @@ describe("web worker", () => {
       `);
       const messages: any[] = [];
       worker.addEventListener("message", e => messages.push(e.data));
-      const errored = new Promise<never>((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
+      const failed = errored(worker);
       const { promise: ready, resolve } = Promise.withResolvers<number>();
       worker.addEventListener("message", e => e.data?.port && resolve(e.data.port));
-      const port = await Promise.race([ready, errored]);
+      const port = await Promise.race([ready, failed]);
       using sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
       for (let i = 0; i < 5; i++) sender.send(String(i), port, "127.0.0.1");
-      const [close] = await Promise.race([once(worker, "close"), errored]);
+      const [close] = await Promise.race([once(worker, "close"), failed]);
       expect(messages).toEqual([{ port }, "0"]);
       expect(close.code).toBe(0);
     });

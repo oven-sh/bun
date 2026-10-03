@@ -428,6 +428,7 @@ describe("dns", () => {
       const [system, libc] = await Promise.all(
         ["system", "libc"].map(backend => exchange(both, lookup("host.corp.example", { backend }))),
       );
+      expect(libc.requests).toHaveLength(2);
       expect(system.requests).toEqual(libc.requests);
     });
 

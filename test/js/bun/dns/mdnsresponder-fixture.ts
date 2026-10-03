@@ -159,7 +159,8 @@ function handle(conn: number, header: Buffer, data: Buffer, errorFds: number[]) 
     status.writeInt32BE(ERR_UNSUPPORTED);
   }
 
-  const errorFd = errorFds.shift()!;
+  const errorFd = errorFds.shift();
+  if (errorFd === undefined) throw new Error(`request with op ${op} came without a descriptor for its status`);
   writeSync(errorFd, status);
   closeSync(errorFd);
   if (replies.length) writeSync(conn, Buffer.concat(replies));

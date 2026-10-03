@@ -1340,7 +1340,7 @@ fn check_what_is_named(
                         let said = Diagnostic {
                             code: related.code,
                             category: related.category,
-                            text: related.text.into_bytes(),
+                            text: related.text,
                             ..global(0, &[""; 0])
                         };
                         let Some((of, start, end)) = related.at else {
@@ -1366,9 +1366,9 @@ fn check_what_is_named(
                     code: e.code,
                     category: e.category,
                     text: if request.says_it_as_typescript_does {
-                        e.text.into_bytes()
+                        e.text
                     } else {
-                        in_terms_of_bun(e.text.into_bytes())
+                        in_terms_of_bun(e.text)
                     },
                     ..global(0, &[""; 0])
                 };

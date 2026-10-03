@@ -152,7 +152,7 @@ impl Checker<'_> {
                 file,
                 hir.node(c).with(Part::Base),
                 2675,
-                &[Arg::Text(&name)],
+                &[Arg::Bytes(&name)],
             );
         }
     }
@@ -370,7 +370,7 @@ impl Checker<'_> {
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {
                         let suggestion = self.prop_to_string(&suggestion);
-                        let args = [Arg::Type(base), Arg::Text(&suggestion)];
+                        let args = [Arg::Type(base), Arg::Bytes(&suggestion)];
                         self.error_at(at, code(4117), &args);
                     }
                     None => {

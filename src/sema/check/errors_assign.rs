@@ -590,7 +590,7 @@ impl Checker<'_> {
                     (file, prop.pos, end),
                     2353,
                     &[
-                        Arg::Text(&self.source_text(file, prop.pos, end)),
+                        Arg::Bytes(&self.source_text(file, prop.pos, end)),
                         Arg::Type(context),
                     ],
                 );
@@ -629,12 +629,9 @@ impl Checker<'_> {
                     return Ok(None);
                 };
                 let digits = self.number_name(hir.numbers[n as usize]);
-                let text = format!(
-                    "{}{}",
-                    if op == UnOp::Plus { '+' } else { '-' },
-                    self.atoms().text(digits)
-                );
-                return Ok(Some(self.atoms().intern_str(&text)));
+                let sign: &[u8] = if op == UnOp::Plus { b"+" } else { b"-" };
+                let text = cat!(sign, self.atoms().bytes(digits));
+                return Ok(Some(self.atoms().intern(&text)));
             }
             _ => {}
         }
@@ -1504,8 +1501,8 @@ impl Checker<'_> {
             return self.type_of_property(ty, name);
         }
         // `isNumericLiteralName`: what a number is spelled as.
-        let key = match self.atoms().text(name).parse::<f64>() {
-            Ok(n) if self.number_name(n) == name => self.number_literal(n, false),
+        let key = match crate::atom::parse_number(self.atoms().bytes(name)) {
+            Some(n) if self.number_name(n) == name => self.number_literal(n, false),
             _ => self.string_literal(name, false),
         };
         self.indexed_access_if_any(ty, key, false)

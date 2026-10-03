@@ -23,7 +23,8 @@ impl Category {
     }
 }
 
-/// Bytes as text, for the arguments of a diagnostic and for the printer of types, which still hold a `String`. Goes when they hold bytes.
+/// Bytes as text, for the tools that write baselines.
+#[cfg(feature = "baselines")]
 pub fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }

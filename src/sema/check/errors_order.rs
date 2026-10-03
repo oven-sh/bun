@@ -184,7 +184,7 @@ impl Checker<'_> {
         let (from, to) = self.get_error_range_for_node(file, declaration);
         let name = self.declaration_name_at(file, name);
         let related = self.declared_here((file, from, to), name.clone());
-        self.error_at((file, start, 0), code, &[Arg::Text(&name)])
+        self.error_at((file, start, 0), code, &[Arg::Bytes(&name)])
             .add_related_info(related);
     }
 

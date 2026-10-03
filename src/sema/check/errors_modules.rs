@@ -154,7 +154,7 @@ impl Checker<'_> {
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
                     let arg0 = fully_qualified_name(self, resolved);
                     let arg1 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
-                    let args = [Arg::Text(&arg0), Arg::Atom(name), arg1];
+                    let args = [Arg::Bytes(&arg0), Arg::Atom(name), arg1];
                     self.error(file, right, 2724, &args);
                 }
                 return;
@@ -186,7 +186,7 @@ impl Checker<'_> {
                 }
             }
             let arg0 = fully_qualified_name(self, resolved);
-            self.error(file, right, 2694, &[Arg::Text(&arg0), Arg::Atom(name)]);
+            self.error(file, right, 2694, &[Arg::Bytes(&arg0), Arg::Atom(name)]);
             return;
         }
     }
@@ -312,7 +312,7 @@ impl Checker<'_> {
 
     /// `addTypeOnlyDeclarationRelatedInfo`, of `getTypeOnlyAliasDeclarationEx(sym, SymbolFlagsValue)`. `name`: what the alias goes by
     /// where the error is.
-    pub(super) fn type_only_declaration_related(&self, sym: Sym, name: String) -> Vec<Reported> {
+    pub(super) fn type_only_declaration_related(&self, sym: Sym, name: Vec<u8>) -> Vec<Reported> {
         let type_only = self
             .files()
             .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
@@ -398,10 +398,10 @@ pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node)
 }
 
 /// `getFullyQualifiedName`
-pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
+pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> Vec<u8> {
     let name = c.symbol_to_string(sym);
     match c.files().symbol_parent(sym) {
-        Some(parent) => format!("{}.{name}", fully_qualified_name(c, parent)),
+        Some(parent) => cat!(fully_qualified_name(c, parent), b".", name),
         None => name,
     }
 }
@@ -409,7 +409,7 @@ pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
 /// `getFullyQualifiedName` for an `AliasTarget`. A synthesized property (of a union, an intersection, a mapped type, a tuple) has no `Parent`.
 pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) -> Vec<u8> {
     let (object, name) = match symbol {
-        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol).into_bytes(),
+        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol),
         AliasTarget::Property(object, name, _) => (object, name),
         AliasTarget::Unknown => return b"unknown".to_vec(),
     };
@@ -421,7 +421,7 @@ pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) 
         prop = &of[0];
     }
     let mut qualified = match prop.source {
-        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol).into_bytes(),
+        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol),
         PropSource::Literal(file, property) => {
             let owner = c.bound(file).prop_owner[property.idx()];
             let mut parent = c.name_of_object_literal(file, owner);

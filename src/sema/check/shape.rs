@@ -917,7 +917,7 @@ impl<'p> Checker<'p> {
 
     pub fn number_name(&self, n: f64) -> Atom {
         let text = crate::atom::number_to_string(n);
-        self.atoms().intern_str(&text)
+        self.atoms().intern(&text)
     }
 
     /// Adds the members `members` declares (the static ones or the others) to `b`. `early`: only those the binder can name, without
@@ -3527,9 +3527,9 @@ impl<'p> Checker<'p> {
             UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
             UntypedProperty::Assignment(e) => self
                 .name_of_assignment_declaration(file, e)
-                .unwrap_or_else(|| "(Missing)".to_owned()),
+                .unwrap_or_else(|| b"(Missing)".to_vec()),
         };
-        let diagnostic = self.new_diagnostic(at, code, &[Arg::Text(&name), Arg::Type(ty)]);
+        let diagnostic = self.new_diagnostic(at, code, &[Arg::Bytes(&name), Arg::Type(ty)]);
         self.add_error_or_suggestion(no_implicit_any, diagnostic);
     }
 
@@ -5455,7 +5455,7 @@ impl<'p> Checker<'p> {
         std::str::from_utf8(text)
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
-            .is_some_and(|n| crate::atom::number_to_string(n).as_bytes() == text)
+            .is_some_and(|n| crate::atom::number_to_string(n) == text)
     }
 
     /// The call or construct signatures of `ty`.

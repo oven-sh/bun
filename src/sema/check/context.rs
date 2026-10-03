@@ -352,7 +352,7 @@ impl<'p> Checker<'p> {
                     }
                     // `createIterableType`, `getGlobalIterableTypeChecked`
                     if self.global_type_symbol(known::Iterable).is_none() {
-                        self.report_global_error(2318, vec!["Iterable".to_owned()]);
+                        self.report_global_error(2318, vec![b"Iterable".to_vec()]);
                     }
                     return Some(self.global_ref(
                         known::Iterable,
@@ -1022,11 +1022,7 @@ impl<'p> Checker<'p> {
         // A place past the fixed start of a tuple is one of those the rest of it stands for.
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
-            && self
-                .atoms()
-                .text(name)
-                .parse::<f64>()
-                .is_ok_and(|n| n >= 0.0)
+            && crate::atom::parse_number(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
         {
             let elems = self.type_arguments(part);
             let fixed = Self::fixed_length(flags);

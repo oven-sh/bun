@@ -2613,11 +2613,11 @@ fn split_package_name(spec: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
-/// `@scope/name` has its types in `@types/scope__name`.
-fn mangle_scoped(name: &[u8]) -> Vec<u8> {
+/// `MangleScopedPackageName`: `@scope/name` has its types in `@types/scope__name`.
+pub(crate) fn mangle_scoped(name: &[u8]) -> Vec<u8> {
     match name.strip_prefix(b"@") {
-        Some(rest) => rest.replacen(b"/", b"__", 1),
-        None => name.to_vec(),
+        Some(rest) if strings::contains_char(rest, b'/') => rest.replacen(b"/", b"__", 1),
+        _ => name.to_vec(),
     }
 }
 

@@ -609,14 +609,14 @@ impl Checker<'_> {
             PatKind::Ident(name) if name != known::empty => {
                 (self.place_of_token(file, start), Arg::Atom(name))
             }
-            _ => ((file, start, start), Arg::Text("(Missing)")),
+            _ => ((file, start, start), Arg::Bytes(b"(Missing)")),
         };
         let property = self.declaration_name_at(file, hir[p].pos);
         let related = hir[param].ty.is_none().then(|| {
             let end = self.end_of_param(file, param);
-            self.new_diagnostic((file, end, end), 2843, &[Arg::Text(&property)])
+            self.new_diagnostic((file, end, end), 2843, &[Arg::Bytes(&property)])
         });
-        let diagnostic = self.error_at(node, 2842, &[name, Arg::Text(&property)]);
+        let diagnostic = self.error_at(node, 2842, &[name, Arg::Bytes(&property)]);
         if let Some(related) = related {
             diagnostic.add_related_info(related);
         }
@@ -826,7 +826,7 @@ impl Checker<'_> {
         if code != 0 {
             let (start, end) = self.get_error_range_for_node(file, name);
             let text = self.source_text(file, start, end);
-            self.error_at((file, start, end), code, &[Arg::Text(&text)]);
+            self.error_at((file, start, end), code, &[Arg::Bytes(&text)]);
             return;
         }
         // `GetDeclarationOfKind(symbol, KindGetAccessor)`, `KindSetAccessor`

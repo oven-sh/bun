@@ -4050,7 +4050,7 @@ impl<'f> Binder<'f> {
     /// `getDeclarationName`: the text of the string or numeric literal `key`.
     fn literal_name(&self, key: ExprId) -> Atom {
         match self.f[key].kind {
-            ExprKind::Number(number) => self.atoms.intern_str(&crate::atom::number_to_string(
+            ExprKind::Number(number) => self.atoms.intern(&crate::atom::number_to_string(
                 self.f.numbers[number as usize],
             )),
             _ => string_literal_text(self.f, key),

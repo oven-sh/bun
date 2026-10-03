@@ -460,7 +460,7 @@ impl Checker<'_> {
                 let end = self.end_inside_parentheses(file, id);
                 self.error_at((file, e.pos, end), 2712, &[]);
                 // `getGlobalPromiseConstructorSymbol`
-                self.report_global_error(2468, vec!["Promise".to_owned()]);
+                self.report_global_error(2468, vec![b"Promise".to_vec()]);
             }
         }
         // `getReturnTypeFromBody` only gets there for a function that returns nothing, calls of itself aside.
@@ -502,7 +502,7 @@ impl Checker<'_> {
             if is_asked {
                 let (start, end) = self.error_range_of_fn(file, f);
                 self.error_at((file, start, end), 2705, &[]);
-                self.report_global_error(2468, vec!["Promise".to_owned()]);
+                self.report_global_error(2468, vec![b"Promise".to_vec()]);
             }
         }
     }

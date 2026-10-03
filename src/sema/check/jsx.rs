@@ -143,7 +143,7 @@ impl<'p> Checker<'p> {
                         return None;
                     };
                     let at = (file, hir[caller].pos, hir[j].opening_end);
-                    let container = Arg::Text("JSX.IntrinsicElements");
+                    let container = Arg::Bytes(b"JSX.IntrinsicElements");
                     self.error_at(at, 2339, &[Arg::Atom(name), container]);
                     return Some(Vec::new());
                 }

@@ -1009,12 +1009,9 @@ impl<'p> Printer<'_, 'p> {
                 };
                 Node::simple(quoted(self.c.atoms().bytes(value), quote, false))
             }
-            TypeNodeKind::NumberLit(index) => Node::simple(
-                crate::atom::number_to_string(
-                    hir.numbers.get(index as usize).copied().unwrap_or(0.0),
-                )
-                .into_bytes(),
-            ),
+            TypeNodeKind::NumberLit(index) => Node::simple(crate::atom::number_to_string(
+                hir.numbers.get(index as usize).copied().unwrap_or(0.0),
+            )),
             TypeNodeKind::BigIntLit { text, negative } => {
                 let digits = self.text(text);
                 let digits = digits.strip_suffix(b"n").unwrap_or(&digits);

@@ -749,7 +749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TNumericLiteral => {
                 let text = bun_sema::atom::number_to_string(p.lexer.number);
-                value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(text.as_bytes()));
+                value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(&text));
                 p.note(&mut value.loc, crate::sema::Mark::NameKind, 2);
             }
             T::TBigIntegerLiteral => value.name = js_ast::StoreStr::new(p.lexer.raw()),
@@ -768,8 +768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     js_ast::ExprData::ENumber(number) => {
                         let text = bun_sema::atom::number_to_string(number.value());
-                        value.name =
-                            js_ast::StoreStr::new(p.arena.alloc_slice_copy(text.as_bytes()));
+                        value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(&text));
                         p.note(&mut value.loc, crate::sema::Mark::NameKind, 4);
                     }
                     js_ast::ExprData::EString(_) => {}

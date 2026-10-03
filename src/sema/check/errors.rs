@@ -315,48 +315,41 @@ impl Checker<'_> {
     /// `alternate`: `AlternateResult`.
     fn module_not_found_hint(
         &self,
-        spec: &str,
-        package: &str,
-        alternate: Option<String>,
+        spec: &[u8],
+        package: &[u8],
+        alternate: Option<&[u8]>,
     ) -> super::explain::Line {
-        // `MangleScopedPackageName`
-        let mangled = match package
-            .strip_prefix('@')
-            .and_then(|rest| rest.split_once('/'))
-        {
-            Some((scope, name)) => format!("{scope}__{name}"),
-            None => package.to_owned(),
-        };
+        let mangled = crate::resolve::mangle_scoped(package);
         if let Some(types) = alternate {
-            let package = if types.contains("/node_modules/@types/") {
-                format!("@types/{mangled}")
+            let package = if strings::contains(types, b"/node_modules/@types/") {
+                cat!(b"@types/", mangled)
             } else {
-                package.to_owned()
+                package.to_vec()
             };
             return super::explain::Line {
                 code: 6278,
-                args: held(vec![types, package]),
+                args: held(vec![types.to_vec(), package]),
                 level: 1,
             };
         }
         // `GetPackagesMap`
         let (types, own) = (
-            format!("/node_modules/@types/{mangled}/"),
-            format!("/node_modules/{package}/"),
+            cat!(b"/node_modules/@types/", mangled, b"/"),
+            cat!(b"/node_modules/", package, b"/"),
         );
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for module in modules {
-            has_types_package |= strings::contains(&module.path, types.as_bytes());
+            has_types_package |= strings::contains(&module.path, &types);
             has_declarations |= crate::resolve::is_declaration_file_name(&module.path)
-                && strings::contains(&module.path, own.as_bytes());
+                && strings::contains(&module.path, &own);
         }
         let (code, args) = if has_types_package {
-            (7040, vec![package.to_owned(), mangled])
+            (7040, vec![package.to_vec(), mangled])
         } else if has_declarations {
-            (7058, vec![package.to_owned(), spec.to_owned()])
+            (7058, vec![package.to_vec(), spec.to_vec()])
         } else {
-            (7035, vec![spec.to_owned(), mangled])
+            (7035, vec![spec.to_vec(), mangled])
         };
         super::explain::Line {
             code,
@@ -580,7 +573,7 @@ impl Checker<'_> {
             Some(b'"' | b'\'') => word_at(self, from, start),
             _ => self.atom_text(name),
         };
-        let (module_name, written) = (Arg::Text(&module_name), Arg::Text(&written));
+        let (module_name, written) = (Arg::Bytes(&module_name), Arg::Bytes(&written));
         let mut related = Vec::new();
         match (code, other) {
             (2724, Some(meant)) => {
@@ -604,7 +597,11 @@ impl Checker<'_> {
             _ => {}
         }
         let args: &[Arg<'_>] = match code {
-            2460 | 2724 => &[module_name, written, other.map_or(Arg::Text(""), Arg::Sym)],
+            2460 | 2724 => &[
+                module_name,
+                written,
+                other.map_or(Arg::Bytes(b""), Arg::Sym),
+            ],
             2595 | 2597 => &[written],
             2616 => &[written, written, module_name],
             _ => &[module_name, written],
@@ -763,14 +760,15 @@ impl Checker<'_> {
             return;
         };
         let (path, package) = module.untyped_import_files[index];
-        let text = self.atom_text(spec);
+        let atoms = self.atoms();
+        let text = atoms.bytes(spec);
         let error_info = package
-            .filter(|_| !crate::resolve::is_relative(text.as_bytes()))
+            .filter(|_| !crate::resolve::is_relative(text))
             .map(|package| {
                 let mut alternates = module.untyped_import_alternates.iter();
                 let alternate = alternates.find(|a| (a.0, a.1) == (spec, mode));
-                let alternate = alternate.map(|a| self.atom_text(a.2));
-                let hint = self.module_not_found_hint(&text, &self.atom_text(package), alternate);
+                let alternate = alternate.map(|a| atoms.bytes(a.2));
+                let hint = self.module_not_found_hint(text, atoms.bytes(package), alternate);
                 Reported::new(at, hint.code, hint.args)
             });
         let args = [Arg::Atom(spec), Arg::Atom(path)];
@@ -1759,7 +1757,7 @@ fn get_candidate_name(name: &[u8]) -> &[u8] {
 // ───────────────────────────── what goes into the messages ─────────────────────────────
 
 /// `DeclarationNameToString`, `TokenText`: the name or the word written at `start`.
-fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> String {
+fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> Vec<u8> {
     c.source_text(file, start, c.end_of_name_at(file, start))
 }
 
@@ -1942,10 +1940,10 @@ impl Files {
 
 /// `getFullyQualifiedName` of `module`, seen from an import of it. `getSpecifierForModuleSymbol`: a file goes by a specifier that
 /// leads to it from there, for which `spec`, the one that is written, is taken.
-fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> String {
+fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> Vec<u8> {
     let decls = c.files().decls_of(module);
     if decls.iter().any(|d| matches!(d.1, Decl::File)) {
-        format!("\"{}\"", c.atom_text(spec))
+        cat!(b"\"", c.atoms().bytes(spec), b"\"")
     } else {
         c.symbol_to_string(module)
     }
@@ -1969,51 +1967,51 @@ pub(super) fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u3
 }
 
 /// `entityNameToString`
-fn entity_name_text(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
+fn entity_name_text(c: &Checker<'_>, file: FileId, e: ExprId) -> Vec<u8> {
     match c.hir(file)[e].kind {
         ExprKind::Dot { obj, name, .. } => {
-            format!("{}.{}", entity_name_text(c, file, obj), c.atom_text(name))
+            cat!(entity_name_text(c, file, obj), b".", c.atoms().bytes(name))
         }
         ExprKind::Ident(name) => c.atom_text(name),
-        ExprKind::This => "this".to_owned(),
-        _ => String::new(),
+        ExprKind::This => b"this".to_vec(),
+        _ => Vec::new(),
     }
 }
 
 /// `TokenToString` of the operator of `a op b`, or of `a op= b`.
-fn operator_text(op: BinOp, is_assignment: bool) -> String {
-    let text = match op {
-        BinOp::Add => "+",
-        BinOp::Sub => "-",
-        BinOp::Mul => "*",
-        BinOp::Div => "/",
-        BinOp::Rem => "%",
-        BinOp::Pow => "**",
-        BinOp::Shl => "<<",
-        BinOp::Shr => ">>",
-        BinOp::UShr => ">>>",
-        BinOp::BitAnd => "&",
-        BinOp::BitOr => "|",
-        BinOp::BitXor => "^",
-        BinOp::Lt => "<",
-        BinOp::Le => "<=",
-        BinOp::Gt => ">",
-        BinOp::Ge => ">=",
-        BinOp::EqEq => "==",
-        BinOp::NotEq => "!=",
-        BinOp::EqEqEq => "===",
-        BinOp::NotEqEq => "!==",
-        BinOp::In => "in",
-        BinOp::Instanceof => "instanceof",
-        BinOp::And => "&&",
-        BinOp::Or => "||",
-        BinOp::Nullish => "??",
-        BinOp::Comma => ",",
+fn operator_text(op: BinOp, is_assignment: bool) -> Vec<u8> {
+    let text: &[u8] = match op {
+        BinOp::Add => b"+",
+        BinOp::Sub => b"-",
+        BinOp::Mul => b"*",
+        BinOp::Div => b"/",
+        BinOp::Rem => b"%",
+        BinOp::Pow => b"**",
+        BinOp::Shl => b"<<",
+        BinOp::Shr => b">>",
+        BinOp::UShr => b">>>",
+        BinOp::BitAnd => b"&",
+        BinOp::BitOr => b"|",
+        BinOp::BitXor => b"^",
+        BinOp::Lt => b"<",
+        BinOp::Le => b"<=",
+        BinOp::Gt => b">",
+        BinOp::Ge => b">=",
+        BinOp::EqEq => b"==",
+        BinOp::NotEq => b"!=",
+        BinOp::EqEqEq => b"===",
+        BinOp::NotEqEq => b"!==",
+        BinOp::In => b"in",
+        BinOp::Instanceof => b"instanceof",
+        BinOp::And => b"&&",
+        BinOp::Or => b"||",
+        BinOp::Nullish => b"??",
+        BinOp::Comma => b",",
     };
     if is_assignment {
-        format!("{text}=")
+        cat!(text, b"=")
     } else {
-        text.to_owned()
+        text.to_vec()
     }
 }
 
@@ -2209,12 +2207,12 @@ impl Checker<'_> {
             op,
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
         ) {
-            let args = [Arg::Text(&left), Arg::Text(&right)];
+            let args = [Arg::Bytes(&left), Arg::Bytes(&right)];
             return self.error_and_maybe_suggest_await(at, would_work_with_await, 2367, &args);
         }
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
         let operator = operator_text(op, is_assignment);
-        let args = [Arg::Text(&operator), Arg::Text(&left), Arg::Text(&right)];
+        let args = [Arg::Bytes(&operator), Arg::Bytes(&left), Arg::Bytes(&right)];
         self.error_and_maybe_suggest_await(at, would_work_with_await, 2365, &args);
     }
 
@@ -2242,12 +2240,12 @@ impl Checker<'_> {
         {
             entity_name_text(self, file, location)
         } else {
-            "...".to_owned()
+            b"...".to_vec()
         };
-        let not = if is_equality { "" } else { "!" };
-        let suggestion = format!("{not}Number.isNaN({name})");
+        let not: &[u8] = if is_equality { b"" } else { b"!" };
+        let suggestion = cat!(not, b"Number.isNaN(", name, b")");
         let (from, to) = self.error_range_of_expr(file, location);
-        let did_you_mean = self.new_diagnostic((file, from, to), 1369, &[Arg::Text(&suggestion)]);
+        let did_you_mean = self.new_diagnostic((file, from, to), 1369, &[Arg::Bytes(&suggestion)]);
         let always = if is_equality { "false" } else { "true" };
         let diagnostic = self.error_at(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
         if !(is_left_nan && is_right_nan) {
@@ -2271,13 +2269,12 @@ impl Checker<'_> {
             BinOp::BitOr => "||",
             _ => "!==",
         };
-        let found =
-            start_of_token_before(&hir.text, self.start_of(file, right), operator.as_bytes());
+        let found = start_of_token_before(&hir.text, self.start_of(file, right), &operator);
         let at = match found {
             Some(start) => (file, start, start + operator.len() as u32),
             None => self.place_of_token(file, self.start_inside_parentheses(file, e)),
         };
-        self.error_at(at, 2447, &[Arg::Text(&operator), Arg::Text(suggested)]);
+        self.error_at(at, 2447, &[Arg::Bytes(&operator), Arg::Text(suggested)]);
     }
 
     /// 6807: `errorOrSuggestion`, an error in the initializer of a member of an enum and a suggestion anywhere else.
@@ -2302,7 +2299,11 @@ impl Checker<'_> {
             );
             let operator = operator_text(op, is_assignment);
             let count = crate::atom::number_to_string(f64::from_bits(bits) % 32.0);
-            let args = [Arg::Text(&written), Arg::Text(&operator), Arg::Text(&count)];
+            let args = [
+                Arg::Bytes(&written),
+                Arg::Bytes(&operator),
+                Arg::Bytes(&count),
+            ];
             let diagnostic = self.new_diagnostic(self.place_of_expr(file, e), 6807, &args);
             self.add_error_or_suggestion(is_error, diagnostic);
         }
@@ -2332,7 +2333,7 @@ impl Checker<'_> {
         };
         let at = self.place_of_written_expr(file, offending);
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
-        self.error_at(at, 2469, &[Arg::Text(&operator_text(op, is_assignment))]);
+        self.error_at(at, 2469, &[Arg::Bytes(&operator_text(op, is_assignment))]);
         false
     }
 
@@ -2490,7 +2491,7 @@ impl Checker<'_> {
     pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |c, error| {
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
-            let args: Vec<Arg> = name.iter().map(|name| Arg::Text(name)).collect();
+            let args: Vec<Arg> = name.iter().map(|name| Arg::Bytes(name)).collect();
             c.error_at(at, code, &args);
         })
     }
@@ -2502,7 +2503,7 @@ impl Checker<'_> {
         file: FileId,
         node: ExprId,
         error: super::flow::NonNullError,
-    ) -> ((FileId, u32, u32), u32, Option<String>) {
+    ) -> ((FileId, u32, u32), u32, Option<Vec<u8>>) {
         use super::flow::NonNullError;
         let hir = self.hir(file);
         let is_name = self.is_entity_name(file, node);
@@ -2524,7 +2525,7 @@ impl Checker<'_> {
             },
         };
         let name = match code {
-            18050 if matches!(hir[node].kind, ExprKind::Null) => Some("null".to_owned()),
+            18050 if matches!(hir[node].kind, ExprKind::Null) => Some(b"null".to_vec()),
             18046..=18050 => Some(entity_name_text(self, file, node)),
             _ => None,
         };

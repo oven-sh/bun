@@ -43,7 +43,7 @@ impl Checker<'_> {
 }
 
 /// Of an error: where it starts, where it ends, its code, and the arguments of its message.
-type Noted = (u32, u32, u32, Vec<String>);
+type Noted = (u32, u32, u32, Vec<Vec<u8>>);
 
 const HAS_INDICES: u8 = 1 << 0; // d
 const GLOBAL: u8 = 1 << 1; // g
@@ -220,7 +220,7 @@ impl<'a> RegExpParser<'a> {
         code: u32,
         start: usize,
         length: usize,
-        args: impl FnOnce() -> Vec<String>,
+        args: impl FnOnce() -> Vec<Vec<u8>>,
     ) {
         if self.last_error != Some(start) && !self.is_too_deep {
             self.last_error = Some(start);
@@ -254,7 +254,7 @@ impl<'a> RegExpParser<'a> {
 
     /// 1508, of the character `ch` at `start`.
     fn error_unexpected(&mut self, start: usize, ch: u8) {
-        self.error_with(1508, start, 1, || vec![char::from(ch).to_string()]);
+        self.error_with(1508, start, 1, || vec![vec![ch]]);
     }
 
     /// `char`. `None` for its -1: the body is over.
@@ -293,7 +293,7 @@ impl<'a> RegExpParser<'a> {
             _ => return,
         };
         if self.target < available_from {
-            self.error_with(1501, pos, size, || vec![name.to_owned()]);
+            self.error_with(1501, pos, size, || vec![name.as_bytes().to_vec()]);
         }
     }
 
@@ -303,9 +303,7 @@ impl<'a> RegExpParser<'a> {
         let group_specifiers = std::mem::take(&mut self.group_specifiers);
         for (pos, end, name) in &std::mem::take(&mut self.group_name_references) {
             if !group_specifiers.contains(name) {
-                self.error_with(1532, *pos, *end - *pos, || {
-                    vec![String::from_utf8_lossy(name).into_owned()]
-                });
+                self.error_with(1532, *pos, *end - *pos, || vec![name.to_vec()]);
                 let names = group_specifiers.iter().map(|specifier| &specifier[..]);
                 self.suggest(*pos, *end - *pos, name, names);
             }
@@ -323,7 +321,7 @@ impl<'a> RegExpParser<'a> {
                     },
                     pos,
                     end - pos,
-                    || vec![groups.to_string()],
+                    || vec![super::sink::number_text(groups as usize)],
                 );
             }
         }
@@ -499,7 +497,7 @@ impl<'a> RegExpParser<'a> {
             if !self.any_unicode_mode {
                 return false;
             }
-            self.error_with(1005, self.pos, 0, || vec!["}".to_owned()]);
+            self.error_with(1005, self.pos, 0, || vec![b"}".to_vec()]);
             self.pos -= 1;
         }
         true
@@ -639,7 +637,10 @@ impl<'a> RegExpParser<'a> {
                     },
                     start,
                     self.pos - start,
-                    || vec![format!("\\x{code:02x}")],
+                    || {
+                        let digit = |nibble: u32| b"0123456789abcdef"[nibble as usize & 15];
+                        vec![vec![b'\\', b'x', digit(code >> 4), digit(code)]]
+                    },
                 );
                 ClassAtom::Char(code)
             }
@@ -650,7 +651,7 @@ impl<'a> RegExpParser<'a> {
                     if atom_escape { 1488 } else { 1537 },
                     start,
                     end - start,
-                    || vec![String::from_utf8_lossy(&text[start..end]).into_owned()],
+                    || vec![text[start..end].to_vec()],
                 );
                 ClassAtom::Char(u32::from(ch))
             }
@@ -1061,10 +1062,10 @@ impl<'a> RegExpParser<'a> {
                 _ => self.error_with(1005, self.pos, 0, || {
                     vec![
                         match expression_type {
-                            ClassSetExpressionType::ClassSubtraction => "--",
-                            ClassSetExpressionType::ClassIntersection => "&&",
+                            ClassSetExpressionType::ClassSubtraction => b"--",
+                            ClassSetExpressionType::ClassIntersection => b"&&",
                         }
-                        .to_owned(),
+                        .to_vec(),
                     ]
                 }),
             }
@@ -1322,7 +1323,7 @@ impl<'a> RegExpParser<'a> {
             }
         } else if self.any_unicode_mode {
             self.error_with(1531, self.pos - 2, 2, || {
-                vec![if is_character_complement { "P" } else { "p" }.to_owned()]
+                vec![vec![if is_character_complement { b'P' } else { b'p' }]]
             });
         } else {
             self.pos -= 1;
@@ -1380,7 +1381,7 @@ impl<'a> RegExpParser<'a> {
         if self.peek() == Some(ch) {
             self.pos += 1;
         } else {
-            self.error_with(1005, self.pos, 0, || vec![char::from(ch).to_string()]);
+            self.error_with(1005, self.pos, 0, || vec![vec![ch]]);
         }
     }
 
@@ -1500,9 +1501,8 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
 pub(super) fn spelling_suggestion<'c>(
     name: &[u8],
     candidates: impl Iterator<Item = &'c [u8]>,
-) -> Option<String> {
-    get_spelling_suggestion(name, candidates, |c| c, |a, b| a.cmp(b))
-        .map(|best| String::from_utf8_lossy(best).into_owned())
+) -> Option<Vec<u8>> {
+    get_spelling_suggestion(name, candidates, |c| c, |a, b| a.cmp(b)).map(|best| best.to_vec())
 }
 
 /// `levenshteinWithMax`: changing a letter costs two, and changing its case next to nothing. `None` for its -1: more than `max_value`.

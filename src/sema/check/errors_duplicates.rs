@@ -534,7 +534,7 @@ impl Checker<'_> {
                 {
                     // `InternalSymbolNamePrefix` (0xFE) is not valid UTF-8, so it prints as U+FFFD.
                     let name = match id == known::assignment_declaration {
-                        true => Arg::Text("\u{FFFD}assignment"),
+                        true => Arg::Bytes("\u{FFFD}assignment".as_bytes()),
                         false => Arg::Atom(id),
                     };
                     self.error_at((file, start, end), 2323, &[name]);

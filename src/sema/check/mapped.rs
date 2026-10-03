@@ -642,7 +642,7 @@ impl<'p> Checker<'p> {
                         value: EnumValue::String(value),
                         ..
                     } if c.is_numeric_name(value) => {
-                        c.atoms().text(value).parse().unwrap_or(f64::NAN)
+                        crate::atom::parse_number(c.atoms().bytes(value)).unwrap_or(f64::NAN)
                     }
                     _ => return false,
                 };
@@ -809,7 +809,7 @@ impl<'p> Checker<'p> {
                 });
             }
             if self.is_numeric_name(name) && self.every_type(object, |c, t| c.is_tuple(t)) {
-                let at: f64 = self.atoms().text(name).parse().unwrap_or(f64::NAN);
+                let at = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(f64::NAN);
                 let ends = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Tuple { flags, .. } if Self::fixed_length(flags) == flags.len());
                 if access_node != AccessNode::None
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)
@@ -994,7 +994,7 @@ impl<'p> Checker<'p> {
                 _ => false,
             };
             if is_bigint_literal {
-                self.error_at(index_node, 2538, &[Arg::Text("bigint")]);
+                self.error_at(index_node, 2538, &[Arg::Bytes(b"bigint")]);
             } else if self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
                 && let Some(name) = name
             {
@@ -2569,18 +2569,32 @@ impl<'p> Checker<'p> {
         for (i, chunk) in self.atoms().bytes(value).utf8_chunks().enumerate() {
             let text = chunk.valid();
             let mut chars = text.chars();
-            let text = match (kind, chars.next()) {
-                (StringMappingKind::Uppercase, _) => text.to_uppercase(),
-                (StringMappingKind::Lowercase, _) => text.to_lowercase(),
+            let mut push =
+                |c: char| mapped.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+            // How much of `text` is left as it is.
+            let rest = match (kind, chars.next()) {
+                (StringMappingKind::Uppercase, _) => {
+                    text.chars()
+                        .flat_map(char::to_uppercase)
+                        .for_each(&mut push);
+                    ""
+                }
+                // Not one character at a time: a sigma at the end of a word has a form of its own.
+                (StringMappingKind::Lowercase, _) => {
+                    text.to_lowercase().chars().for_each(&mut push);
+                    ""
+                }
                 (StringMappingKind::Capitalize, Some(first)) if i == 0 => {
-                    first.to_uppercase().collect::<String>() + chars.as_str()
+                    first.to_uppercase().for_each(&mut push);
+                    chars.as_str()
                 }
                 (StringMappingKind::Uncapitalize, Some(first)) if i == 0 => {
-                    first.to_lowercase().collect::<String>() + chars.as_str()
+                    first.to_lowercase().for_each(&mut push);
+                    chars.as_str()
                 }
-                _ => text.to_owned(),
+                _ => text,
             };
-            mapped.extend_from_slice(text.as_bytes());
+            mapped.extend_from_slice(rest.as_bytes());
             mapped.extend_from_slice(chunk.invalid());
         }
         self.atoms().intern(&mapped)

@@ -10,6 +10,7 @@ use super::explain::Line;
 use super::sink::held;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
+use bun_core::strings;
 use smallvec::SmallVec;
 
 /// What a type of the standard library got with each version of it: `(lib, properties)`.
@@ -169,12 +170,12 @@ impl Checker<'_> {
         }
         let name = self.entity_name_around(file, e);
         let node = (file, self.start_of(file, e), self.end_of_expr(file, e));
-        self.error_at(node, 2689, &[Arg::Text(&name)]);
+        self.error_at(node, 2689, &[Arg::Bytes(&name)]);
         true
     }
 
     /// `getEntityNameForExtendingInterface`: the whole of the dotted name that `e` is, or is the left part of, as it is written.
-    pub(super) fn entity_name_around(&self, file: FileId, e: ExprId) -> String {
+    pub(super) fn entity_name_around(&self, file: FileId, e: ExprId) -> Vec<u8> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut top = e;
         while let Parent::Expr(parent) = bound.expr_parent[top.idx()]
@@ -187,20 +188,19 @@ impl Checker<'_> {
     }
 
     /// `DeclarationNameToString` of the name written at `pos`.
-    pub(super) fn declaration_name_at(&self, file: FileId, pos: u32) -> String {
+    pub(super) fn declaration_name_at(&self, file: FileId, pos: u32) -> Vec<u8> {
         self.source_text(file, pos, self.end_of_name_at(file, pos))
     }
 
     /// The name of a property whose declaration cannot be read: a `#x` as it is written, `[Symbol.iterator]` for what a symbol names.
-    fn name_of_unread_property(&self, name: Atom) -> String {
+    fn name_of_unread_property(&self, name: Atom) -> Vec<u8> {
         let bytes = self.atoms().bytes(name);
         let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
-            return String::from_utf8_lossy(as_written(bytes)).into_owned();
+            return as_written(bytes).to_vec();
         };
-        let symbol = String::from_utf8_lossy(symbol);
-        match symbol.split_once('@') {
-            Some((variable, _)) => format!("[{variable}]"),
-            None => format!("[Symbol.{symbol}]"),
+        match strings::index_of_char_usize(symbol, b'@') {
+            Some(at) => cat!(b"[", symbol[..at], b"]"),
+            None => cat!(b"[Symbol.", symbol, b"]"),
         }
     }
 
@@ -313,11 +313,13 @@ impl Checker<'_> {
             && self.static_side_has(object, name)
         {
             let container = self.type_to_string(object);
-            let member = format!(
-                "{container}[{}]",
-                self.source_text(file, at_index.1, at_index.2)
+            let member = cat!(
+                container,
+                b"[",
+                self.source_text(file, at_index.1, at_index.2),
+                b"]"
             );
-            let args = [Arg::Atom(name), Arg::Text(&container), Arg::Text(&member)];
+            let args = [Arg::Atom(name), Arg::Bytes(&container), Arg::Bytes(&member)];
             self.error_at(at_access, 2576, &args);
         } else if self.index_type_of_type(object, TypeId::NUMBER).is_some() {
             self.error_at(at_index, 7015, &[]);
@@ -325,15 +327,15 @@ impl Checker<'_> {
             && let Some(meant) = self.property_meant(object, name, None, true)
         {
             let meant = self.name_of_unread_property(meant);
-            let args = [Arg::Atom(name), Arg::Type(object), Arg::Text(&meant)];
+            let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&meant)];
             self.error_at(at_index, 2551, &args);
         } else if self.has_accessor_method_for(object, key, is_target) {
-            let method = if is_target { "set" } else { "get" };
+            let method: &[u8] = if is_target { b"set" } else { b"get" };
             let call = match self.access_to_string(file, obj) {
-                Some(receiver) => format!("{receiver}.{method}"),
-                None => method.to_owned(),
+                Some(receiver) => cat!(receiver, b".", method),
+                None => method.to_vec(),
             };
-            self.error_at(at_access, 7052, &[Arg::Type(object), Arg::Text(&call)]);
+            self.error_at(at_access, 7052, &[Arg::Type(object), Arg::Bytes(&call)]);
         } else {
             let under = self.lines_under_implicit_any_element(object, key).pop();
             let under = under.map(|line| Reported::new(at_access, line.code, line.args));
@@ -346,8 +348,10 @@ impl Checker<'_> {
     /// What `getPropertyTypeForIndexType` puts under 7053.
     fn lines_under_implicit_any_element(&mut self, object: TypeId, key: TypeId) -> Vec<Line> {
         let (code, first) = match *self.data(key) {
-            TypeData::EnumLit { .. } => (2339, format!("[{}]", self.type_to_string(key))),
-            TypeData::UniqueSymbol { name, .. } => (2339, format!("[{}]", self.atom_text(name))),
+            TypeData::EnumLit { .. } => (2339, cat!(b"[", self.type_to_string(key), b"]")),
+            TypeData::UniqueSymbol { name, .. } => {
+                (2339, cat!(b"[", self.atoms().bytes(name), b"]"))
+            }
             TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
                 match self.property_name_of_type(key) {
                     Some(name) => (2339, self.atom_text(name)),
@@ -365,7 +369,7 @@ impl Checker<'_> {
     }
 
     /// `tryGetPropertyAccessOrIdentifierToString`
-    fn access_to_string(&self, file: FileId, e: ExprId) -> Option<String> {
+    fn access_to_string(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
         if is_parenthesized(self.hir(file), e) {
             return None;
         }
@@ -374,7 +378,7 @@ impl Checker<'_> {
             ExprKind::Ident(name) => Some(self.atom_text(name)),
             ExprKind::Dot { obj, name, .. } => {
                 let receiver = self.access_to_string(file, obj)?;
-                Some(format!("{receiver}.{}", self.atom_text(name)))
+                Some(cat!(receiver, b".", self.atoms().bytes(name)))
             }
             // `IsPropertyName`
             ExprKind::Index { obj, index, .. } if !is_parenthesized(self.hir(file), index) => {
@@ -384,7 +388,7 @@ impl Checker<'_> {
                     ExprKind::Number(n) => crate::atom::number_to_string(hir.numbers[n as usize]),
                     _ => return None,
                 };
-                Some(format!("{receiver}.{name}"))
+                Some(cat!(receiver, b".", name))
             }
             _ => None,
         }
@@ -817,7 +821,7 @@ impl Checker<'_> {
             for &subtype in self.parts(containing) {
                 let apparent = self.apparent_type(subtype);
                 if self.type_of_property(apparent, name).is_none() {
-                    let args = [Arg::Text(&missing), Arg::Type(subtype)];
+                    let args = [Arg::Bytes(&missing), Arg::Type(subtype)];
                     chain = Some(self.new_diagnostic_chain(None, at, 2339, &args));
                     break;
                 }
@@ -825,11 +829,11 @@ impl Checker<'_> {
         }
         let container = self.reduced(containing);
         let container = self.type_to_string(container);
-        let args = [Arg::Text(&missing), Arg::Text(&container)];
+        let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
         let diagnostic = if !is_private && self.static_side_has(containing, name) {
-            let member = format!("{container}.{missing}");
-            let args = [args[0], args[1], Arg::Text(&member)];
+            let member = cat!(container, b".", missing);
+            let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
         } else if self.is_property_of_what_is_promised(containing, name) {
             let mut diagnostic = self.new_diagnostic_chain(chain, at, 2339, &args);
@@ -842,11 +846,11 @@ impl Checker<'_> {
             self.suggested_symbol_for_nonexistent_property(file, e, name, apparent)
         {
             let suggested = self.name_of_unread_property(suggestion);
-            let args = [args[0], args[1], Arg::Text(&suggested)];
+            let args = [args[0], args[1], Arg::Bytes(&suggested)];
             let code = if is_unchecked_js { 2568 } else { 2551 };
             let mut diagnostic = self.new_diagnostic_chain(chain, at, code, &args);
             if let Some(declared_at) = declared_at {
-                let declared = self.new_diagnostic(declared_at, 2728, &[Arg::Text(&suggested)]);
+                let declared = self.new_diagnostic(declared_at, 2728, &[Arg::Bytes(&suggested)]);
                 diagnostic.add_related_info(declared);
             }
             diagnostic
@@ -944,12 +948,12 @@ impl Checker<'_> {
         if container.is_none() {
             return None;
         }
-        let container = self.atoms().text(container);
-        let missing = self.atoms().text(name);
-        let (_, features) = LIBRARY_FEATURES.iter().find(|(ty, _)| *ty == container)?;
+        let (container, missing) = (self.atoms().bytes(container), self.atoms().bytes(name));
+        let mut types = LIBRARY_FEATURES.iter();
+        let (_, features) = types.find(|(ty, _)| ty.as_bytes() == container)?;
         features
             .iter()
-            .find(|(_, props)| props.contains(&&*missing))
+            .find(|(_, props)| props.iter().any(|prop| prop.as_bytes() == missing))
             .map(|&(lib, _)| lib)
     }
 
@@ -967,7 +971,7 @@ impl Checker<'_> {
             return chain;
         };
         let written = self.type_to_string_without_reduction(ty);
-        let args = [Arg::Text(&written), Arg::Prop(&prop)];
+        let args = [Arg::Bytes(&written), Arg::Prop(&prop)];
         Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 
@@ -1083,7 +1087,7 @@ impl Checker<'_> {
             let meant = hir[type_class].members.iter().find(|&m| {
                 matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)
             });
-            let args = [Arg::Text(&diag_name)];
+            let args = [Arg::Bytes(&diag_name)];
             let shadowing = self.place_of_token(file, hir[shadowing].name_pos);
             let shadowing = self.new_diagnostic(shadowing, 18017, &args);
             let meant = meant.map(|m| self.place_of_token(file, hir[m].name_pos));
@@ -1096,7 +1100,7 @@ impl Checker<'_> {
             return true;
         }
         let class = self.class_sym(declared_in, type_class);
-        self.error_at(at, 18013, &[Arg::Text(&diag_name), Arg::Sym(class)]);
+        self.error_at(at, 18013, &[Arg::Bytes(&diag_name), Arg::Sym(class)]);
         true
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` again and again: the classes the private name of `e`,

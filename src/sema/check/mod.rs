@@ -4,6 +4,11 @@
 //! [`Program`] is shared by all threads and only ever grows. A [`Checker`] belongs to one thread: it has the stack of questions
 //! being answered and whatever else is only true for the moment.
 
+/// The pieces, one after the other.
+macro_rules! cat {
+    ($($piece:expr),+ $(,)?) => { [$(&$piece[..]),+].concat() };
+}
+
 mod alias;
 mod call;
 mod context;
@@ -206,7 +211,7 @@ pub struct Program {
     /// works out the rest.
     symbol_reference_links: ByNode<Sym, (), Buffered>,
     /// `GetGlobalDiagnostics`: what is wrong and is in no file. `Cannot find global type 'Array'.` The code, and what goes into the message.
-    global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<String>)>>,
+    global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<Vec<u8>>)>>,
     sink: sink::Sink,
     /// `MappedType.containsError`
     mapped_types_with_errors: ById<TypeId, (), Buffered>,
@@ -431,34 +436,34 @@ impl Program {
     }
 
     /// `GetGlobalDiagnostics`: what has been found wrong that is in no file, once all files have been checked. In order, each once.
-    pub fn global_errors(&self) -> Vec<(u32, Vec<String>)> {
+    pub fn global_errors(&self) -> Vec<(u32, Vec<Vec<u8>>)> {
         if self.files.modules.is_empty() {
             return Vec::new();
         }
         // `initializeChecker`: these there have to be, whether or not anything uses them.
-        let mut needed = vec![
-            "IArguments",
-            "Array",
-            "Object",
-            "Function",
-            "String",
-            "Number",
-            "Boolean",
-            "RegExp",
+        let mut needed: Vec<&[u8]> = vec![
+            b"IArguments",
+            b"Array",
+            b"Object",
+            b"Function",
+            b"String",
+            b"Number",
+            b"Boolean",
+            b"RegExp",
         ];
         // `getGlobalStrictFunctionType`
         if self.files.options.strict_bind_call_apply {
-            needed.extend(["CallableFunction", "NewableFunction"]);
+            needed.extend([&b"CallableFunction"[..], b"NewableFunction"]);
         }
         let mut all = self.global_errors.lock().clone();
         for name in needed {
             let is_there = self
                 .files
                 .atoms
-                .lookup(name.as_bytes())
+                .lookup(name)
                 .is_some_and(|atom| self.files.global(atom, SymFlags::TYPE).is_some());
             if !is_there {
-                all.insert((2318, vec![name.to_owned()]));
+                all.insert((2318, vec![name.to_vec()]));
             }
         }
         all.into_iter().collect()
@@ -2394,7 +2399,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── well-known global types ─────────────────────────────
 
     /// An error that is in no file: `c.error(nil, ..)`. It belongs to the entry of the innermost query, or to the task.
-    pub(super) fn report_global_error(&mut self, code: u32, args: Vec<String>) {
+    pub(super) fn report_global_error(&mut self, code: u32, args: Vec<Vec<u8>>) {
         let owner = self.stack.last().copied();
         let diagnostic = Reported::new(explain::NOWHERE, code, sink::held(args));
         self.add_diagnostic_of(owner, diagnostic);

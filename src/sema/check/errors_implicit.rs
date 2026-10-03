@@ -89,7 +89,7 @@ impl Checker<'_> {
                 } else if decl.flags.contains(Flags::REPARSED) {
                     self.error_at(node, 7012, &[any]);
                 } else if is_missing {
-                    self.error_at(node, 7010, &[Arg::Text("(Missing)"), any]);
+                    self.error_at(node, 7010, &[Arg::Bytes(b"(Missing)"), any]);
                 } else {
                     let name = Arg::Bytes(&hir.text[start as usize..name_end as usize]);
                     self.error_at(node, 7010, &[name, any]);

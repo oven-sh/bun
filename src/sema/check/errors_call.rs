@@ -10,7 +10,7 @@
 use super::call::{Arg, CallLike, CallState};
 use super::explain::{Line, NOWHERE};
 use super::relate::Relation;
-use super::sink::held;
+use super::sink::{held, number_text};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::SmallVec;
@@ -30,11 +30,11 @@ pub(super) struct ArgumentCounts {
 
 impl ArgumentCounts {
     /// `parameterRange`
-    pub(super) fn expected(&self) -> String {
+    pub(super) fn expected(&self) -> Vec<u8> {
         if !self.has_rest && self.least < self.most {
-            format!("{}-{}", self.least, self.most)
+            cat!(number_text(self.least), b"-", number_text(self.most))
         } else {
-            self.least.to_string()
+            number_text(self.least)
         }
     }
 }
@@ -376,7 +376,7 @@ impl Checker<'_> {
         apparent: TypeId,
         construct: bool,
     ) -> Vec<Line> {
-        let line = |code: u32, name: String, level: u32| Line {
+        let line = |code: u32, name: Vec<u8>, level: u32| Line {
             code,
             args: held(vec![name]),
             level,
@@ -483,14 +483,14 @@ impl Checker<'_> {
             }
             _ => return None,
         };
-        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Text(&name)]))
+        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Bytes(&name)]))
     }
 
     /// The same of what a name or an export of a namespace stands for: where it is declared, and `symbolToString`.
     fn variable_in_need_of_a_type_annotation(
         &mut self,
         sym: Sym,
-    ) -> Option<((FileId, u32, u32), String)> {
+    ) -> Option<((FileId, u32, u32), Vec<u8>)> {
         let sym = self.files().resolve_alias_if_needed(sym)?;
         if !self.files().flags(sym).intersects(SymFlags::VARIABLE) {
             return None;
@@ -1264,7 +1264,7 @@ impl Checker<'_> {
                 (6236, vec![self.atom_text(name)])
             }
             PatKind::Ident(name) => (6210, vec![self.atom_text(name)]),
-            PatKind::Missing => (6210, vec![String::new()]),
+            PatKind::Missing => (6210, vec![Vec::new()]),
         };
         let start = hir[param].pos;
         // There is no text of the default library.
@@ -1315,10 +1315,10 @@ impl Checker<'_> {
         } else {
             2554
         };
-        let given = args.len().to_string();
+        let given = number_text(args.len());
         let error_range = self.error_range_of_call_node(file, e, node);
         let ((start, end), code, counted) = if least < args.len() && args.len() < most {
-            let either = vec![given, most_below.to_string(), least_above.to_string()];
+            let either = vec![given, number_text(most_below), number_text(least_above)];
             (error_range, 2575, either)
         } else if args.len() < least || most >= args.len() {
             (error_range, code, vec![expected, given])
@@ -1423,13 +1423,13 @@ impl Checker<'_> {
             }
             if below && above {
                 code = 2743;
-                counts.push(given.to_string());
-                counts.push(most_below.to_string());
-                counts.push(least_above.to_string());
+                counts.push(number_text(given));
+                counts.push(number_text(most_below));
+                counts.push(number_text(least_above));
             } else {
                 let expected = if below { most_below } else { least_above };
-                counts.push(expected.to_string());
-                counts.push(given.to_string());
+                counts.push(number_text(expected));
+                counts.push(number_text(given));
             }
         } else if let [sig] = *sigs {
             let type_params = self.sig_type_params(sig);
@@ -1438,11 +1438,11 @@ impl Checker<'_> {
                 type_params.len(),
             );
             counts.push(if least < most {
-                format!("{least}-{most}")
+                cat!(number_text(least), b"-", number_text(most))
             } else {
-                least.to_string()
+                number_text(least)
             });
-            counts.push(given.to_string());
+            counts.push(number_text(given));
         }
         let end = self.end_of_type_argument_list(file, type_args);
         self.add_diagnostic(Reported::new(

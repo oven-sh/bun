@@ -901,7 +901,7 @@ impl<'p> Checker<'p> {
         if target.written && lexical.is_some_and(|(_, m)| hir[m].kind == MemberKind::Method) {
             let written = self.declaration_name_at(file, name_pos);
             let right = self.place_of_token(file, name_pos);
-            self.grammar_error_at(right, 2803, &[Arg::Text(&written)]);
+            self.grammar_error_at(right, 2803, &[Arg::Bytes(&written)]);
         }
         let left = match left {
             Ok(left) => left,
@@ -975,7 +975,7 @@ impl<'p> Checker<'p> {
                 if self.is_plain_js(file) && !self.classes_around_private_name(file, e).is_empty() {
                     let written = self.declaration_name_at(file, name_pos);
                     let right = self.place_of_token(file, name_pos);
-                    self.grammar_error_at(right, 1111, &[Arg::Text(&written)]);
+                    self.grammar_error_at(right, 1111, &[Arg::Bytes(&written)]);
                 }
             }
             // `isJSLiteralType`: a property missing from the type of a JavaScript object literal is `any`. `isUncheckedJSSuggestion`
@@ -1076,7 +1076,7 @@ impl<'p> Checker<'p> {
         {
             let right = self.place_of_token(file, name_pos);
             let text = self.source_text(file, right.1, right.2);
-            self.error_at(right, 2540, &[Arg::Text(&text)]);
+            self.error_at(right, 2540, &[Arg::Bytes(&text)]);
             return (TypeId::ERROR, stops);
         }
         // The access ends with its name.
@@ -2284,7 +2284,7 @@ impl<'p> Checker<'p> {
             && self.full_signature(file, func).is_none()
         {
             let start = hir[this.pat].pos;
-            let args = [Arg::Text("this"), Arg::Type(TypeId::ANY)];
+            let args = [Arg::Bytes(b"this"), Arg::Type(TypeId::ANY)];
             self.error_at((file, start, start + 4), 7006, &args);
         }
         TypeId::ANY
@@ -4009,7 +4009,7 @@ impl<'p> Checker<'p> {
                         if self.maybe_type_of_kind_considering_base_constraint(ty, is_bigint) {
                             let base = self.base_of_literal(ty);
                             let at = self.place_of_written_expr(file, operand);
-                            self.error_at(at, 2736, &[Arg::Text("+"), Arg::Type(base)]);
+                            self.error_at(at, 2736, &[Arg::Bytes(b"+"), Arg::Type(base)]);
                         }
                         TypeId::NUMBER
                     }

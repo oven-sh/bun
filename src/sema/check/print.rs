@@ -14,11 +14,6 @@ use bun_core::lexer::is_identifier;
 use bun_core::strings::{CodepointIterator, Cursor};
 use core::fmt::Write;
 
-/// The pieces, one after the other.
-macro_rules! cat {
-    ($($piece:expr),+ $(,)?) => { [$(&$piece[..]),+].concat() };
-}
-
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
 
@@ -72,7 +67,11 @@ thread_local! {
 
 impl Checker<'_> {
     /// `DeclarationNameToString(GetNonAssignedNameOfDeclaration(e))`, of an assignment or a call that declares a property.
-    pub(super) fn name_of_assignment_declaration(&self, file: FileId, e: ExprId) -> Option<String> {
+    pub(super) fn name_of_assignment_declaration(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<Vec<u8>> {
         let hir = self.hir(file);
         let name = match hir[e].kind {
             // `module.exports = value` has no name.
@@ -106,11 +105,11 @@ impl Checker<'_> {
         out.append(&mut type_to_string_with(self, ty, None, flags));
     }
 
-    /// What `write` writes, as a `String`. It goes with the eight that call it, each of which goes with its last caller: a diagnostic takes an `Arg`.
-    fn printed(&mut self, write: impl FnOnce(&mut Self, &mut Vec<u8>)) -> String {
+    /// What `write` writes.
+    fn printed(&mut self, write: impl FnOnce(&mut Self, &mut Vec<u8>)) -> Vec<u8> {
         let mut out = Vec::new();
         write(self, &mut out);
-        to_valid_utf8(out)
+        out
     }
 
     /// `typeToStringEx` when and where tsgo prints `ty` for a message, for what that resolves: it counts a level, and circles close
@@ -120,7 +119,7 @@ impl Checker<'_> {
     }
 
     /// `typeToString`
-    pub fn type_to_string(&mut self, ty: TypeId) -> String {
+    pub fn type_to_string(&mut self, ty: TypeId) -> Vec<u8> {
         self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING))
     }
 
@@ -130,10 +129,10 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
         enclosing_declaration: Option<Enclosing>,
-    ) -> String {
+    ) -> Vec<u8> {
         // `writeTypeOrSymbol` does not ask the node builder about it in a test without errors.
         if ty == TypeId::ERROR {
-            return super::type_writer::ERROR_TYPE_TEXT.to_owned();
+            return super::type_writer::ERROR_TYPE_TEXT.as_bytes().to_vec();
         }
         let flags = NO_TRUNCATION
             | ALLOW_UNIQUE_ES_SYMBOL_TYPE
@@ -143,12 +142,12 @@ impl Checker<'_> {
     }
 
     /// `getTypeNameForErrorDisplay`
-    pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> String {
+    pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> Vec<u8> {
         self.printed(|c, out| c.write_type(out, ty, USE_FULLY_QUALIFIED_TYPE))
     }
 
     /// `typeToStringEx(t, nil, TypeFormatFlagsNoTypeReduction)`: an intersection nothing can be is written out, not as `never`.
-    pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> String {
+    pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> Vec<u8> {
         self.printed(|c, out| c.write_type(out, ty, NO_TYPE_REDUCTION))
     }
 
@@ -210,13 +209,13 @@ impl Checker<'_> {
         &mut self,
         left: TypeId,
         right: TypeId,
-    ) -> (String, String) {
+    ) -> (Vec<u8>, Vec<u8>) {
         let (left_text, right_text) = (
             self.type_to_string_where_it_is_declared(left),
             self.type_to_string_where_it_is_declared(right),
         );
         if left_text != right_text {
-            return (to_valid_utf8(left_text), to_valid_utf8(right_text));
+            return (left_text, right_text);
         }
         (
             self.type_to_string_fully_qualified(left),
@@ -232,13 +231,13 @@ impl Checker<'_> {
     }
 
     /// `symbolToString`
-    pub fn symbol_to_string(&mut self, symbol: Sym) -> String {
+    pub fn symbol_to_string(&mut self, symbol: Sym) -> Vec<u8> {
         self.printed(|c, out| c.write_symbol(out, symbol))
     }
 
     /// `getNameOfSymbolAsWritten`, of the symbol of the function expression or arrow function `e`, which has no `Sym`.
     #[cfg(feature = "baselines")]
-    pub(super) fn name_of_function_expression(&mut self, file: FileId, e: ExprId) -> String {
+    pub(super) fn name_of_function_expression(&mut self, file: FileId, e: ExprId) -> Vec<u8> {
         to_valid_utf8(with_printer(self, None, None, 0, |printer| {
             printer
                 .name_of_initialized_variable(file, e)
@@ -283,7 +282,7 @@ impl Checker<'_> {
     }
 
     /// `symbolToString`, of a property.
-    pub fn prop_to_string(&mut self, prop: &Prop) -> String {
+    pub fn prop_to_string(&mut self, prop: &Prop) -> Vec<u8> {
         self.printed(|c, out| c.write_prop(out, prop))
     }
 
@@ -310,7 +309,7 @@ impl Checker<'_> {
     }
 
     /// `signatureToString`
-    pub fn signature_to_string(&mut self, signature: SigId) -> String {
+    pub fn signature_to_string(&mut self, signature: SigId) -> Vec<u8> {
         self.printed(|c, out| c.write_signature(out, signature))
     }
 
@@ -533,10 +532,12 @@ fn type_to_string_with(
     cat!(text[..end], b"...")
 }
 
-/// `strings.ToValidUTF8(text, "\uFFFD")`, for who still takes a `String`.
-pub(super) fn to_valid_utf8(text: Vec<u8>) -> String {
-    String::from_utf8(text)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+/// `strings.ToValidUTF8(text, "\uFFFD")`, of text that leaves the checker.
+pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
+    match bstr::ByteSlice::to_str_lossy(&text[..]) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(valid) => valid.into_bytes(),
+    }
 }
 
 /// Printing resolves what it comes across. A circle that goes through here is nobody's error, and what the check under way has found
@@ -1243,7 +1244,7 @@ impl<'p> Printer<'_, 'p> {
                 return Node::simple(quoted(value, b'"', false));
             }
             TypeData::NumberLit { bits, .. } => {
-                let text = crate::atom::number_to_string(f64::from_bits(*bits)).into_bytes();
+                let text = crate::atom::number_to_string(f64::from_bits(*bits));
                 self.approximate_length += text.len();
                 return Node::simple(text);
             }
@@ -1677,7 +1678,7 @@ impl<'p> Printer<'_, 'p> {
         let name = match decl {
             Decl::ExportsProperty(e) | Decl::Expando(e) => {
                 let name = self.c.name_of_assignment_declaration(file, e);
-                return name.map(String::into_bytes);
+                return name;
             }
             // It IS the name. `hir.node(decl)` would go up to what it names and `name` down again.
             Decl::Var(name) | Decl::Param(name) | Decl::Require(name) => hir.node(name),
@@ -3645,7 +3646,7 @@ impl<'p> Printer<'_, 'p> {
                     }
                     Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                         match self.c.name_of_assignment_declaration(file, first) {
-                            Some(text) => text.into_bytes(),
+                            Some(text) => text,
                             None => self.name_from_name_type(prop.name),
                         }
                     }

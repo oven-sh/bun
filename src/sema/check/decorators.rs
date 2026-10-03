@@ -77,7 +77,7 @@ impl<'p> Checker<'p> {
             .lookup(name)
             .and_then(|name| self.files().global(name, SymFlags::TYPE));
         let Some(sym) = found else {
-            self.report_global_error(2318, vec![String::from_utf8_lossy(name).into_owned()]);
+            self.report_global_error(2318, vec![name.to_vec()]);
             return None;
         };
         Some(self.type_reference(sym, args))
@@ -282,7 +282,7 @@ impl<'p> Checker<'p> {
                             Some(b'0'..=b'9' | b'.')
                         ) =>
                     {
-                        let n: f64 = self.atoms().text(name).parse().unwrap_or(0.0);
+                        let n = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(0.0);
                         self.number_literal(n, false)
                     }
                     PropKey::Name(name) => self.string_literal(name, false),
@@ -535,7 +535,7 @@ impl<'p> Checker<'p> {
             self.error_at(
                 (file, at_sign, end),
                 1329,
-                &[Arg::Text(&self.source_text(file, start, end))],
+                &[Arg::Bytes(&self.source_text(file, start, end))],
             );
             return;
         }

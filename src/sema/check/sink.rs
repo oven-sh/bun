@@ -52,6 +52,11 @@ pub(super) fn held(args: Vec<impl Into<Vec<u8>>>) -> Args {
     (args.into_iter().map(|arg| arg.into().into())).collect()
 }
 
+/// A number as it is written in a message.
+pub(super) fn number_text(number: usize) -> Vec<u8> {
+    bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), number).to_vec()
+}
+
 /// `maxSerializationLevel`
 pub(super) const MAX_SERIALIZATION_LEVEL: u32 = 2;
 
@@ -211,7 +216,7 @@ impl super::Program {
                 .push(diagnostic);
         }
         let args = diagnostic.args.iter();
-        let args = args.map(|arg| String::from_utf8_lossy(arg).into_owned());
+        let args = args.map(|arg| arg.to_vec());
         (self.global_errors.lock()).insert((diagnostic.code, args.collect()));
     }
 

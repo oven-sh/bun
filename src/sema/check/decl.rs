@@ -1947,12 +1947,13 @@ impl<'p> Checker<'p> {
                     && matches!(value, EnumValue::String(_))
                     && !result.is_syntactically_string
                 {
-                    let name = format!(
-                        "{}.{}",
-                        self.atom_text(hir[en].name),
-                        self.atom_text(hir[member].name)
+                    let atoms = self.atoms();
+                    let name = cat!(
+                        atoms.bytes(hir[en].name),
+                        b".",
+                        atoms.bytes(hir[member].name)
                     );
-                    self.error_at(at, 18055, &[Arg::Text(&name)]);
+                    self.error_at(at, 18055, &[Arg::Bytes(&name)]);
                 }
             }
             None if is_const => {
@@ -2726,10 +2727,11 @@ impl<'p> Checker<'p> {
             // `TypeFormatFlagsWriteArrayAsGenericType`
             match self.array_element(declared) {
                 Some(element) => {
-                    format!(
-                        "{}<{}>",
+                    cat!(
                         self.symbol_to_string(sym),
-                        self.type_to_string(element)
+                        b"<",
+                        self.type_to_string(element),
+                        b">"
                     )
                 }
                 None => self.type_to_string(declared),
@@ -2740,7 +2742,7 @@ impl<'p> Checker<'p> {
         self.error_at(
             at,
             code,
-            &[Arg::Text(&name), Arg::Number(least), Arg::Number(most)],
+            &[Arg::Bytes(&name), Arg::Number(least), Arg::Number(most)],
         );
         is_js.then_some(most)
     }

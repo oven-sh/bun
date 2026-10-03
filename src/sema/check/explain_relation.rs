@@ -10,7 +10,6 @@ use super::explain::Line;
 use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STACK_DEPTH_OVERFLOW, STATE_NONE, Ternary};
 use super::related::Place;
-use super::sink::held;
 use super::*;
 use std::rc::Rc;
 
@@ -147,13 +146,7 @@ fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
         if !matches!(entry.code, 2202..=2205) {
             lines.push(Line {
                 code: entry.code,
-                args: held(
-                    entry
-                        .args
-                        .iter()
-                        .map(|arg| String::from_utf8_lossy(arg).into_owned())
-                        .collect(),
-                ),
+                args: entry.args.clone(),
                 level: level + lines.len() as u32,
             });
         }
@@ -555,17 +548,17 @@ impl<'p> Checker<'p> {
         }
         if let Some(ty) = predicate.ty {
             text.extend_from_slice(b" is ");
-            text.extend(self.type_to_string(ty).into_bytes());
+            text.extend(self.type_to_string(ty));
         }
         text
     }
 
     /// `valueToString` of the value of an enum member.
-    pub(super) fn enum_value_text(&self, value: EnumValue) -> String {
+    pub(super) fn enum_value_text(&self, value: EnumValue) -> Vec<u8> {
         match value {
             EnumValue::String(text) => {
                 let text = self.atoms().bytes(text);
-                super::print::to_valid_utf8(super::print::quoted(text, b'"', false))
+                super::print::quoted(text, b'"', false)
             }
             EnumValue::Number(bits) => crate::atom::number_to_string(f64::from_bits(bits)),
         }
@@ -704,11 +697,7 @@ impl<'p> Checker<'p> {
             && let Some((code, prop)) = self.why_never_intersection(original_target)
         {
             let intersection = self.type_to_string_without_reduction(original_target);
-            self.report_error(
-                r,
-                code,
-                &[Arg::Bytes(intersection.as_bytes()), Arg::Prop(&prop)],
-            );
+            self.report_error(r, code, &[Arg::Bytes(&intersection), Arg::Prop(&prop)]);
         }
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
@@ -718,7 +707,7 @@ impl<'p> Checker<'p> {
             let constraint = self.type_to_string(target);
             let at = self.place_of_type_parameter_declaration(file, tp);
             r.related_info
-                .push(self.new_diagnostic(at, 2208, &[Arg::Text(&constraint)]));
+                .push(self.new_diagnostic(at, 2208, &[Arg::Bytes(&constraint)]));
         }
     }
 
@@ -874,8 +863,7 @@ impl<'p> Checker<'p> {
             generalized_source_type = self.type_to_string_fully_qualified(generalized_source);
         }
         let [source_name, generalized_source_name, target_name] =
-            [&source_type, &generalized_source_type, &target_type]
-                .map(|name| Arg::Bytes(name.as_bytes()));
+            [&source_type, &generalized_source_type, &target_type].map(|name| Arg::Bytes(name));
         // Of `T[K]`, unless the source is an indexed access too, it is `T` that counts.
         let is_type_parameter = match (self.data(target), self.data(source)) {
             (TypeData::IndexedAccess { obj, .. }, s)
@@ -928,10 +916,7 @@ impl<'p> Checker<'p> {
             Some(2345) if self.has_exact_optional_unassignable_properties(source, target) => 2379,
             Some(message) => message,
         };
-        let names = [
-            Some(generalized_source_type.as_bytes()),
-            Some(target_type.as_bytes()),
-        ];
+        let names = [Some(&generalized_source_type[..]), Some(&target_type[..])];
         let gives_way = !is_conversion_or_interface_implementation_message(message);
         let is_said_already = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
@@ -1001,7 +986,7 @@ impl<'p> Checker<'p> {
         // `getSuggestedSymbolForNonexistentJSXAttribute`
         let properties = self.properties_of_type(error_target);
         let name = self.prop_to_string(prop);
-        let specific: Option<&[u8]> = match name.as_bytes() {
+        let specific: Option<&[u8]> = match &name[..] {
             b"for" => Some(b"htmlFor"),
             b"class" => Some(b"className"),
             _ => None,
@@ -1012,8 +997,8 @@ impl<'p> Checker<'p> {
                     .iter()
                     .position(|p| self.written_name(p.name) == specific)
             })
-            .or_else(|| self.suggested_property(name.as_bytes(), &properties));
-        let args = [Arg::Bytes(name.as_bytes()), Arg::Type(error_target)];
+            .or_else(|| self.suggested_property(&name, &properties));
+        let args = [Arg::Bytes(&name), Arg::Type(error_target)];
         match suggested {
             Some(i) => self.report_error(r, 2551, &[args[0], args[1], Arg::Prop(&properties[i])]),
             None => self.report_error(r, 2339, &args),
@@ -1093,7 +1078,7 @@ impl<'p> Checker<'p> {
         if let [only] = unmatched {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
-            let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg.as_bytes()));
+            let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg));
             self.report_error(r, 2741, &args);
             if let Some(place) = self.place_of_first_prop_declaration(only) {
                 r.related_info.push(self.declared_here(place, name));
@@ -1109,8 +1094,8 @@ impl<'p> Checker<'p> {
             for prop in &unmatched[..listed] {
                 names.push(self.prop_to_string(prop));
             }
-            let names = names.join(", ");
-            let args = [&source_type, &target_type, &names].map(|arg| Arg::Bytes(arg.as_bytes()));
+            let names = names.join(&b", "[..]);
+            let args = [&source_type, &target_type, &names].map(|arg| Arg::Bytes(arg));
             if unmatched.len() > 5 {
                 let more = Arg::Number(unmatched.len() - 4);
                 self.report_error(r, 2740, &[args[0], args[1], args[2], more]);

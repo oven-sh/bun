@@ -5,7 +5,7 @@
 //! declarations are those the binder and `lateBindMember` have put together with the first of them.
 
 use super::enclosing_declaration::Enclosing;
-use super::print::{quoted, to_valid_utf8};
+use super::print::quoted;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -799,15 +799,17 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 .resolve_without_export_value(e, name, symbol)
                 .map(Found::Symbol),
             None => match name {
-                known::arguments if bound.is_arguments_object(e) => {
-                    Some(Found::Undeclared(self.c.atom_text(name)))
-                }
+                known::arguments if bound.is_arguments_object(e) => Some(Found::Undeclared(
+                    crate::messages::text(&self.c.atom_text(name)),
+                )),
                 // `RequireSymbol`
                 known::require
                     if hir.is_js
                         && matches!(bound.expr_parent[e.idx()], Parent::Expr(call) if call.is_some() && crate::bind::require_argument(hir, call).is_some()) =>
                 {
-                    Some(Found::Undeclared(self.c.atom_text(name)))
+                    Some(Found::Undeclared(crate::messages::text(
+                        &self.c.atom_text(name),
+                    )))
                 }
                 _ => None,
             },
@@ -976,7 +978,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 }
                 match bound.fns[function.idx()].owner {
                     FnOwner::Expr(e) => Found::Anonymous {
-                        name: self.c.name_of_function_expression(file, e),
+                        name: crate::messages::text(&self.c.name_of_function_expression(file, e)),
                         file,
                         declaration: Declaration::Expression(e),
                     },
@@ -1082,9 +1084,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                             let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
                                 return None;
                             };
-                            Some(PropertyParent::Named(
-                                self.c.name_of_function_expression(file, e),
-                            ))
+                            Some(PropertyParent::Named(crate::messages::text(
+                                &self.c.name_of_function_expression(file, e),
+                            )))
                         }
                         (known::object_literal, _) => None,
                         _ => Some(PropertyParent::Symbol(files.sym(file, parent))),
@@ -1245,10 +1247,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             }
             _ => prop.source.clone(),
         };
-        let name = self.c.prop_to_string(&Prop {
+        let name = crate::messages::text(&self.c.prop_to_string(&Prop {
             source,
             ..prop.clone()
-        });
+        }));
         // `lookupSymbolChainWorker`: `class C<T> { T: number }` is one symbol, and a type parameter is not qualified.
         let is_type_parameter = |declaration: &(FileId, Declaration)| {
             matches!(declaration.1, Declaration::Bound(Decl::TypeParam(_)))
@@ -1283,7 +1285,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let Some(first) = props.first() else {
             return (String::new(), declarations);
         };
-        let name = self.c.prop_to_string(first);
+        let name = crate::messages::text(&self.c.prop_to_string(first));
         let parent = if has_non_uniform_value_declaration {
             None
         } else {
@@ -1361,7 +1363,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         if is_default_export && (!is_initial || symbol.file != self.file) {
             return "default".to_owned();
         }
-        let name = self.c.symbol_to_string(symbol);
+        let name = crate::messages::text(&self.c.symbol_to_string(symbol));
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
         if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
             let specifier =
@@ -1369,7 +1371,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
-                return to_valid_utf8(quoted(&specifier, b'"', true));
+                return crate::messages::text(&quoted(&specifier, b'"', true));
             }
         }
         name
@@ -1400,7 +1402,7 @@ fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
         // A string literal of what is between the first and the last character, whatever that is.
         Some(quote @ ('"' | '\'')) if !is_enum_member => {
             let literal = quoted(unquote_string(inner).as_bytes(), quote as u8, true);
-            text.push_str(&to_valid_utf8(literal));
+            text.push_str(&crate::messages::text(&literal));
         }
         _ => text.push_str(inner),
     }

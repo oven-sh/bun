@@ -1054,7 +1054,7 @@ impl<'p> Checker<'p> {
                         self.error_at(
                             (file, start, self.end_of_prop(file, p)),
                             7018,
-                            &[Arg::Text(&name), Arg::Type(widened)],
+                            &[Arg::Bytes(&name), Arg::Type(widened)],
                         );
                         error_reported = true;
                     }
@@ -1111,7 +1111,7 @@ impl<'p> Checker<'p> {
         if f.name.is_some() || matches!(f.kind, FnKind::Method | FnKind::Getter) {
             let name = self.declaration_name_at(file, at.1);
             let code = if is_yield { 7055 } else { 7010 };
-            self.error_at(at, code, &[Arg::Text(&name), Arg::Type(widened)]);
+            self.error_at(at, code, &[Arg::Bytes(&name), Arg::Type(widened)]);
         } else {
             let code = if is_yield { 7025 } else { 7011 };
             self.error_at(at, code, &[Arg::Type(widened)]);
@@ -1137,7 +1137,7 @@ impl<'p> Checker<'p> {
             PatKind::Missing | PatKind::Ident(known::empty)
         );
         let (name_end, name) = match hir[pat].kind {
-            _ if is_missing => (start, Arg::Text("(Missing)")),
+            _ if is_missing => (start, Arg::Bytes(b"(Missing)")),
             PatKind::Ident(name) => (self.end_of_name_at(file, start), Arg::Atom(name)),
             _ => {
                 let end = self.end_of_pat(file, pat);
@@ -3259,7 +3259,7 @@ impl<'p> Checker<'p> {
         if self.is_awaited_type_needed(awaited) {
             // `getGlobalAwaitedSymbol`
             let Some(alias) = self.files().global(known::Awaited, SymFlags::TYPE_ALIAS) else {
-                self.report_global_error(2318, vec!["Awaited".to_owned()]);
+                self.report_global_error(2318, vec![b"Awaited".to_vec()]);
                 return Some(awaited);
             };
             // `unwrapAwaitedType`: `Awaited<T | U>` does for `Awaited<Awaited<T> | U>`.

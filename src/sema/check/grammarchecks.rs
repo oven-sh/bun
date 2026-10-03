@@ -362,7 +362,7 @@ impl Checker<'_> {
             }
             if !has_body_node(f) {
                 let end = self.end_of_fn(file, func);
-                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Text("{")]);
+                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
             }
             return self.check_grammar_for_generator(file, func);
         };
@@ -396,7 +396,7 @@ impl Checker<'_> {
         if !has_body_node(f) {
             if !is_ambient(hir, f.flags) && !is_in_type && !is_abstract {
                 let end = self.end_of_fn(file, func);
-                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Text("{")]);
+                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
             }
         } else if is_abstract {
             return self.grammar_error_on_node(file, func, 1318, &[]);
@@ -824,7 +824,7 @@ impl Checker<'_> {
             if current_kind & existing.1 & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);
                 let text = self.source_text(file, start, end);
-                self.error_at((file, start, end), 2300, &[Arg::Text(&text)]);
+                self.error_at((file, start, end), 2300, &[Arg::Bytes(&text)]);
             } else if current_kind & existing.1 & PROPERTY_ASSIGNMENT != 0 {
                 self.error(file, name, 1117, &[]);
             } else if current_kind & GET_OR_SET_ACCESSOR != 0

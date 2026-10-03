@@ -156,7 +156,7 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn number_name(&self, n: f64) -> Atom {
-        self.atom(bun_sema::atom::number_to_string(n).as_bytes())
+        self.atom(&bun_sema::atom::number_to_string(n))
     }
 
     /// `["a"]` is `a`.

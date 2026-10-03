@@ -3179,7 +3179,7 @@ impl<'a> Lexer<'a> {
     pub(crate) fn token_value(&mut self) -> Result<Vec<u8>, Error> {
         Ok(match self.token {
             T::TStringLiteral => self.to_utf8_e_string()?.data.slice().to_vec(),
-            T::TNumericLiteral => bun_sema::atom::number_to_string(self.number).into_bytes(),
+            T::TNumericLiteral => bun_sema::atom::number_to_string(self.number),
             T::TBigIntegerLiteral => [self.identifier, b"n"].concat(),
             T::TPrivateIdentifier => self.identifier.to_vec(),
             _ if self.is_identifier_or_keyword() => self.identifier.to_vec(),

@@ -125,6 +125,7 @@ impl Checker<'_> {
             ..Enclosing::at_scope(file, scope)
         };
         let text = self.type_to_string_for_baseline_with(ty, Some(enclosing_declaration));
+        let text = crate::messages::text(&text);
         self.enclosing_module_specifier_mode = None;
         if let Some(index) = repeated {
             walk.text_of_expr[index] = Some((ty, text.clone()));
@@ -362,7 +363,7 @@ impl Checker<'_> {
         ) {
             return self.string_literal(name, false);
         }
-        match self.atom_text(name).parse::<f64>() {
+        match self.atoms().text(name).parse::<f64>() {
             Ok(value) => self.number_literal(value, false),
             Err(_) => TypeId::ERROR,
         }

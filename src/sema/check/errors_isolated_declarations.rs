@@ -85,7 +85,7 @@ struct Said {
     start: u32,
     end: u32,
     code: u32,
-    args: Vec<String>,
+    args: Vec<Vec<u8>>,
     related: Vec<Reported>,
     /// It was reported more than once.
     is_merged: bool,
@@ -267,13 +267,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn iso_related(&self, file: FileId, node: Node, code: u32, args: Vec<String>) -> Reported {
+    fn iso_related(&self, file: FileId, node: Node, code: u32, args: Vec<Vec<u8>>) -> Reported {
         let (start, end) = self.get_error_range_for_node(file, node);
         Reported::new((file, start, end), code, held(args))
     }
 
     /// `GetTextOfNode(node.Name())`
-    fn iso_name_text(&self, file: FileId, node: Node) -> String {
+    fn iso_name_text(&self, file: FileId, node: Node) -> Vec<u8> {
         let hir = self.hir(file);
         let name = hir.name(node);
         self.source_text(file, hir.start(name), self.end_of_node(file, name))

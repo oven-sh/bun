@@ -208,7 +208,7 @@ impl Checker<'_> {
             if !self.check_type_assignable_to_ex(given, wanted, Some(at), None, Some(&mut diags)) {
                 let declared = self.prop_to_string(&prop);
                 let args = [
-                    Arg::Text(&declared),
+                    Arg::Bytes(&declared),
                     Arg::Type(type_with_this),
                     Arg::Type(base_with_this),
                 ];
@@ -398,7 +398,7 @@ impl Checker<'_> {
                         self.error_at(
                             (file, start, end),
                             2612,
-                            &[Arg::Text(&arg0), Arg::Type(base)],
+                            &[Arg::Bytes(&arg0), Arg::Type(base)],
                         );
                     }
                 }
@@ -425,7 +425,7 @@ impl Checker<'_> {
             };
             let start = hir[c].name_pos;
             {
-                let names: Vec<String> = missed
+                let names: Vec<Vec<u8>> = missed
                     .iter()
                     .map(|prop| self.prop_to_string(prop))
                     .collect();
@@ -434,9 +434,9 @@ impl Checker<'_> {
                     [only] => only.clone(),
                     _ => names[..listed]
                         .iter()
-                        .map(|name| format!("'{name}'"))
+                        .map(|name| cat!(b"'", name, b"'"))
                         .collect::<Vec<_>>()
-                        .join(", "),
+                        .join(&b", "[..]),
                 };
                 let mut args = Vec::new();
                 if !is_expression {
@@ -449,7 +449,7 @@ impl Checker<'_> {
                     args.extend([base_name, list]);
                 }
                 if names.len() > 5 {
-                    args.push((names.len() - 4).to_string());
+                    args.push(super::sink::number_text(names.len() - 4));
                 }
                 self.add_diagnostic(super::sink::Reported::new(
                     (file, start, 0),
@@ -661,7 +661,7 @@ impl Checker<'_> {
                             self.type_to_string(declared_base),
                         );
                         let name = self.prop_to_string(prop);
-                        let args = [Arg::Text(&name), Arg::Text(&first), Arg::Text(&second)];
+                        let args = [Arg::Bytes(&name), Arg::Bytes(&first), Arg::Bytes(&second)];
                         let error_info = self.new_diagnostic(at, 2319, &args);
                         let args = [Arg::Type(ty), args[1], args[2]];
                         let diagnostic =
@@ -825,7 +825,7 @@ impl Checker<'_> {
                 None => self.prop_to_string(prop),
             };
             let (key, value) = (Arg::Type(info.key), Arg::Type(info.value));
-            let args = [Arg::Text(&name), Arg::Type(prop_type), key, value];
+            let args = [Arg::Bytes(&name), Arg::Type(prop_type), key, value];
             let diagnostic = self.error_at((cx.file, start, end), 2411, &args);
             diagnostic.related_information.extend(related);
         }

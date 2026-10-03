@@ -892,20 +892,18 @@ impl<'p> Checker<'p> {
         source: TypeId,
         constraint: TypeId,
     ) -> Option<TypeId> {
-        let text = self.atoms().text(value).into_owned();
-        let number = text
-            .parse::<f64>()
-            .ok()
-            .filter(|v| v.is_finite() && self.atoms().text(self.number_name(*v)) == text);
+        let text = self.atoms().bytes(value);
+        let number = crate::atom::parse_number(text)
+            .filter(|v| v.is_finite() && self.number_name(*v) == value);
         // `isValidBigIntString(text, roundTripOnly)`: just what a bigint prints as.
-        let negative = text.starts_with('-');
-        let digits = text.strip_prefix('-').unwrap_or(&text);
+        let negative = text.starts_with(b"-");
+        let digits = text.strip_prefix(b"-").unwrap_or(text);
         let is_bigint = !digits.is_empty()
-            && digits.bytes().all(|b| b.is_ascii_digit())
-            && if digits == "0" {
+            && digits.iter().all(|b| b.is_ascii_digit())
+            && if digits == b"0" {
                 !negative
             } else {
-                !digits.starts_with('0')
+                !digits.starts_with(b"0")
             };
         // In order of preference.
         let rank = |c: &mut Self, t: TypeId| -> Option<(u32, TypeId)> {
@@ -931,7 +929,7 @@ impl<'p> Checker<'p> {
                 } => (number.map(f64::to_bits) == Some(*bits)).then_some((5, t)),
                 // `parseBigIntLiteralType`
                 TypeData::Intrinsic(Intrinsic::BigInt) if is_bigint => {
-                    let written = c.atoms().intern(digits.as_bytes());
+                    let written = c.atoms().intern(digits);
                     Some((
                         6,
                         c.intern(TypeData::BigIntLit {
@@ -945,15 +943,13 @@ impl<'p> Checker<'p> {
                     text: written,
                     negative: minus,
                     ..
-                } => (is_bigint
-                    && *minus == negative
-                    && c.atoms().bytes(*written) == digits.as_bytes())
-                .then_some((6, t)),
+                } => (is_bigint && *minus == negative && c.atoms().bytes(*written) == digits)
+                    .then_some((6, t)),
                 TypeData::BoolLit { value: v, .. } => {
-                    (text == if *v { "true" } else { "false" }).then_some((7, t))
+                    (text == if *v { &b"true"[..] } else { b"false" }).then_some((7, t))
                 }
-                _ if t.is_undefined() => (text == "undefined").then_some((8, t)),
-                _ if t.is_null() => (text == "null").then_some((9, t)),
+                _ if t.is_undefined() => (text == b"undefined").then_some((8, t)),
+                _ if t.is_null() => (text == b"null").then_some((9, t)),
                 _ => None,
             }
         };

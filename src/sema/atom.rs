@@ -386,11 +386,6 @@ impl Interner {
         ))
     }
 
-    #[inline]
-    pub fn intern_str(&self, text: &str) -> Atom {
-        self.intern(text.as_bytes())
-    }
-
     /// The atom of `text`, if anything interned it.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
@@ -418,6 +413,7 @@ impl Interner {
     }
 
     /// `EscapeInternalSymbolName`: the byte that no text has reads `__`.
+    #[cfg(feature = "baselines")]
     pub fn text(&self, atom: Atom) -> std::borrow::Cow<'_, str> {
         if atom.is_none() {
             return std::borrow::Cow::Borrowed("<none>");
@@ -426,6 +422,7 @@ impl Interner {
     }
 }
 
+#[cfg(feature = "baselines")]
 fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     match bytes {
         [0xFE, rest @ ..] => {
@@ -466,11 +463,6 @@ impl<'p> Atoms<'p> {
         }
     }
 
-    #[inline]
-    pub fn intern_str(&self, text: &str) -> Atom {
-        self.intern(text.as_bytes())
-    }
-
     /// The atom of `text`, if it is published or the task has created it.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
@@ -499,6 +491,7 @@ impl<'p> Atoms<'p> {
     }
 
     /// See `Interner::text`.
+    #[cfg(feature = "baselines")]
     pub fn text(&self, atom: Atom) -> std::borrow::Cow<'p, str> {
         if atom.is_none() {
             return std::borrow::Cow::Borrowed("<none>");
@@ -507,27 +500,31 @@ impl<'p> Atoms<'p> {
     }
 }
 
+/// The number `text` is the decimal notation of.
+pub fn parse_number(text: &[u8]) -> Option<f64> {
+    core::str::from_utf8(text).ok()?.parse().ok()
+}
+
 /// `String(n)`, which is the name a number goes by as a property.
-pub fn number_to_string(n: f64) -> String {
+pub fn number_to_string(n: f64) -> Vec<u8> {
+    use std::io::Write;
+    let mut text = Vec::new();
     if n.is_nan() {
-        "NaN".to_owned()
+        text.extend_from_slice(b"NaN");
     } else if n.is_infinite() {
-        if n > 0.0 {
-            "Infinity".to_owned()
-        } else {
-            "-Infinity".to_owned()
-        }
+        text.extend_from_slice(if n > 0.0 { b"Infinity" } else { b"-Infinity" });
     } else if n == 0.0 {
-        "0".to_owned()
+        text.push(b'0');
     } else if n.abs() >= 1e21 || n.abs() < 1e-6 {
-        let text = format!("{n:e}");
-        match text.split_once('e') {
-            Some((mantissa, exponent)) if !exponent.starts_with('-') => {
-                format!("{mantissa}e+{exponent}")
-            }
-            _ => text,
+        // Writing to a `Vec` does not fail.
+        let _ = write!(text, "{n:e}");
+        if let Some(e) = bun_core::strings::index_of_char_usize(&text, b'e')
+            && text.get(e + 1) != Some(&b'-')
+        {
+            text.insert(e + 1, b'+');
         }
     } else {
-        format!("{n}")
+        let _ = write!(text, "{n}");
     }
+    text
 }

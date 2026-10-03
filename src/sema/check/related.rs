@@ -91,7 +91,7 @@ impl Checker<'_> {
     }
 
     /// `'{0}' is declared here.`
-    pub(super) fn declared_here(&self, at: Place, name: String) -> Reported {
+    pub(super) fn declared_here(&self, at: Place, name: Vec<u8>) -> Reported {
         Reported::new(at, 2728, held(vec![name]))
     }
 }

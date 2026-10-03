@@ -10,7 +10,7 @@ use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Emit;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
-    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written, to_valid_utf8,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written,
 };
 use super::sink::held;
 use super::*;
@@ -100,8 +100,8 @@ pub(super) struct Access {
     accessibility: Accessibility,
     /// `AliasesToMakeVisible`
     pub(super) aliases: Vec<(FileId, StmtId)>,
-    symbol_name: String,
-    module_name: String,
+    symbol_name: Vec<u8>,
+    module_name: Vec<u8>,
     /// `ErrorNode`: from where to where.
     error_node: Option<(u32, u32)>,
 }
@@ -111,8 +111,8 @@ impl Access {
         Access {
             accessibility: Accessibility::Accessible,
             aliases,
-            symbol_name: String::new(),
-            module_name: String::new(),
+            symbol_name: Vec::new(),
+            module_name: Vec::new(),
             error_node: None,
         }
     }
@@ -140,7 +140,7 @@ struct Found {
     start: u32,
     end: u32,
     code: u32,
-    args: Vec<String>,
+    args: Vec<Vec<u8>>,
     related: Vec<Reported>,
 }
 
@@ -913,9 +913,9 @@ impl<'p> Checker<'p> {
     }
 
     /// `symbolToString`
-    fn symbol_text(&mut self, symbol: Sym) -> String {
+    fn symbol_text(&mut self, symbol: Sym) -> Vec<u8> {
         if symbol == self.files().global_this_symbol {
-            return "globalThis".to_owned();
+            return b"globalThis".to_vec();
         }
         let symbol = self.target_of_module_clone(symbol);
         self.symbol_to_string(symbol)
@@ -1351,7 +1351,7 @@ impl<'p> Checker<'p> {
             accessibility: Accessibility::NotResolved,
             aliases: Vec::new(),
             symbol_name: self.atom_text(first),
-            module_name: String::new(),
+            module_name: Vec::new(),
             error_node: start.map(|start| (start, self.end_of_name_at(at.file, start))),
         };
         let Some(symbol) = found else {
@@ -2212,7 +2212,7 @@ impl<'p> Checker<'p> {
             module_name: if had != initial {
                 self.symbol_text(had)
             } else {
-                String::new()
+                Vec::new()
             },
             error_node: None,
         })
@@ -2240,7 +2240,7 @@ impl<'p> Checker<'p> {
             accessibility: Accessibility::NotAccessible,
             aliases: Vec::new(),
             symbol_name: self.symbol_text(symbol),
-            module_name: String::new(),
+            module_name: Vec::new(),
             error_node: None,
         };
         if let Some(module) = self.external_module_container_of_symbol(symbol)
@@ -2262,12 +2262,12 @@ impl<'p> Checker<'p> {
 
 impl SymbolTrackerImpl {
     /// `GetTextOfNode`
-    fn text(&self, c: &Checker<'_>, node: Node) -> String {
+    fn text(&self, c: &Checker<'_>, node: Node) -> Vec<u8> {
         let file = self.current_source_file;
         c.source_text(file, c.hir(file).start(node), c.end_of_node(file, node))
     }
 
-    fn add_diagnostic(&mut self, range: (u32, u32), code: u32, args: Vec<String>) {
+    fn add_diagnostic(&mut self, range: (u32, u32), code: u32, args: Vec<Vec<u8>>) {
         self.diagnostics.push(Found {
             start: range.0,
             end: range.1,
@@ -2473,7 +2473,7 @@ impl SymbolTrackerImpl {
     }
 
     /// `errorDeclarationNameWithFallback`
-    fn error_declaration_name(&self, c: &Checker<'_>) -> String {
+    fn error_declaration_name(&self, c: &Checker<'_>) -> Vec<u8> {
         let hir = c.hir(self.current_source_file);
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
@@ -2484,11 +2484,11 @@ impl SymbolTrackerImpl {
         match (self.text(c, name), hir.data(location)) {
             (text, _) if !text.is_empty() => text,
             (_, NodeData::Stmt(s)) if name.is_none() => match hir[s].kind {
-                StmtKind::ExportAssign(_) => "export=".to_owned(),
-                StmtKind::ExportDefault(_) => "default".to_owned(),
-                _ => "(Missing)".to_owned(),
+                StmtKind::ExportAssign(_) => b"export=".to_vec(),
+                StmtKind::ExportDefault(_) => b"default".to_vec(),
+                _ => b"(Missing)".to_vec(),
             },
-            _ => "(Missing)".to_owned(),
+            _ => b"(Missing)".to_vec(),
         }
     }
 }
@@ -2529,25 +2529,24 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
         match report {
             Report::CyclicStructure => self.add_diagnostic(location, 5088, vec![name]),
             Report::InaccessibleThis => {
-                self.add_diagnostic(location, 2527, vec![name, "this".to_owned()]);
+                self.add_diagnostic(location, 2527, vec![name, b"this".to_vec()]);
             }
             Report::InaccessibleUniqueSymbol => {
-                self.add_diagnostic(location, 2527, vec![name, "unique symbol".to_owned()]);
+                self.add_diagnostic(location, 2527, vec![name, b"unique symbol".to_vec()]);
             }
             Report::LikelyUnsafeImportRequired(specifier, symbol) => {
-                let (specifier, symbol) = (to_valid_utf8(specifier), to_valid_utf8(symbol));
                 self.add_diagnostic(location, 2883, vec![name, specifier, symbol]);
             }
             Report::NonSerializableProperty(property) => {
-                self.add_diagnostic(location, 4118, vec![to_valid_utf8(property)]);
+                self.add_diagnostic(location, 4118, vec![property]);
             }
             Report::PrivateInBaseOfClassExpression(property) => {
-                self.add_diagnostic(location, 4094, vec![to_valid_utf8(property)]);
+                self.add_diagnostic(location, 4094, vec![property]);
                 if is_name_of_variable && let Some(found) = self.diagnostics.last_mut() {
                     found.related.push(c.new_diagnostic(
                         (self.current_source_file, location.0, location.1),
                         9027,
-                        &[Arg::Text(&name)],
+                        &[Arg::Bytes(&name)],
                     ));
                 }
             }
@@ -2875,7 +2874,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let mut number = 0;
         while !self.is_unique_name(&name) {
             number += 1;
-            name = [base, b"_", number.to_string().as_bytes()].concat();
+            name = cat!(base, b"_", super::sink::number_text(number));
         }
         self.generated_names.push(name.clone());
         name
@@ -2892,7 +2891,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             let name = match count {
                 0..26 => vec![b'_', b'a' + count as u8],
-                _ => [b"_", (count - 26).to_string().as_bytes()].concat(),
+                _ => cat!(b"_", super::sink::number_text(count as usize - 26)),
             };
             if self.is_unique_name(&name) {
                 self.generated_names.push(name.clone());
@@ -3772,7 +3771,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         (b"", value)
                     };
                     let size = crate::atom::number_to_string(size);
-                    member.extend_from_slice(&[b" = ", sign, size.as_bytes()].concat());
+                    member.extend_from_slice(&cat!(b" = ", sign, size));
                 }
                 Some(EnumValue::String(value)) => {
                     member.extend_from_slice(b" = ");

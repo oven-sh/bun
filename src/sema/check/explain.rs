@@ -57,7 +57,7 @@ pub struct RelatedExplained {
     pub at: Option<(FileId, u32, u32)>,
     pub code: u32,
     pub category: Category,
-    pub text: String,
+    pub text: Vec<u8>,
 }
 
 /// An error as it is shown.
@@ -68,7 +68,7 @@ pub struct Explained {
     pub code: u32,
     pub category: Category,
     /// The lines of the message. Those after the first are indented by two spaces for each level.
-    pub text: String,
+    pub text: Vec<u8>,
     pub related: Vec<RelatedExplained>,
 }
 
@@ -79,15 +79,15 @@ impl Checker<'_> {
     }
 
     /// `name` as it is written in a message.
-    pub(super) fn atom_text(&self, name: crate::atom::Atom) -> String {
-        String::from_utf8_lossy(self.atoms().bytes(name)).into_owned()
+    pub(super) fn atom_text(&self, name: crate::atom::Atom) -> Vec<u8> {
+        self.atoms().bytes(name).to_vec()
     }
 
     /// The source text of `file` from `start` to `end`.
-    pub(super) fn source_text(&self, file: FileId, start: u32, end: u32) -> String {
+    pub(super) fn source_text(&self, file: FileId, start: u32, end: u32) -> Vec<u8> {
         let text = &self.hir(file).text;
         let end = (end as usize).min(text.len());
-        String::from_utf8_lossy(&text[(start as usize).min(end)..end]).into_owned()
+        text[(start as usize).min(end)..end].to_vec()
     }
 
     /// `check_file` and `finish_file`, for whoever checks one file by itself.
@@ -118,7 +118,7 @@ impl Explained {
     /// `d` as it is shown.
     pub(super) fn new(d: Reported) -> Explained {
         // The message of `d` and the lines under it, each indented by two spaces for each level.
-        fn said(d: &mut Reported, otherwise: Category) -> (Category, String) {
+        fn said(d: &mut Reported, otherwise: Category) -> (Category, Vec<u8>) {
             let (category, template) =
                 messages::message(d.code).unwrap_or((otherwise, "Unknown error."));
             let mut text = Vec::new();

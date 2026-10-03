@@ -121,7 +121,7 @@ impl Checker<'_> {
                 let end = self.end_of_type_node_from(file, constraint, start);
                 let name = self.atom_text(hir.type_params[p].name);
                 let related = self.origin_of_circular_constraint(file, own, start, end);
-                self.error_at((file, start, end), 2313, &[Arg::Text(&name)])
+                self.error_at((file, start, end), 2313, &[Arg::Bytes(&name)])
                     .related_information
                     .extend(related);
             }
@@ -267,7 +267,7 @@ impl Checker<'_> {
             self.hir(file)[accessor].name_pos,
             self.end_of_member_name(file, accessor),
         );
-        let err = self.new_diagnostic(at, code, &[Arg::Text(&name)]);
+        let err = self.new_diagnostic(at, code, &[Arg::Bytes(&name)]);
         self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
     }
 
@@ -391,7 +391,7 @@ impl Checker<'_> {
             if let Some(start) = c.name_of_function(file, of) {
                 let end = c.end_of_name_at(file, start);
                 let name = c.source_text(file, start, end);
-                let err = c.new_diagnostic((file, start, end), code, &[Arg::Text(&name)]);
+                let err = c.new_diagnostic((file, start, end), code, &[Arg::Bytes(&name)]);
                 c.add_diagnostic_of(owner, err);
                 return true;
             }

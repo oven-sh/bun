@@ -144,12 +144,12 @@ impl Checker<'_> {
     }
 
     /// `GetTextOfNode` of the same: with its quotes.
-    fn xa_specifier_text(&self, file: FileId, pos: u32, spec: Atom) -> String {
+    fn xa_specifier_text(&self, file: FileId, pos: u32, spec: Atom) -> Vec<u8> {
         let text = &self.hir(file).text[..];
         self.xa_specifier_pos(file, pos, spec)
             .and_then(|at| Some((at, string_literal(text, at as usize)?.1)))
             .map_or_else(
-                || format!("\"{}\"", self.atom_text(spec)),
+                || cat!(b"\"", self.atoms().bytes(spec), b"\""),
                 |(at, end)| self.source_text(file, at, end as u32),
             )
     }
@@ -180,7 +180,7 @@ impl Checker<'_> {
         &self,
         type_only: TypeOnlyDeclaration,
         is_export: bool,
-        name: String,
+        name: Vec<u8>,
     ) -> Vec<Reported> {
         let place = match type_only {
             TypeOnlyDeclaration::ExportStar(file, star) => {
@@ -285,7 +285,7 @@ impl Checker<'_> {
             return;
         }
         // Those at one place come in the order of their messages.
-        let mut said: Vec<(StmtId, Vec<String>)> = Vec::new();
+        let mut said: Vec<(StmtId, Vec<Vec<u8>>)> = Vec::new();
         let links = files.module_links(files.file_symbol(file));
         for collision in links.export_collisions.iter() {
             let (of, first) = collision.first;
@@ -898,9 +898,9 @@ impl Checker<'_> {
         let mode =
             crate::program::mode_for_usage_location(options, importing.default_mode, &written);
         let (key, at) = ((spec, mode), self.place_of_token(file, start));
-        let text = self.atoms().text(spec);
-        if let Some(without_prefix) = text.strip_prefix("@types/") {
-            self.error_at(at, 6137, &[Arg::Text(without_prefix), Arg::Atom(spec)]);
+        let text = self.atoms().bytes(spec);
+        if let Some(without_prefix) = text.strip_prefix(b"@types/") {
+            self.error_at(at, 6137, &[Arg::Bytes(without_prefix), Arg::Atom(spec)]);
         }
         // `tryFindAmbientModule` and `patternAmbientModules` have what scripts declare. A `declare module` that adds to nothing is not
         // there, and does not stand in the way of a file.
@@ -923,15 +923,15 @@ impl Checker<'_> {
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension
                 || options.rewrite_relative_import_extensions)
-                && is_declaration_file_name(text.as_bytes());
+                && is_declaration_file_name(text);
             if using_ts_extension && is_declaration_name {
                 if site.is_emittable {
                     let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext)
                         .contains(&options.module)
                         || mode == ResolutionMode::Import;
                     let prefers_ts = options.allow_importing_ts_extensions;
-                    let suggested = suggested_import_source(&text, is_esm, prefers_ts);
-                    self.error_at(at, 2846, &[Arg::Text(&suggested)]);
+                    let suggested = suggested_import_source(text, is_esm, prefers_ts);
+                    self.error_at(at, 2846, &[Arg::Bytes(&suggested)]);
                 }
             // `AllowImportingTsExtensionsFrom`
             } else if using_ts_extension
@@ -940,12 +940,20 @@ impl Checker<'_> {
             {
                 if site.is_emittable {
                     // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
-                    let extension = try_extract_ts_extension(&text).or_else(|| {
-                        [".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
-                            .into_iter()
-                            .find(|&e| text.contains(e))
+                    let extension = try_extract_ts_extension(text).or_else(|| {
+                        [
+                            &b".ts"[..],
+                            b".tsx",
+                            b".d.ts",
+                            b".cts",
+                            b".d.cts",
+                            b".mts",
+                            b".d.mts",
+                        ]
+                        .into_iter()
+                        .find(|&e| strings::contains(text, e))
                     });
-                    self.error_at(at, 5097, &[Arg::Text(extension.unwrap_or(""))]);
+                    self.error_at(at, 5097, &[Arg::Bytes(extension.unwrap_or(b""))]);
                 }
             } else if options.rewrite_relative_import_extensions
                 && !site.is_ambient
@@ -954,8 +962,7 @@ impl Checker<'_> {
                 && !site.is_type_only
             {
                 // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
-                let should_rewrite =
-                    path_is_relative(text.as_bytes()) && strip_ts_extension(&text).is_some();
+                let should_rewrite = path_is_relative(text) && strip_ts_extension(text).is_some();
                 let may_be_emitted = target.hir.kind != FileKind::Declaration
                     && !strings::contains(&target.path, b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
@@ -963,9 +970,11 @@ impl Checker<'_> {
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension && !should_rewrite && may_be_emitted {
                     // `GetAnyExtensionFromPath`
-                    let base = &text[text.rfind('/').map_or(0, |i| i + 1)..];
-                    let extension = base.rfind('.').map_or("", |i| &base[i..]);
-                    self.error_at(at, 2877, &[Arg::Text(extension)]);
+                    let base =
+                        &text[strings::last_index_of_char(text, b'/').map_or(0, |i| i + 1)..];
+                    let extension =
+                        strings::last_index_of_char(base, b'.').map_or(&b""[..], |i| &base[i..]);
+                    self.error_at(at, 2877, &[Arg::Bytes(extension)]);
                 }
             }
             if !target.is_module() {
@@ -1034,7 +1043,7 @@ impl Checker<'_> {
             return false;
         }
         let mut extensionless = importing.extensionless_imports.iter();
-        if !options.resolve_json_module && text.ends_with(".json") {
+        if !options.resolve_json_module && text.ends_with(b".json") {
             self.error_at(at, 2732, &[Arg::Atom(spec)]);
         } else if options.resolves_like_node
             && mode == ResolutionMode::Import
@@ -1053,7 +1062,7 @@ impl Checker<'_> {
         } else if is_side_effect {
             self.error_at(at, 2882, &[Arg::Atom(spec)]);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
-        } else if crate::resolve::is_node_core_module(text.as_bytes())
+        } else if crate::resolve::is_node_core_module(text)
             && self.hir(file).text.get(start as usize) != Some(&b'`')
         {
             let types = options.types.as_ref();
@@ -1309,36 +1318,52 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
 }
 
 /// `path` without the extension of TypeScript's it ends with, if it ends with one.
-fn strip_ts_extension(path: &str) -> Option<&str> {
-    [".d.ts", ".d.mts", ".d.cts", ".mts", ".cts", ".ts", ".tsx"]
-        .into_iter()
-        .find_map(|e| path.strip_suffix(e))
-        .filter(|stem| !stem.is_empty())
+fn strip_ts_extension(path: &[u8]) -> Option<&[u8]> {
+    [
+        &b".d.ts"[..],
+        b".d.mts",
+        b".d.cts",
+        b".mts",
+        b".cts",
+        b".ts",
+        b".tsx",
+    ]
+    .into_iter()
+    .find_map(|e| path.strip_suffix(e))
+    .filter(|stem| !stem.is_empty())
 }
 
 /// `TryExtractTSExtension`
-fn try_extract_ts_extension(path: &str) -> Option<&'static str> {
-    [".d.ts", ".d.cts", ".d.mts", ".ts", ".tsx", ".mts", ".cts"]
-        .into_iter()
-        .find(|&e| path.ends_with(e))
+fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
+    [
+        &b".d.ts"[..],
+        b".d.cts",
+        b".d.mts",
+        b".ts",
+        b".tsx",
+        b".mts",
+        b".cts",
+    ]
+    .into_iter()
+    .find(|&e| path.ends_with(e))
 }
 
 /// `getSuggestedImportSource`, of a specifier that names a declaration file. `is_esm`: what is written out is an ECMAScript module.
-fn suggested_import_source(specifier: &str, is_esm: bool, prefers_ts: bool) -> String {
-    let extension = try_extract_ts_extension(specifier).unwrap_or("");
+fn suggested_import_source(specifier: &[u8], is_esm: bool, prefers_ts: bool) -> Vec<u8> {
+    let extension = try_extract_ts_extension(specifier).unwrap_or(b"");
     let stem = &specifier[..specifier.len() - extension.len()];
     if !is_esm {
-        return stem.to_owned();
+        return stem.to_vec();
     }
-    let suggested = match (extension, prefers_ts) {
-        (".mts" | ".d.mts", true) => ".mts",
-        (".mts" | ".d.mts", false) => ".mjs",
-        (".cts" | ".d.cts", true) => ".cts",
-        (".cts" | ".d.cts", false) => ".cjs",
-        (_, true) => ".ts",
-        (_, false) => ".js",
+    let suggested: &[u8] = match (extension, prefers_ts) {
+        (b".mts" | b".d.mts", true) => b".mts",
+        (b".mts" | b".d.mts", false) => b".mjs",
+        (b".cts" | b".d.cts", true) => b".cts",
+        (b".cts" | b".d.cts", false) => b".cjs",
+        (_, true) => b".ts",
+        (_, false) => b".js",
     };
-    format!("{stem}{suggested}")
+    cat!(stem, suggested)
 }
 
 /// `isCommentOrBlankLine`

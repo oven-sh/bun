@@ -46,7 +46,7 @@ impl Checker<'_> {
         Some(self.new_diagnostic(
             place,
             6500,
-            &[Arg::Text(&property_name), Arg::Text(&on_type)],
+            &[Arg::Bytes(&property_name), Arg::Bytes(&on_type)],
         ))
     }
 

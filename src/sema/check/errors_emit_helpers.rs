@@ -112,7 +112,7 @@ impl Checker<'_> {
                         .lookup(name.as_bytes())
                         .and_then(|name| files.module_export(helpers_module, name))
                         .filter(|&symbol| files.means(symbol, SymFlags::VALUE));
-                    let mut args = vec![TSLIB.to_owned(), name.to_owned()];
+                    let mut args = vec![TSLIB.as_bytes().to_vec(), name.as_bytes().to_vec()];
                     let code = match symbol {
                         None => 2343,
                         Some(symbol) => {
@@ -124,7 +124,7 @@ impl Checker<'_> {
                             if self.eh_has_signature_with_arity_greater_than(symbol, arity) {
                                 continue;
                             }
-                            args.push((arity + 1).to_string());
+                            args.push(super::sink::number_text(arity + 1));
                             2807
                         }
                     };

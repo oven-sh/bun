@@ -1204,7 +1204,7 @@ impl<'p> Checker<'p> {
                 if let Some(r) = error_reporter {
                     let declared = self.enum_type(target);
                     let declared = self.type_to_string_fully_qualified(declared);
-                    let args = [Arg::Sym(member), Arg::Bytes(declared.as_bytes())];
+                    let args = [Arg::Sym(member), Arg::Bytes(&declared)];
                     self.report_error(r, 2324, &args);
                 }
                 return false;
@@ -1227,7 +1227,7 @@ impl<'p> Checker<'p> {
             if let Some(r) = error_reporter {
                 let count = 2 + values.iter().flatten().count();
                 let values = values.map(|v| v.map(|v| self.enum_value_text(v)).unwrap_or_default());
-                let [first, second] = values.each_ref().map(|v| Arg::Bytes(v.as_bytes()));
+                let [first, second] = values.each_ref().map(|v| Arg::Bytes(v));
                 self.report_error(
                     r,
                     code,

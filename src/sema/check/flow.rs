@@ -3940,7 +3940,7 @@ impl<'p> Checker<'p> {
             && self.contains_undefined(flow_type)
         {
             let name = self.prop_to_string(prop);
-            self.error_at(error_node, 2565, &[Arg::Text(&name)]);
+            self.error_at(error_node, 2565, &[Arg::Bytes(&name)]);
             // "Return the declared type to reduce follow-on errors"
             return prop_type;
         }
@@ -4667,7 +4667,7 @@ impl<'p> Checker<'p> {
                 UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
                 UntypedProperty::Assignment(_) => self.atom_text(name),
             };
-            self.error_at(at, 7008, &[Arg::Text(&written), Arg::Type(ty)]);
+            self.error_at(at, 7008, &[Arg::Bytes(&written), Arg::Type(ty)]);
         }
         if self.is_every_type_nullable(ty) {
             return None;

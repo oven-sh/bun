@@ -7,6 +7,7 @@ use super::sink::held;
 use super::*;
 use crate::bind::Parent;
 use crate::resolve::ModuleKind;
+use bun_core::strings;
 
 impl Checker<'_> {
     /// `GetIncludeProcessorDiagnostics`
@@ -52,19 +53,18 @@ impl Checker<'_> {
         let end = start + self.atoms().bytes(value).len() as u32;
         // `supportedExtensions`
         let extensions = if self.p.files.options.allow_js {
-            "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'"
+            &b"'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'"[..]
         } else {
-            "'.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'"
+            b"'.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'"
         };
         let args = match code {
             1006 => Vec::new(),
             2688 => vec![name],
             2726 => {
-                let lib = name.to_lowercase();
-                let unqualified = lib.strip_prefix("lib.").unwrap_or(&lib);
-                let unqualified = unqualified.strip_suffix(".d.ts").unwrap_or(unqualified);
-                let suggestion =
-                    spelling_suggestion(unqualified.as_bytes(), crate::resolve::LIBS.iter());
+                let lib = name.to_ascii_lowercase();
+                let unqualified = lib.strip_prefix(b"lib.").unwrap_or(&lib);
+                let unqualified = unqualified.strip_suffix(b".d.ts").unwrap_or(unqualified);
+                let suggestion = spelling_suggestion(unqualified, crate::resolve::LIBS.iter());
                 match suggestion {
                     Some(suggestion) => {
                         code = 2727;
@@ -73,8 +73,11 @@ impl Checker<'_> {
                     None => vec![lib],
                 }
             }
-            6054 | 6231 => vec![name.replace('\\', "/"), extensions.to_owned()],
-            _ => vec![name.replace('\\', "/")],
+            6054 | 6231 => vec![
+                strings::replace_owned(&name, b"\\", b"/"),
+                extensions.to_vec(),
+            ],
+            _ => vec![strings::replace_owned(&name, b"\\", b"/")],
         };
         self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
     }

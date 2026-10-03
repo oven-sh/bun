@@ -171,7 +171,7 @@ impl Checker<'_> {
             self.error_at(
                 (file, start, end),
                 2845,
-                &[Arg::Text(&is_truthy.to_string())],
+                &[Arg::Text(if is_truthy { "true" } else { "false" })],
             );
             return;
         }
@@ -228,7 +228,7 @@ impl Checker<'_> {
                 // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
                 let name = self.type_names_for_error_display(ty, ty).0;
                 // `errorAndMaybeSuggestAwait`
-                self.error_at(at, 2801, &[Arg::Text(&name)])
+                self.error_at(at, 2801, &[Arg::Bytes(&name)])
                     .add_related_info(Reported::bare(at, 2773));
             } else {
                 self.error_at(at, 2774, &[]);

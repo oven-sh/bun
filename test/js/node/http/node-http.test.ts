@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isWindows, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -3409,6 +3409,74 @@ describe("a dispatch that throws while an earlier response on the connection is 
   });
 });
 
+// The same throw with nothing ahead of the request but a raw write of the socket. A 'connection'
+// listener left it in the buffer, and the client does not read. The first request is then
+// dispatched like a pipelined one: its response waits in the queue, and the connection has no
+// current response yet. The throw follows the rule above: nothing of the response goes out, and
+// the connection closes at its turn, when the raw write has left.
+// Node v26.3.0 keeps the connection where the modes below expect a close. It also sends the
+// 100 Continue of "expect-request" before the throw, and it answers "body-to-come" with a 400.
+describe.concurrent.each(["tcp", "tls"])(
+  "a dispatch that throws while a raw write of the socket is still in its buffer (%s)",
+  transport => {
+    const fixture = path.join(import.meta.dir, "node-http-throw-behind-raw-write-fixture.js");
+    // CI has its own time for each test. A local debug or ASAN build needs several seconds to start one fixture.
+    const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
+    const thrown = (thrower: string) => [`${thrower} /first`, `uncaught: ${thrower} threw`];
+    const nothingSent = { rawBytes: "all", response: "", closed: true };
+    const expected: Record<string, object> = {
+      "request": { queued: true, events: thrown("request"), ...nothingSent },
+      "checkContinue": { queued: true, events: thrown("checkContinue"), ...nothingSent },
+      "checkExpectation": { queued: true, events: thrown("checkExpectation"), ...nothingSent },
+      "expect-request": { queued: true, events: thrown("request"), ...nothingSent },
+      // The constructors throw before a response exists that the server can put in the queue.
+      "constructor-request": { events: ["IncomingMessage", "uncaught: IncomingMessage threw"], ...nothingSent },
+      "constructor-response": { events: thrown("ServerResponse"), ...nothingSent },
+      // A response that is complete at its turn is sent, and the connection stays.
+      "ended": {
+        queued: true,
+        events: thrown("request"),
+        rawBytes: "all",
+        response: "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\ndone",
+        closed: false,
+      },
+      // req.destroy() destroys the connection with the rest of the raw write, like in Node.js.
+      "destroyed": { queued: true, events: thrown("request"), response: "", closed: true },
+      "body": { queued: true, events: thrown("request"), ...nothingSent },
+      // The body that arrives after the throw ends the connection before the raw write has left.
+      "body-to-come": { queued: true, events: thrown("request"), response: "", closed: true },
+    };
+
+    // Windows takes the whole raw write of a plain TCP socket at once, so the first request is
+    // not queued there. Over TLS it is queued, so that transport covers Windows.
+    test.skipIf(isWindows && transport === "tcp").each(Object.keys(expected))(
+      "%s",
+      async mode => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), fixture, transport, mode],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          result: stdout ? JSON.parse(stdout) : undefined,
+          stderr,
+          exitCode,
+          signalCode: proc.signalCode,
+        }).toEqual({
+          result: { mode, ...expected[mode] },
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      timeout,
+    );
+  },
+);
+
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine
   // upgrades can reach the 'upgrade' event, but a request that falls through
@@ -4914,10 +4982,7 @@ it.each([
 });
 
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
-  // cleanupAndPropagate deliberately defers destroy to req.onSocket for
-  // status-code tunnel failures; oncreate must forward the socket so
-  // onSocketNT actually destroys it - otherwise the proxy connection leaks
-  // until the proxy closes its side.
+  // Node leaves this connection open. https.Agent#createConnection() closes it: the request gets only the error.
   const proxySockets: import("node:net").Socket[] = [];
   const proxy = createNetServer(socket => {
     proxySockets.push(socket);

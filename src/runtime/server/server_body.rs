@@ -1758,7 +1758,7 @@ where
                         if is_ended_or_closed() {
                             return Ok(JSValue::FALSE);
                         }
-                        if let Some(raw_response) = node_http_response.raw_response.get() {
+                        if let Some(raw_response) = node_http_response.writer() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
                             fetch_headers_to_use.to_uws_response(

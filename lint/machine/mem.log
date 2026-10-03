@@ -1,8 +1,3 @@
-10-02_16:09:36 anon=1011MB pids=42 load=892.32 top=cachegrind-amd6:268MB
-10-02_16:10:15 anon=569MB pids=54 load=853.47 top=cachegrind-amd6:323MB
-10-02_16:10:52 anon=4MB pids=37 load=881.99 top=cachegrind-amd6:30MB
-10-02_16:11:30 anon=248MB pids=36 load=886.20 top=cachegrind-amd6:270MB
-10-02_16:12:09 anon=1324MB pids=44 load=856.94 top=cachegrind-amd6:236MB
 10-02_16:12:45 anon=817MB pids=56 load=893.29 top=cachegrind-amd6:314MB
 10-02_16:13:25 anon=286MB pids=50 load=890.19 top=cachegrind-amd6:309MB
 10-02_16:14:07 anon=285MB pids=36 load=908.44 top=cachegrind-amd6:309MB
@@ -398,3 +393,8 @@
 10-03_04:52:55 anon=9MB pids=32 load=1030.77 top=postgres:12MB
 10-03_04:53:46 anon=5MB pids=29 load=1040.09 top=postgres:12MB
 10-03_04:55:34 anon=4MB pids=29 load=1235.73 top=postgres:12MB
+10-03_04:57:55 anon=38MB pids=37 load=1273.55 top=git:88MB
+10-03_05:00:38 anon=3MB pids=27 load=1469.25 top=postgres:12MB
+10-03_05:01:55 anon=3MB pids=27 load=1407.01 top=postgres:12MB
+10-03_05:03:57 anon=8MB pids=32 load=1319.69 top=postgres:12MB
+10-03_05:05:49 anon=21MB pids=33 load=1356.45 top=git-remote-http:19MB

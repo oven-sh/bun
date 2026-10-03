@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { existsSync, lstatSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, readdirSorted, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -9,6 +9,30 @@ const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toCont
 const platformPath = (path: string) => path;
 
 setDefaultTimeout(1000 * 60 * 5);
+
+const registry = new VerdaccioRegistry();
+
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
+// tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
+async function runBun(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
 describe("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
@@ -71,16 +95,6 @@ describe("error messages", () => {
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed
 // every command that formatted it.
 describe("packages whose label is longer than 1024 bytes", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
   // `x/../` normalizes away, so the tarball still lives at a short path that is valid
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
@@ -94,20 +108,6 @@ describe("packages whose label is longer than 1024 bytes", () => {
       },
     });
     return packageDir;
-  }
-
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
-  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
   }
 
   async function install(cwd: string) {
@@ -1232,5 +1232,196 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `"my-alias": "npm:no-deps@1.0.0"` installs the package `no-deps` into `node_modules/my-alias`.
+// `bun patch` prints the package's own name and keys the patch by it (`no-deps@1.0.0`), so that
+// name has to select the package too, not only the alias.
+describe("an npm: aliased dependency", () => {
+  async function writeProject(dependencies: Record<string, string>, linker: "hoisted" | "isolated" = "hoisted") {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { "package.json": JSON.stringify({ name: "root", dependencies }) },
+    });
+    return packageDir;
+  }
+
+  async function createProject(dependencies: Record<string, string>, linker?: "hoisted" | "isolated") {
+    const packageDir = await writeProject(dependencies, linker);
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return packageDir;
+  }
+
+  async function expectPrepared(packageDir: string, argument: string, folder: string) {
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", argument);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(`To patch no-deps, edit the following folder:\n\n  ${folder}\n`);
+    expect(stdout).toContain(`bun patch --commit '${folder}'`);
+    expect(exitCode).toBe(0);
+  }
+
+  test.concurrent.each(["my-alias", "my-alias@1.0.0", "no-deps", "no-deps@1.0.0"])("bun patch %s", async argument => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0" });
+    await expectPrepared(packageDir, argument, "node_modules/my-alias");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["my-alias"]);
+  });
+
+  test.concurrent.each(["@my/alias", "no-deps"])("bun patch %s with a scoped alias", async argument => {
+    const packageDir = await createProject({ "@my/alias": "npm:no-deps@1.0.0" });
+    await expectPrepared(packageDir, argument, "node_modules/@my/alias");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["@my"]);
+  });
+
+  // The isolated linker makes `node_modules/my-alias` a symlink into `node_modules/.bun`.
+  test.concurrent("bun patch and --commit <package name> with the isolated linker", async () => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0" }, "isolated");
+    const folder = join(packageDir, "node_modules", "my-alias");
+    expect(lstatSync(folder).isSymbolicLink()).toBe(true);
+
+    await expectPrepared(packageDir, "no-deps", "node_modules/my-alias");
+    expect(lstatSync(folder).isSymbolicLink()).toBe(false);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).not.toContain("no-deps");
+    await Bun.write(join(folder, "index.js"), "module.exports = 'patched';\n");
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+    });
+    expect(await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+  });
+
+  test.concurrent("bun patch --commit <package name>", async () => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0" });
+    await expectPrepared(packageDir, "no-deps", "node_modules/my-alias");
+    await Bun.write(join(packageDir, "node_modules", "my-alias", "index.js"), "module.exports = 'patched';\n");
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+    });
+    expect(await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["my-alias"]);
+  });
+
+  // A second `bun patch` starts from the patched package, so the next commit keeps the first change.
+  test.concurrent.each(["my-alias", "no-deps"])("bun patch %s of a package that is already patched", async argument => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0" });
+    const index = join(packageDir, "node_modules", "my-alias", "index.js");
+    await expectPrepared(packageDir, argument, "node_modules/my-alias");
+    await Bun.write(index, "module.exports = 'patched';\n");
+    const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "node_modules/my-alias");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    await expectPrepared(packageDir, argument, "node_modules/my-alias");
+    expect(await Bun.file(index).text()).toBe("module.exports = 'patched';\n");
+  });
+
+  test.concurrent("bun patch <package name> asks for a version when two aliases install different ones", async () => {
+    const packageDir = await createProject({ "a1": "npm:no-deps@1.0.0", "a2": "npm:no-deps@2.0.0" });
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
+    expect(stderr).toContain(
+      "error: Found multiple versions of no-deps, please specify a precise version from the following list:\n" +
+        "  no-deps@1.0.0\n" +
+        "  no-deps@2.0.0\n",
+    );
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+
+    await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/a1");
+    await expectPrepared(packageDir, "no-deps@2.0.0", "node_modules/a2");
+    await expectPrepared(packageDir, "a2", "node_modules/a2");
+  });
+
+  // An alias of another version does not make the name of a dependency ambiguous.
+  test.concurrent("bun patch <package name> selects the dependency with that name before an alias", async () => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0", "no-deps": "2.0.0" });
+    await expectPrepared(packageDir, "no-deps", "node_modules/no-deps");
+    await expectPrepared(packageDir, "no-deps@2.0.0", "node_modules/no-deps");
+    await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/my-alias");
+    await expectPrepared(packageDir, "my-alias", "node_modules/my-alias");
+  });
+
+  test.concurrent(
+    "bun patch <package name> prefers the folder with that name to an alias of the same package",
+    async () => {
+      const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.0" });
+      await expectPrepared(packageDir, "no-deps", "node_modules/no-deps");
+      await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/no-deps");
+      await expectPrepared(packageDir, "my-alias", "node_modules/my-alias");
+    },
+  );
+
+  // The refused name comes from the lockfile, so the message must not print its control characters.
+  test.concurrent("bun patch escapes the unsafe name that it refuses", async () => {
+    const packageDir = await writeProject({ "a/\x1b[31mRED\x1b[0m\rFAKE\nsecond": "npm:no-deps@1.0.0" });
+    expect((await runBun(packageDir, "install")).exitCode).toBe(1);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
+    expect(stderr).toContain(
+      String.raw`error: refusing to patch dependency with unsafe name "a/\u001B[31mRED\u001B[0m\rFAKE\nsecond"` + "\n",
+    );
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+  });
+
+  // `bun.lockb` is read as is. One resolution id past the end of the package list used to be an
+  // index out of bounds when the id belonged to the named dependency. The name lookup now reads
+  // the id of every dependency, so it must not trust any of them.
+  test.concurrent.each([
+    ["another dependency", 0, "failed to resolve"],
+    ["the named dependency", 1, "error: package no-deps not found"],
+  ])("bun patch --commit <name> with a resolution id past the end for %s", async (_, index, message) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted", saveTextLockfile: false },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0" } }),
+      },
+    });
+    expect((await runBun(packageDir, "install")).exitCode).toBe(0);
+    await expectPrepared(packageDir, "no-deps", "node_modules/no-deps");
+
+    // `buffers.resolutions` is the second u32 array. Its [start, end) offsets come before the prefix.
+    const lockb = Buffer.from(await Bun.file(join(packageDir, "bun.lockb")).arrayBuffer());
+    const prefix = "\n<u32> 4 sizeof, 4 alignof\n";
+    const at = lockb.indexOf(prefix, lockb.indexOf(prefix) + 1);
+    const start = Number(lockb.readBigUInt64LE(at - 16));
+    const end = Number(lockb.readBigUInt64LE(at - 8));
+    expect((end - start) / 4).toBe(2);
+    lockb.writeUInt32LE(0x7fffffff, start + 4 * index);
+    await Bun.write(join(packageDir, "bun.lockb"), lockb);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "no-deps");
+    expect(stderr).toContain(message);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toBeUndefined();
+  });
+
+  // The alias names the folder. `bun install` refuses to write `node_modules/a/b`, because only
+  // `@scope/name` can have a `/`, so `bun patch` does not create that folder either.
+  test.concurrent.each(["no-deps", "a/b"])("bun patch %s refuses an alias that bun install refuses", async argument => {
+    const packageDir = await writeProject({ "a/b": "npm:no-deps@1.0.0" });
+    const install = await runBun(packageDir, "install");
+    expect(install.stderr).toContain("error: refusing to install dependency with unsafe name a/b\n");
+    expect(install.exitCode).toBe(1);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", argument);
+    expect(stderr).toContain('error: refusing to patch dependency with unsafe name "a/b"\n');
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([]);
   });
 });

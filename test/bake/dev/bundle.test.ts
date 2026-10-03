@@ -1,6 +1,8 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import type { Bake } from "bun";
+import { describe, expect } from "bun:test";
+import { existsSync, writeFileSync } from "node:fs";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -410,6 +412,266 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// No route imports the client entry point of a router type. The script of
+// every route of that router type starts at it.
+const clientEntryPointFramework: Bake.Framework = {
+  fileSystemRouterTypes: [
+    {
+      root: "routes",
+      style: "nextjs-pages",
+      layouts: true,
+      serverEntryPoint: "./server.ts",
+      clientEntryPoint: "./client.ts",
+    },
+    {
+      root: "other-routes",
+      style: "nextjs-pages",
+      serverEntryPoint: "./other-server.ts",
+      clientEntryPoint: "./other-client.ts",
+    },
+  ],
+  serverComponents: {
+    separateSSRGraph: false,
+    serverRuntimeImportSource: "./server.ts",
+    serverRegisterClientReferenceExport: "registerClientReference",
+  },
+};
+const clientEntryPointFiles = {
+  "server.ts": `
+    export function render(req, meta) {
+      const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+      const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+      return new Response("<!DOCTYPE html><html><head>" + styles + "</head><body>" + scripts + "</body></html>", {
+        headers: { "content-type": "text/html" },
+      });
+    }
+    export function registerClientReference(value, file, uid) {
+      return { value, file, uid };
+    }
+  `,
+  "other-server.ts": `
+    export * from "./server";
+  `,
+  "client.ts": `
+    import "./client-dep";
+    console.log("client v1");
+  `,
+  "client-dep.ts": `
+    console.log("dep v1");
+    import.meta.hot.accept();
+  `,
+  "client.css": `
+    body {
+      color: red;
+    }
+  `,
+  "other-client.ts": `
+    console.log("other v1");
+  `,
+  "nav.ts": `
+    export const nav = "nav v1";
+  `,
+  "routes/_layout.ts": `
+    export { nav as default } from "../nav";
+  `,
+  "routes/index.ts": `export default "index";`,
+  "routes/second.ts": `export default "second";`,
+  "routes/third.ts": `export default "third";`,
+  "other-routes/other.ts": `export default "other";`,
+};
+async function loadClientEntryPointPages(dev: Dev) {
+  const pages: Record<string, { script: string; styles: number; versions: string[] }> = {};
+  for (const url of ["/", "/second", "/other"]) {
+    const html = await dev.fetch(url).text();
+    const script = html.match(/<script type="module" src="([^"]+)">/)![1];
+    const code = await dev.fetch(script).text();
+    pages[url] = {
+      script,
+      styles: html.match(/<link rel="stylesheet"/g)?.length ?? 0,
+      versions: [...new Set(code.match(/\b(client|dep|other) v\d+/g))].sort(),
+    };
+  }
+  return pages;
+}
+devTest("saving a file under the framework client entry point updates the next page load", {
+  framework: clientEntryPointFramework,
+  files: clientEntryPointFiles,
+  async test(dev) {
+    const first = await loadClientEntryPointPages(dev);
+    expect(first).toEqual({
+      "/": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] },
+      "/second": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] },
+      "/other": { script: expect.any(String), styles: 0, versions: ["other v1"] },
+    });
+
+    {
+      await using c = await dev.client("/");
+      await c.expectMessage("dep v1", "client v1");
+
+      // `client-dep.ts` accepts the update, so the connected page does not reload.
+      await dev.write(
+        "client-dep.ts",
+        `
+          console.log("dep v2");
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("dep v2");
+      const second = await loadClientEntryPointPages(dev);
+      expect(second).toEqual({
+        "/": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] },
+        "/second": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] },
+        "/other": first["/other"],
+      });
+      expect(second["/"].script).not.toBe(first["/"].script);
+      expect(second["/second"].script).not.toBe(first["/second"].script);
+
+      // Nothing accepts an update of `client.ts`, so the connected page reloads.
+      await c.expectReload(async () => {
+        await dev.write(
+          "client.ts",
+          `
+            import "./client-dep";
+            console.log("client v2");
+          `,
+        );
+      });
+      await c.expectMessage("dep v2", "client v2");
+    }
+
+    await dev.write(
+      "client.ts",
+      `
+        import "./client-dep";
+        import "./client.css";
+        console.log("client v3");
+      `,
+    );
+    expect(await loadClientEntryPointPages(dev)).toEqual({
+      "/": { script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] },
+      "/second": { script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] },
+      "/other": first["/other"],
+    });
+  },
+});
+devTest("a build error under the framework client entry point shows on the next page load", {
+  framework: clientEntryPointFramework,
+  files: clientEntryPointFiles,
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write("client-dep.ts", `console.log("dep v2");`);
+    expect((await loadClientEntryPointPages(dev))["/"]).toEqual({
+      script: expect.any(String),
+      styles: 0,
+      versions: ["client v1", "dep v2"],
+    });
+  },
+});
+// A page tells the dev server the route that `history.pushState` took it to.
+// That gives the route a bundle entry before anything requests the route.
+async function navigateWithPushState(dev: Dev, pathname: string) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  dev.on("hmr", function onMessage(data: Uint8Array) {
+    if (data[0] !== "n".charCodeAt(0)) return;
+    dev.off("hmr", onMessage);
+    resolve();
+  });
+  dev.socket!.send("n" + pathname);
+  await promise;
+}
+describe.each([
+  ["a module under the client entry point", "client-dep.ts", `console.log("dep v2" +);`],
+  ["the server entry point", "server.ts", clientEntryPointFiles["server.ts"] + "export const broken = ;"],
+  ["a module that a layout imports", "nav.ts", `export const nav = ;`],
+] as const)("a build error in %s", (_, file, broken) => {
+  devTest("first request of a route that a page navigated to", {
+    framework: clientEntryPointFramework,
+    files: clientEntryPointFiles,
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(200);
+      await navigateWithPushState(dev, "/second");
+      await navigateWithPushState(dev, "/third");
+
+      await dev.write(file, broken, { errors: null });
+      expect((await dev.fetch("/third")).status).toBe(500);
+
+      await dev.write(file, clientEntryPointFiles[file]);
+      expect((await dev.fetch("/second")).status).toBe(200);
+      expect((await dev.fetch("/third")).status).toBe(200);
+    },
+  });
+});
+devTest("a marked route whose page another page imports still gets its layout bundled", {
+  framework: clientEntryPointFramework,
+  files: {
+    ...clientEntryPointFiles,
+    "routes/index.ts": `export { default } from "./admin/index";`,
+    "routes/admin/_layout.ts": `export default "admin layout";`,
+    "routes/admin/index.ts": `export default "admin";`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+    await navigateWithPushState(dev, "/admin");
+
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
+    await dev.write("client-dep.ts", clientEntryPointFiles["client-dep.ts"]);
+    expect((await dev.fetch("/admin")).status).toBe(200);
+  },
+});
+devTest("a route that a fixed build error left marked answers while its page is bundled again", {
+  framework: clientEntryPointFramework,
+  // Holds the bundle of a save of `routes/second.ts` in flight until the test writes `release`.
+  pluginFile: `
+    import { existsSync, writeFileSync } from "node:fs";
+    export default [
+      {
+        name: "hold the page of /second",
+        setup(build) {
+          build.onLoad({ filter: /routes[\\\\/]second\\.ts$/ }, async args => {
+            if (existsSync("hold")) {
+              writeFileSync("holding", "");
+              while (!existsSync("release")) await Bun.sleep(5);
+            }
+            return { contents: await Bun.file(args.path).text(), loader: "ts" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    ...clientEntryPointFiles,
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(meta.pageModule.default, { headers: { "content-type": "text/html" } });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/second").equals("second");
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
+    await dev.write("client-dep.ts", clientEntryPointFiles["client-dep.ts"]);
+
+    writeFileSync(dev.join("hold"), "");
+    writeFileSync(dev.join("routes/second.ts"), `export default "second v2";`);
+    const deadline = Date.now() + 30_000;
+    while (!existsSync(dev.join("holding"))) {
+      if (Date.now() > deadline) throw new Error("the save of routes/second.ts did not start a bundle");
+      await Bun.sleep(5);
+    }
+    await dev.fetch("/second").equals("second");
+
+    writeFileSync(dev.join("release"), "");
+    await dev.output.waitForLine(/Reloaded in .*second\.ts/);
+    await dev.fetch("/second").equals("second v2");
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {

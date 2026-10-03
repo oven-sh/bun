@@ -1,8 +1,10 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 const isBun = !!process.versions.bun;
 
 it("a tick that throws goes to uncaughtException and the ticks queued after it still run, in order", async () => {
@@ -1137,4 +1139,211 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// A CommonJS entry point runs to its end and then the process.nextTick queue runs, before the
+// microtasks it queued: what `node` and `node --require` (v26.3.0) print. process.nextTick makes
+// its queue on first use, and a module that loads before the entry point and uses it (a preload:
+// node:stream does, and every node:worker_threads worker preloads it) must not change that.
+describe.concurrent("process.nextTick and a CommonJS entry point", () => {
+  const nextTickFirst = "sync,nextTick,promise,queueMicrotask";
+  const microtasksFirst = "sync,promise,queueMicrotask,nextTick";
+  const order = (report = "console.log") => `
+    const order = ["sync"];
+    Promise.resolve().then(() => order.push("promise"));
+    queueMicrotask(() => order.push("queueMicrotask"));
+    process.nextTick(() => order.push("nextTick"));
+    setImmediate(() => ${report}(order.join(",")));
+  `;
+  const commonJS = `require("node:os");` + order();
+  const preload = { "preload.cjs": `require("node:stream");` };
+
+  async function run(files, cmd) {
+    using dir = tempDir("process-nexttick-entry", files);
+    await using proc = Bun.spawn({
+      cmd,
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const entryPoints = [
+    [".cjs", { "entry.cjs": order() }, ["entry.cjs"]],
+    ['.js, "type": "commonjs"', { "entry.js": order(), "package.json": `{ "type": "commonjs" }` }, ["entry.js"]],
+    [".js, require()", { "entry.js": commonJS }, ["entry.js"]],
+    ["-e", {}, ["-e", commonJS]],
+  ];
+
+  it.each(entryPoints)("%s", async (_, files, args) => {
+    expect(await run(files, [bunExe(), ...args])).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it.each(entryPoints)("%s, after a preload that uses process.nextTick", async (_, files, args) => {
+    const result = await run({ ...files, ...preload }, [bunExe(), "--preload", "./preload.cjs", ...args]);
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Bun reports what the entry point throws after its ticks and microtasks (Node reports it first).
+  it(".cjs that throws, after a preload that uses process.nextTick", async () => {
+    const result = await run(
+      {
+        ...preload,
+        "entry.cjs": `process.on("uncaughtException", () => {});` + order() + `throw new Error("thrown");`,
+      },
+      [bunExe(), "--preload", "./preload.cjs", "entry.cjs"],
+    );
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node loads the entry point through the ES module loader when there is an --import, and prints
+  // the microtasks first. Bun's --import is --preload, and the entry point stays CommonJS.
+  it(".cjs, after an --import that uses process.nextTick", async () => {
+    const result = await run({ "entry.cjs": order(), "preload.mjs": `import "node:stream";` }, [
+      bunExe(),
+      "--import",
+      "./preload.mjs",
+      "entry.cjs",
+    ]);
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // `bun --bun node` runs bun as `node`, which keeps the symlink as the main path. The module is
+  // keyed by its real path.
+  it("a symlink to a .cjs that bun runs as `node`, after a preload", async () => {
+    using dir = tempDir("process-nexttick-entry", { ...preload, "real/bin.cjs": order() });
+    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", "-r", "./preload.cjs", "./bin.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it("what a symlink to a .cjs that bun runs as `node` throws is an uncaughtException", async () => {
+    using dir = tempDir("process-nexttick-entry", {
+      "real/bin.cjs": `
+        process.on("uncaughtExceptionMonitor", (error, origin) => console.log(origin));
+        process.on("uncaughtException", () => {});
+        throw new Error("from the entry point");
+      `,
+    });
+    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", "./bin.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException\n", stderr: "", exitCode: 0 });
+  });
+
+  // An ES module entry point runs inside a microtask, so what it queues with process.nextTick waits
+  // for the microtask queue. Here the preload has already made the queue.
+  it.each([
+    [".mjs", { "entry.mjs": order() }, ["entry.mjs"]],
+    ['.js, "type": "module"', { "entry.js": order(), "package.json": `{ "type": "module" }` }, ["entry.js"]],
+    [".js, import", { "entry.js": `import "node:os";` + order() }, ["entry.js"]],
+    [".js, export {}", { "entry.js": order() + "export {};" }, ["entry.js"]],
+  ])("%s, after a preload that uses process.nextTick, is still an ES module", async (_, files, args) => {
+    const result = await run({ ...files, ...preload }, [bunExe(), "--preload", "./preload.cjs", ...args]);
+    expect(result).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node runs `eval: true` as CommonJS and a data: URL as an ES module. One process starts the four
+  // workers, with no other test beside it: a debug build takes seconds to start them.
+  it.serial("node:worker_threads entry points", async () => {
+    const labelled = label => order(`(order => console.log(${JSON.stringify(label)}, order))`);
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "worker.cjs": labelled(".cjs"),
+        "worker.mjs": labelled(".mjs"),
+        "main.mjs": `
+          import { Worker } from "node:worker_threads";
+          new Worker("./worker.cjs");
+          new Worker("./worker.mjs");
+          new Worker(${JSON.stringify(`require("node:os");` + labelled("eval: true"))}, { eval: true });
+          new Worker(new URL("data:text/javascript," + encodeURIComponent(${JSON.stringify(labelled("data:"))})));
+        `,
+      },
+      [bunExe(), "main.mjs"],
+    );
+    expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      lines: [
+        `.cjs ${nextTickFirst}`,
+        `.mjs ${microtasksFirst}`,
+        `data: ${microtasksFirst}`,
+        `eval: true ${nextTickFirst}`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Every test file is an entry point in turn.
+  it("each CommonJS file of `bun test`, after a preload", async () => {
+    const testFile = name => `
+      const { test } = require("bun:test");
+      ${order(`(order => console.log(${JSON.stringify(name)}, order))`)}
+      test(${JSON.stringify(name)}, () => new Promise(resolve => setImmediate(resolve)));
+    `;
+    const { stdout, exitCode } = await run({ ...preload, "a.test.cjs": testFile("a"), "b.test.cjs": testFile("b") }, [
+      bunExe(),
+      "test",
+      "--preload",
+      "./preload.cjs",
+      "./a.test.cjs",
+      "./b.test.cjs",
+    ]);
+    // stdout starts with the `bun test` banner.
+    const lines = stdout.split("\n").filter(line => line.startsWith("a ") || line.startsWith("b "));
+    expect({ lines, exitCode }).toEqual({ lines: [`a ${nextTickFirst}`, `b ${nextTickFirst}`], exitCode: 0 });
+  });
+
+  // --hot runs the entry point again in the same global object.
+  it("each run of a --hot entry point, after a preload", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        ...preload,
+        "entry.cjs": `
+          const { readFileSync, writeFileSync } = require("node:fs");
+          ${order(`(order => {
+            console.log(order);
+            if (globalThis.reloaded) process.exit(0);
+            globalThis.reloaded = true;
+            writeFileSync(__filename, readFileSync(__filename, "utf8") + "\\n");
+          })`)}
+        `,
+      },
+      [bunExe(), "--hot", "--preload", "./preload.cjs", "entry.cjs"],
+    );
+    // A debug build reports each reload on stderr.
+    expect({ stdout, exitCode }).toEqual({ stdout: `${nextTickFirst}\n${nextTickFirst}\n`, exitCode: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/34115
+  it("Writable.toWeb() close() rejects when the stream ends first, after a preload that loads node:stream", async () => {
+    const result = await run(
+      {
+        ...preload,
+        "entry.cjs": `
+          const { Writable } = require("node:stream");
+          const writable = new Writable({ write(chunk, encoding, callback) { callback(); } });
+          Writable.toWeb(writable).close().then(() => console.log("resolved"), error => console.log("rejected", error.code));
+          writable.end();
+        `,
+      },
+      [bunExe(), "--preload", "./preload.cjs", "entry.cjs"],
+    );
+    expect(result).toEqual({ stdout: "rejected ABORT_ERR\n", stderr: "", exitCode: 0 });
+  });
 });

@@ -9308,7 +9308,8 @@ declare module "bun" {
      * Branch on these instead of parsing the message.
      *
      * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
-     *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
+     *   on this *machine* (HEIC/AVIF without the OS codec; TIFF on Linux,
+     *   unless it is a camera raw and the system LibRaw is installed).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
@@ -9333,8 +9334,9 @@ declare module "bun" {
     /**
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
      * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
-     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
-     * frame everywhere.
+     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on
+     * Linux, except for a camera raw when the system LibRaw is installed;
+     * `gif` decodes the first frame everywhere.
      */
     type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
     type Filter =
@@ -9362,6 +9364,25 @@ declare module "bun" {
        * @default true
        */
       autoOrient?: boolean;
+      /**
+       * Camera raw development. Only consulted for a camera raw input
+       * (NEF/CR2/ARW/DNG, decoded on Linux through the system LibRaw);
+       * ignored for every other format.
+       */
+      raw?: {
+        /**
+         * Exposure multiplier applied instead of LibRaw's automatic
+         * brightness stretch. Leaving it unset keeps that stretch, which is
+         * what `dcraw` produces and what most raw viewers show; setting it
+         * turns the stretch off and scales the recorded exposure by this
+         * factor, so `1` is the exposure as shot. Values that are not
+         * finite and greater than zero are ignored, and so are values
+         * that stop being either when narrowed to the 32-bit float
+         * LibRaw takes — `1e300` and `1e-300` among them.
+         * @default undefined // LibRaw's automatic stretch
+         */
+        brightness?: number;
+      };
     }
 
     interface ResizeOptions {

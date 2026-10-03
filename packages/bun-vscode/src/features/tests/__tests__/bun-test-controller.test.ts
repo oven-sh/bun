@@ -593,6 +593,18 @@ describe("BunTestController - Test Discovery and Management", () => {
       expect(config.bunCommand).toBe("bun");
     });
   });
+
+  describe("getTestTargetArgs", () => {
+    test("should use the workspace root when running all discovered tests", () => {
+      const args = internal.getTestTargetArgs(new Set(["/test/workspace/a.test.ts", "/test/workspace/b.test.ts"]), true);
+      expect(args).toEqual(["."]);
+    });
+
+    test("should use explicit files for targeted test runs", () => {
+      const args = internal.getTestTargetArgs(new Set(["/test/workspace/a.test.ts", "/test/workspace/b.test.ts"]), false);
+      expect(args).toEqual(["/test/workspace/a.test.ts", "/test/workspace/b.test.ts"]);
+    });
+  });
 });
 
 describe("BunTestController - Test Item Management", () => {

@@ -1109,6 +1109,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             // backpressure); don't enqueue a second close frame on top of it.
             return;
         }
+        // Only a read closes this socket, and JS cannot `resume()` it after the close.
+        self.resume();
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             self.clear_data();
@@ -1246,6 +1248,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub(crate) fn pause(&self) -> bool {
+        // A close is mid-flush: keep the reads that `send_close_with_body` resumed.
+        if self.has_pending_close_dispatch() {
+            return false;
+        }
         if let Some(tunnel) = self.tunnel() {
             return tunnel.pause_stream();
         }

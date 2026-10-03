@@ -2269,6 +2269,95 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(opened).toBe(3);
   });
 
+  // `req.headers` is the only view of the request's headers the handler can
+  // read and change, so it is the handshake upgrade() validates and answers.
+  // upgrade() used to read the raw request line for every handshake header
+  // that view did not have: a header the handler deleted came back, and a
+  // repeated header meant one thing to the handler and another to upgrade().
+  describe("reads the handshake headers from req.headers", () => {
+    it.each([
+      ["the handler leaves req.headers alone", false],
+      ["the handler reads req.headers", true],
+    ])("rejects a repeated Sec-WebSocket-Key when %s", async (_label, touch) => {
+      opened = 0;
+      server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, srv) {
+          if (touch) void req.headers.get("host");
+          if (srv.upgrade(req)) return;
+          return new Response("no", { status: 400 });
+        },
+        websocket: {
+          open() {
+            opened++;
+          },
+          message() {},
+        },
+      });
+
+      // Two fields of the same name are one ", "-joined value, which is not a
+      // valid key (RFC 6455 §11.3.1: the header must not appear more than
+      // once). Reading the first field alone would accept the handshake and
+      // answer the first key.
+      const dup = await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, `Sec-WebSocket-Key: ${K}`, V]);
+      expect(dup.status).toBe(400);
+      expect(opened).toBe(0);
+
+      // Control: one field of that name still upgrades.
+      expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+      expect(opened).toBe(1);
+    });
+
+    // The "after an await" row already behaved: the request is detached from
+    // the raw uWS request by then, so there was nothing to fall back to.
+    it.each(["before any await", "after an await"])(
+      "a handshake header deleted from req.headers stays deleted (%s)",
+      async when => {
+        server = serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          async fetch(req, srv) {
+            const del = req.headers.get("x-delete")!;
+            // setImmediate, not a microtask: leave the HTTP parser's stack so the
+            // request is detached from the raw uWS request before upgrade() runs.
+            if (when === "after an await") await new Promise(resolve => setImmediate(resolve));
+            req.headers.delete(del);
+            if (srv.upgrade(req)) return;
+            return new Response("no", { status: 400 });
+          },
+          websocket: { message() {} },
+        });
+        const shake = (del: string) =>
+          rawHandshake([
+            U,
+            C,
+            `Sec-WebSocket-Key: ${K}`,
+            V,
+            "Sec-WebSocket-Protocol: chat, superchat",
+            `X-Delete: ${del}`,
+          ]);
+
+        // Control: nothing relevant deleted, the first offered subprotocol is selected.
+        const control = await shake("x-unrelated");
+        expect(control.status).toBe(101);
+        expect(control.headers.toLowerCase()).toContain("sec-websocket-protocol: chat");
+
+        const noProtocol = await shake("sec-websocket-protocol");
+        expect(noProtocol.status).toBe(101);
+        expect(noProtocol.headers.toLowerCase()).not.toContain("sec-websocket-protocol");
+
+        // A deleted key or Upgrade token leaves no handshake to accept.
+        expect((await shake("sec-websocket-key")).status).toBe(400);
+        expect((await shake("upgrade")).status).toBe(400);
+
+        const noVersion = await shake("sec-websocket-version");
+        expect(noVersion.status).toBe(426);
+        expect(noVersion.headers.toLowerCase()).toContain("sec-websocket-version: 13");
+      },
+    );
+  });
+
   it("returns false for an invalid handshake even when fetch() is async", async () => {
     let upgradeResult: boolean | undefined;
     server = serve({

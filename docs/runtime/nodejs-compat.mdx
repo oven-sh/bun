@@ -49,7 +49,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`, so you cannot hand it connections the way Node allows: `server.emit('connection', socket)` reads the socket as plaintext HTTP (a raw TLS connection fails with `'clientError'`) and nothing listens for `'secureConnection'`. To route connections yourself, terminate TLS with a `tls.Server` and pass each `TLSSocket` to a plain `http.Server` with `emit('connection', tlsSocket)`. `https.Server` request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

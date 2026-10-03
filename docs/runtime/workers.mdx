@@ -56,7 +56,7 @@ worker.addEventListener("error", event => {
 });
 ```
 
-Bun resolves the specifier passed to `Worker` relative to the project root (like typing `bun ./path/to/file.js`).
+Bun resolves a string specifier the way `import()` would from the file that calls `new Worker()`: a relative path is relative to that file, and a bare specifier goes through `node_modules` and `package.json` `"imports"`. If that finds no module, Bun resolves the specifier relative to the current working directory (like typing `bun ./path/to/file.js`). Entries in the `preload` option resolve the same way.
 
 ### `preload` - load modules before the worker starts
 

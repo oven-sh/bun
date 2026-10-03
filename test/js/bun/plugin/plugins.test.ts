@@ -1342,6 +1342,30 @@ describe.concurrent("what onResolve answers is not asked of the registry", () =>
          try { require.resolve(specifier); } catch (error) { console.log(error.message.split("\\n")[0]); }`,
       "virtual.js itself-served.js\nCannot find module 'a-package'\nCannot find module 'itself-not-served.js'\n",
     ],
+    [
+      "import.meta.require()",
+      "entry.mjs",
+      `console.log(import.meta.require("served.ask").default, import.meta.require("itself-served.js").default);`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "import.meta.resolve()",
+      "entry.mjs",
+      `console.log(import.meta.resolve("served.ask"), import.meta.resolve("itself-served.js"));`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      `console.log(Bun.resolveSync("served.ask", import.meta.dir), Bun.resolveSync("itself-served.js", import.meta.dir));`,
+      "virtual.js itself-served.js\n",
+    ],
+    [
+      "Bun.resolve()",
+      "entry.mjs",
+      `console.log(await Bun.resolve("served.ask", import.meta.dir), await Bun.resolve("itself-served.js", import.meta.dir));`,
+      "virtual.js itself-served.js\n",
+    ],
   ])("by %s", async (_, name, source, stdout) => {
     const asked: string[] = [];
     using registry = Bun.serve({

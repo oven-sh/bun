@@ -11,6 +11,7 @@ use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_trace as WatcherTrace;
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -400,6 +401,10 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         this.eventlist_index_scratch.clear();
         this.eventlist_index_scratch
             .extend_from_slice(this.watchlist.items_eventlist_index());
+        WatcherTrace::collect_dir_indices(
+            this.watchlist.items_file_path(),
+            &mut this.trace_dir_index_scratch,
+        );
     }
 
     let mut event_id: usize = 0;
@@ -451,6 +456,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     continue;
                 }
             };
+            // Skip the trace file's own writes, or the trace feeds itself.
+            if event.name_len > 0
+                && this.trace_dir_index_scratch.contains(&idx)
+                && WatcherTrace::is_trace_file_name(event.name().as_bytes())
+            {
+                events_processed += 1;
+                continue;
+            }
             this.watch_events[event_id] = watch_event_from_inotify_event(event, idx);
 
             // Safely handle event names with bounds checking

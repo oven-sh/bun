@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -66,7 +66,40 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
 const check = (dir: { toString(): string }, args: string[] = [], extra = {}) =>
   run(String(dir), ["check", ...args], extra);
 
+// Some sandboxes have no pseudo-terminals.
+const hasTerminal = (() => {
+  try {
+    new Bun.Terminal({}).close();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 describe.concurrent("bun check", () => {
+  // The progress line is drawn by a thread of its own, and only for a person at a terminal.
+  test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
+    using dir = project({ "index.ts": `const wrong: string = 1;\n` });
+    let output = "";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check"],
+      cwd: String(dir),
+      env: { ...env, BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: "0" },
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_terminal, chunk) {
+          output += new TextDecoder().decode(chunk);
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    expect(output).toContain("Loading");
+    expect(output).toContain("TS2322");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
   test("a project without errors", async () => {
     using dir = project({
       "index.ts": `import { double } from "./math";\nconsole.log(double(2).toFixed(1));\n`,

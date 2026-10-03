@@ -192,14 +192,18 @@ fn global_node_modules() -> Option<Vec<u8>> {
 
 /// Shows how far `progress` has got on stderr until `is_done`, once it has taken long enough for somebody to wonder.
 fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
-    const BEFORE_THE_FIRST: Duration = Duration::from_millis(300);
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread is not from Bun's pool.
     Output::Source::configure_thread_no_js();
+    let before_the_first = Duration::from_millis(
+        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
+            .get()
+            .unwrap_or(300),
+    );
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
-        if began.elapsed() >= BEFORE_THE_FIRST {
+        if began.elapsed() >= before_the_first {
             let mut line = Vec::new();
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -41,15 +41,85 @@ test("bad workspace path", () => {
 
 // The glob walker opens the literal prefix of an absolute pattern before it walks it. When
 // that directory is missing, the error names the errno by its node spelling on every
-// platform (Windows used to print the bare variant name, "NOENT").
-test("glob entry under a missing directory reports the errno name", async () => {
+// platform (Windows used to print the bare variant name, "NOENT") and the directory. No
+// other error line follows it.
+test.concurrent("glob entry under a missing directory reports the errno name and the directory", async () => {
   using dir = tempDir("bad-workspace-glob-missing-root", {});
   const entry = `${String(dir).replaceAll("\\", "/")}/missing/*`;
   writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
 
   const { stderr, exitCode } = await runInstall(String(dir));
 
-  expect(stderr).toContain(`error: Failed to run workspace pattern ${entry} due to error ENOENT`);
+  expect(errorLines(stderr)).toEqual([
+    `error: Failed to run workspace pattern ${entry} due to error ENOENT (open "${join(String(dir), "missing")}")`,
+  ]);
+  expect(exitCode).toBe(1);
+});
+
+// npm, pnpm and yarn 1 fail here too. Root ignores the mode bits, and chmod on Windows
+// cannot make a directory unreadable or unsearchable.
+test.concurrent.skipIf(isWindows || process.getuid?.() === 0).each([
+  ["unreadable", 0o000, "open", "secret"],
+  ["unsearchable", 0o444, "fstatat", join("secret", "package.json")],
+])("glob entry that reaches an %s directory names what it failed on", async (_, mode, syscall, failedOn) => {
+  using dir = tempDir("bad-workspace-glob-eacces", {
+    "package.json": rootPackageJson(["pkgs/*"]),
+    ...PKG1,
+    "pkgs/secret/package.json": JSON.stringify({ name: "secret" }),
+  });
+  const secret = join(String(dir), "pkgs", "secret");
+  chmodSync(secret, mode);
+  try {
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(errorLines(stderr)).toEqual([
+      `error: Failed to run workspace pattern pkgs/* due to error EACCES (${syscall} "${join(String(dir), "pkgs", failedOn)}")`,
+    ]);
+    expect(exitCode).toBe(1);
+  } finally {
+    chmodSync(secret, 0o755);
+  }
+});
+
+// `bun add` walks the glob again when it writes package.json back. The registry removes the
+// directory between the two walks.
+test.concurrent("glob entry that fails when bun add writes package.json back is reported", async () => {
+  using dir = tempDir("bad-workspace-glob-write-back", { "extra/.keep": "" });
+  const extra = join(String(dir), "extra");
+  const entry = `${String(dir).replaceAll("\\", "/")}/extra/*`;
+  let tarballRequested = false;
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.url.endsWith(".tgz")) {
+        tarballRequested = true;
+        return new Response(Bun.file(join(import.meta.dir, "baz-0.0.3.tgz")));
+      }
+      rmSync(extra, { recursive: true, force: true });
+      return Response.json({
+        name: "baz",
+        versions: { "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${registry.url}baz-0.0.3.tgz` } } },
+        "dist-tags": { latest: "0.0.3" },
+      });
+    },
+  });
+  writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
+  writeFileSync(join(String(dir), "bunfig.toml"), `[install]\ncache = false\nregistry = "${registry.url}"\n`);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "baz"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // bun asked for the tarball, so the first walk passed.
+  expect(tarballRequested).toBe(true);
+  expect(errorLines(stderr)).toEqual([
+    `error: Failed to run workspace pattern ${entry} due to error ENOENT (open "${extra}")`,
+  ]);
   expect(exitCode).toBe(1);
 });
 
@@ -184,6 +254,10 @@ async function runInstall(cwd: string) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function errorLines(stderr: string) {
+  return stderr.split(/\r?\n/).filter(line => line.startsWith("error:"));
 }
 
 // Installs and asserts that pkgs/pkg1 is the only workspace package that was found.

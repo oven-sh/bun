@@ -1,6 +1,6 @@
 use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
@@ -20,6 +20,7 @@ use super::add_remove_with_filter::{
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
+use super::workspace_manifests::ScratchManifests;
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 /// A package.json whose cache entry was re-printed; `target.name_hash == None` is the root.
@@ -264,9 +265,12 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     ids
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
-fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
-    let mut scratch = super::workspace_manifests::ScratchManifests::new();
+/// The root and every edited member, indexed by position in `edited`.
+fn parse_edited(
+    manager: &mut PackageManager,
+    scratch: &mut ScratchManifests,
+    edited: &[EditedPackageJson],
+) -> crate::Result<Vec<(usize, Package)>> {
     scratch.parse_root(manager)?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
@@ -277,7 +281,24 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
         parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
-    let super::workspace_manifests::ScratchManifests {
+    Ok(parsed)
+}
+
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
+fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
+    let mut scratch = ScratchManifests::new();
+    let parsed = match parse_edited(manager, &mut scratch, edited) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            if scratch.log.has_errors() {
+                let _ = scratch
+                    .log
+                    .print(std::ptr::from_mut(Output::error_writer()));
+            }
+            return Err(err);
+        }
+    };
+    let ScratchManifests {
         lockfile: scratch, ..
     } = scratch;
 

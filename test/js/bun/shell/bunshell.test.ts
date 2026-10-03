@@ -954,6 +954,22 @@ booga"
       })
       .runAsTest("Should work with a different cwd");
 
+    describe("whitespace or an operator ends the word that ** is in", () => {
+      TestBuilder.command`echo ** | cat`
+        .ensureTempDir()
+        .file("only.txt", "")
+        .stdout("only.txt\n")
+        .runAsTest("echo ** | cat");
+
+      TestBuilder.command`echo ** && echo c`
+        .ensureTempDir()
+        .file("only.txt", "")
+        .stdout("only.txt\nc\n")
+        .runAsTest("echo ** && echo c");
+
+      TestBuilder.command`echo ** c`.ensureTempDir().file("only.txt", "").stdout("only.txt c\n").runAsTest("echo ** c");
+    });
+
     describe("interpolated values cannot inject glob syntax", () => {
       // Only `*`/`**` written literally in the template act as glob syntax.
       // Metacharacters arriving via `${...}` interpolation are data and must
@@ -1743,6 +1759,35 @@ describe("deno_task", () => {
       .stdout("1\n")
       .fileEquals("test.txt", "5\n")
       .runAsTest("redirect stderr of subprocess");
+
+    // https://github.com/oven-sh/bun/issues/12602
+    describe("a digit at the end of a word is not an fd number", () => {
+      TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"process.stdout.write(process.argv.at(-1) + ':' + (await Bun.stdin.text()))"} arg1<input.txt`
+        .file("input.txt", "INPUT\n")
+        .stdout("arg1:INPUT\n")
+        .fileEquals("input.txt", "INPUT\n")
+        .runAsTest("arg1<file");
+
+      TestBuilder.command`echo z1>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("echo z1>file");
+      TestBuilder.command`echo z2>test.txt`.fileEquals("test.txt", "z2\n").runAsTest("echo z2>file");
+      TestBuilder.command`echo z0>test.txt`.fileEquals("test.txt", "z0\n").runAsTest("echo z0>file");
+      TestBuilder.command`echo file10>test.txt`.fileEquals("test.txt", "file10\n").runAsTest("echo file10>file");
+      TestBuilder.command`echo a > test.txt && echo z1>>test.txt`
+        .fileEquals("test.txt", "a\nz1\n")
+        .runAsTest("echo z1>>file");
+      TestBuilder.command`echo "z"1>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("after a quoted word");
+      TestBuilder.command`echo $(echo z)1>test.txt`
+        .fileEquals("test.txt", "z1\n")
+        .runAsTest("after a command substitution");
+      TestBuilder.command`echo ${"a b"}2>test.txt`
+        .fileEquals("test.txt", "a b2\n")
+        .runAsTest("after an interpolated string");
+
+      TestBuilder.command`echo z 2>test.txt`
+        .stdout("z\n")
+        .fileEquals("test.txt", "")
+        .runAsTest("a digit that is a word of its own is still an fd number");
+    });
 
     // invalid fd
     // await TestBuilder.command`echo 2 3> test.txt`

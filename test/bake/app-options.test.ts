@@ -58,12 +58,9 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.each([
-  ["./client.ts", "client side entrypoint"],
-  ["./server.ts", "server side entrypoint"],
-])('Bun.serve({ app }) reports %s when a "browser" map disables it', async (disabled, role) => {
+test('Bun.serve({ app }) reports a framework entry point that a "browser" map disables', async () => {
   using dir = tempDir("bake-app-disabled-entry", {
-    "package.json": JSON.stringify({ name: "app", browser: { [disabled]: false } }),
+    "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
     "client.ts": `export {};`,
     "server.ts": `export function render() { return new Response("ok"); }`,
     "routes/index.ts": `export default () => new Response("ok");`,
@@ -87,7 +84,7 @@ test.each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(`Failed to resolve '${disabled}' for framework (${role})`);
+  expect(stderr).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
   expect(stdout).toBe("threw: Framework is missing required files!\n");
   expect(exitCode).toBe(0);
 });

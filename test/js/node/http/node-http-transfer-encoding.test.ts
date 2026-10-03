@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { createServer, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
-import type { Duplex } from "stream";
+import { duplexPair, type Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -1203,34 +1203,36 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
   }
 
   // Sends `request` and returns every byte the server sent until it closed the connection, without
-  // the Date lines. The last request in `request` must make the server close the connection.
+  // the Date lines. The last request in `request` must make the server close the connection. When
+  // the handler throws, the result is the code of that error and no bytes.
   // `emitted` gives the connection to the server with emit("connection"), so the response writes
   // through the JS handle of internal/http1_server_fallback and not through the native one.
   async function respond(
     handler: Handler,
     request: string,
     { options = {}, emitted = false }: { options?: object; emitted?: boolean } = {},
-  ): Promise<{ thrown: string | null; response: string }> {
-    let thrown: string | null = null;
+  ) {
+    const done = Promise.withResolvers<{ thrown: string | null; response: string }>();
     const server = createServer(options, (req, res) => {
       try {
         handler(req, res);
       } catch (err: any) {
-        thrown = err.code ?? err.message;
-        res.destroy();
+        done.resolve({ thrown: err.code ?? err.message, response: "" });
       }
     });
     await using listener = emitted ? new Server(socket => void server.emit("connection", socket)) : server;
     await once(listener.listen(0, "127.0.0.1"), "listening");
     const { port } = listener.address() as AddressInfo;
-    const closed = Promise.withResolvers<void>();
     const socket = connect(port, "127.0.0.1", () => socket.write(request));
     let raw = "";
     socket.on("data", (chunk: Buffer) => (raw += chunk.toString("latin1")));
-    socket.on("error", () => {});
-    socket.on("close", () => closed.resolve());
-    await closed.promise;
-    return { thrown, response: raw.replace(/^Date: .*\r\n/gm, "") };
+    socket.on("error", done.reject);
+    socket.on("close", () => done.resolve({ thrown: null, response: raw.replace(/^Date: .*\r\n/gm, "") }));
+    try {
+      return await done.promise;
+    } finally {
+      socket.destroy();
+    }
   }
 
   const GET_CLOSE = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
@@ -1386,6 +1388,7 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
   });
 
   test.concurrent("flushHeaders() and a throw: the next end(data) sends the head with its Content-Length", async () => {
+    let firstEnd = "";
     const result = await respond((req, res) => {
       let threw = false;
       wrapWriteHead(res, res => {
@@ -1396,10 +1399,17 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
       });
       try {
         res.end("ok");
-      } catch {}
+        firstEnd = "returned";
+      } catch (err: any) {
+        firstEnd = err.message;
+      }
       res.end("ok");
     }, GET_CLOSE);
-    expect(result).toEqual({ thrown: null, response: HEAD_CLOSE + LENGTH_OK });
+    expect({ ...result, firstEnd }).toEqual({
+      thrown: null,
+      response: HEAD_CLOSE + LENGTH_OK,
+      firstEnd: "from writeHead",
+    });
   });
 
   // Node's write_() calls writeHead() first and then reads what it decided: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L975-L992
@@ -1454,53 +1464,73 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
   // Node has no answer for this one: it sends the bytes of both calls and then fails an internal assertion.
   // Here the response is finished when the replaced writeHead returns: the outer end() drops its data and
   // gives its callback what an end() on a finished response gives it.
-  test.concurrent.each([
-    ["", false],
-    [' on a connection from emit("connection")', true],
-  ])(
-    "a replaced writeHead that ends the response%s: the outer end() returns and 'finish' runs once",
-    async (_, emitted) => {
+  describe("a replaced writeHead that ends the response", () => {
+    // Ends the response with `body` in the replaced writeHead, and records in `events` what the end() of the handler does.
+    function endInWriteHead(res: any, body: string | Buffer, events: string[]) {
+      wrapWriteHead(res, res => res.end(body));
+      res.on("finish", () => events.push("finish"));
+      res.on("error", (err: any) => events.push(`'error' ${err.code}`));
+      try {
+        res.end("dropped", (err?: any) => events.push(`end callback: ${err?.code ?? "no error"}`));
+        events.push("end() returned");
+      } catch (err: any) {
+        events.push(`end() threw ${err.code}`);
+      }
+    }
+
+    test.concurrent("the response is written: the callback of the outer end() gets the error at once", async () => {
       const events: string[] = [];
-      let callbacks = 0;
-      // More than the socket buffers hold while the client does not read, so the inner end() still drains when the outer one goes on.
-      const body = Buffer.alloc(8 * 1024 * 1024, "x");
+      const closed = Promise.withResolvers<void>();
+      const result = await respond((req, res) => {
+        res.on("close", () => closed.resolve());
+        endInWriteHead(res, "inner", events);
+      }, GET_CLOSE);
+      await closed.promise;
+      expect({ ...result, events }).toEqual({
+        thrown: null,
+        response: `${HEAD_CLOSE}Content-Length: 5\r\n\r\ninner`,
+        events: ["end callback: ERR_STREAM_ALREADY_FINISHED", "end() returned", "finish"],
+      });
+    });
+
+    test.concurrent("the response still drains: the callback of the outer end() waits for 'finish'", async () => {
+      const events: string[] = [];
+      const body = Buffer.alloc(1024 * 1024, "x");
       const handled = Promise.withResolvers<void>();
-      const responseClosed = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
       const server = createServer((req, res) => {
-        wrapWriteHead(res, res => res.end(body));
-        res.on("finish", () => events.push("finish"));
-        res.on("error", (err: any) => events.push(`'error' ${err.code}`));
-        res.on("close", () => responseClosed.resolve());
-        try {
-          res.end("dropped", () => callbacks++);
-          events.push("end() returned");
-        } catch (err: any) {
-          events.push(`end() threw ${err.code}`);
-        }
+        res.on("close", () => closed.resolve());
+        endInWriteHead(res, body, events);
         handled.resolve();
       });
-      await using listener = emitted ? new Server(socket => void server.emit("connection", socket)) : server;
-      await once(listener.listen(0, "127.0.0.1"), "listening");
-      const { port } = listener.address() as AddressInfo;
-      const socket = connect(port, "127.0.0.1", () => socket.write(GET_CLOSE));
-      socket.on("error", () => {});
-      await handled.promise;
-      let head = "";
-      let received = 0;
-      socket.on("data", (chunk: Buffer) => {
-        if (received === 0) head = chunk.toString("latin1", 0, chunk.indexOf("\r\n\r\n") + 4);
-        received += chunk.length;
-      });
-      await once(socket, "close");
-      await responseClosed.promise;
-      expect({ events, callbacks, head: head.replace(/^Date: .*\r\n/m, ""), body: received - head.length }).toEqual({
-        events: ["end() returned", "finish"],
-        callbacks: 1,
-        head: `${HEAD_CLOSE}Content-Length: ${body.length}\r\n\r\n`,
-        body: body.length,
-      });
-    },
-  );
+      // A duplexPair side completes a write when the other side reads it, so this body drains until the client reads.
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        clientSide.write(GET_CLOSE);
+        await handled.promise;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        events.push("the client reads");
+        const chunks: Buffer[] = [];
+        clientSide.on("data", (chunk: Buffer) => chunks.push(chunk));
+        await closed.promise;
+        const bytes = Buffer.concat(chunks);
+        const bodyStart = bytes.indexOf("\r\n\r\n") + 4;
+        expect({
+          events,
+          head: bytes.toString("latin1", 0, bodyStart).replace(/^Date: .*\r\n/m, ""),
+          body: bytes.subarray(bodyStart).equals(body),
+        }).toEqual({
+          events: ["end() returned", "the client reads", "finish", "end callback: no error"],
+          head: `${HEAD_CLOSE}Content-Length: ${body.length}\r\n\r\n`,
+          body: true,
+        });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    });
+  });
 });
 
 // Once the header section is on the wire, tearing a response down (res.destroy(),

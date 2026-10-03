@@ -358,6 +358,37 @@ fn err_throw_content_length_mismatch(
         .throw()
 }
 
+/// Same text as the `ERR_HTTP_INVALID_STATUS_CODE` row of `simpleErrorMessages` in ErrorCode.cpp.
+#[cold]
+#[inline(never)]
+fn err_throw_invalid_status_code(global: &JSGlobalObject, status_code: JSValue) -> jsc::JsError {
+    match status_code.to_bun_string(global) {
+        Ok(text) => global
+            .err(
+                ErrorCode::ERR_HTTP_INVALID_STATUS_CODE,
+                format_args!("Invalid status code: {text}"),
+            )
+            .throw(),
+        Err(err) => err,
+    }
+}
+
+/// The status code that `value` is, when it is an integer in 100..=999.
+#[inline]
+fn integer_status_code(value: JSValue) -> Option<i32> {
+    let status_code = if value.is_int32() {
+        value.as_int32()
+    } else {
+        // JSC does not box every integer as an int32: the result of float arithmetic stays a double.
+        let number = value.get_number()?;
+        if number.trunc() != number {
+            return None;
+        }
+        number as i32
+    };
+    (100..=999).contains(&status_code).then_some(status_code)
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -1007,19 +1038,16 @@ impl NodeHTTPResponse {
             _ => JSValue::UNDEFINED,
         };
 
-        let status_code: i32 = if !status_code_value.is_undefined() {
-            global_object.validate_integer_range::<i32>(
-                status_code_value,
-                200,
-                jsc::IntegerRange {
-                    min: 100,
-                    max: 999,
-                    field_name: b"statusCode",
-                    ..Default::default()
-                },
-            )?
-        } else {
-            200
+        // ServerResponse gives a status code that does not fit to writeHead() before write() and end() call this. `_send()` does not.
+        let status_code: i32 = match integer_status_code(status_code_value) {
+            Some(status_code) => status_code,
+            None if status_code_value.is_undefined() => 200,
+            None => {
+                return Err(err_throw_invalid_status_code(
+                    global_object,
+                    status_code_value,
+                ));
+            }
         };
 
         let status_message_view;

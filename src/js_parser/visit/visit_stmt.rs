@@ -1350,11 +1350,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
+        // `label: for (using x = y;;) body`: the lowering wraps the loop in a try/finally,
+        // and every label has to stay on the loop itself for `continue label` to remain
+        // valid. So the outermost label statement is what gets wrapped, here, and the
+        // labels inside it and `s_for` skip the lowering.
+        let lowers_for_head_using =
+            !p.label_lowers_for_head_using && p.using_for_head_to_lower(data.stmt).is_some();
+        if lowers_for_head_using {
+            p.label_lowers_for_head_using = true;
+        }
         data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);
+
+        if lowers_for_head_using {
+            p.label_lowers_for_head_using = false;
+            if let Some(init) = p.using_for_head_to_lower(data.stmt) {
+                let wrapped = p.arena.alloc_slice_copy(&[*stmt]);
+                let lowered = Self::lower_using_in_for_head(p, init, wrapped)?;
+                p.pop_scope();
+                stmts.extend_from_slice(&lowered);
+                return Ok(());
+            }
+        }
+
         p.pop_scope();
 
         stmts.push(*stmt);
         Ok(())
+    }
+
+    /// When `stmt`, through any labels on it, is a C-style `for` loop whose head is a `using`
+    /// declaration that the target needs lowered, returns that head.
+    fn using_for_head_to_lower(&self, mut stmt: Stmt) -> Option<Stmt> {
+        loop {
+            match stmt.data {
+                StmtData::SLabel(label) => stmt = label.stmt,
+                StmtData::SFor(for_data) => {
+                    return for_data
+                        .init
+                        .filter(|init| self.is_using_local_to_lower(*init));
+                }
+                _ => return None,
+            }
+        }
     }
 
     fn s_expr(
@@ -1874,6 +1911,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::For,
     ) -> Result<(), Error> {
+        // Taken before anything nested is visited: the flag is meant for this loop only.
+        let label_lowers_using_head = core::mem::take(&mut p.label_lowers_for_head_using);
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
 
@@ -1914,10 +1954,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if !label_lowers_using_head
+            && let Some(init) = data.init
+            && p.is_using_local_to_lower(init)
+        {
+            let wrapped = p.arena.alloc_slice_copy(&[*stmt]);
+            let lowered = Self::lower_using_in_for_head(p, init, wrapped)?;
+            p.pop_scope();
+            stmts.extend_from_slice(&lowered);
+            return Ok(());
+        }
+
         p.pop_scope();
 
         stmts.push(*stmt);
         Ok(())
+    }
+
+    /// Whether `stmt` is a `using` / `await using` declaration that the target needs lowered.
+    fn is_using_local_to_lower(&self, stmt: Stmt) -> bool {
+        self.options.features.lower_using
+            && matches!(stmt.data, StmtData::SLocal(local) if local.kind.is_using())
+    }
+
+    /// Lowers the `using` / `await using` declaration `init` in the head of a C-style `for`
+    /// loop. The bindings are constant, so there are no per-iteration copies, and the
+    /// resources are disposed once, when the loop exits by any path. That makes the loop
+    /// itself (`wrapped`: the loop, or the label statement around it) the try body:
+    ///
+    ///   let stack = [];
+    ///   try {
+    ///     for (const x = __using(stack, y, 0); test; update) body
+    ///   } catch (e) {
+    ///     var err = e, hasErr = 1;
+    ///   } finally {
+    ///     __callDispose(stack, err, hasErr);
+    ///   }
+    ///
+    /// Must run while the loop's own scope (or the label scope) is still current, so that
+    /// the head becomes `const` and not the module-level `var` of a wrapped module.
+    fn lower_using_in_for_head(
+        p: &mut Self,
+        init: Stmt,
+        wrapped: &'a mut [Stmt],
+    ) -> Result<StmtList<'a>, Error> {
+        let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
+        ctx.scan_stmts(p, &mut [init]);
+        Ok(ctx.finalize(p, wrapped, false))
     }
 
     fn s_for_in(

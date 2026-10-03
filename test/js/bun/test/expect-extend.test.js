@@ -326,6 +326,21 @@ describe("async support", () => {
       await expect(async () => await expect(1).toEqual(expect._toCustomB())).toThrow(); // asymmetric use
     }
   });
+
+  it("throws the rejection error when the rejected value throws while it is printed", () => {
+    const rejection = new String("rejection");
+    rejection.toString = () => {
+      throw new TypeError("toString throws");
+    };
+    expect.extend({
+      _toCustomA: _expected => Promise.reject(rejection),
+    });
+
+    if (isBun) {
+      // the matcher call throws its own error, not what printing the rejected value threw
+      expect(() => expect(1)._toCustomA()).toThrow("Matcher `_toCustomA` returned a promise that rejected");
+    }
+  });
 });
 
 it("should not crash under intensive usage", () => {

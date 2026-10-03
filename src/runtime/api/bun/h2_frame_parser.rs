@@ -1350,6 +1350,8 @@ pub(crate) struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
+    // A RST_STREAM was sent or received, or node has submitted one by now: no push on this stream.
+    closing: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1851,6 +1853,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
+            closing: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -2133,6 +2136,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
         let old_state = stream.state;
         stream.state = StreamState::CLOSED;
+        stream.closing = true;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -2171,6 +2175,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
 
         stream.state = StreamState::CLOSED;
+        stream.closing = true;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -3974,6 +3979,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
+    fn can_accept_push(&self, parent_id: u32) -> bool {
+        match self.streams.get().get(&parent_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe { !(*stream).closing },
+            None => true,
+        }
+    }
+
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
@@ -4195,6 +4208,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             unsafe {
                 old_state = (*stream).state as u8;
                 (*stream).state = StreamState::CLOSED;
+                (*stream).closing = true;
                 (*stream).rst_code = code;
             }
         }
@@ -5459,6 +5473,28 @@ impl H2FrameParser {
                 }
             }
             let _ = this.flush();
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// setStreamClosing(streamId, heldBackInRead): node holds a close(NGHTTP2_CANCEL) back inside a read.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_stream_closing(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [stream_arg, held_back_arg] = callframe.arguments_as_array::<2>();
+        if !stream_arg.is_number() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // rewrite_read holds the engine borrow for the whole read.
+        if held_back_arg.to_boolean() && this.engine.try_borrow_mut().is_err() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if let Some(stream) = this.streams.get().get(&stream_arg.to_u32()).copied() {
+            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+            unsafe { (*stream).closing = true };
         }
         Ok(JSValue::UNDEFINED)
     }

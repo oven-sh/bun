@@ -1,0 +1,23 @@
+{
+  "_id": "dedupe-divergent-peers",
+  "name": "dedupe-divergent-peers",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "dedupe-divergent-peers",
+      "version": "1.0.0",
+      "dependencies": {
+        "dedupe-cycle-peer": "1.0.0",
+        "dedupe-divergent-strict": "1.0.0"
+      },
+      "_id": "dedupe-divergent-peers@1.0.0",
+      "dist": {
+        "integrity": "sha512-Yumt8FHlpYqig5uBOhz1w0V2NBRkTbadwifUCJrRKW2O2/6xyci4RBbs6qEz4wz52M7Gxh+/MkdJos+1Byr7Xw==",
+        "shasum": "110d11761bdf73aec0212e4c66f1efa3e0c38aef",
+        "tarball": "http://localhost:4873/dedupe-divergent-peers/-/dedupe-divergent-peers-1.0.0.tgz"
+      }
+    }
+  }
+}

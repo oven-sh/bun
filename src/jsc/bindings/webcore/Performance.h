@@ -56,11 +56,7 @@ namespace WebCore {
 using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
-class CachedResource;
 class Document;
-class DocumentLoadTiming;
-class DocumentLoader;
-class NetworkLoadMetrics;
 class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
@@ -106,6 +102,9 @@ public:
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
+    // A Bun.ModuleGraph's context stopped: the observers its script made observe nothing more
+    // (they are registered with the realm's Performance, which would keep them and their graph).
+    void disconnectObserversOf(const ScriptExecutionContext&);
 
     static Seconds reduceTimeResolution(Seconds);
 
@@ -113,14 +112,10 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
-
-    // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
-
-    // EventTargetData* eventTargetData() override;
-    // EventTargetData* eventTargetDataConcurrently() override;
-    // EventTargetData& ensureEventTargetData() override;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
     Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);

@@ -1356,12 +1356,13 @@ impl BunxCommand {
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
         );
-        env_loader
-            .map
-            .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
-            .expect("oom");
-
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        // The child must run `argv_to_use` as built. It would splice BUN_OPTIONS into its argv,
+        // and a `--cwd` or `-g` there moves the install out of the cache. The marker is for the
+        // child and its lifecycle scripts, not for the binary that runs after the install.
+        let envp = env_loader.map.create_null_delimited_env_map_omitting(
+            [b"BUN_OPTIONS", b"BUN_INTERNAL_BUNX_INSTALL"],
+            &[c"BUN_INTERNAL_BUNX_INSTALL=true"],
+        )?;
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

@@ -823,6 +823,8 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
+  // The private brand the constructor puts on the instance.
+  declare $isNodeWorkerThreadsWorker: true;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();

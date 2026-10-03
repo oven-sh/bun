@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1057,15 +1057,15 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
 });
 
 // In a node worker only parentPort receives what the parent posts; the global
-// scope's `self.onmessage` is not a channel there (as in node). Libraries that
-// install both a parentPort listener and globalThis.onmessage as a node/web shim
-// must see one delivery, not two.
-test("a parent message reaches parentPort only, not globalThis.onmessage, in a node worker", async () => {
+// scope is not a channel there (as in node). A worker that listens on both must
+// see one delivery, not two. The global scope has no addEventListener of its own
+// in a node worker, but EventTarget.prototype's still takes it as the receiver.
+test("a parent message reaches parentPort only, not a listener on the global scope, in a node worker", async () => {
   const w = new Worker(
     `const { parentPort } = require("node:worker_threads");
      let count = 0;
      parentPort.on("message", () => { count++; });
-     globalThis.onmessage = () => { count += 100; };
+     EventTarget.prototype.addEventListener.call(globalThis, "message", () => { count += 100; });
      parentPort.on("message", () => setImmediate(() => parentPort.postMessage(count)));`,
     { eval: true },
   );
@@ -1153,14 +1153,12 @@ test("workerpool's channel detection picks parentPort in a node worker, and mess
 // The child uses the Web Worker idiom on its global scope. Node has no such
 // globals in a worker, so the child throws and the parent exits with that error.
 // Bun 1.4.0 to 1.4.2 printed "ready" and then waited forever: the global
-// postMessage() reached the parent, and nothing came back. Spawned with a
-// timeout, so a worker that waits is killed and the failure is a diff.
-const hangTimeout = isDebug || isASAN ? 60_000 : 15_000;
-test(
-  "the Web Worker idiom in a node worker fails as in node, it does not hang",
-  async () => {
-    using dir = tempDir("node-worker-global-scope", {
-      "main.mjs": `import { Worker } from "node:worker_threads";
+// postMessage() reached the parent, and nothing came back. The spawn timeout is
+// shorter than this file's test timeout, so a child that waits is killed and
+// the failure is the diff below.
+test("the Web Worker idiom in a node worker fails as in node, it does not hang", async () => {
+  using dir = tempDir("node-worker-global-scope", {
+    "main.mjs": `import { Worker } from "node:worker_threads";
 const w = new Worker(new URL("./child.mjs", import.meta.url));
 w.on("message", (m) => {
     console.log(JSON.stringify(m));
@@ -1168,33 +1166,31 @@ w.on("message", (m) => {
     else w.terminate();
 });
 `,
-      "child.mjs": `addEventListener("message", (e) => postMessage({ echo: e.data }));
+    "child.mjs": `addEventListener("message", (e) => postMessage({ echo: e.data }));
 postMessage("ready");
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.mjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: hangTimeout,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({
-      stdout,
-      error: stderr.match(/^\w*Error: .*$/m)?.[0],
-      exitCode,
-      signalCode: proc.signalCode,
-    }).toEqual({
-      stdout: "",
-      error: "ReferenceError: addEventListener is not defined",
-      exitCode: 1,
-      signalCode: null,
-    });
-  },
-  hangTimeout + 30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: isDebug ? 60_000 : 8_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    error: stderr.match(/^\w*Error: .*$/m)?.[0],
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: "",
+    error: "ReferenceError: addEventListener is not defined",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
 
 // The two channels that worked before the Web Worker globals left the node
 // worker, with the same handshake as the report: they must not change.

@@ -397,6 +397,31 @@ test.concurrent.each([
   });
 });
 
+// A member's plain dependency takes the root's `npm:` alias of the same name when the member's
+// range admits a bound of the alias range. `>1` starts at 2.0.0, the same as a written `>=2.0.0`.
+test.concurrent.each([
+  { member: "^2.0.0", memberSees: { name: "no-deps", version: "2.0.0" } },
+  { member: "^1.0.0", memberSees: { name: "a-dep", version: "1.0.10" } },
+])("a member's a-dep@$member next to the root alias npm:no-deps@>1", async ({ member, memberSees }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["moo"], dependencies: { "a-dep": "npm:no-deps@>1" } }),
+    ),
+    write(join(packageDir, "moo", "package.json"), JSON.stringify({ name: "moo", dependencies: { "a-dep": member } })),
+  ]);
+  await runBunInstall(env, packageDir);
+  expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+  const nested = join(packageDir, "moo", "node_modules", "a-dep", "package.json");
+  const seenByMember = (await exists(nested)) ? nested : join(packageDir, "node_modules", "a-dep", "package.json");
+  expect(await file(seenByMember).json()).toMatchObject(memberSees);
+});
+
 // `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
 // override is still the range, which is what bun.lock records, so a reload sees no change.
 test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {

@@ -264,6 +264,8 @@ pub mod ssl_wrapper {
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
+        /// `on_handshake` ran. A handshake that completes after it is a renegotiation.
+        handshake_reported: Cell<bool>,
         traffic: Cell<Traffic>,
     }
 
@@ -402,7 +404,13 @@ pub mod ssl_wrapper {
         /// Backref to the parent (e.g. *mut HTTPClient / *mut WebSocketProxyTunnel / *mut UpgradedDuplex).
         pub ctx: T,
         pub on_open: fn(T),
+        /// The connection's handshake, reported once. The owner starts its protocol here.
         pub on_handshake: fn(T, bool, us_bun_verify_error_t),
+        /// The end of a TLS 1.2 renegotiation, reported after `on_handshake`.
+        /// `None`: nothing of the owner starts over (fetch / WebSocket
+        /// tunnels). node:tls reports each handshake and passes its
+        /// `on_handshake` again.
+        pub on_renegotiation: Option<fn(T, bool, us_bun_verify_error_t)>,
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
@@ -562,6 +570,7 @@ pub mod ssl_wrapper {
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
+                handshake_reported: Cell::new(false),
                 traffic: Cell::new(Traffic::Idle),
             });
             let this = Self { inner };
@@ -946,9 +955,12 @@ pub mod ssl_wrapper {
                 HandshakeOutcome::Aborted => (false, self.verify_error()),
             };
             self.flags.set_authorized(success);
-            // trigger the handshake callback
             let handlers = self.handlers.get();
-            (handlers.on_handshake)(handlers.ctx, success, result);
+            if !self.handshake_reported.replace(true) {
+                (handlers.on_handshake)(handlers.ctx, success, result);
+            } else if let Some(on_renegotiation) = handlers.on_renegotiation {
+                on_renegotiation(handlers.ctx, success, result);
+            }
         }
 
         fn trigger_wanna_write_callback(&self, data: &[u8]) {

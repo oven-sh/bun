@@ -604,6 +604,9 @@ impl ProxyTunnel {
                 on_open,
                 on_data,
                 on_handshake,
+                // The request goes out in `on_handshake`. The end of a
+                // renegotiation must not send it again.
+                on_renegotiation: None,
                 on_close,
                 write: write_encrypted,
                 // fetch's proxy tunnel surfaces no 'session'/'keylog' events;

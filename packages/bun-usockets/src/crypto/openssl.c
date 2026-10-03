@@ -1703,6 +1703,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
 
   s->ssl = ssl;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
+  s->ssl_handshake_reported = 0;
   s->ssl_write_wants_read = 0;
   s->ssl_write_parked = 0;
   s->ssl_read_wants_write = 0;
@@ -1870,6 +1871,20 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   s->ssl_fatal_error = 1;
 }
 
+/* A connection reports its handshake once: its owner starts the protocol
+ * there (fetch sends the request, Redis and MySQL log in). Every later report
+ * is the end of a renegotiation, a separate event that only the owners that
+ * report each handshake consume. */
+static void ssl_dispatch_handshake(struct us_socket_t *s, int success,
+                                   struct us_bun_verify_error_t verify_error) {
+  if (s->ssl_handshake_reported) {
+    us_dispatch_renegotiation(s, success, verify_error);
+    return;
+  }
+  s->ssl_handshake_reported = 1;
+  us_dispatch_handshake(s, success, verify_error);
+}
+
 /* The on_handshake callback runs JS which may us_socket_close(s) — that frees
  * s->ssl. Every caller MUST check ssl_gone(s) immediately after this returns
  * and bail before touching s->ssl again. */
@@ -1890,7 +1905,7 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
   loop_ssl_data->ssl_last_fatal_error_owner = NULL;
   struct us_bun_verify_error_t verify_error = {
       .error = -71, .code = "EPROTO", .reason = reason};
-  us_dispatch_handshake(s, 0, verify_error);
+  ssl_dispatch_handshake(s, 0, verify_error);
   return 1;
 }
 
@@ -1918,7 +1933,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
      * graceful close (code 0) must send a bare FIN, not a close_notify it
      * cannot read, and must not wait for a reply. Fatal also refuses writes. */
     s->ssl_fatal_error = 1;
-    us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
+    ssl_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
     /* Nothing else will tear this connection down (the peer is still waiting
      * for a Finished that will never come) - close unless JS already did. */
     if (!ssl_gone(s) && !us_socket_is_closed(s)) {
@@ -1937,7 +1952,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   struct us_bun_verify_error_t verify_error =
       success && s->ssl ? us_ssl_socket_verify_error_from_ssl(s_ssl(s))
                         : ssl_failed_handshake_verify_error(s);
-  us_dispatch_handshake(s, success, verify_error);
+  ssl_dispatch_handshake(s, success, verify_error);
 }
 
 static void ssl_trigger_handshake_econnreset(struct us_socket_t *s) {
@@ -1952,7 +1967,7 @@ static void ssl_trigger_handshake_econnreset(struct us_socket_t *s) {
   struct us_bun_verify_error_t verify_error = {
       .error = -46, .code = "ECONNRESET",
       .reason = "Client network socket disconnected before secure TLS connection was established"};
-  us_dispatch_handshake(s, 0, verify_error);
+  ssl_dispatch_handshake(s, 0, verify_error);
 }
 
 /* True once a re-entrant us_socket_close() has run inside a dispatch. Any

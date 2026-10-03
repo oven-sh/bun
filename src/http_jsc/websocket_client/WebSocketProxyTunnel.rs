@@ -182,6 +182,9 @@ impl WebSocketProxyTunnel {
                 on_open: Self::on_open,
                 on_data: Self::on_data,
                 on_handshake: Self::on_handshake,
+                // The upgrade request goes out in `on_handshake`. The end of
+                // a renegotiation must not send it again.
+                on_renegotiation: None,
                 on_close: Self::on_close,
                 write: Self::write_encrypted,
                 // No JS TLSSocket fronts the tunnel; opting out keeps the

@@ -172,6 +172,30 @@ us_dispatch_shims! {
         = vt.on_handshake(s, ok, err, core::ptr::null_mut()) or ();
 }
 
+/// The end of a TLS renegotiation, which `openssl.c` reports after the
+/// connection's one `us_dispatch_handshake`. Only the owners that report each
+/// handshake consume it. Every other owner started its protocol in
+/// `on_handshake`, and a second call there would start it again mid-stream.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null socket pointer.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn us_dispatch_renegotiation(
+    s: *mut us_socket_t,
+    ok: c_int,
+    err: us_bun_verify_error_t,
+) {
+    match us_socket_t::opaque_mut(s).kind() {
+        // node:tls emits 'secure' for each handshake. A connected WebSocket
+        // checks the renegotiated session against the name its upgrade verified.
+        SocketKind::BunSocketTls | SocketKind::WsClientTls => {
+            // SAFETY: same contract as `us_dispatch_handshake`.
+            unsafe { us_dispatch_handshake(s, ok, err) }
+        }
+        _ => {}
+    }
+}
+
 /// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of
 /// the returned pair before decryption. Only `bun_socket_tls` ever sets the
 /// `ssl_raw_tap` bit, so this isn't part of the per-kind vtable.

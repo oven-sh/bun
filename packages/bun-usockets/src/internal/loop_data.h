@@ -36,6 +36,13 @@ typedef void* zig_mutex_t;
 struct us_quic_socket_context_s;
 struct us_nq_driver_s;
 
+/* A socket us_socket_resume() could not register with the kernel again, and the
+ * code to close it with. */
+struct us_internal_unresumable_socket_t {
+    struct us_socket_t *socket;
+    int code;
+};
+
 struct us_internal_loop_data_t {
 #ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
@@ -94,6 +101,10 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Filled by us_socket_resume(), closed by us_internal_loop_post(). The owner
+     * of a socket does not expect its close handler to run inside resume(). */
+    int num_unresumable_sockets;
+    struct us_internal_unresumable_socket_t *unresumable_sockets;
 };
 
 #endif // LOOP_DATA_H

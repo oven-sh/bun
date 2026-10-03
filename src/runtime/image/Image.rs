@@ -650,7 +650,7 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
         E::EncodeFailed => zstr!("Image: encode failed"),
         E::TooManyPixels => zstr!("Image: input exceeds maxPixels limit"),
         E::UnsupportedOnPlatform => zstr!(
-            "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)"
+            "Image: format not supported on this machine (AVIF/TIFF require the OS codec; HEIC needs the OS codec or a system libheif whose decoder covers this file's bit depth; AVIF encode needs an AV1 encoder)"
         ),
         E::OutOfMemory => zstr!("Image: out of memory"),
     }
@@ -1723,6 +1723,11 @@ impl PipelineTask {
                 codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
                     codecs::Format::Png
                 }
+                // Linux decodes HEIC (dlopen'd libheif) but cannot write it,
+                // so it is decode-only there and joins the rule above.
+                // macOS/Windows re-encode HEIC through the system backend.
+                #[cfg(target_os = "linux")]
+                codecs::Format::Heic => codecs::Format::Png,
                 f => f,
             },
             ..Default::default()

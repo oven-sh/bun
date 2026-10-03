@@ -982,9 +982,7 @@ test("a bad record behind the client's Finished does not make a server accept an
   assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });
 
-// A client calls end() before the first step of its handshake: in the tick of tls.connect(), in the next tick, or
-// inside 'connect'. The ClientHello still leaves before the FIN, so the server answers, and the handshake ends on that
-// answer. The server closes when the FIN arrives. Returns the ordered events of the client.
+// A client calls end() before the first step of its handshake. Returns the ordered events of the client.
 async function endBeforeClientHello(
   when,
   maxVersion,
@@ -1145,8 +1143,7 @@ test("end() inside 'connect' sends the ClientHello before the FIN", async () => 
 });
 
 test("a server that end()s at accept still reports the client that gives up", async () => {
-  // Only a client's FIN waits for the first step of its handshake. A server has no flight to send before it reads
-  // one, so its FIN leaves at once and the client reads the end of the stream.
+  // A server has no flight to send before it reads one, so its FIN leaves at once.
   const { promise, resolve } = Promise.withResolvers();
   const server = tls.createServer({ key, cert }, socket => socket.on("error", () => {}));
   server.on("connection", socket => {

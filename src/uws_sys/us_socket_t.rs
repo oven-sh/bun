@@ -309,8 +309,7 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
-    /// A shutdown before the first handshake step sends its FIN after that
-    /// step. No-op on a server socket or after the handshake.
+    /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&mut self) {
         c::us_socket_set_first_flight_before_fin(self);
     }

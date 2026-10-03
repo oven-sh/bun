@@ -389,10 +389,7 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * server that fails verification. Must run before the handshake is driven
  * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
-/* Client TLS socket of node:tls: a shutdown before the first handshake step
- * sends its FIN after that step, so the ClientHello leaves first, as in node.
- * Must run before the handshake is driven, like us_socket_set_inline_reject.
- * No-op otherwise. */
+/* TLS client: a shutdown before the first handshake step sends its FIN after that step. */
 void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────

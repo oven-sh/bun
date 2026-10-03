@@ -163,6 +163,15 @@ impl GitEnv {
         // No prompts by default: the install's own output would hide them.
         let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
 
+        // `git` must not come from a `node_modules/.bin` that `bun run` put on PATH.
+        let (path, bin_dirs) = bun_paths::env_path::split_bin_dirs_of(
+            map.get(b"PATH").unwrap_or(b""),
+            crate::bun_fs::FileSystem::instance().top_level_dir(),
+        );
+        if !bin_dirs.is_empty() {
+            bun_core::handle_oom(map.put(b"PATH", &path));
+        }
+
         if map.get(b"GIT_ASKPASS").is_none() {
             let config = SloppyGlobalGitConfig::get();
             if !config.has_askpass {

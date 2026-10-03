@@ -1,0 +1,25 @@
+{
+  "_id": "script-path-uses-tool",
+  "name": "script-path-uses-tool",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-uses-tool",
+      "scripts": {
+        "postinstall": "script-path-tool"
+      },
+      "dependencies": {
+        "script-path-tool": "1.0.0"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-uses-tool@1.0.0",
+      "dist": {
+        "integrity": "sha512-jkPNS1dUqpvKDsXWWFxomvM2OuqIW+CIeUjhe0CsIpF4nslON1F6WZykzPOJRDohZDRfGYZiBaIpc22dIJW4vQ==",
+        "shasum": "fc5df5da13e277e3c15ec5759ef0dfb99c3065c2",
+        "tarball": "http://localhost:4873/script-path-uses-tool/-/script-path-uses-tool-1.0.0.tgz"
+      }
+    }
+  }
+}

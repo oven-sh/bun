@@ -1,0 +1,25 @@
+{
+  "_id": "script-path-self",
+  "name": "script-path-self",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-self",
+      "bin": {
+        "script-path-self": "self.js"
+      },
+      "scripts": {
+        "postinstall": "script-path-self"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-self@1.0.0",
+      "dist": {
+        "integrity": "sha512-0he53N6q+53EnBFNgfoN2jAWBzQFqkd60+o9cUq4DQymeKU1OKnlaD6szP+c1Qv4b7zH8uPicqj4kLZxBK6Xuw==",
+        "shasum": "6a6d2be168ba183ea4b484cb134c585fef483cf8",
+        "tarball": "http://localhost:4873/script-path-self/-/script-path-self-1.0.0.tgz"
+      }
+    }
+  }
+}

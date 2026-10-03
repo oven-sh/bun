@@ -8,7 +8,7 @@ use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
     package::PackageColumns as _,
-    package::scripts::{List as ScriptsList, PrintFormat, Scripts},
+    package::scripts::{List as ScriptsList, Owner as ScriptsOwner, PrintFormat, Scripts},
     tree,
 };
 use bun_install::package_manager_real::{
@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager, Resolution, ResolutionTag,
 };
 use bun_paths::AutoAbsPath;
 
@@ -148,6 +148,7 @@ impl UntrustedCommand {
                     &mut node_modules_path,
                     alias,
                     resolution,
+                    ScriptsOwner::Unspawned,
                 );
                 node_modules_path.set_length(folder_saved);
 
@@ -375,6 +376,16 @@ impl TrustCommand {
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
 
+                let owner = match resolution.tag {
+                    ResolutionTag::Root | ResolutionTag::Workspace => ScriptsOwner::Project,
+                    _ => PackageManager::installed_dependency_owner(
+                        node_modules_path.slice_z(),
+                        package_id,
+                        node_modules.tree_id,
+                        dep_id,
+                    ),
+                };
+
                 // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
                 let result = package_scripts.get_list(
                     unsafe { &mut *log },
@@ -382,6 +393,7 @@ impl TrustCommand {
                     &mut node_modules_path,
                     alias,
                     resolution,
+                    owner,
                 );
                 node_modules_path.set_length(folder_saved);
 

@@ -8,7 +8,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{join_abs_string_z, platform};
+use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal, join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
@@ -19,11 +19,11 @@ use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
-use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::lockfile_real::package::scripts::{List as ScriptsList, Owner as ScriptsOwner};
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{DependencyID, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -320,6 +320,7 @@ impl PackageManager {
                 name,
                 ResolutionTag::Root,
                 add_node_gyp_rebuild_script,
+                ScriptsOwner::Project,
             );
         } else if Syscall::exists(binding_dot_gyp_path.as_bytes()) {
             // no scripts exist but auto node gyp script needs to be added
@@ -330,6 +331,7 @@ impl PackageManager {
                 name,
                 ResolutionTag::Root,
                 true,
+                ScriptsOwner::Project,
             );
         }
     }
@@ -356,7 +358,20 @@ impl PackageManager {
             return Ok(());
         }
 
+        // First: everything below reads PATH.
+        let demoted_bin_dirs = self.demote_inherited_bin_dirs()?;
+
         self.ensure_temp_node_gyp_script()?;
+
+        if let ScriptsOwner::Hoisted {
+            package_id,
+            tree_id,
+            dependency_id,
+        } = list.owner
+        {
+            crate::package_installer::link_owner_bins(self, package_id, tree_id, dependency_id)?;
+        }
+        let project_node_gyp = self.project_node_gyp();
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
@@ -372,25 +387,24 @@ impl PackageManager {
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        // `EnvPathOptions` is currently fieldless.
-        let mut path = EnvPath::init_capacity(
-            original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
+        let store_node_modules = if list.owner == ScriptsOwner::StoreEntry {
+            store_entry_node_modules(&list.cwd)
+        } else {
+            None
+        };
+        let path = lifecycle_script_path(
+            list.owner,
+            cwd,
+            store_node_modules.as_deref(),
+            &original_path,
+            demoted_bin_dirs,
         )?;
-        // `defer PATH.deinit()` — handled by Drop
-
-        let mut parent: Option<&[u8]> = Some(cwd);
-
-        while let Some(dir) = parent {
-            let mut builder = path.path_component_builder();
-            builder.append(dir);
-            builder.append(b"node_modules/.bin");
-            builder.apply()?;
-
-            parent = bun_paths::dirname(dir);
-        }
-
-        path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
+        if let Some(node_gyp) = project_node_gyp {
+            if script_env.get(b"npm_config_node_gyp").is_none() {
+                script_env.put(b"npm_config_node_gyp", node_gyp)?;
+            }
+        }
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
@@ -435,6 +449,59 @@ impl PackageManager {
         Ok(())
     }
 
+    /// Takes the install's `node_modules/.bin` entries out of the inherited PATH and returns them.
+    fn demote_inherited_bin_dirs(&self) -> Result<&'static [u8], crate::Error> {
+        static DEMOTED: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+        if let Some(demoted) = DEMOTED.get() {
+            return Ok(demoted);
+        }
+        let (kept, demoted) = bun_paths::env_path::split_bin_dirs_of(
+            self.env().get(b"PATH").unwrap_or(b""),
+            FileSystem::instance().top_level_dir(),
+        );
+        if !demoted.is_empty() {
+            self.env_mut().map.put(b"PATH", &kept)?;
+        }
+        Ok(DEMOTED.get_or_init(|| demoted.into_boxed_slice()))
+    }
+
+    /// `bin/node-gyp.js` of a `node-gyp` that the root package itself depends on.
+    fn project_node_gyp(&self) -> Option<&'static [u8]> {
+        static PINNED: std::sync::OnceLock<Option<Box<[u8]>>> = std::sync::OnceLock::new();
+        PINNED
+            .get_or_init(|| {
+                let lockfile = &self.lockfile;
+                let deps = lockfile.buffers.dependencies.as_slice();
+                let string_buf = lockfile.buffers.string_bytes.as_slice();
+                let root_deps = *lockfile.packages.slice().items_dependencies().first()?;
+                (root_deps.begin()..root_deps.end())
+                    .any(|id| deps[id as usize].name.slice(string_buf) == b"node-gyp")
+                    .then_some(())?;
+                let mut path = AutoAbsPath::init_top_level_dir();
+                let _ = path.append(b"node_modules/node-gyp/bin/node-gyp.js");
+                Syscall::exists(path.slice()).then(|| Box::from(path.slice()))
+            })
+            .as_deref()
+    }
+
+    /// For `bun pm trust`, which does not know which linker installed `dir`.
+    pub fn installed_dependency_owner(
+        dir: &ZStr,
+        package_id: PackageID,
+        tree_id: bun_install::lockfile::tree::Id,
+        dependency_id: DependencyID,
+    ) -> ScriptsOwner {
+        if store_entry_node_modules(dir).is_some() {
+            ScriptsOwner::StoreEntry
+        } else {
+            ScriptsOwner::Hoisted {
+                package_id,
+                tree_id,
+                dependency_id,
+            }
+        }
+    }
+
     pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
     ) -> ArrayHashMap<PackageID, ()> {
@@ -466,6 +533,85 @@ impl PackageManager {
 
         set
     }
+}
+
+/// The owner's `.bin` directories, `inherited`, every other `.bin` above `cwd`, then `demoted`.
+fn lifecycle_script_path(
+    owner: ScriptsOwner,
+    cwd: &[u8],
+    store_node_modules: Option<&[u8]>,
+    inherited: &[u8],
+    demoted: &[u8],
+) -> Result<EnvPath, bun_alloc::AllocError> {
+    fn append_bin_dir(path: &mut EnvPath, dir: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        let mut builder = path.path_component_builder();
+        builder.append(dir);
+        builder.append(b"node_modules/.bin");
+        builder.apply()
+    }
+
+    let install_root = FileSystem::instance().top_level_dir();
+    let mut path = EnvPath::init_capacity(
+        inherited.len() + demoted.len() + 2 * (cwd.len() + b"/node_modules/.bin".len() + 1),
+    )?;
+    let mut shared: Vec<&[u8]> = Vec::new();
+
+    let mut parent: Option<&[u8]> = Some(cwd);
+    while let Some(dir) = parent {
+        let owned = dir.len() == cwd.len()
+            || (owner == ScriptsOwner::Project
+                && !matches!(
+                    is_parent_or_equal(install_root, dir),
+                    ParentEqual::Unrelated
+                ));
+        if owned {
+            append_bin_dir(&mut path, dir)?;
+        } else {
+            shared.push(dir);
+        }
+        parent = bun_paths::dirname(dir);
+    }
+
+    if let Some(node_modules) = store_node_modules {
+        let mut builder = path.path_component_builder();
+        builder.append(node_modules);
+        builder.append(b".bin");
+        builder.apply()?;
+    }
+
+    path.append(inherited)?;
+    for dir in shared {
+        append_bin_dir(&mut path, dir)?;
+    }
+    path.append(demoted)?;
+    Ok(path)
+}
+
+/// `node_modules/.bun/<entry>/node_modules` for a `cwd` in a store entry, or one symlink away.
+fn store_entry_node_modules(cwd: &ZStr) -> Option<Vec<u8>> {
+    let mut link_buf = bun_paths::path_buffer_pool::get();
+    let mut join_buf = bun_paths::path_buffer_pool::get();
+    let dir: &[u8] = match Syscall::readlink(cwd, &mut link_buf[..]) {
+        Ok(len) => bun_paths::resolve_path::join_abs_string_buf::<platform::Auto>(
+            bun_paths::dirname(cwd.as_bytes())?,
+            &mut join_buf[..],
+            &[&link_buf[..len]],
+        ),
+        Err(_) => cwd.as_bytes(),
+    };
+
+    let mut node_modules = bun_paths::dirname(dir)?;
+    if bun_paths::basename(node_modules) != b"node_modules" {
+        // `node_modules/@scope/name`
+        node_modules = bun_paths::dirname(node_modules)?;
+        if bun_paths::basename(node_modules) != b"node_modules" {
+            return None;
+        }
+    }
+    let store = bun_paths::dirname(bun_paths::dirname(node_modules)?)?;
+    (bun_paths::basename(store) == b".bun"
+        && bun_paths::basename(bun_paths::dirname(store)?) == b"node_modules")
+        .then(|| node_modules.to_vec())
 }
 
 fn add_package_to_set(

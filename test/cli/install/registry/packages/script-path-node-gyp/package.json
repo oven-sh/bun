@@ -1,0 +1,22 @@
+{
+  "_id": "script-path-node-gyp",
+  "name": "script-path-node-gyp",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-node-gyp",
+      "bin": {
+        "node-gyp": "bin/node-gyp.js"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-node-gyp@1.0.0",
+      "dist": {
+        "integrity": "sha512-mU8HXGwJcz1UREMxmwhRLtUEKNcfyWaOjNz3PpRWOE0os9RaWlRzhUzvW2tPPkWJtUkHVPoksIIPTO8gdHHcIA==",
+        "shasum": "22409f2c4a3f2d1266c0708f66dfbb092adbd041",
+        "tarball": "http://localhost:4873/script-path-node-gyp/-/script-path-node-gyp-1.0.0.tgz"
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -243,6 +243,90 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
     `),
   );
 });
+
+// accept() can fail and leave its connection in the listen backlog (EMFILE,
+// ENFILE, ENOBUFS, ENOMEM). The listener is level-triggered, so it used to be
+// reported readable again at once and the loop retried the failing accept()
+// with no delay. It now backs off and retries on a short deadline. Each case
+// counts event loop iterations for each of 20 timers of 10 ms: an idle loop
+// makes about one, a backed-off listener adds about four, and a loop that
+// retries with no delay makes hundreds (still many when the process gets a
+// small share of a core). Not concurrent: the tests around it spawn Bun
+// children too, and some of them keep the 5000ms default timeout.
+test.skipIf(skip)(
+  "Bun.listen (tcp, unix) whose accept() fails backs off, then accepts the queued client",
+  async () => {
+    const errnos = ["EMFILE", "ENFILE", "ENOBUFS", "ENOMEM"] as const;
+    using dir = tempDir("accept-backoff", {});
+    const listeners = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: join(String(dir), "listen.sock") } };
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
+          import os from "node:os";
+
+          async function iterationsPerTimer() {
+            const before = getEventLoopStats().iteration;
+            for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 10));
+            return (getEventLoopStats().iteration - before) / 20;
+          }
+
+          const result = {};
+          for (const [name, where] of Object.entries(${JSON.stringify(listeners)})) {
+            let accepted = Promise.withResolvers();
+            const listener = Bun.listen({
+              ...where,
+              socket: {
+                open(socket) {
+                  accepted.resolve();
+                  socket.end();
+                },
+                data() {},
+              },
+            });
+            const target = where.unix ? where : { hostname: where.hostname, port: listener.port };
+            const rates = (result[name] = { idle: await iterationsPerTimer() });
+            for (const errno of ${JSON.stringify(errnos)}) {
+              accepted = Promise.withResolvers();
+              fault.set({ syscall: "accept", action: "errno", errno: os.constants.errno[errno], repeat: -1 });
+              // Resolves when the kernel queued the connection: accept() did not take it yet.
+              const client = await Bun.connect({ ...target, socket: { data() {}, close() {} } });
+              rates[errno] = await iterationsPerTimer();
+              fault.clear();
+              await accepted.promise;
+              client.end();
+            }
+            listener.stop(true);
+          }
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let rates: any = stdout.trim();
+    try {
+      rates = JSON.parse(rates);
+    } catch {}
+    const backsOff = (name: "tcp" | "unix") =>
+      Object.fromEntries(errnos.map(errno => [errno, rates?.[name]?.[errno] <= rates?.[name]?.idle + 8]));
+    const all = { EMFILE: true, ENFILE: true, ENOBUFS: true, ENOMEM: true };
+    expect({
+      rates,
+      tcp: backsOff("tcp"),
+      unix: backsOff("unix"),
+      signalCode: proc.signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+    }).toEqual({ rates: expect.anything(), tcp: all, unix: all, signalCode: null, exitCode: 0, stderrTail: "" });
+  },
+  // The child takes a few seconds on a debug+ASAN build.
+  30_000,
+);
 
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by

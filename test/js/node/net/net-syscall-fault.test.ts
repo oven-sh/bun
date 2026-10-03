@@ -1,8 +1,10 @@
-import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
@@ -33,6 +35,34 @@ async function connectedPair(onServerSocket?: (s: net.Socket) => void) {
       server.close();
     },
   };
+}
+
+// Event loop iterations for each of 20 timers of 10 ms. An idle loop makes
+// about one. A listener that is backed off adds about two for each retry, which
+// is four per timer. A loop that retries a failing accept() with no delay makes
+// hundreds, and still many when the process gets a small share of a core.
+async function iterationsPerTimer() {
+  const before = getEventLoopStats().iteration;
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  return (getEventLoopStats().iteration - before) / 20;
+}
+
+// accept() errors that leave the connection in the listen backlog.
+const acceptErrnos = ["EMFILE", "ENFILE", "ENOBUFS", "ENOMEM"] as const;
+const failAccept = (errno: (typeof acceptErrnos)[number]) =>
+  fault.set({ syscall: "accept", action: "errno", errno: os.constants.errno[errno], repeat: -1 });
+const disarmAccept = () => fault.set({ syscall: "accept", action: "none" });
+// Five measurements of 20 timers each take more than the 5000ms default on a
+// loaded debug+ASAN build.
+const ACCEPT_TIMEOUT_MS = 30_000;
+
+// `failing` maps each errno to the loop's iteration rate while accept() failed
+// with it.
+function expectBackedOff(idle: number, failing: Record<string, number>) {
+  expect({
+    rates: { idle, ...failing },
+    ...Object.fromEntries(acceptErrnos.map(errno => [errno, failing[errno] <= idle + 8])),
+  }).toEqual({ rates: expect.anything(), EMFILE: true, ENFILE: true, ENOBUFS: true, ENOMEM: true });
 }
 
 describe.skipIf(skip)("node:net under injected syscall faults", () => {
@@ -333,6 +363,104 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
       expect(c2.readyState).toBe("open");
       serverSock.destroy();
       c2.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test(
+    "accept → EMFILE, ENFILE, ENOBUFS or ENOMEM until disarmed: net.Server backs off, then accepts the queued client",
+    async () => {
+      const server = net.createServer(socket => socket.destroy());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = (server.address() as net.AddressInfo).port;
+      try {
+        const idle = await iterationsPerTimer();
+        const failing: Record<string, number> = {};
+        for (const errno of acceptErrnos) {
+          const accepted = once(server, "connection");
+          failAccept(errno);
+          // The kernel completes the connect and queues the connection: accept() does not take it.
+          const client = net.connect({ port, host: "127.0.0.1" });
+          client.on("error", () => {});
+          await once(client, "connect");
+          failing[errno] = await iterationsPerTimer();
+          disarmAccept();
+          await accepted;
+          client.destroy();
+        }
+        expectBackedOff(idle, failing);
+      } finally {
+        server.close();
+      }
+    },
+    ACCEPT_TIMEOUT_MS,
+  );
+
+  test(
+    "accept → EMFILE, ENFILE, ENOBUFS or ENOMEM until disarmed: http.Server backs off, then answers the queued request",
+    async () => {
+      const server = http.createServer((req, res) => res.end("ok"));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = (server.address() as net.AddressInfo).port;
+      try {
+        const idle = await iterationsPerTimer();
+        const failing: Record<string, number> = {};
+        for (const errno of acceptErrnos) {
+          failAccept(errno);
+          const client = net.connect({ port, host: "127.0.0.1" });
+          client.on("error", () => {});
+          let text = "";
+          const answered = new Promise<void>((resolve, reject) => {
+            client.on("data", chunk => {
+              text += chunk;
+              if (text.split("\r\n\r\n")[1]?.includes("ok")) resolve();
+            });
+            client.on("close", () => reject(new Error("closed before a response: " + JSON.stringify(text))));
+          });
+          await once(client, "connect");
+          // The request makes the listener readable also where accept() is deferred until data arrives.
+          client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+          failing[errno] = await iterationsPerTimer();
+          disarmAccept();
+          await answered;
+          client.destroy();
+        }
+        expectBackedOff(idle, failing);
+      } finally {
+        server.close();
+      }
+    },
+    ACCEPT_TIMEOUT_MS,
+  );
+
+  test("accept → ECONNABORTED or EPROTO (the kernel dropped the connection): the listener does not back off", async () => {
+    const server = net.createServer(socket => socket.destroy());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      const iterations: Record<string, number> = {};
+      for (const errno of ["ECONNABORTED", "EPROTO"] as const) {
+        const accepted = once(server, "connection");
+        // The injector fails 20 calls and leaves the connection queued. A
+        // listener that stays in the poll set takes one failure for each loop
+        // iteration. A listener that backs off needs two iterations for each.
+        fault.set({ syscall: "accept", action: "errno", errno: os.constants.errno[errno], repeat: 20 });
+        const before = getEventLoopStats().iteration;
+        const client = net.connect({ port, host: "127.0.0.1" });
+        client.on("error", () => {});
+        await accepted;
+        iterations[errno] = getEventLoopStats().iteration - before;
+        client.destroy();
+      }
+      expect({
+        iterations,
+        ECONNABORTED: iterations.ECONNABORTED < 32,
+        EPROTO: iterations.EPROTO < 32,
+      }).toEqual({ iterations: expect.anything(), ECONNABORTED: true, EPROTO: true });
     } finally {
       server.close();
     }

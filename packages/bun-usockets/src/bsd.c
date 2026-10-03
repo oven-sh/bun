@@ -1084,6 +1084,39 @@ int bsd_send_is_transient_error() {
 #endif
 }
 
+/* accept() failed and the connection that made the listener readable is still
+ * queued, so a level-triggered poll reports it again at once. By exclusion:
+ * the errors listed here mean nothing is queued or took the connection off the
+ * queue (accept(2): pending network errors of the new socket). */
+int bsd_accept_left_connection_queued() {
+#ifdef _WIN32
+    const int err = WSAGetLastError();
+    return err != WSAEWOULDBLOCK && err != WSAECONNRESET && err != WSAECONNABORTED;
+#else
+    switch (errno) {
+    case EWOULDBLOCK:
+#if EAGAIN != EWOULDBLOCK
+    case EAGAIN:
+#endif
+    case ECONNABORTED:
+    case EPROTO:
+    case EPERM:
+    case ENETDOWN:
+    case ENOPROTOOPT:
+    case EHOSTDOWN:
+#ifdef ENONET
+    case ENONET:
+#endif
+    case EHOSTUNREACH:
+    case EOPNOTSUPP:
+    case ENETUNREACH:
+        return 0;
+    default:
+        return 1;
+    }
+#endif
+}
+
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do

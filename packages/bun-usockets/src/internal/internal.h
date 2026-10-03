@@ -507,6 +507,9 @@ struct us_listen_socket_t {
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
+  /* accept() failed and left its connection queued: the listener is out of the
+   * poll set until the loop's retry deadline registers it again. */
+  unsigned char accept_backed_off;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

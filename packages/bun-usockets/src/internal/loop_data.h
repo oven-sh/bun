@@ -94,6 +94,10 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* -1, or, while a listener is backed off after a failed accept(), the
+     * sweep's own deadline: sweep_next_tick_ns then holds the accept retry.
+     * Not used with libuv. */
+    long long accept_backoff_sweep_ns;
 };
 
 #endif // LOOP_DATA_H

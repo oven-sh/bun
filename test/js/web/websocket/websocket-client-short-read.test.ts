@@ -1,6 +1,7 @@
-import { TCPSocketListener } from "bun";
+import { type Socket, TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tls } from "harness";
+import { once } from "node:events";
 import { WebSocket } from "ws";
 
 const hostname = process.env.HOST || "127.0.0.1";
@@ -344,5 +345,422 @@ describe("WebSocket buffered handshake data", () => {
       "done",
     ]);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("WebSocket frames in the same read as the 101", () => {
+  function frame(opcode: number, payload: Uint8Array): Uint8Array {
+    return Uint8Array.from([0x80 | opcode, payload.length, ...payload]);
+  }
+  const textFrame = (text: string) => frame(0x1, new TextEncoder().encode(text));
+  const binaryFrame = (text: string) => frame(0x2, new TextEncoder().encode(text));
+  const closeFrame = (code: number) => frame(0x8, Uint8Array.from([code >> 8, code & 0xff]));
+
+  // A raw peer that answers the upgrade with the 101 response and `glued` in one
+  // write, so the client gets both from one read. `peer()` is the accepted socket.
+  function rawServer(options: {
+    glued: Uint8Array;
+    secure?: boolean;
+    // Sends the start of the status line in a write of its own first, so the client buffers it.
+    splitHead?: boolean;
+    afterHandshake?: (socket: Socket<{ request: string }>) => void;
+  }) {
+    let accepted: Socket<{ request: string }> | undefined;
+    const server = Bun.listen<{ request: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: options.secure ? tls : undefined,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        data(socket, chunk) {
+          if (accepted) return;
+          socket.data.request += chunk.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          accepted = socket;
+          const key = /sec-websocket-key: (.*)\r\n/i.exec(socket.data.request)![1];
+          const hasher = new Bun.CryptoHasher("sha1");
+          hasher.update(key);
+          hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+          const head =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${hasher.digest("base64")}\r\n` +
+            "\r\n";
+          const respond = (from: number) => {
+            socket.write(Buffer.concat([Buffer.from(head.slice(from)), options.glued]));
+            socket.flush();
+            options.afterHandshake?.(socket);
+          };
+          if (!options.splitHead) return respond(0);
+          const first = "HTTP/1.1 101 ";
+          socket.write(first);
+          socket.flush();
+          // The first immediate runs before the poll in which the client reads `first`, the second one after it.
+          setImmediate(() => setImmediate(respond, first.length));
+        },
+      },
+    });
+    return {
+      url: `${options.secure ? "wss" : "ws"}://127.0.0.1:${server.port}`,
+      peer: () => accepted!,
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  // Rejects every promise in `pending` when the connection fails or closes early.
+  function rejectOnFailure(ws: globalThis.WebSocket, ...pending: { reject: (reason: Error) => void }[]) {
+    ws.addEventListener("error", event => {
+      for (const { reject } of pending) reject(new Error(`error: ${(event as ErrorEvent).message}`));
+    });
+    ws.addEventListener("close", event => {
+      for (const { reject } of pending) reject(new Error(`closed: ${event.code} ${event.reason}`));
+    });
+  }
+
+  describe.each(["ws", "wss"])("%s", protocol => {
+    // "split" sends the same frames once the client has dispatched `open`, so a later read brings them.
+    test.each(["glued", "split"])("%s: open, its microtasks, then each message", async segmentation => {
+      const frames = Buffer.concat([textFrame("a"), binaryFrame("b")]);
+      using server = rawServer({
+        secure: protocol === "wss",
+        glued: segmentation === "glued" ? frames : new Uint8Array(),
+      });
+
+      const order: string[] = [];
+      const opened = Promise.withResolvers<void>();
+      const done = Promise.withResolvers<void>();
+      let ready = false;
+      const ws = new globalThis.WebSocket(server.url, { tls: { rejectUnauthorized: false } });
+      rejectOnFailure(ws, opened, done);
+      ws.addEventListener("open", () => {
+        order.push("open");
+        queueMicrotask(() => order.push("microtask from open"));
+        if (segmentation === "split") {
+          server.peer().write(frames);
+          server.peer().flush();
+        }
+      });
+      ws.addEventListener("open", () => opened.resolve());
+      ws.addEventListener("message", event => {
+        order.push(`message ${event.data} ready=${ready}`);
+        queueMicrotask(() => {
+          order.push(`microtask from message ${event.data}`);
+          if (String(event.data) === "b") done.resolve();
+        });
+      });
+
+      try {
+        await opened.promise;
+        // Still inside the microtask checkpoint that follows `open`.
+        for (let i = 0; i < 4; i++) await null;
+        order.push("microtasks from open done");
+        ready = true;
+        await done.promise;
+        expect(order).toEqual([
+          "open",
+          "microtask from open",
+          "microtasks from open done",
+          "message a ready=true",
+          "microtask from message a",
+          "message b ready=true",
+          "microtask from message b",
+        ]);
+      } finally {
+        ws.close();
+      }
+    });
+  });
+
+  test("the ws package: code that awaits 'open' gets the message that came with the 101", async () => {
+    using server = rawServer({ glued: textFrame("greeting") });
+
+    const order: string[] = [];
+    const received = Promise.withResolvers<void>();
+    let ready = false;
+    const ws = new WebSocket(server.url);
+    ws.on("message", data => {
+      order.push(`message ${data} ready=${ready}`);
+      received.resolve();
+    });
+    ws.on("error", received.reject);
+    ws.on("close", code => received.reject(new Error(`closed: ${code}`)));
+
+    try {
+      // Rejects on "error".
+      await once(ws, "open");
+      order.push("open awaited");
+      ready = true;
+      await received.promise;
+      expect(order).toEqual(["open awaited", "message greeting ready=true"]);
+    } finally {
+      ws.close();
+    }
+  });
+
+  test("a Bun.serve peer that sends from its open handler", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return server.upgrade(req) ? undefined : new Response("not a websocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("greeting");
+        },
+        message() {},
+      },
+    });
+
+    const order: string[] = [];
+    const opened = Promise.withResolvers<void>();
+    const received = Promise.withResolvers<void>();
+    let ready = false;
+    const ws = new globalThis.WebSocket(`ws://127.0.0.1:${server.port}`);
+    rejectOnFailure(ws, opened, received);
+    ws.addEventListener("open", () => opened.resolve());
+    ws.addEventListener("message", event => {
+      order.push(`message ${event.data} ready=${ready}`);
+      received.resolve();
+    });
+
+    try {
+      await opened.promise;
+      order.push("open awaited");
+      ready = true;
+      await received.promise;
+      expect(order).toEqual(["open awaited", "message greeting ready=true"]);
+    } finally {
+      ws.close();
+    }
+  });
+
+  test("an open listener that spins the event loop gets them ahead of the frames it read meanwhile", async () => {
+    using server = rawServer({ glued: textFrame("with the 101") });
+
+    const order: string[] = [];
+    const opened = Promise.withResolvers<void>();
+    const laterFrameRead = Promise.withResolvers<void>();
+    const ws = new globalThis.WebSocket(server.url);
+    rejectOnFailure(ws, opened, laterFrameRead);
+    ws.addEventListener("open", () => {
+      order.push("open");
+      server.peer().write(textFrame("after the 101"));
+      server.peer().flush();
+      // Ticks the event loop until the client has read that frame.
+      expect(laterFrameRead.promise).resolves.toBeUndefined();
+      order.push("open returns");
+      opened.resolve();
+    });
+    ws.addEventListener("message", event => {
+      order.push(`message ${event.data}`);
+      if (event.data === "after the 101") laterFrameRead.resolve();
+    });
+
+    try {
+      await opened.promise;
+      expect(order).toEqual(["open", "message with the 101", "message after the 101", "open returns"]);
+    } finally {
+      ws.close();
+    }
+  });
+
+  // A callback that waits synchronously ticks the event loop below its own event-loop scope. A
+  // socket callback in there is not the outermost scope, so its exit drains no microtasks.
+  test.each(["glued", "split"])(
+    "%s, while a callback waits synchronously: open, its microtasks, then the message",
+    async segmentation => {
+      using server = rawServer({ glued: segmentation === "glued" ? textFrame("a") : new Uint8Array() });
+
+      const order: string[] = [];
+      const received = Promise.withResolvers<void>();
+      const waited = Promise.withResolvers<void>();
+      setImmediate(() => {
+        const ws = new globalThis.WebSocket(server.url);
+        rejectOnFailure(ws, received);
+        ws.addEventListener("open", () => {
+          order.push("open");
+          queueMicrotask(() => order.push("microtask from open"));
+          if (segmentation === "split") {
+            server.peer().write(textFrame("a"));
+            server.peer().flush();
+          }
+        });
+        ws.addEventListener("message", event => {
+          order.push(`message ${event.data}`);
+          received.resolve();
+        });
+        try {
+          // The connection opens while this ticks the event loop.
+          expect(received.promise).resolves.toBeUndefined();
+          waited.resolve();
+        } catch (error) {
+          waited.reject(error);
+        } finally {
+          ws.close();
+        }
+      });
+
+      await waited.promise;
+      expect(order).toEqual(["open", "microtask from open", "message a"]);
+    },
+  );
+
+  test("an 'upgrade' listener of the ws package that spins the event loop while a later frame arrives", async () => {
+    // With the head split over two reads, the read that the listener lets in parses the same 101
+    // again and completes the connection below the listener.
+    using server = rawServer({ glued: textFrame("with the 101"), splitHead: true });
+
+    const order: string[] = [];
+    const laterFrameRead = Promise.withResolvers<void>();
+    const upgradeReturned = Promise.withResolvers<void>();
+    const ws = new WebSocket(server.url);
+    ws.on("upgrade", () => {
+      order.push("upgrade");
+      server.peer().write(textFrame("after the 101"));
+      server.peer().flush();
+      try {
+        expect(laterFrameRead.promise).resolves.toBeUndefined();
+        order.push("upgrade returns");
+        upgradeReturned.resolve();
+      } catch (error) {
+        upgradeReturned.reject(error);
+      }
+    });
+    ws.on("open", () => order.push("open"));
+    ws.on("message", data => {
+      order.push(`message ${data}`);
+      if (String(data) === "after the 101") laterFrameRead.resolve();
+    });
+    ws.on("error", laterFrameRead.reject);
+    ws.on("close", code => laterFrameRead.reject(new Error(`closed: ${code}`)));
+
+    try {
+      await upgradeReturned.promise;
+      expect(order).toEqual(["upgrade", "open", "message with the 101", "message after the 101", "upgrade returns"]);
+    } finally {
+      ws.close();
+    }
+  });
+
+  // "split" sends the frame from inside the listener, so a read during the wait brings it.
+  test.each(["glued", "split"])(
+    "%s: an open listener that queues a microtask and then waits synchronously for the message",
+    async segmentation => {
+      const frames = textFrame("greeting");
+      using server = rawServer({ glued: segmentation === "glued" ? frames : new Uint8Array() });
+
+      const order: string[] = [];
+      const opened = Promise.withResolvers<void>();
+      const received = Promise.withResolvers<void>();
+      const ws = new globalThis.WebSocket(server.url);
+      rejectOnFailure(ws, opened, received);
+      ws.addEventListener("open", () => {
+        order.push("open");
+        queueMicrotask(() => order.push("microtask from open"));
+        if (segmentation === "split") {
+          server.peer().write(frames);
+          server.peer().flush();
+        }
+        // Without the cap, a client that holds the message back hangs here.
+        const { promise: cap, resolve: giveUp } = Promise.withResolvers<void>();
+        const timer = setTimeout(giveUp, 2000);
+        try {
+          // Ticks the event loop until the message is dispatched.
+          expect(Promise.race([received.promise, cap])).resolves.toBeUndefined();
+          order.push("open returns");
+          opened.resolve();
+        } catch (error) {
+          opened.reject(error);
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+      ws.addEventListener("message", event => {
+        order.push(`message ${event.data}`);
+        received.resolve();
+      });
+
+      try {
+        await opened.promise;
+        expect(order).toEqual(["open", "microtask from open", "message greeting", "open returns"]);
+      } finally {
+        ws.close();
+      }
+    },
+  );
+
+  // The nested event loop can see the end of the stream before the open listener returns.
+  describe("an open listener that ends the peer and spins the event loop", () => {
+    async function eventsOf(
+      protocol: string,
+      glued: Uint8Array,
+      endPeer: (socket: Socket<{ request: string }>) => void,
+    ) {
+      using server = rawServer({ secure: protocol === "wss", glued });
+
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const ws = new globalThis.WebSocket(server.url, { tls: { rejectUnauthorized: false } });
+      ws.addEventListener("open", () => {
+        events.push("open");
+        endPeer(server.peer());
+        // Two turns of the event loop, each with a poll of the socket.
+        expect(new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)))).resolves.toBeUndefined();
+      });
+      ws.addEventListener("message", event => events.push(`message ${event.data}`));
+      ws.addEventListener("error", () => events.push("error"));
+      ws.addEventListener("close", event => {
+        events.push(`close ${event.code} clean=${event.wasClean}`);
+        closed.resolve();
+      });
+      await closed.promise;
+      return events;
+    }
+
+    // Windows: a socket that closes while its own data callback spins the event loop is freed under
+    // the outer dispatch (libuv.c does not count tick_depth). A debug build segfaults, with or without this fix.
+    test.skipIf(isWindows).each(["ws", "wss"])("%s: a Close frame, then FIN", async protocol => {
+      const glued = Buffer.concat([textFrame("last words"), closeFrame(1000)]);
+      expect(await eventsOf(protocol, glued, socket => socket.end())).toEqual([
+        "open",
+        "message last words",
+        "close 1000 clean=true",
+      ]);
+    });
+
+    // Only Linux is known to keep received bytes readable once the reset is in.
+    test.skipIf(!isLinux)("a reset", async () => {
+      expect(await eventsOf("ws", textFrame("last words"), socket => socket.terminate())).toEqual([
+        "open",
+        "message last words",
+        "close 1006 clean=false",
+      ]);
+    });
+  });
+
+  test("a peer that ends the connection right behind them still gets them delivered", async () => {
+    // The 101, a message, a Close frame, then FIN: the client can see the end of the stream in
+    // the same poll as the data.
+    using server = rawServer({
+      glued: Buffer.concat([textFrame("last words"), closeFrame(1000)]),
+      afterHandshake: socket => socket.end(),
+    });
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ws = new globalThis.WebSocket(server.url);
+    ws.addEventListener("open", () => events.push("open"));
+    ws.addEventListener("message", event => events.push(`message ${event.data}`));
+    ws.addEventListener("error", () => events.push("error"));
+    ws.addEventListener("close", event => {
+      events.push(`close ${event.code} clean=${event.wasClean}`);
+      closed.resolve();
+    });
+
+    await closed.promise;
+    expect(events).toEqual(["open", "message last words", "close 1000 clean=true"]);
   });
 });

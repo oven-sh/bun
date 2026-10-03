@@ -38,6 +38,7 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
+extern "C" bool Bun__NodeHTTP__endAtPeerFin(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -921,7 +922,10 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+        bool takesRawWrites = httpResponseData->isConnectRequest;
+        /* node:http: the socket of an accepted Upgrade takes raw writes while its request body still arrives. */
+        if constexpr (IsNodeHttp) takesRawWrites = takesRawWrites || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+        if (takesRawWrites && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
@@ -1027,22 +1031,38 @@ private:
             /* CONNECT/Upgrade tunnels allow half-open: the peer finishing its
              * writable side ends the JS socket's readable side ('end' event) but
              * the server can keep writing until it ends the socket itself, like
-             * Node's http server (allowHalfOpen: true). This includes an accepted
-             * Upgrade whose body never completed (HTTP_NODE_TUNNEL_AFTER_BODY): the
-             * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
-            if (httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+             * Node's http server (allowHalfOpen: true). */
+            if (httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
+                return s;
+            }
+
+            /* An accepted Upgrade whose body is incomplete is no tunnel yet: Node's socketOnEnd still ends its socket. https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L923-L939 */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
+                if (httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                }
+                if (us_socket_is_closed(s)) {
+                    return s;
+                }
                 /* No more of that body can come. A request that still waits for it holds the event loop, so end it like onClose does. */
-                if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
-                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
-                    httpResponseData->isConnectRequest = true;
-                    if (httpResponseData->inStream) {
-                        httpResponseData->inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
-                        if (!us_socket_is_closed(s)) {
-                            httpResponseData->inStream = nullptr;
-                        }
+                if (auto inStream = httpResponseData->inStream) {
+                    /* A close from inside the call must not end it again. */
+                    httpResponseData->inStream = nullptr;
+                    inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
+                    /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
+                    if (us_socket_is_closed(s) || us_socket_kind(s) != socketKind()) {
+                        return s;
+                    }
+                }
+                /* Raw writes that the JS socket still holds go out first. Its drain sets the same mark, and onWritable closes. */
+                if (Bun__NodeHTTP__endAtPeerFin(SSL, s)) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
+                    if (asyncSocket->hasFullyDrained()) {
+                        asyncSocket->shutdown();
+                        return asyncSocket->close();
                     }
                 }
                 return s;

@@ -900,6 +900,12 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
     }
 }
 
+template<bool SSL>
+static void closeAtDrainGate(us_socket_t* socket)
+{
+    reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
+}
+
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
@@ -931,6 +937,14 @@ void JSNodeHTTPServerSocket::onDrain()
             return;
         }
     }
+    if (endedByPeerFin && !isClosed()) {
+        // The last raw write left after the peer's FIN: the close gate that follows in uWS's onWritable ends the socket.
+        if (is_ssl) {
+            closeAtDrainGate<true>(socket);
+        } else {
+            closeAtDrainGate<false>(socket);
+        }
+    }
     updateTunnelIdle();
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
@@ -956,6 +970,10 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     if (last) {
+        // The close reports the end of the stream again.
+        if (tunnelReadEnded) {
+            return;
+        }
         tunnelReadEnded = true;
     }
     if (!functionToCallOnData) {
@@ -1090,6 +1108,18 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
     }
+}
+
+// uWS read the peer's FIN inside the body of an accepted Upgrade request. Returns whether it can end the socket now: false while
+// streamBuffer holds raw writes, and onDrain() then tells it.
+extern "C" bool Bun__NodeHTTP__endAtPeerFin(int ssl, us_socket_t* socket)
+{
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    if (!serverSocket) {
+        return true;
+    }
+    serverSocket->endedByPeerFin = true;
+    return serverSocket->streamBuffer.bufferedSize() == 0;
 }
 
 // Returns the JSNodeHTTPServerSocket already attached to this raw socket, or

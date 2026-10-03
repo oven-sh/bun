@@ -51,6 +51,8 @@ public:
     us_socket_t* socket = nullptr;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
+    /* uWS read the peer's FIN inside the body of an accepted Upgrade request. write() takes no more, and uWS closes the socket when streamBuffer has left. */
+    unsigned endedByPeerFin : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
     /* The JS Duplex of a tunnel is full: readStop() to readStart(). */

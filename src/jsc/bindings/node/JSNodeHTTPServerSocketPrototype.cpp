@@ -266,8 +266,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsNumber(0));
     }
-    if (thisObject->isClosed() || thisObject->ended) {
-        return JSValue::encode(JSC::jsNumber(0));
+    if (thisObject->isClosed() || thisObject->ended || thisObject->endedByPeerFin) {
+        // null: a write after the end that the peer's FIN caused (_write in _http_server.ts).
+        return JSValue::encode(thisObject->endedByPeerFin ? JSC::jsNull() : JSC::jsNumber(0));
     }
 
     thisObject->flushResponseBytesAhead();
@@ -287,7 +288,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    if (thisObject->isClosed()) {
+    // After the peer's FIN inside an Upgrade request body (endedByPeerFin), uWS sends the FIN and closes.
+    if (thisObject->isClosed() || thisObject->endedByPeerFin) {
         return JSValue::encode(JSC::jsUndefined());
     }
 

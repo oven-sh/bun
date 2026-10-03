@@ -1555,6 +1555,15 @@ function socketOnError(this: any, err) {
 }
 function noopOnError() {}
 
+// The peer's FIN inside the body of an accepted Upgrade request ended the socket, as Node's socketOnEnd does. Node's raw
+// socket then refuses a write: the write callback gets the error, and socketOnError gives it to 'clientError' before the
+// upgrade stream emits it.
+function failWriteAfterPeerEnd(socket, callback) {
+  const err = $ERR_STREAM_WRITE_AFTER_END();
+  callback(err);
+  socket.server?.emit("clientError", err, socket);
+}
+
 function onSocketTimeoutTimerExpired(socket) {
   // The keep-alive idle timer is left armed across the request to avoid a
   // clear + setTimeout cycle per request. A fire while a request is in
@@ -2157,6 +2166,10 @@ function getNodeHTTPServerSocket() {
         if (handle) {
           const flushed = handle.write(_chunk, _encoding);
           if (!flushed && handle.ondrain) {
+            if (flushed === null) {
+              process.nextTick(failWriteAfterPeerEnd, this, _callback);
+              return;
+            }
             // Streaming mode (CONNECT tunnels): wait for the native drain
             // callback before completing the write.
             this.#pendingCallback = _callback;

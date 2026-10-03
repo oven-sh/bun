@@ -367,6 +367,77 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   expectNonEnumerableStack(materialized);
 });
 
+test("Error.captureStackTrace rejects a Proxy target like a non-object", () => {
+  // V8 throws kInvalidArgument for any receiver that is not a plain JSObject,
+  // which excludes a Proxy. No trap runs and nothing reaches the target.
+  const observed = [];
+  const handler = new Proxy(
+    {},
+    {
+      get(_, trap) {
+        observed.push(trap);
+        return undefined;
+      },
+    },
+  );
+  const target = {};
+  const proxy = new Proxy(target, handler);
+  const callableProxy = new Proxy(function () {}, handler);
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+
+  for (const value of [proxy, callableProxy, revocable.proxy]) {
+    let caught;
+    try {
+      Error.captureStackTrace(value);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(caught.message).toBe("invalid_argument");
+  }
+
+  expect(observed).toEqual([]);
+  expect(Reflect.ownKeys(target)).toEqual([]);
+  expect(Reflect.ownKeys(proxy)).toEqual([]);
+});
+
+test("Error.captureStackTrace on globalThis installs .stack on the global object", () => {
+  // globalThis is a proxy in front of the global object. V8 stores "stack" on
+  // the object behind it, so globalThis.stack reads back as a string.
+  expect(Object.getOwnPropertyDescriptor(globalThis, "stack")).toBeUndefined();
+  try {
+    Error.captureStackTrace(globalThis);
+    const d = Object.getOwnPropertyDescriptor(globalThis, "stack");
+    expect({ type: typeof globalThis.stack, enumerable: d?.enumerable, configurable: d?.configurable }).toEqual({
+      type: "string",
+      enumerable: false,
+      configurable: true,
+    });
+    expect(globalThis.stack.split("\n")[1]).toContain("capture-stack-trace.test.js");
+    delete globalThis.stack;
+
+    // Error.prepareStackTrace gets the same value the caller passed, and can
+    // read the default-formatted stack through it. The raw global object
+    // behind the proxy never reaches script: a strict `this` of it is undefined.
+    let seen;
+    Error.prepareStackTrace = (err, sites) => {
+      seen = {
+        isGlobalThis: err === globalThis,
+        stackType: typeof err.stack,
+        hasOwnStack: Object.prototype.hasOwnProperty.call(err, "stack"),
+        sites: Array.isArray(sites),
+      };
+      return "from-prepare";
+    };
+    Error.captureStackTrace(globalThis);
+    expect(seen).toEqual({ isGlobalThis: true, stackType: "string", hasOwnStack: true, sites: true });
+    expect(globalThis.stack).toBe("from-prepare");
+  } finally {
+    delete globalThis.stack;
+  }
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();

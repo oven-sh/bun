@@ -1,4 +1,5 @@
 import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
+import { highwayStringsForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
@@ -225,6 +226,71 @@ describe("crypto.getCurves", () => {
   it("should return an array of strings", () => {
     expect(Array.isArray(crypto.getCurves())).toBe(true);
     expect(typeof crypto.getCurves()[0]).toBe("string");
+  });
+});
+
+describe("timingSafeEqual", () => {
+  // Below 64 bytes the native compare is BoringSSL's byte loop. From 64 bytes
+  // it is a SIMD kernel: blocks of four vectors, then single vectors, then one
+  // last vector that overlaps the previous one, or one partial load when the
+  // input is shorter than a vector. A vector is 16, 32 or 64 bytes, depending
+  // on the CPU.
+  type Compare = (a: Uint8Array, b: Uint8Array) => boolean;
+
+  function findMisses(equal: Compare, lengths: number[], positions: (length: number) => number[]) {
+    const misses: string[] = [];
+    const max = Math.max(...lengths);
+    const left = crypto.randomBytes(max + 1);
+    const right = Buffer.alloc(max + 2);
+    for (const length of lengths) {
+      // Different odd offsets, so neither side is aligned.
+      const a = left.subarray(1, 1 + length);
+      const b = right.subarray(2, 2 + length);
+      a.copy(b);
+      if (equal(a, b) !== true) misses.push(`length ${length}: equal inputs`);
+      for (const i of positions(length)) {
+        const bit = 1 << (i & 7);
+        b[i] ^= bit;
+        if (equal(a, b) !== false) misses.push(`length ${length}: byte ${i} differs by ${bit}`);
+        b[i] ^= bit;
+      }
+    }
+    return misses;
+  }
+
+  const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+  const everyPosition = (length: number) => range(0, length - 1);
+
+  describe.each([
+    ["node:crypto", crypto.timingSafeEqual],
+    ["globalThis.crypto", globalThis.crypto.timingSafeEqual.bind(globalThis.crypto)],
+  ])("%s", (_, timingSafeEqual) => {
+    it("sees one flipped bit at every position, for every length up to 137", () => {
+      expect(findMisses(timingSafeEqual, range(0, 137), everyPosition)).toEqual([]);
+    });
+
+    it("sees one flipped bit in large inputs", () => {
+      // 709 = 2 blocks + 3 vectors + 5 bytes at 64 bytes per vector.
+      const lengths = [709, 1024, 4096 + 5, 16384 + 31];
+      // A stride of 61 is coprime to every vector width, so the flipped byte moves through the lanes.
+      // The last 64 bytes cover the overlapping vector.
+      const positions = (length: number) => [
+        ...range(0, Math.floor((length - 1) / 61)).map(i => i * 61),
+        ...range(length - 64, length - 1),
+      ];
+      expect(findMisses(timingSafeEqual, lengths, positions)).toEqual([]);
+    });
+  });
+
+  it("the SIMD kernel sees one flipped bit at every position, for every length up to 330", () => {
+    // timingSafeEqual calls the kernel from 64 bytes, so only the testing shim reaches the short lengths.
+    const kernel: Compare = (a, b) => highwayStringsForTesting("constantTimeEq", a, b) === 1;
+    expect(findMisses(kernel, range(0, 330), everyPosition)).toEqual([]);
+
+    const same = crypto.randomBytes(1029);
+    expect(kernel(same, same)).toBe(true);
+    expect(kernel(new Uint8Array(0), new Uint8Array(0))).toBe(true);
+    expect(() => kernel(same, same.subarray(1))).toThrow(RangeError);
   });
 });
 

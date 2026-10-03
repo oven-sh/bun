@@ -953,13 +953,10 @@ impl TagExt for Tag {
             // newspeak/repo
             // npm:package@1.2.3
             b'n' => {
-                if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
-                    let remain =
-                        &dependency[b"npm:".len() + (dependency[b"npm:".len()] == b'@') as usize..];
-                    for (i, &c) in remain.iter().enumerate() {
-                        if c == b'@' {
-                            return Tag::infer(&remain[i + 1..]);
-                        }
+                if let Some(remain) = dependency.strip_prefix(b"npm:") {
+                    let remain = &remain[remain.starts_with(b"@") as usize..];
+                    if let Some(at) = strings::index_of_char(remain, b'@') {
+                        return Tag::infer(&remain[at as usize + 1..]);
                     }
 
                     return Tag::Npm;
@@ -1116,6 +1113,37 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
+/// `@scope/name@version` after `npm:` -> (`@scope/name`, `version`).
+fn split_npm_alias(str: &[u8]) -> (&[u8], &[u8]) {
+    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
+    while i < str.len() {
+        if str[i] == b'@' {
+            return (&str[0..i], &str[i + 1..]);
+        }
+        i += 1;
+    }
+    (str, &str[i..])
+}
+
+fn invalid_package_name(
+    log_: Option<&mut bun_ast::Log>,
+    name: &[u8],
+    dependency: &[u8],
+) -> Option<Version> {
+    if let Some(log) = log_ {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "invalid package name \"{}\" in dependency \"{}\"",
+                bstr::BStr::new(name),
+                bstr::BStr::new(dependency)
+            ),
+        );
+    }
+    None
+}
+
 pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
@@ -1131,22 +1159,14 @@ pub(crate) fn parse_with_tag(
 
             let mut is_alias = false;
             let name = 'brk: {
-                if input.starts_with(b"npm:") {
+                if let Some(target) = input.strip_prefix(b"npm:") {
                     is_alias = true;
-                    let str = &input[b"npm:".len()..];
-                    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
-
-                    while i < str.len() {
-                        if str[i] == b'@' {
-                            input = &str[i + 1..];
-                            break 'brk sliced.sub(&str[0..i]).value();
-                        }
-                        i += 1;
+                    let (name, rest) = split_npm_alias(target);
+                    if is_scoped_package_name(name).is_err() {
+                        return invalid_package_name(log_, name, dependency);
                     }
-
-                    input = &str[i..];
-
-                    break 'brk sliced.sub(&str[0..i]).value();
+                    input = rest;
+                    break 'brk sliced.sub(name).value();
                 }
 
                 alias
@@ -1192,35 +1212,17 @@ pub(crate) fn parse_with_tag(
         Tag::DistTag => {
             let mut tag_to_use = sliced.value();
 
-            let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
+            let actual = if let Some(target) = dependency.strip_prefix(b"npm:") {
                 // npm:@foo/bar@latest
-                sliced
-                    .sub('brk: {
-                        let mut i = b"npm:".len();
-
-                        // npm:@foo/bar@latest
-                        //     ^
-                        i += (dependency[i] == b'@') as usize;
-
-                        while i < dependency.len() {
-                            // npm:@foo/bar@latest
-                            //             ^
-                            if dependency[i] == b'@' {
-                                break;
-                            }
-                            i += 1;
-                        }
-
-                        tag_to_use = sliced.sub(&dependency[i + 1..]).value();
-                        break 'brk &dependency[b"npm:".len()..i];
-                    })
-                    .value()
+                let (name, rest) = split_npm_alias(target);
+                if is_scoped_package_name(name).is_err() {
+                    return invalid_package_name(log_, name, dependency);
+                }
+                tag_to_use = sliced.sub(rest).value();
+                sliced.sub(name).value()
             } else {
                 alias
             };
-
-            // name should never be empty
-            debug_assert!(!actual.is_empty());
 
             Some(Version {
                 literal: sliced.value(),

@@ -3467,8 +3467,16 @@ impl<'a> HTTPClient<'a> {
                     HTTPRequestBody::Sendfile(mut sendfile) => {
                         // `sendfile(2)` cannot write to a TLS socket; use the socket's own write.
                         #[cfg(unix)]
+                        let mut short_write = false;
+                        #[cfg(not(unix))]
+                        let short_write = false;
+                        #[cfg(unix)]
                         let status = if IS_SSL {
-                            sendfile.write_copy(|chunk| write_to_socket::<IS_SSL>(socket, chunk))
+                            sendfile.write_copy(|chunk| {
+                                let wrote = write_to_socket::<IS_SSL>(socket, chunk)?;
+                                short_write = wrote < chunk.len();
+                                Ok(wrote)
+                            })
                         } else {
                             sendfile.write(socket.fd())
                         };
@@ -3487,8 +3495,10 @@ impl<'a> HTTPClient<'a> {
                                 return;
                             }
                             crate::send_file::Status::Again => {
-                                // No writable event is pending after `sendfile(2)` or a full pass.
-                                socket.request_writable_event();
+                                // A short TLS write already polls for what it waits on.
+                                if !short_write {
+                                    socket.request_writable_event();
+                                }
                             }
                         }
                     }
@@ -3564,7 +3574,7 @@ impl<'a> HTTPClient<'a> {
                                 }
                                 crate::send_file::Status::Again => {
                                     // A blocked tunnel brings the next `on_writable` itself.
-                                    if !tunnel_blocked {
+                                    if !tunnel_blocked && !proxy.has_pending_writes() {
                                         socket.request_writable_event();
                                     }
                                 }

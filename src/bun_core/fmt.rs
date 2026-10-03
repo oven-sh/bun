@@ -3336,10 +3336,6 @@ impl<T: Display> Display for NullableFallback<'_, T> {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// quotePosixShell
-// ───────────────────────────────────────────────────────────────────────────
-
 /// One word of a POSIX shell command: `parts` joined inside `'...'`. The shell expands nothing in it.
 pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
 

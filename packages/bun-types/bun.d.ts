@@ -1516,7 +1516,7 @@ declare module "bun" {
        * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 1 }); // ReferenceError
        * ```
        */
-      maxAliasCount?: number;
+      maxAliasCount?: number | undefined;
 
       /**
        * How deep the sequences and mappings of a document may nest. A scalar has depth `0`, `[]` depth `1`
@@ -1535,7 +1535,7 @@ declare module "bun" {
        * YAML.parse("a: [1]", { maxDepth: 1 }); // SyntaxError
        * ```
        */
-      maxDepth?: number;
+      maxDepth?: number | undefined;
     }
 
     /**
@@ -1545,7 +1545,6 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @param options Limits for input from an untrusted source, see {@link ParseOptions}
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1558,6 +1557,24 @@ declare module "bun" {
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * ```
+     */
+    export function parse(input: string): unknown;
+    /**
+     * Parse a YAML string into a JavaScript value, with limits for input from an untrusted source.
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @param options The limits, see {@link ParseOptions}
+     * @returns A JavaScript value, or an array of them for a multi-document stream
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 0 }); // ReferenceError
+     * YAML.parse("a: [[1]]", { maxDepth: 2 }); // SyntaxError
      * ```
      */
     export function parse(input: string, options?: ParseOptions): unknown;

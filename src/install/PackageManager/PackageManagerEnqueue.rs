@@ -893,6 +893,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         version_was_replaced = false;
         break 'version dependency.version.clone();
     };
+
+    if matches!(
+        version.tag,
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+    ) && this.lockfile.str(&name).is_empty()
+    {
+        if dependency.behavior.is_required() {
+            if let Some(fail) = fail_fn {
+                fail(this, dependency, id, crate::Error::MissingPackageName);
+            } else {
+                report_empty_registry_name(this, id, dependency, &version);
+            }
+        }
+        return Ok(());
+    }
+
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {
@@ -1850,6 +1866,39 @@ fn warn_unmet_peer_dependency(
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
     );
+}
+
+/// `<registry>/` is the registry root, not a packument, so an empty registry name never resolves.
+#[cold]
+#[inline(never)]
+fn report_empty_registry_name(
+    this: &PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    version: &dependency::Version,
+) {
+    let lockfile = &this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let declared_in = crate::audit_fix::dependent_label(
+        lockfile,
+        lockfile
+            .get_parent_pkg_of_dependency(id)
+            .unwrap_or(invalid_package_id),
+    );
+    let log = this.log_mut();
+    let mut report = |args: core::fmt::Arguments<'_>| {
+        if dependency.behavior.is_peer() {
+            log.add_warning_fmt(None, bun_ast::Loc::EMPTY, args);
+        } else {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        }
+    };
+    report(format_args!(
+        "{} has a dependency with an empty name: {}: {}",
+        bstr::BStr::new(&declared_in),
+        bun_fmt::quote(dependency.name.slice(buf)),
+        bun_fmt::quote(version.literal.slice(buf)),
+    ));
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.

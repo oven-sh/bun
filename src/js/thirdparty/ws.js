@@ -138,6 +138,15 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// ServerWebSocket.send() returns 0 for a dropped message and for a sent empty one. Only a drop leaves bytes buffered.
+function wasDropped(ws, written) {
+  return written === 0 && ws.getBufferedAmount() !== 0;
+}
+
+function payloadByteLength(data) {
+  return typeof data === "string" ? Buffer.byteLength(data) : (data?.byteLength ?? data?.size ?? 0);
+}
+
 // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
 function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
@@ -1077,18 +1086,21 @@ class BunWebSocketMocked extends EventEmitter {
   #drain(ws) {
     let chunk;
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
-      const [data, compress, cb] = chunk;
-      const written = ws.send(data, compress);
-      if (written === 0) {
-        // dropped again: wait for the next drain event. -1 is not a drop, uws buffered the message.
-        return;
-      }
+      const [data, compress, cb, byteLength] = chunk;
+      // Dropped again: wait for the next drain event. -1 is not a drop, uws buffered the message.
+      if (wasDropped(ws, ws.send(data, compress))) return;
 
-      this.#bufferedAmount -= chunk.length;
+      this.#bufferedAmount -= byteLength;
       this.#enquedMessages.shift();
 
       if (typeof cb === "function") queueMicrotask(cb);
     }
+  }
+
+  #enqueue(data, compress, cb) {
+    const byteLength = payloadByteLength(data);
+    this.#enquedMessages.push([data, compress, cb, byteLength]);
+    this.#bufferedAmount += byteLength;
   }
 
   ping(data, mask, cb) {
@@ -1148,24 +1160,17 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#state === ReadyState_OPEN) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
-      // send returns:
-      // 1+ - The number of bytes sent is always the byte length of the data never less
-      // 0 - dropped due to backpressure (not sent)
-      // -1 - enqueue the data internaly
-      // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
-      if (written === 0) {
-        // dropped
-        this.#enquedMessages.push([data, compress, cb]);
-        this.#bufferedAmount += data.length;
+      const ws = this.#ws;
+      // uws can flush its buffer without a drain event, so a direct send could overtake the queue.
+      if (this.#enquedMessages.length !== 0 || wasDropped(ws, ws.send(data, compress))) {
+        this.#enqueue(data, compress, cb);
         return;
       }
 
       if (typeof cb === "function") process.nextTick(cb);
     } else if (this.#state === ReadyState_CONNECTING) {
       // not connected yet
-      this.#enquedMessages.push([data, opts?.compress, cb]);
-      this.#bufferedAmount += data.length;
+      this.#enqueue(normalizeData(data, opts), opts?.compress, cb);
     }
   }
 
@@ -1230,7 +1235,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get bufferedAmount() {
-    return this.#bufferedAmount ?? 0;
+    return (this.#ws?.getBufferedAmount() ?? 0) + this.#bufferedAmount;
   }
   /**
    * Set up the socket and the internal resources.

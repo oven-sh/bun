@@ -21,6 +21,7 @@ export const prestartMap = {
   "js/sql/postgres-simple-query-pipeline": ["postgres_plain"],
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
+  "js/sql/sql-statement-cache-hash-collision": ["mysql_plain", "postgres_plain"],
   "js/valkey/": ["redis_unified"],
   "js/web/websocket/autobahn": ["autobahn"],
   "js/web/websocket/websocket-proxy": ["squid"],

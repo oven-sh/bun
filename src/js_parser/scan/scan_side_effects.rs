@@ -339,6 +339,22 @@ impl SideEffects {
                         }
                     }
 
+                    // Size-aware folding can leave literal arithmetic as
+                    // `.e_binary`; it is side-effect-free, so drop it when
+                    // unused. `extract_numeric_values` is non-recursive on
+                    // purpose: `known_primitive` recursion overflows on a
+                    // deep `a+a+a+…`.
+                    Op::Code::BinAdd
+                    | Op::Code::BinSub
+                    | Op::Code::BinMul
+                    | Op::Code::BinDiv
+                    | Op::Code::BinRem
+                    | Op::Code::BinPow => {
+                        if Expr::extract_numeric_values(&bin.left.data, &bin.right.data).is_some() {
+                            return None;
+                        }
+                    }
+
                     _ => {}
                 }
             }

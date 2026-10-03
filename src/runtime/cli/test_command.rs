@@ -2407,7 +2407,7 @@ impl TestCommand {
         Self::exit_after_report(reporter, vm, failed)
     }
 
-    /// The end-of-run report: snapshots, coverage, summary, JUnit, timings. Returns whether the run failed.
+    /// The end-of-run report. Returns whether the run failed.
     fn report_run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -2976,7 +2976,7 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Once per file, not once per repeat, and before the load: an exit at its top level reports the file.
+            // Not once per repeat. Before the load: a top-level `process.exit()` reports the file.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
@@ -3112,7 +3112,7 @@ impl TestCommand {
     }
 }
 
-/// A main-thread exit was requested. A serial run on the stack is reported before the caller ends the process.
+/// The main thread is about to exit on request. Reports a serial run that is on the stack.
 #[inline]
 pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
     if let Some(run) = jest::Jest::runner().and_then(|runner| runner.serial_run.take()) {
@@ -3120,22 +3120,22 @@ pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
     }
 }
 
-/// Reports the run in place of the tail of `exec`. A run that failed or was cut short does not exit 0.
+/// Reports the run in place of the tail of `exec`. A run that failed or lost work does not exit 0.
 #[cold]
 fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
     let running_file =
         jest::Jest::runner().and_then(|runner| runner.bun_test_root.clone_active_file());
-    // The file that runs holds the reporter `handle_test_completed` uses. Between files, `run_all_tests` holds it.
+    // The running file holds the reporter pointer that `handle_test_completed` uses.
     let reporter = running_file
         .as_deref()
         .and_then(|file| file.reporter)
         .map_or_else(|| run.reporter.as_ptr(), core::ptr::NonNull::as_ptr);
-    // SAFETY: the reporter outlives the run. The frames that borrow it never run again: the caller exits.
+    // SAFETY: the reporter outlives the run. Its borrowers never run again: the caller exits.
     let reporter = unsafe { &mut *reporter };
     let files: &[Interned] = &run.files;
 
     if should_drain_event_loop() {
-        // As under node, the file ends the run with its own code. Only a failure that is already counted outranks it.
+        // As under node, the file ends the run with its own code unless a failure is counted.
         if reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.min_exit_code = 1;
         }
@@ -3154,7 +3154,7 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
             == 0
             && reporter.jest.unhandled_errors_between_tests == 0;
 
-    // A lone file that exits before it registers anything is a script, as node's `common.skip()` and `// Flags:` re-spawn.
+    // A lone file that registered nothing is a script. Node's `common.skip()` exits this way.
     if files.len() == 1 && !vm.is_in_preload && nothing_reported && !unfinished.registered {
         return;
     }
@@ -3165,14 +3165,19 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
             .path
             .text
     });
-    // A preload runs inside the load of a file that is already counted and that does not run.
-    let started = (summary.files as usize)
-        .saturating_sub(usize::from(vm.is_in_preload))
-        .min(files.len());
+    // A preload runs inside the first load of a file that `run` has counted and that does not run.
+    let runs_left = if vm.is_in_preload {
+        reporter.jest.summary.files = reporter.jest.summary.files.saturating_sub(1);
+        0
+    } else {
+        reporter.jest.current_file.runs_left()
+    };
+    let started = (reporter.jest.summary.files as usize).min(files.len());
     let not_started = &files[started..];
 
-    // A failure when the exit leaves work undone. A run that lost nothing keeps the code of the exit.
-    let is_failure = unfinished.tests > 0 || unfinished.collecting || !not_started.is_empty();
+    // A failure only when the exit leaves work undone.
+    let is_failure =
+        unfinished.tests > 0 || unfinished.collecting || runs_left > 0 || !not_started.is_empty();
 
     if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {
         pretty_error!("<r>\n");
@@ -3208,6 +3213,13 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
                 "<r><d>{} test{} in this file did not finish<r>\n",
                 unfinished.tests,
                 if unfinished.tests == 1 { "" } else { "s" }
+            );
+        }
+        if runs_left > 0 {
+            pretty_error!(
+                "<r><d>{} run{} of this file did not start<r>\n",
+                runs_left,
+                if runs_left == 1 { "" } else { "s" }
             );
         }
         if !not_started.is_empty() {

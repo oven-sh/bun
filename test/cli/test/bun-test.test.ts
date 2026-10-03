@@ -2075,6 +2075,29 @@ describe("bun test", () => {
       expect(stderr).toContain("error: process.exit(0) was called in a preload script");
       expect(stderr).toContain(didNotRun);
       expect(stderr).toContain(" 1 fail");
+      expect(stderr).toContain("Ran 1 test across 0 files.");
+      expect(exitCode).toBe(1);
+    });
+
+    test("in a preload that --isolate runs again for the second file, only that file did not run", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "preload.ts": `
+            import { existsSync, writeFileSync } from "node:fs";
+            const ranBefore = import.meta.dir + "/preload-ran-before";
+            if (existsSync(ranBefore)) process.exit(0);
+            writeFileSync(ranBefore, "");
+          `,
+          "a.test.ts": passes,
+          "b.test.ts": passes,
+        },
+        ["--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      );
+      expect(stderr).toContain("error: process.exit(0) was called in a preload script");
+      expect(stderr).toContain("1 test file did not run:\n  b.test.ts");
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(" 1 fail");
+      expect(stderr).toContain("Ran 2 tests across 1 file.");
       expect(exitCode).toBe(1);
     });
 
@@ -2119,6 +2142,35 @@ describe("bun test", () => {
       expect(stderr).toContain(" 1 pass");
       expect(stderr).toContain(" 1 fail");
       expect(exitCode).toBe(1);
+    });
+
+    describe("in afterAll, with --rerun-each=2", () => {
+      test("in the first run, the run that did not start makes it a failure", async () => {
+        const { stderr, exitCode } = await run({ "a.test.ts": exitsInAfterAll }, ["--rerun-each=2", "./a.test.ts"]);
+        expect(stderr).toContain("error: process.exit(0) was called while a.test.ts was running");
+        expect(stderr).toContain("1 run of this file did not start");
+        expect(stderr).toContain(" 1 pass");
+        expect(stderr).toContain(" 1 fail");
+        expect(exitCode).toBe(1);
+      });
+
+      test("in the last run, every test has a result, so the code is kept", async () => {
+        const { stderr, exitCode } = await run(
+          {
+            "a.test.ts": `
+              import { test, expect, afterAll } from "bun:test";
+              globalThis.runs = (globalThis.runs ?? 0) + 1;
+              afterAll(() => { if (globalThis.runs === 2) process.exit(0); });
+              test("passes", () => { expect(1).toBe(1); });
+            `,
+          },
+          ["--rerun-each=2", "./a.test.ts"],
+        );
+        expect(stderr).toContain("note: process.exit(0) was called while a.test.ts was running");
+        expect(stderr).toContain(" 2 pass");
+        expect(stderr).toContain(" 0 fail");
+        expect(exitCode).toBe(0);
+      });
     });
 
     test.each(["process.exit(0)", "process.exitCode = 0"])(

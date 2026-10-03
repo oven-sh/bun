@@ -43,6 +43,8 @@ impl CurrentFile {
         repeat_index: u32,
         reporter: &mut CommandLineReporter,
     ) {
+        self.repeat_info.count = repeat_count;
+        self.repeat_info.index = repeat_index;
         if reporter.worker_ipc_file_idx.is_some() {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
@@ -53,8 +55,6 @@ impl CurrentFile {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
             self.has_printed_filename = false;
             return;
         }
@@ -92,6 +92,11 @@ impl CurrentFile {
         }
 
         Output::flush();
+    }
+
+    /// Runs of the file that `--rerun-each` has not started.
+    pub(crate) fn runs_left(&self) -> u32 {
+        self.repeat_info.count.saturating_sub(self.repeat_info.index + 1)
     }
 
     pub(crate) fn print_if_needed(&mut self) {

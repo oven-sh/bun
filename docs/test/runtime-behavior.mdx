@@ -262,7 +262,8 @@ The exit counts as one failed test when it leaves work undone:
 
 - A test that the file registered has no result yet.
 - The file has not registered all its tests yet: its top-level code or a `describe` callback is still running.
-- A test file did not start. When a `--preload` script calls `process.exit()`, no test file starts.
+- A test file did not start. A `--preload` script runs before its test file starts.
+- `--rerun-each` has a run of the file left to start.
 
 `bun test` then prints an error at the line that called `process.exit()` and lists what did not run:
 

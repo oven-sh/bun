@@ -2499,9 +2499,7 @@ fn update_package_json_after_migration(
         }
     }
 
-    // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
-    // (see `data_store_dupe_str` below) so it shares the lifetime of the
-    // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
+    // Strings taken from pnpm-workspace.yaml live in `bump`: until the print and re-parse below.
     let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
     let mut catalog_obj: Option<Expr> = None;
     let mut catalogs_obj: Option<Expr> = None;
@@ -2510,22 +2508,12 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // The `Vec<u8>` would drop at the end of this arm while the
-            // `Expr`s it backs (catalog/catalogs/overrides/patchedDependencies
-            // below) escape into `json` and the
-            // `workspace_package_json_cache`. Intern the bytes into the same
-            // thread-local `DATA_STORE` that owns the surrounding `Expr`
-            // nodes — arena ownership, not a leak (bulk-freed on
-            // `Expr::data_store_reset`). This only covers scalars that slice
-            // the source; arena-backed scalars are re-interned after the
-            // parse below.
-            let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
+            let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
                 &yaml_source,
                 log,
-                &arena,
+                &bump,
                 bun_parsers::yaml::CyclicAliases::Reject,
             ) else {
                 break 'read_pnpm_workspace_yaml;
@@ -2536,40 +2524,20 @@ fn update_package_json_after_migration(
                     let mut paths: Vec<&'static [u8]> = Vec::new();
                     while let Some(package_path) = packages.next() {
                         if let Some(package_path_str) = as_string(&package_path) {
-                            // Intern (vs. the prior `Box<[u8]>`) so the
-                            // `EString` nodes built from these paths below do
-                            // not dangle once this function returns and the
-                            // boxes drop — they are stored into
-                            // `root_pkg_json.root` which is cached in
-                            // `manager.workspace_package_json_cache`.
-                            paths.push(js_ast::data_store_dupe_str(package_path_str));
+                            paths.push(package_path_str);
                         }
                     }
                     workspace_paths = Some(paths);
                 }
             }
 
-            catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
-            catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
-            workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
-            workspace_patched_deps_obj = ws_root
-                .get_object(b"patchedDependencies")
-                .filter(is_non_empty_object);
-
-            // These subtrees escape this arm (into `json` and the cached
-            // package.json tree) while `arena` drops with it, so their
-            // arena-backed strings must be re-interned first (#39785).
-            for subtree in [
-                &mut catalog_obj,
-                &mut catalogs_obj,
-                &mut workspace_overrides_obj,
-                &mut workspace_patched_deps_obj,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                data_store_dupe_expr_strings(subtree);
-            }
+            use WorkspaceYamlField::{NamedStrings, Strings};
+            catalog_obj = take_workspace_yaml_field(&ws_root, "catalog", Strings, silent);
+            catalogs_obj = take_workspace_yaml_field(&ws_root, "catalogs", NamedStrings, silent);
+            workspace_overrides_obj =
+                take_workspace_yaml_field(&ws_root, "overrides", Strings, silent);
+            workspace_patched_deps_obj =
+                take_workspace_yaml_field(&ws_root, "patchedDependencies", Strings, silent);
         }
         Err(_) => {}
     }
@@ -2759,35 +2727,112 @@ fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
 }
 
-/// The YAML parser backs quoted, block, and multi-line plain scalars with the
-/// caller's parse arena (`NodeScalar::to_expr`), so a subtree that outlives
-/// that arena dangles. Re-intern every string into the thread-local
-/// `DATA_STORE` that owns the surrounding `Expr` nodes.
-fn data_store_dupe_expr_strings(expr: &mut Expr) {
-    match &mut expr.data {
-        ExprData::EString(s) => {
-            let s = &mut **s;
-            if s.is_utf8() {
-                s.data = E::Str::new(js_ast::data_store_dupe_str(s.data.slice()));
-            }
-        }
-        ExprData::EObject(o) => {
-            for prop in (**o).properties.slice_mut() {
-                if let Some(key) = prop.key.as_mut() {
-                    data_store_dupe_expr_strings(key);
+#[derive(Clone, Copy)]
+enum WorkspaceYamlField {
+    /// `overrides`, `catalog`, `patchedDependencies`: a string for each key.
+    Strings,
+    /// `catalogs`: a map of strings for each catalog name.
+    NamedStrings,
+}
+
+/// A new object with only the string-to-string entries of the `name` map: a YAML key can be any node and aliases make the tree a DAG of any depth, so nothing else may reach the JSON printer.
+fn take_workspace_yaml_field(
+    ws_root: &Expr,
+    name: &'static str,
+    field: WorkspaceYamlField,
+    silent: bool,
+) -> Option<Expr> {
+    let map = ws_root.get_object(name.as_bytes())?;
+    let taken = match field {
+        WorkspaceYamlField::Strings => workspace_yaml_strings(&map, format_args!("{name}"), silent),
+        WorkspaceYamlField::NamedStrings => {
+            let entries = e_object(&map).properties.slice();
+            let mut props = G::PropertyList::init_capacity(entries.len());
+            for prop in entries {
+                let key = prop.key.as_ref().expect("infallible: prop has key");
+                let value = prop.value.as_ref().expect("infallible: prop has value");
+                let Some(key_str) = workspace_yaml_key(key, format_args!("{name}"), silent) else {
+                    continue;
+                };
+                if !value.is_object() {
+                    if !silent {
+                        bun_core::warn!(
+                            "skipped {} \"{}\" from pnpm-workspace.yaml: the value is not a map",
+                            name,
+                            bstr::BStr::new(key_str)
+                        );
+                    }
+                    continue;
                 }
-                if let Some(value) = prop.value.as_mut() {
-                    data_store_dupe_expr_strings(value);
-                }
+                let strings = workspace_yaml_strings(
+                    value,
+                    format_args!("{name}.{}", bstr::BStr::new(key_str)),
+                    silent,
+                );
+                VecExt::append(
+                    &mut props,
+                    G::Property {
+                        key: Some(*key),
+                        value: Some(strings),
+                        ..Default::default()
+                    },
+                );
             }
+            Expr::init(
+                E::Object {
+                    properties: props,
+                    ..Default::default()
+                },
+                map.loc,
+            )
         }
-        ExprData::EArray(a) => {
-            for item in (**a).items.slice_mut() {
-                data_store_dupe_expr_strings(item);
+    };
+    Some(taken).filter(is_non_empty_object)
+}
+
+fn workspace_yaml_strings(map: &Expr, path: core::fmt::Arguments<'_>, silent: bool) -> Expr {
+    let entries = e_object(map).properties.slice();
+    let mut props = G::PropertyList::init_capacity(entries.len());
+    for prop in entries {
+        let key = prop.key.as_ref().expect("infallible: prop has key");
+        let value = prop.value.as_ref().expect("infallible: prop has value");
+        let Some(key_str) = workspace_yaml_key(key, path, silent) else {
+            continue;
+        };
+        if as_string(value).is_none() {
+            if !silent {
+                bun_core::warn!(
+                    "skipped {} \"{}\" from pnpm-workspace.yaml: the value is not a string",
+                    path,
+                    bstr::BStr::new(key_str)
+                );
             }
+            continue;
         }
-        _ => {}
+        VecExt::append(&mut props, shallow_clone_prop(prop));
     }
+    Expr::init(
+        E::Object {
+            properties: props,
+            ..Default::default()
+        },
+        map.loc,
+    )
+}
+
+fn workspace_yaml_key(
+    key: &Expr,
+    path: core::fmt::Arguments<'_>,
+    silent: bool,
+) -> Option<&'static [u8]> {
+    let key_str = as_string(key);
+    if key_str.is_none() && !silent {
+        bun_core::warn!(
+            "skipped an entry of {} from pnpm-workspace.yaml: the key is not a string",
+            path
+        );
+    }
+    key_str
 }
 
 fn paths_array(paths: &[&'static [u8]]) -> Expr {

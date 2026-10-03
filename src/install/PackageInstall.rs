@@ -1035,6 +1035,10 @@ impl<'a> PackageInstall<'a> {
                     EntryKind::File => {
                         let path_len = entry.path.len();
                         let base_len = entry.basename.len();
+                        // One byte of the buffer is the NUL terminator written below.
+                        if path_len >= stackpath.len() {
+                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        }
                         stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
                         stackpath[path_len] = 0;
                         // `stackpath[path_len] == 0` written above; both views are
@@ -1321,8 +1325,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is the NUL terminator written below.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
@@ -1643,8 +1648,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is the NUL terminator written below.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         break;
@@ -1786,6 +1792,12 @@ impl<'a> PackageInstall<'a> {
                         }
                         EntryKind::File => {
                             let target_len = to_copy_into2_offset + entry.path.len();
+                            // One byte of the buffer is the NUL terminator written below.
+                            if target_len >= head2.len() {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
                             head2[to_copy_into2_offset..target_len]
                                 .copy_from_slice(entry.path.as_bytes());
                             head2[target_len] = 0;
@@ -1814,8 +1826,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is the NUL terminator written below.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }

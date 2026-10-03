@@ -2191,6 +2191,26 @@ impl Lockfile {
         }
     }
 
+    /// Undoes `tag_workspace_links` for one edge: the range goes back to what its literal spells.
+    /// `false` for a `workspace:` spec, which that pass did not write.
+    pub(crate) fn untag_workspace_link(&mut self, dep_id: DependencyID) -> bool {
+        let dep = &self.buffers.dependencies[dep_id as usize];
+        if dep.version.tag != dependency::Tag::Workspace {
+            return true;
+        }
+        let sliced = dep
+            .version
+            .literal
+            .sliced(self.buffers.string_bytes.as_slice());
+        match dependency::parse(dep.name, dep.name_hash, sliced.slice, &sliced, None, None) {
+            Some(version) if version.tag == dependency::Tag::Npm => {
+                self.buffers.dependencies[dep_id as usize].version = version;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Record that package `id` was appended via an exact-version dependency
     /// (`=X.Y.Z`). See the `exact_pinned` field doc.
     #[inline]

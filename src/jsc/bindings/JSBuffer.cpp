@@ -2373,9 +2373,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L325-L330
-// Node's native writers reject a non-string value and never coerce it, so its
-// toString() does not run.
+// Node's native writers reject a non-string value and never coerce it (THROW_AND_RETURN_IF_NOT_STRING, src/node_errors.h).
 static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isString()) [[likely]]
@@ -2449,8 +2447,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         maxLength = std::min(byteLength - safeOffset, static_cast<size_t>(intLength));
     }
 
-    // The wrapper's bounds checks above run before node's native writer sees the value,
-    // so an out-of-bounds offset or length wins over a non-string value.
+    // Node's JS wrapper checks the bounds first, so a bounds error wins over a non-string value.
     JSString* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2506,8 +2503,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
         return {};
     }
 
-    // toNumber only runs user-overridable code for an object argument, and that code
-    // can detach or resize the view, so re-validate only when it could have run.
+    // toNumber only runs user-overridable code for an object argument, and
+    // that code can detach or resize the view, so re-validate only when it could have run.
     if (offsetValue.isObject() && castedThis->isDetached()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};

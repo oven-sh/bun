@@ -155,8 +155,8 @@ extern "C" fn select_alpn_callback(
             // handler, the selection's `toString`, the scope's checkpoint), and
             // restore it on every path back to BoringSSL — after the scope guard
             // below has exited, since this guard is declared first. Connected
-            // usockets only: UpgradedDuplex/Pipe own mem BIOs whose BIO_get_data
-            // is a BUF_MEM*, not loop_ssl_data.
+            // usockets only: UpgradedDuplex/Pipe own an SSLWrapper BIO whose
+            // BIO_get_data is its ciphertext queues, not loop_ssl_data.
             const LOOP_STATE_SLOTS: usize = 6; // US_SSL_LOOP_STATE_SLOTS
             debug_assert_eq!(
                 LOOP_STATE_SLOTS as core::ffi::c_int,

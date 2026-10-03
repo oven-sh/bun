@@ -58,6 +58,55 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
 
+it.if(isWindows)("a write larger than 64 KiB round-trips over a TLS named pipe", async () => {
+  // The TLS engine over a pipe hands the pipe all the ciphertext of one write
+  // at once and queues what the pipe delivers. Both directions carry far more
+  // here than the 64 KiB the engine reads per pass.
+  const payload = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  // Resolves with the first `payload.length` bytes `socket` emits.
+  const receive = (socket: ReturnType<typeof connect>) => {
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    const chunks: Buffer[] = [];
+    let received = 0;
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received >= payload.length) resolve(Buffer.concat(chunks));
+    });
+    socket.on("error", reject);
+    return promise;
+  };
+
+  const atServer = Promise.withResolvers<Buffer>();
+  let client: ReturnType<typeof connect> | null = null;
+  const server = createServer(tls, socket => {
+    receive(socket).then(all => {
+      socket.write(all);
+      atServer.resolve(all);
+    }, atServer.reject);
+  });
+  server.on("tlsClientError", atServer.reject);
+  try {
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+
+    const socket = connect({ path: pipeName, ca: tls.cert });
+    client = socket;
+    const atClient = receive(socket);
+    socket.on("secureConnect", () => socket.write(payload));
+
+    const [serverGot, clientGot] = await Promise.all([atServer.promise, atClient]);
+    expect({ serverGotPayload: serverGot.equals(payload), clientGotPayload: clientGot.equals(payload) }).toEqual({
+      serverGotPayload: true,
+      clientGotPayload: true,
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 describe.each(["TLSv1.2", "TLSv1.3"] as const)(
   "%s over a named pipe: write() issued before the handshake completes",
   version => {

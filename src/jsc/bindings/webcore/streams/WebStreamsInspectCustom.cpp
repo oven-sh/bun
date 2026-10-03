@@ -54,7 +54,7 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    JSObject* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;

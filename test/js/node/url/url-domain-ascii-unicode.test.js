@@ -100,3 +100,89 @@ describe("url.domainToUnicode", () => {
     });
   }
 });
+
+// hasValidPunycodeHost still rejects these hosts, so domainToUnicode returns "" where Node v26.10.0 returns the value
+// in the tables below. The list goes away with that check (whatwg/url#914).
+const knownRejectDeviations = new Set([
+  "xn--xn--zca-hia.xn--mgbh0fb",
+  "xn--nxa.xn--",
+  "xn--nxa.xn--abc-",
+  "xn--nxa-",
+  "xn--1ug.xn--nxa",
+  "xn--nxa.xn--1ug",
+  "xn--a.b",
+  "xn--nxa.xn--abc.xn--nxa",
+  "xn--nxa.xn--fffd.xn--nxa",
+  "xn--nxa.xn--%41.xn--nxa",
+  "xn--nxa_.xn--nxa",
+]);
+
+// Node keeps a label that fails UTS #46 as it is (ada::idna::to_unicode). ICU appends U+FFFD to it. Values are from
+// Node v26.10.0. The ASCII fast path of hasValidPunycodeHost lacks the rule these labels break, so they get here.
+describe("url.domainToUnicode with an xn-- label that fails UTS #46", () => {
+  test.each([
+    // The label decodes to "xn--zca£". UTS #46 4.1 criterion 4: a decoded label must not begin with "xn--".
+    ["xn--xn--zca-hia", "xn--xn--zca-hia"],
+    ["xn--xn---epa", "xn--xn---epa"],
+    ["XN--XN--ZCA-HIA.Example", "xn--xn--zca-hia.example"],
+    // The valid labels still decode.
+    ["a.xn--xn--ab-gva.b", "a.xn--xn--ab-gva.b"],
+    ["xn--zca.xn--xn--zca-hia", "ß.xn--xn--zca-hia"],
+    ["xn--xn--zca-hia.xn--maana-pta.xn--ls8h", "xn--xn--zca-hia.mañana.💩"],
+    ["xn--xn--zca-hia.xn--mgbh0fb", "xn--xn--zca-hia.مثال"],
+  ])("%s", (input, expected) => {
+    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
+  });
+});
+
+describe("url.domainToUnicode with many xn-- labels", () => {
+  // The whole-name ICU conversion moves the rest of the name for each decoded label. That takes more than 9 s for
+  // this host on a debug build, so the test times out. One conversion per label takes 0.2 s.
+  // Node (ada 4.0.0) returns "" for a host of more than 16384 bytes. Bun has no cap.
+  test("takes linear time in the number of xn-- labels", () => {
+    const labels = 131072;
+    const host = Buffer.alloc(labels * 8, "xn--nxa.").toString() + "com";
+    expect(url.domainToUnicode(host)).toBe(Buffer.alloc(labels * 3, "β.").toString() + "com");
+  });
+
+  // Expected values are from Node v26.10.0.
+  test.each([
+    ["xn--nxa.xn--nxa.xn--nxa.com", "β.β.β.com"],
+    ["xn--nxa..xn--nxa", "β..β"],
+    ["xn--nxa.", "β."],
+    [".xn--nxa", ".β"],
+    ["xn--nxa.xn--", "β.xn--"],
+    ["xn--nxa.xn--abc-", "β.xn--abc-"],
+    ["xn--nxa-", "xn--nxa-"],
+    ["xn--nxa.ab--cd", "β.ab--cd"],
+    ["xn--nxa.-ab.ab-", "β.-ab.ab-"],
+    ["XN--NXA.Com", "β.com"],
+    ["xn--zca.xn--zca", "ß.ß"],
+    ["xn--mgbh0fb.xn--nxa", "مثال.β"],
+    ["xn--4dbklr2c8d.xn--4dbrk0ce.museum", "איקו״ם.ישראל.museum"],
+    ["xn--mgba3a4fra.xn--fiqs8s.xn--h2brj9c", "ايران.中国.भारत"],
+    ["xn--ls8h.xn--nxa", "💩.β"],
+    ["xn--1ug.xn--nxa", "xn--1ug.β"],
+    ["xn--nxa.xn--1ug", "β.xn--1ug"],
+    ["xn--9ca.xn--nxa", "é.β"],
+    ["xn--n3h.xn--nxa", "☃.β"],
+    ["xn--a.b", "xn--a.b"],
+    [
+      "xn--nxa." + "xn--80aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "β." + Buffer.alloc(120, "а").toString(),
+    ],
+    ["xn--nxa.xn--nxa.1.2.3.4", ""],
+    ["xn--nxa.0x7f.1", ""],
+    ["[::1]", "[::1]"],
+    ["ß.β.xn--nxa", "ß.β.β"],
+    ["xn--nxa.xn--abc.xn--nxa", "β.xn--abc.β"],
+    ["xn--nxa.xn--fffd.xn--nxa", "β.xn--fffd.β"],
+    ["xn--nxa.xn--\u0000.xn--nxa", ""],
+    ["xn--nxa.xn--%41.xn--nxa", "β.xn--a.β"],
+    ["xn--nxa_.xn--nxa", "xn--nxa_.β"],
+    ["xn--nxa.xn--nxa/path", "β.β"],
+    ["xn--nxa.xn--nxa?query", "β.β"],
+  ])("matches Node: %j", (input, expected) => {
+    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
+  });
+});

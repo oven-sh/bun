@@ -395,13 +395,6 @@ impl WriteFile {
             .is_path()
     }
 
-    /// `fallocate` on a caller's O_APPEND fd leaves a hole of NUL bytes before the appended data.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn appends_to_caller_fd(&self, fd: Fd) -> bool {
-        !self.is_allowed_to_close()
-            && sys::get_fcntl_flags(fd).is_ok_and(|flags| flags as i32 & sys::O::APPEND != 0)
-    }
-
     #[cfg(not(windows))]
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
@@ -464,10 +457,7 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block
-                && self.bytes_blob.shared_view().len() > 1024
-                && !self.appends_to_caller_fd(fd)
-            {
+            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,

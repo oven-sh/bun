@@ -77,8 +77,7 @@ pub fn install_with_manager(
     let load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile() {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
-        // `*log` are disjoint storage. `load_from_cwd` only reads `manager`
-        // for option flags and writes through `lockfile`/`log`.
+        // `*log` are disjoint storage.
         unsafe {
             let log = (*mgr).log;
             (*mgr)
@@ -158,6 +157,12 @@ pub fn install_with_manager(
 
                 if needs_new_lockfile {
                     break 'differ;
+                }
+
+                // bun keeps the lockfile from here on. One that it discards registers no alias.
+                if ok.format == lockfile::Format::Binary {
+                    ok.lockfile
+                        .record_dependency_row_aliases(&mut manager.known_npm_aliases);
                 }
 
                 let mut lockfile = Lockfile::default();

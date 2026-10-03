@@ -129,7 +129,7 @@ impl PackageManagerCommand {
         let load_lockfile = unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             let log: *mut bun_ast::Log = (*pm_raw).log;
-            (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
+            (*lockfile).load_from_bytes(Some(&*pm_raw), bytes, &mut *log)
         };
 
         Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
@@ -724,9 +724,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
             // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-            // cannot alias. `detect_and_load_other_lockfile` reads
-            // `manager.options`/`manager.log` only and never re-projects
-            // `manager.lockfile`.
+            // cannot alias.
             let mut load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;

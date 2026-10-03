@@ -57,6 +57,7 @@ test/integration/expo-app/expo.test.ts
 test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
+test/integration/rspack/rspack.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/js/bun/css/css-fuzz.test.ts
 test/js/bun/ffi/cc.test.ts
@@ -343,7 +344,6 @@ test/napi/uv_stub.test.ts
 
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
-test/js/bun/test/parallel/test-integration-rspack.ts
 
 test/js/web/websocket/websocket-subprotocol-strict.test.ts
 test/js/node/net/node-net-server.test.ts

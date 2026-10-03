@@ -93,7 +93,6 @@ test/js/bun/test/expect-assertions.test.ts  # 4 of 80 builds; parallel batch; ex
 test/js/bun/test/parallel/test-docker-build-alpine.ts  # 1 of 80 builds; ubuntu
 test/js/bun/test/parallel/test-docker-build-distroless.ts  # 2 of 80 builds; debian, ubuntu; timeout
 test/js/bun/test/parallel/test-http-client-should-be-able-to-send-array-of-[key-value]-as-headers.ts  # 1 of 80 builds; mac; timeout
-test/js/bun/test/parallel/test-integration-rspack.ts  # 1 of 80 builds; ubuntu, debian; timeout
 test/js/bun/util/filesink.test.ts  # 1 of 80 builds; highWaterMark -> "(rope) abcdefghijklmnopqrstuvwxyz😋 Get Emoji: All Emojis to ✂️ C...
 test/js/bun/util/stripANSI.test.ts  # 3 of 80 builds; parallel batch; returns same string object when no ANSI sequences present: expect(received).toBe(expec...
 test/js/bun/websocket/websocket-server.test.ts  # returns 0 when the topic has no subscribers: Expected 101 status code (1 build, darwin 14 x64); server.publish() batched reports dropped / backpressure (1 build, darwin 14 aarch64)

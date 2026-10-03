@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
         return {};
     }
 
-    auto values = impl.getSetCookieHeaders();
+    auto& values = impl.getSetCookieHeaders();
     unsigned count = values.size();
     if (!count) {
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
@@ -261,7 +261,7 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto values = impl->getSetCookieHeaders();
+    auto& values = impl->getSetCookieHeaders();
     unsigned count = values.size();
 
     if (!count) {

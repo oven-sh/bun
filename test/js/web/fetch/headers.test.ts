@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -733,6 +734,77 @@ describe("Headers", () => {
       // through unchanged while A-Z fold.
       const s = "X-Ab\u0100Cd\u0101Ef\uffffGZ";
       expect(lowercaseHeaderNameSIMD(s)).toBe("x-ab\u0100cd\u0101ef\uffffgz");
+    });
+  });
+
+  describe("growth limit", () => {
+    // Every set-cookie value is one entry in a Vector<String>, which holds at most
+    // min(INT32_MAX, the synthetic allocation limit) / 8 entries. The real limit
+    // needs 262343954 values and 2 GB. The child runs with a 64 KiB limit, which
+    // puts it at 8192 values.
+    const LIMIT_BYTES = 64 * 1024;
+    const MAX_SET_COOKIE = LIMIT_BYTES / 8;
+
+    test("append('set-cookie') throws a RangeError when the list cannot grow", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const headers = new Headers();
+            let stored = 0;
+            let appendError = null;
+            try {
+              for (; stored < ${MAX_SET_COOKIE} + 100; stored++) headers.append("set-cookie", "a=" + stored);
+            } catch (e) {
+              appendError = e.name + ": " + e.message;
+            }
+            const values = headers.getSetCookie();
+
+            let constructorError = null;
+            try {
+              new Headers([...values, "one=more"].map(value => ["set-cookie", value]));
+            } catch (e) {
+              constructorError = e.name + ": " + e.message;
+            }
+
+            // The object still works at the limit.
+            headers.set("content-type", "text/plain");
+            const iterated = [...headers].length;
+            const copied = new Response(null, { headers }).clone().headers.getSetCookie().length;
+            headers.set("set-cookie", "b=2");
+
+            console.log(JSON.stringify({
+              stored,
+              appendError,
+              kept: values.length,
+              last: values.at(-1),
+              constructorError,
+              iterated,
+              copied,
+              afterSet: headers.getSetCookie(),
+            }));
+          `,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "{}")).toEqual({
+        stored: MAX_SET_COOKIE,
+        appendError: "RangeError: Out of memory",
+        // The refused value is not stored.
+        kept: MAX_SET_COOKIE,
+        last: "a=" + (MAX_SET_COOKIE - 1),
+        constructorError: "RangeError: Out of memory",
+        iterated: MAX_SET_COOKIE + 1,
+        copied: MAX_SET_COOKIE,
+        afterSet: ["b=2"],
+      });
+      expect(exitCode).toBe(0);
     });
   });
 });

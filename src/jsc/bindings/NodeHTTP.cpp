@@ -91,14 +91,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(jsString(vm, WTF::move(fullURL)));
     }
 
-    // Get the method.
-    if (methodString.isUndefinedOrNull()) [[unlikely]] {
-        std::string_view methodView = request->getMethod();
-        WTF::String methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(methodView.data()), methodView.length() });
-        args.append(jsString(vm, WTF::move(methodString)));
-    } else {
-        args.append(methodString);
-    }
+    args.append(methodString);
 
     uint32_t bits = 0;
     // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.

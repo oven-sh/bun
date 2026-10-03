@@ -2,7 +2,7 @@ use enumset::EnumSet;
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
-#[derive(enumset::EnumSetType, Debug)]
+#[derive(enumset::EnumSetType, strum::FromRepr, Debug)]
 pub enum Method {
     ACL = 0,
     BIND = 1,
@@ -48,8 +48,7 @@ pub enum Method {
 pub type Set = EnumSet<Method>;
 
 bun_core::comptime_string_map! {
-    /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
-    /// hot path hits the uppercase entries; the all-lower entries exist only
+    /// For method names from JavaScript; the all-lower entries exist only
     /// for `new Request("get", …)` JS-side convenience (mixed-case still
     /// rejects).
     #[inline]
@@ -200,24 +199,8 @@ impl Method {
         )
     }
 
-    #[inline]
-    pub fn find(str: &[u8]) -> Option<Method> {
-        Self::which(str)
-    }
-
     /// Looks up the method in `METHOD_MAP` (length dispatch + constant-length
-    /// word compares; no hashing — a `phf::Map` here cost a SipHash13 round per
-    /// lookup, ≈ 0.6 % self-time in a Bun.serve hello-world profile, called
-    /// twice per request).
-    ///
-    /// `#[inline]`: this lookup should be fully
-    /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
-    /// release binary). Without the hint LLVM keeps this as a ~600-byte
-    /// out-of-line call because the full compare tree looks heavy, even though
-    /// every per-request caller only ever exercises the len=3 `b"GET"` arm —
-    /// trivially branch-predicted once the length dispatch is visible
-    /// at the call site. Showed up as 8 self-time samples (0.09 %) in the
-    /// `server/node-http` bench from the call alone.
+    /// word compares; no hashing).
     #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()

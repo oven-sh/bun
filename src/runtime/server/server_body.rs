@@ -103,7 +103,7 @@ trait RequestCtxOps: RequestCtx {
         req: &mut Self::Req,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
-        method: Option<http::Method>,
+        method: http::Method,
     );
     fn on_response(&self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
     fn deinit(&self);
@@ -151,7 +151,7 @@ where
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
-        method: Option<http::Method>,
+        method: http::Method,
     ) {
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
         // MaybeUninit for in-place construction — `&mut` scoped to this call.
@@ -280,7 +280,7 @@ trait ReqLike {
     /// Whether the transport frames the body with a Transfer-Encoding header.
     /// This is the parser's verdict, not a lookup of the first header field.
     fn has_transfer_encoding(&mut self) -> bool;
-    fn method(&mut self) -> &[u8];
+    fn method(&mut self) -> http::Method;
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
@@ -294,7 +294,7 @@ impl ReqLike for uws_sys::Request {
         uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::Request::method(self)
     }
     #[inline]
@@ -319,7 +319,7 @@ impl ReqLike for uws_sys::h3::Request {
         false
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::h3::Request::method(self)
     }
     #[inline]
@@ -2745,7 +2745,6 @@ where
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            user_route.route.method.specific(),
         ) else {
             return;
         };
@@ -2841,7 +2840,6 @@ where
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
-            None,
         ) else {
             return;
         };
@@ -2875,7 +2873,6 @@ where
         resp: &mut R,
         should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
-        method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<Ctx>> {
         jsc::mark_binding!();
         // SAFETY: `this` is the live heap server registered as the callback
@@ -2896,12 +2893,10 @@ where
             }
         }
 
-        // Resolve once, reuse for both `has_request_body()` and the forward to
-        // `Ctx::create`.
-        let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
+        let method = ReqLike::method(req);
 
         let request_body_length: Option<usize> = 'request_body_length: {
-            if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
+            if method.has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
                         break 'brk bun_http_types::parse_content_length(content_length);
@@ -3133,7 +3128,6 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
-        method: Option<http::Method>,
     ) {
         // BACKREF: `UserRoute.server` is set at construction from the owning
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
@@ -3159,7 +3153,6 @@ where
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            method,
         ) else {
             return;
         };
@@ -3220,7 +3213,7 @@ where
             // intermediate `&mut Self` was ever created; shared suffices (the
             // route entry is only read).
             let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
@@ -3262,13 +3255,14 @@ where
         // reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = unsafe { (*this.request_pool).claim() };
         let should_deinit_context = core::cell::Cell::new(false);
+        let method = req.method();
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot.addr().as_ptr(),
             self_ptr,
             req,
             RespLike::to_any_response(resp),
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            None,
+            method,
         );
         // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
         let ctx = unsafe { &*ctx_slot.assume_init().as_ptr() };
@@ -3357,9 +3351,8 @@ where
             // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
             // copy to owned buffers so the two `&req` borrows in the expansion
             // don't overlap with the returned slice lifetimes.
-            let m = req.method().to_vec();
             let u = req.url().to_vec();
-            httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
+            httplog!("{} - {}", req.method().as_str(), BStr::new(&u));
         }
 
         let authorized = 'brk: {

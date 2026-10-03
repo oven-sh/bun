@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { randomBytes } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -84,6 +85,70 @@ function buildPaxTarball(entries: Array<{ name: string; data: Buffer | string }>
   const parts = entries.map((e, i) => paxEntry(e.name, e.data, i));
   parts.push(Buffer.alloc(1024));
   return new Uint8Array(Buffer.concat(parts));
+}
+
+// Sparse members, as `tar --sparse` writes them. Such a member stores only its
+// data chunks and a map of where they go; `realSize` is the length of the
+// extracted file, so a member whose last chunk ends before `realSize` ends in
+// a hole.
+type SparseChunk = { offset: number; data: Buffer };
+
+function sparseMap(realSize: number, chunks: SparseChunk[]): [number, number][] {
+  const map = chunks.map(c => [c.offset, c.data.length] as [number, number]);
+  const end = chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.data.length : 0;
+  // GNU tar closes the map with an empty entry at the real size.
+  if (end < realSize) map.push([realSize, 0]);
+  return map;
+}
+
+// Old GNU format, the `tar --sparse` default: typeflag 'S', magic "ustar  \0",
+// four map entries at offset 386, the real size at 483. The size field counts
+// the stored bytes only.
+function oldGnuSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): Buffer {
+  const field = (n: number) => n.toString(8).padStart(11, "0") + "\0";
+  const map = sparseMap(realSize, chunks);
+  if (map.length > 4) throw new Error("the old GNU header holds four sparse entries");
+  const body = Buffer.concat(chunks.map(c => c.data));
+  const h = ustarHeader(name, body.length, "S");
+  h.write("ustar  \0", 257, "latin1");
+  map.forEach(([offset, length], i) => {
+    h.write(field(offset), 386 + i * 24);
+    h.write(field(length), 398 + i * 24);
+  });
+  h.write(field(realSize), 483);
+  h.write("        ", 148);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i];
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  return Buffer.concat([h, body, Buffer.alloc((512 - (body.length % 512)) % 512)]);
+}
+
+// PAX format 1.0, what `tar --sparse --format=posix` writes: an 'x' header
+// carries the name and the real size, and the data area starts with the map as
+// decimal lines, NUL-padded to a block, followed by the chunks.
+function paxSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): Buffer {
+  const record = (key: string, value: string | number) => {
+    const body = ` ${key}=${value}\n`;
+    const bodyBytes = Buffer.byteLength(body);
+    let len = bodyBytes + 1;
+    while (String(len).length + bodyBytes !== len) len++;
+    return `${len}${body}`;
+  };
+  const pax = Buffer.from(
+    record("GNU.sparse.major", 1) +
+      record("GNU.sparse.minor", 0) +
+      record("GNU.sparse.name", name) +
+      record("GNU.sparse.realsize", realSize),
+  );
+  const map = sparseMap(realSize, chunks);
+  const mapText = Buffer.from(`${map.length}\n` + map.map(([offset, length]) => `${offset}\n${length}\n`).join(""));
+  const mapPad = Buffer.alloc((512 - (mapText.length % 512)) % 512);
+  return Buffer.concat([
+    ustarHeader("PaxHeaders/sparse", pax.length, "x"),
+    pax,
+    Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ustarEntry(`GNUSparseFile.0/${name}`, Buffer.concat([mapText, mapPad, ...chunks.map(c => c.data)])),
+  ]);
 }
 
 describe("Bun.Archive", () => {
@@ -1649,8 +1714,9 @@ describe("Bun.Archive", () => {
   });
 
   describe("sparse files", () => {
-    // These test sparse tar files created with GNU tar --sparse
-    // They exercise the pwrite/lseek/writeZeros code paths in readDataIntoFd
+    // Files with runs of zeros, archived with GNU tar --sparse. The runs were
+    // not holes on disk, so tar stored each file whole (typeflag '0'): these
+    // cover a plain member. "sparse members" below has members with a map.
     const fixturesDir = join(import.meta.dir, "fixtures", "sparse-tars");
 
     test("extracts sparse file with small hole (< 1 tar block)", async () => {
@@ -1744,6 +1810,163 @@ describe("Bun.Archive", () => {
       // Verify the 64KB hole is zeros
       expect(extracted.slice(1024, 66560)).toEqual(new Uint8Array(65536).fill(0));
     });
+  });
+
+  describe("sparse members", () => {
+    // Both formats, every layout, below and above the size from which
+    // extraction used to preallocate the output file (1 MB).
+    const layouts = (size: number): Record<string, SparseChunk[]> => {
+      const lastBlock = Math.floor((size - 1) / 512) * 512;
+      return {
+        "data-hole": [{ offset: 0, data: Buffer.alloc(512, 0x41) }],
+        "hole-data": [{ offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x42) }],
+        "data-hole-data-hole": [
+          { offset: 0, data: Buffer.alloc(512, 0x43) },
+          { offset: Math.floor(size / 2 / 512) * 512, data: Buffer.alloc(1024, 0x44) },
+        ],
+        "data-hole-data": [
+          { offset: 0, data: Buffer.alloc(512, 0x45) },
+          { offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x46) },
+        ],
+        "hole": [],
+      };
+    };
+    const members: { name: string; size: number; chunks: SparseChunk[] }[] = [];
+    const parts: Buffer[] = [];
+    for (const [format, build] of [
+      ["gnu", oldGnuSparseEntry],
+      ["pax", paxSparseEntry],
+    ] as const) {
+      for (const size of [300_000, 3_000_000]) {
+        for (const [layout, chunks] of Object.entries(layouts(size))) {
+          const name = `${format}-${layout}-${size}.bin`;
+          parts.push(build(name, size, chunks));
+          members.push({ name, size, chunks });
+        }
+      }
+    }
+    parts.push(Buffer.alloc(1024));
+    const bytes = new Uint8Array(Buffer.concat(parts));
+
+    test.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ] as const)("extract() writes each member whole and leaves its holes unallocated (%s)", async (_, options) => {
+      using dir = tempDir("sparse-members", {});
+      expect(await new Bun.Archive(bytes).extract(String(dir), options)).toBe(members.length);
+
+      const wrong: { name: string; length: number }[] = [];
+      let allocated = 0;
+      for (const { name, size, chunks } of members) {
+        const expected = Buffer.alloc(size, 0);
+        for (const c of chunks) c.data.copy(expected, c.offset);
+        const got = readFileSync(join(String(dir), name));
+        if (!got.equals(expected)) wrong.push({ name, length: got.length });
+        allocated += statSync(join(String(dir), name)).blocks * 512;
+      }
+      // The length of a member comes from the end of its data, not from the
+      // last block that was written: a member that ends in a hole is whole.
+      expect(wrong).toEqual([]);
+      // 33 MB of file for 24 chunks of data. A hole takes no disk where the
+      // file system has sparse files and reports them: every Linux CI file
+      // system, and NTFS, which rounds a chunk up to 64 KiB.
+      const chunkCount = members.reduce((n, m) => n + m.chunks.length, 0);
+      if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
+    });
+
+    test("extract() does not size a file from a header that declares more than the archive holds", async () => {
+      // The header declares 16 MiB. The archive ends 100 bytes into the body.
+      const lying = new Uint8Array(
+        Buffer.concat([
+          ustarHeader("big.bin", 16 * 1024 * 1024),
+          Buffer.alloc(100, 0x78),
+          Buffer.alloc(412),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("sparse-lying-header", {});
+      await expect(async () => {
+        await new Bun.Archive(lying).extract(String(dir));
+      }).toThrow("ReadError");
+
+      // What stays is the part of the body that was there.
+      const left = join(String(dir), "big.bin");
+      const stat = existsSync(left) ? statSync(left) : { size: 0, blocks: 0 };
+      expect(stat.size).toBeLessThan(64 * 1024);
+      expect(stat.blocks * 512).toBeLessThan(64 * 1024);
+    });
+
+    // A sparse map can put a chunk where the file system cannot seek: ext4
+    // stops at 16 TiB. The child runs with a file size limit, so a build that
+    // writes zeros up to the offset stops at the limit and not at a full disk.
+    test.skipIf(isWindows)("extract() writes nothing to reach an offset the file system cannot seek to", async () => {
+      const offset = 17 * 2 ** 40;
+      using dir = tempDir("sparse-far-offset", {
+        "far.tar": Buffer.concat([
+          paxSparseEntry("far.bin", offset + 512, [{ offset, data: Buffer.alloc(512, 0x41) }]),
+          Buffer.alloc(1024),
+        ]),
+        "extract.mjs": `
+          import { existsSync, statSync } from "node:fs";
+          const settled = await new Bun.Archive(await Bun.file("far.tar").bytes()).extract(".").then(
+            () => "resolved",
+            () => "rejected",
+          );
+          const stat = existsSync("far.bin") ? statSync("far.bin") : { blocks: 0 };
+          console.log(JSON.stringify({ settled, allocated: stat.blocks * 512 }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        // A write past the limit raises SIGXFSZ, which must not end the child.
+        // Without the limit the child must not run.
+        cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 65536 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      // The limit is below the offset, so no file system can place the chunk.
+      expect(JSON.parse(stdout)).toEqual({ settled: "rejected", allocated: 0 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A full disk, a quota or a file size limit refuses a write in the middle of
+  // a file. The write loop then went on with `write()` at the start of the
+  // file: the file was cut, its first bytes were those of the refused block,
+  // and extract() resolved.
+  test.skipIf(isWindows)("extract() rejects when the file system refuses a write in the middle of a file", async () => {
+    // 6,000,000 bytes where no file can grow past 4 MiB. Gzip, so that the
+    // member arrives in many blocks: the first ones fit.
+    const data = randomBytes(6_000_000);
+    using dir = tempDir("archive-refused-write", {
+      "big.tar.gz": Buffer.from(Bun.gzipSync(Buffer.concat([ustarEntry("big.bin", data), Buffer.alloc(1024)]))),
+      "extract.mjs": `
+        const archive = new Bun.Archive(await Bun.file("big.tar.gz").bytes());
+        console.log(await archive.extract("out").then(() => "resolved", e => "rejected " + e.message));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      // 8192 blocks of 512 bytes. A write past the limit raises SIGXFSZ, which
+      // must not end the child. Without the limit the child must not run.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8192 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected ReadError");
+
+    // What stays of the file is its start, byte for byte.
+    const left = join(String(dir), "out", "big.bin");
+    const written = existsSync(left) ? readFileSync(left) : Buffer.alloc(0);
+    expect(written.equals(data.subarray(0, written.length))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   describe("extract with glob patterns", () => {

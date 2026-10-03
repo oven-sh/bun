@@ -894,11 +894,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf_len);
         }
 
-        self.try_write_newly_buffered_data()
+        self.try_write_newly_buffered_data(buf_len)
     }
 
-    fn try_write_newly_buffered_data(&mut self) -> WriteResult {
+    /// `chunk_len` is how much of the end of `outgoing` the current `write*()` call appended. The
+    /// bytes ahead of it were reported as written when they were buffered, so `Wrote` and `Done`
+    /// leave them out. `Pending` stays the fd's count: `FileSink::bytes_accepted` needs it.
+    fn try_write_newly_buffered_data(&mut self, chunk_len: usize) -> WriteResult {
         debug_assert!(!self.is_done);
+
+        let already_reported = self.outgoing.size() - chunk_len;
 
         // Borrow `self.outgoing` only for the syscall. `try_write` takes `&self`
         // so the shared borrow of `outgoing.slice()` is sound and ends before
@@ -913,27 +918,28 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 if amt == self.outgoing.size() {
                     self.outgoing.reset();
                     self.parent_on_write(amt, WriteStatus::Drained);
+                    WriteResult::Wrote(chunk_len)
                 } else {
                     self.outgoing.wrote(amt);
                     self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
-                    return WriteResult::Pending(amt);
+                    WriteResult::Pending(amt)
                 }
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
                 self.parent_on_write(amt, WriteStatus::EndOfFile);
+                WriteResult::Done(amt.saturating_sub(already_reported))
             }
             WriteResult::Pending(amt) => {
                 self.outgoing.wrote(amt);
                 self.parent_on_write(amt, WriteStatus::Pending);
                 Self::register_poll(self);
+                WriteResult::Pending(amt)
             }
 
-            WriteResult::Err(e) => return WriteResult::Err(e),
+            WriteResult::Err(e) => WriteResult::Err(e),
         }
-
-        rc
     }
 
     pub fn write(&mut self, buf: &[u8]) -> WriteResult {
@@ -964,7 +970,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Err(sys::Error::oom());
             }
 
-            return self.try_write_newly_buffered_data();
+            return self.try_write_newly_buffered_data(buf.len());
         }
 
         let rc = self.try_write(self.force_sync, buf);

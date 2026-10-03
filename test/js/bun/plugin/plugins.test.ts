@@ -1652,3 +1652,63 @@ describe.concurrent("onResolve", () => {
     });
   });
 });
+
+describe("namespace characters", () => {
+  const hooks = ["onLoad", "onResolve"] as const;
+  const accepted = "azAZ09_-@/";
+  const refused = ["a$b", "a.b", "yaml:", "two words", "é", "名前"];
+  const neverMatches = /(?!)/;
+
+  // Calls each hook with each namespace and reports what the call did.
+  function register(build: import("bun").PluginBuilder) {
+    return hooks.flatMap(hook =>
+      [accepted, ...refused].map(namespace => {
+        try {
+          build[hook]({ filter: neverMatches, namespace }, () => undefined);
+          return `${hook} ${namespace}: accepted`;
+        } catch (error: any) {
+          return `${hook} ${namespace}: ${error.name}: ${error.message}`;
+        }
+      }),
+    );
+  }
+
+  const expected = (errorName: string) =>
+    hooks.flatMap(hook => [
+      `${hook} ${accepted}: accepted`,
+      ...refused.map(
+        namespace =>
+          `${hook} ${namespace}: ${errorName}: namespace "${namespace}" can only contain ASCII letters, digits, "_", "-", "@" and "/"`,
+      ),
+    ]);
+
+  it("Bun.plugin and Bun.build refuse a namespace with one message, which names every accepted character", async () => {
+    let fromPlugin: string[] | undefined;
+    plugin({
+      name: "namespace characters",
+      setup(build) {
+        fromPlugin = register(build);
+      },
+    });
+
+    using dir = tempDir("plugin-namespace-characters", { "entry.js": "" });
+    let fromBuild: string[] | undefined;
+    const { success } = await Bun.build({
+      entrypoints: [resolve(String(dir), "entry.js")],
+      plugins: [
+        {
+          name: "namespace characters",
+          setup(build) {
+            fromBuild = register(build);
+          },
+        },
+      ],
+    });
+
+    expect({ plugin: fromPlugin, build: fromBuild, success }).toEqual({
+      plugin: expected("Error"),
+      build: expected("TypeError"),
+      success: true,
+    });
+  });
+});

@@ -45,6 +45,18 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
+// Bun.build throws the same sentence from `validate` in src/js/builtins/BundlerPlugin.ts. plugins.test.ts compares the two.
+static void throwInvalidNamespace(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const String& namespaceString)
+{
+    // `namespaceString` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("namespace \""_s, namespaceString, "\" can only contain ASCII letters, digits, \"_\", \"-\", \"@\" and \"/\""_s);
+    if (!message) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    throwException(globalObject, scope, createError(globalObject, message));
+}
+
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -78,7 +90,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
             namespaceString = namespaceValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
+                throwInvalidNamespace(globalObject, scope, namespaceString);
                 return {};
             }
         }
@@ -193,7 +205,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
             namespaceString = namespaceValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
+                throwInvalidNamespace(globalObject, scope, namespaceString);
                 return {};
             }
         }

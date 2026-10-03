@@ -21,9 +21,11 @@ const LENGTH = 2 ** 31 - 10;
 const fixture = `
   import { SocketAddress } from "node:net";
 
-  const long = "q".repeat(${LENGTH});
+  // "!" is not a plugin namespace character, so Bun.plugin refuses this string.
+  const long = "!".repeat(${LENGTH});
   class C {}
   Object.defineProperty(C, "name", { value: long });
+  const refusedNamespace = hook => Bun.plugin({ setup(build) { build[hook]({ filter: /x/, namespace: long }, () => {}); } });
 
   const cases = {
     "unknown Buffer encoding": () => Buffer.from("x", long),
@@ -34,6 +36,8 @@ const fixture = `
     "invalid SubtleCrypto key format": () => crypto.subtle.importKey(long, new Uint8Array(8), "AES-GCM", false, ["encrypt"]),
     "invalid ReadableStream source type": () => new ReadableStream({ type: long }),
     "value that ReadableStream.from cannot iterate": () => ReadableStream.from(Symbol(long)),
+    "namespace that Bun.plugin refuses in onLoad": () => refusedNamespace("onLoad"),
+    "namespace that Bun.plugin refuses in onResolve": () => refusedNamespace("onResolve"),
   };
   for (const [name, run] of Object.entries(cases)) {
     try {
@@ -69,6 +73,8 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
         "invalid SubtleCrypto key format: RangeError: Out of memory",
         "invalid ReadableStream source type: RangeError: Out of memory",
         "value that ReadableStream.from cannot iterate: RangeError: Out of memory",
+        "namespace that Bun.plugin refuses in onLoad: RangeError: Out of memory",
+        "namespace that Bun.plugin refuses in onResolve: RangeError: Out of memory",
       ],
       stderr: "",
       exitCode: 0,

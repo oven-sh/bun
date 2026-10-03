@@ -2428,9 +2428,7 @@ impl H2FrameParser {
         let _ = self.handlers.get().call_write_callback(callback, &[]);
     }
 
-    /// For a stream write whose bytes the session dropped or refused. The callback gets `null`:
-    /// a Writable callback reads it as "no error", and http2.ts reads it as "not sent", so the
-    /// write does not refresh the idle timer of the session.
+    /// For a dropped or refused write: `null` is "no error" to a Writable, and "not sent" to http2.ts.
     pub(crate) fn dispatch_dropped_write_callback(&self, callback: JSValue) {
         let _dispatch = self.enter_dispatch();
         let _ = self

@@ -341,8 +341,8 @@ impl UpgradeCommand {
                 refresher.expect("infallible: progress active").refresh();
 
                 bun_core::pretty_errorln!(
-                    "JSON error - expected an object but received {:?}",
-                    core::mem::discriminant(&expr.data)
+                    "JSON error - expected an object but received {}",
+                    expr.data.tag_name()
                 );
                 Global::exit(1);
             }

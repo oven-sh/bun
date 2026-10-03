@@ -93,6 +93,12 @@ pub trait DependencyExt {
         builder: &mut SB,
     ) -> Result<Dependency, crate::Error>;
     fn realname(&self) -> String;
+    /// The name package.json gives this dependency, when it is not
+    /// `package_name`, the name of the package it resolves to: the `my-alias`
+    /// of `"my-alias": "npm:dep@1.0.0"`. Unlike `realname`, this also holds for
+    /// a `catalog:` or overridden dependency. A command that takes or prints a
+    /// package name has to handle both names.
+    fn alias_for<'a>(&'a self, package_name: &[u8], buf: &'a [u8]) -> Option<&'a [u8]>;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
     fn parse<'a, 'b>(
@@ -243,6 +249,11 @@ impl DependencyExt for Dependency {
             Tag::Tarball => self.version.tarball().package_name,
             _ => self.name,
         }
+    }
+
+    fn alias_for<'a>(&'a self, package_name: &[u8], buf: &'a [u8]) -> Option<&'a [u8]> {
+        let name = self.name.slice(buf);
+        (name != package_name).then_some(name)
     }
 
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {

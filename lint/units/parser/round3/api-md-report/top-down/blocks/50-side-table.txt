@@ -206,8 +206,10 @@ What is recorded in a lint parse of TypeScript: `x as T`, `x as const`, `x satis
 decorator), `<T>x`.
 [[PICK wrappers-parens: the same decision as "parens" in "What changed for a caller in round 3"]]
 And every pair of parentheses around an expression (`(a)`, `(a, b)`, the body of `=> (b)`, `new (F)()`, `@(d)`):
-the `(` that starts an expression tests the side table in the TypeScript parser. Not recorded, because they are no
-parenthesized expression: the parentheses of the parameters of an arrow function, of a call, and of `if (..)`,
+the `(` that starts an expression tests the side table in the TypeScript parser. That is the one site of the lint
+parse that JavaScript syntax reaches: a parse of TypeScript without lint pays one test for each expression that
+starts with `(`. [[FILL parens-cost: the executed tests of this site per group from sites.cg.<group>.txt. Counted with tsc over the inputs of the benchmark (round3/api-md-report/top-down/parens-per-kb.txt): 0 in bun-types and typescript-lib, 2,094 per pass in src-js (0.64 per KB), 21 per parse in tsx (3.0 per KB)]]
+Not recorded, because they are no parenthesized expression: the parentheses of the parameters of an arrow function, of a call, and of `if (..)`,
 `while (..)` and the like. A lint parse of JavaScript records no parentheses, and `Parser::parse_only` records none.
 [[OR]]
 No parentheses: `WrapperData::Parenthesized` is never made. The site is the `(` that starts any expression, and a

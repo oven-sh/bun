@@ -1,0 +1,9 @@
+# node parens-per-kb.cjs, 2026-10-03, typescript 6.0.2 over the inputs of the transpiler benchmark (/workspace/notes/lint/benchroot).
+# "total" is how often Bun's pfx_t_open_paren runs in one pass over the group: a test of the side table there is that many
+# conditional branches per pass. 20 passes of cgbench.sh (tsx: 2,000 parses): src-js 41,880, tsx 42,000, js-control 192,360.
+# parser3.md reports +203,340 conditional branches in js-control for round 1, which tests P::is_lint_parse() at this site in every parser.
+bun-types       files   29  bytes  1076221  parenthesized      0  arrow(      0  total      0  per KB 0.00
+typescript-lib  files  108  bytes  3784758  parenthesized      0  arrow(      0  total      0  per KB 0.00
+src-js          files  193  bytes  3268179  parenthesized   1455  arrow(    639  total   2094  per KB 0.64
+tsx             files    1  bytes     7003  parenthesized     13  arrow(      8  total     21  per KB 3.00
+js-control      files    1  bytes  1506667  parenthesized   9608  arrow(     10  total   9618  per KB 6.38

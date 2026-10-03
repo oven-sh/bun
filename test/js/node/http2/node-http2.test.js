@@ -1919,6 +1919,113 @@ it("http2 stream.close() validates input types and ranges", async () => {
   });
 });
 
+// node checks `settings` first and validates only a truthy callback:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1556-L1564
+it("http2 session.settings() checks settings before callback and ignores a falsy callback", async () => {
+  function outcome(fn) {
+    try {
+      fn();
+      return "accepted";
+    } catch (err) {
+      return { name: err.name, code: err.code, message: err.message };
+    }
+  }
+
+  function probe(session) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    session.on("error", reject);
+    session.once("close", () => reject(new Error("session closed before the last SETTINGS ACK")));
+    const rejected = {
+      "settings(null, 1)": outcome(() => session.settings(null, 1)),
+      "settings({ maxFrameSize: 1 }, 1)": outcome(() => session.settings({ maxFrameSize: 1 }, 1)),
+      "settings({}, 1)": outcome(() => session.settings({}, 1)),
+    };
+    // Each accepted call sends its own headerTableSize, so the log shows which ACK ran which callback.
+    const log = [];
+    const callback = (err, settings) => log.push(`callback ${err} ${settings.headerTableSize}`);
+    const calls = [
+      [1000, null],
+      [2000, 0],
+      [3000, callback],
+      [4000, ""],
+      [5000, false],
+      [6000, callback],
+    ];
+    const accepted = calls.map(([size, cb]) => outcome(() => session.settings({ headerTableSize: size }, cb)));
+    session.on("localSettings", settings => {
+      const size = settings.headerTableSize;
+      if (!calls.some(call => call[0] === size)) return; // the ACK of the connection preface
+      log.push(`localSettings ${size}`);
+      if (size === 6000) resolve({ rejected, accepted, log });
+    });
+    return promise;
+  }
+
+  const expected = {
+    rejected: {
+      "settings(null, 1)": {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "settings" argument must be of type object. Received null',
+      },
+      "settings({ maxFrameSize: 1 }, 1)": {
+        name: "RangeError",
+        code: "ERR_HTTP2_INVALID_SETTING_VALUE",
+        message: 'Invalid value for setting "maxFrameSize": 1',
+      },
+      "settings({}, 1)": {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "callback" argument must be of type function. Received type number (1)',
+      },
+    },
+    accepted: ["accepted", "accepted", "accepted", "accepted", "accepted", "accepted"],
+    // An ignored callback still takes the ACK of its own frame.
+    log: [
+      "localSettings 1000",
+      "localSettings 2000",
+      "callback null 3000",
+      "localSettings 3000",
+      "localSettings 4000",
+      "localSettings 5000",
+      "callback null 6000",
+      "localSettings 6000",
+    ],
+  };
+
+  const server = http2.createServer();
+  const serverSession = new Promise(resolve => server.once("session", resolve));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    await new Promise((resolve, reject) => client.once("connect", resolve).once("error", reject));
+    expect({ client: await probe(client), server: await probe(await serverSession) }).toEqual({
+      client: expected,
+      server: expected,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3502-L3509
+it.each(["createServer", "createSecureServer"])(
+  "http2 %s().setTimeout() assigns the timeout before it validates the callback",
+  factory => {
+    const server = http2[factory]({});
+    expect(() => server.setTimeout(123, 1)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "callback" argument must be of type function. Received type number (1)',
+      }),
+    );
+    expect(server.timeout).toBe(123);
+    expect(server.listenerCount("timeout")).toBe(0);
+  },
+);
+
 it("http2 session.goaway() sends custom data", async done => {
   const { mustCall } = createCallCheckCtx(done);
 

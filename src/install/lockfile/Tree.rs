@@ -615,6 +615,113 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
+/// The packages that a linked dependency without `Behavior::OPTIONAL` resolves to.
+pub(crate) struct RequiredPackages<'a> {
+    workspace_filters: &'a [WorkspaceFilter],
+    install_root_dependencies: bool,
+    packages_to_install: Option<&'a [PackageID]>,
+    /// Walked on the first question that the asking dependency cannot answer.
+    packages: Option<DynamicBitSet>,
+}
+
+impl<'a> RequiredPackages<'a> {
+    pub(crate) fn new(
+        workspace_filters: &'a [WorkspaceFilter],
+        install_root_dependencies: bool,
+        packages_to_install: Option<&'a [PackageID]>,
+    ) -> Self {
+        Self {
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+            packages: None,
+        }
+    }
+
+    /// `dependency_id` is the linked dependency that asks for `package_id`.
+    pub(crate) fn contains(
+        &mut self,
+        manager: &PackageManager,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    ) -> bool {
+        let lockfile: &Lockfile = &manager.lockfile;
+        if !lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .contains(crate::dependency::Behavior::OPTIONAL)
+        {
+            return true;
+        }
+        // Walk again if the install appended a package since.
+        let packages = match &mut self.packages {
+            Some(packages) if packages.bit_length() == lockfile.packages.len() => packages,
+            stale => stale.insert(bun_core::handle_oom(required_packages(
+                lockfile,
+                manager,
+                self.workspace_filters,
+                self.install_root_dependencies,
+                self.packages_to_install,
+            ))),
+        };
+        packages.is_set(package_id as usize)
+    }
+}
+
+fn required_packages(
+    lockfile: &Lockfile,
+    manager: &PackageManager,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    packages_to_install: Option<&[PackageID]>,
+) -> Result<DynamicBitSet, AllocError> {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkgs = lockfile.packages.slice();
+    let pkg_dependencies = pkgs.items_dependencies();
+    let pkg_metas = pkgs.items_meta();
+
+    let mut required = DynamicBitSet::init_empty(pkg_dependencies.len())?;
+    let mut seen = DynamicBitSet::init_empty(pkg_dependencies.len())?;
+    let mut queue: Vec<PackageID> = vec![0];
+    seen.set(0);
+
+    while let Some(parent_pkg_id) = queue.pop() {
+        let slice = pkg_dependencies[parent_pkg_id as usize];
+        for dep_id in slice.begin()..slice.end() {
+            let pkg_id = resolutions[dep_id as usize];
+            let behavior = dependencies[dep_id as usize].behavior;
+            if pkg_id as usize >= pkg_dependencies.len()
+                // The linkers can bind a peer to another package than the one it resolves to.
+                || behavior.is_peer()
+                // `is_filtered_dependency_or_workspace` would print this package under `--verbose`.
+                || pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os)
+                || is_filtered_dependency_or_workspace(
+                    dep_id,
+                    parent_pkg_id,
+                    workspace_filters,
+                    install_root_dependencies,
+                    manager,
+                    lockfile,
+                    resolutions,
+                )
+                || (parent_pkg_id == 0
+                    && packages_to_install.is_some_and(|packages| !packages.contains(&pkg_id)))
+            {
+                continue;
+            }
+            if !behavior.contains(crate::dependency::Behavior::OPTIONAL) {
+                required.set(pkg_id as usize);
+            }
+            if !seen.is_set(pkg_id as usize) {
+                seen.set(pkg_id as usize);
+                queue.push(pkg_id);
+            }
+        }
+    }
+
+    Ok(required)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // process_subtree / hoist_dependency
 // ──────────────────────────────────────────────────────────────────────────

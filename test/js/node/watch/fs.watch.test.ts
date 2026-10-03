@@ -620,6 +620,67 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // libuv maps every inotify mask bit outside IN_ATTRIB|IN_MODIFY to "rename",
+  // and the kernel sets IN_ISDIR on every event about a directory, so node
+  // reports a directory's attribute change as "rename" and a file's as "change".
+  // https://github.com/oven-sh/bun/issues/43066
+  async function collectWatchEventsUntil(
+    target: string,
+    options: fs.WatchOptions,
+    count: number,
+    act: () => void,
+  ): Promise<[string, string | null][]> {
+    const events: [string, string | null][] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<[string, string | null][]>();
+    const watcher = fs.watch(target, options, (eventType, filename) => {
+      events.push([eventType, filename]);
+      if (events.length === count) resolve(events.slice());
+    });
+    watcher.once("error", reject);
+    try {
+      act();
+      return await promise;
+    } finally {
+      watcher.close();
+    }
+  }
+
+  const toggleMode = (p: string) => fs.chmodSync(p, fs.statSync(p).mode ^ 0o001);
+
+  test.skipIf(!isLinux)("changing the attributes of the watched directory reports rename", async () => {
+    using dir = tempDir("fs-watch-chmod-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    expect(await collectWatchEventsUntil(target, {}, 1, () => toggleMode(target))).toEqual([["rename", "sub"]]);
+  });
+
+  test.skipIf(!isLinux)("changing the attributes of a subdirectory reports rename, of a file change", async () => {
+    using dir = tempDir("fs-watch-chmod-child", { "sub": {}, "f.txt": "x" });
+    const root = String(dir);
+    const events = await collectWatchEventsUntil(root, {}, 2, () => {
+      toggleMode(path.join(root, "sub"));
+      toggleMode(path.join(root, "f.txt"));
+    });
+    expect(events).toEqual([
+      ["rename", "sub"],
+      ["change", "f.txt"],
+    ]);
+  });
+
+  // node's recursive watcher is not libuv: an attribute change of a directory,
+  // the root or one below it, is not reported at all. A file's still is.
+  test.skipIf(!isLinux)("a recursive watch does not report an attribute change of a directory", async () => {
+    using dir = tempDir("fs-watch-chmod-recursive", { "sub": {}, "f.txt": "x" });
+    const root = String(dir);
+    // inotify delivers events in order, so a directory event would land
+    // before the chmod of f.txt.
+    const events = await collectWatchEventsUntil(root, { recursive: true }, 1, () => {
+      toggleMode(root);
+      toggleMode(path.join(root, "sub"));
+      toggleMode(path.join(root, "f.txt"));
+    });
+    expect(events).toEqual([["change", "f.txt"]]);
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

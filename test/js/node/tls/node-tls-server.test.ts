@@ -759,6 +759,72 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
   expect(true).toBe(true);
 });
 
+it.concurrent.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "an ALPNCallback that destroys its socket over a Duplex drops that connection only (%s)",
+  async maxVersion => {
+    // The callback runs inside the handshake of the TLS engine that runs over the stream.
+    const script = `
+      const tls = require("node:tls");
+      const net = require("node:net");
+      const { Duplex } = require("node:stream");
+      const { once } = require("node:events");
+      const server = tls.createServer({
+        ...${JSON.stringify(COMMON_CERT)},
+        maxVersion: ${JSON.stringify(maxVersion)},
+        ALPNCallback() {
+          this.destroy();
+          return undefined;
+        },
+      });
+      // A front hands the server a stream that is not a net.Socket.
+      const front = net.createServer(raw => {
+        raw.on("error", () => {});
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            raw.write(chunk, callback);
+          },
+          final(callback) {
+            raw.end();
+            callback();
+          },
+          destroy(err, callback) {
+            raw.destroy();
+            callback(err);
+          },
+        });
+        raw.on("data", chunk => duplex.push(chunk));
+        raw.on("end", () => duplex.push(null));
+        server.emit("connection", duplex);
+      });
+      front.listen(0, "127.0.0.1", async () => {
+        const { port } = front.address();
+        const refused = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
+        const [err] = await once(refused, "error");
+        // A client that offers no ALPN does not reach the callback: the server still serves it.
+        const served = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        await once(served, "secureConnect");
+        console.log(JSON.stringify({ refused: err.code, alpnProtocol: served.alpnProtocol }));
+        served.destroy();
+        front.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ refused: "ECONNRESET", alpnProtocol: false }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 it("writing to the socket from inside SNICallback or ALPNCallback delivers the data after the handshake", async () => {
   // Same callbacks as above: they run from inside the native read that is
   // processing the ClientHello. A write issued there has to be held until that
@@ -3777,35 +3843,5 @@ describe("server names for a connection handed in with server.emit('connection')
     expect(() => server.addContext("", { ...agent1 })).toThrow(
       expect.objectContaining({ code: "ERR_TLS_REQUIRED_SERVER_NAME" }),
     );
-  });
-
-  it("an ALPNCallback that destroys its socket over a Duplex drops that connection only", async () => {
-    const server = createServer({
-      ...agent2,
-      ALPNCallback(this: TLSSocket) {
-        this.destroy();
-        return undefined;
-      },
-    });
-    const front = net.createServer(raw => {
-      raw.on("error", () => {});
-      server.emit("connection", asDuplex(raw));
-    });
-    let client: TLSSocket | undefined;
-    try {
-      front.listen(0, "127.0.0.1");
-      await once(front, "listening");
-      const port = (front.address() as AddressInfo).port;
-      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["h2"] });
-      const [err] = await once(client, "error");
-      expect(err.code).toBe("ECONNRESET");
-      // A client that offers no ALPN does not reach the callback: the server still serves it.
-      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-      await once(client, "secureConnect");
-      expect(client.getPeerCertificate().subject.CN).toBe("agent2");
-    } finally {
-      client?.destroy();
-      front.close();
-    }
   });
 });

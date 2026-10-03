@@ -759,8 +759,8 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
         error: error => {
           if (error?.syscall === "recv") {
             // Drop errqueue-origin ICMP errors on unconnected sockets like
-            // Node (which never enables IP_RECVERR). Always emit the pending
-            // error of the socket: the errno namespaces overlap.
+            // Node (which never enables IP_RECVERR); always emit real
+            // recvmmsg failures — the errno namespaces overlap.
             if (error.errqueue === true && state.connectState !== CONNECT_STATE_CONNECTED) {
               return;
             }

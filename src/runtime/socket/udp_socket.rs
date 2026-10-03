@@ -96,21 +96,18 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errqueue: c_int) {
     // Reached on every POSIX platform. `is_errqueue` distinguishes an ICMP
-    // errno drained from Linux's MSG_ERRQUEUE from the pending error of the
-    // socket (a recvmmsg that failed with it or, on Linux, the SO_ERROR read
-    // after the error handlers of one event). On the BSDs (no error queue)
-    // the pending error is also how a connected socket's ICMP error
-    // (so_error) arrives. node:dgram must drop only the former on
+    // errno drained from Linux's MSG_ERRQUEUE from a real recvmmsg failure —
+    // which on the BSDs (no error queue) is also how a connected socket's
+    // ICMP error (so_error) arrives. node:dgram must drop only the former on
     // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = this.enter_owners_context();
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
-    // TerminationException pending: loop.c's Linux error pass calls this once
-    // for each report of an event and once more for the pending error after
-    // them, and its recv do-while can reach this right after an `on_data`
-    // iteration's callback.
+    // TerminationException pending: loop.c's Linux errqueue drain calls this
+    // once per queued ICMP in a `while (!u->closed)` loop, and its recv
+    // do-while can reach this right after an `on_data` iteration's callback.
     // `to_js` below and the error handler both enter JS, which trips
     // executeCallImpl's assertNoException(). Mirrors on_data / on_drain.
     if global_this.has_exception() {

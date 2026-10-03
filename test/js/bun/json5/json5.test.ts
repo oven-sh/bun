@@ -814,6 +814,21 @@ describe("stringify", () => {
     expect(JSON5.stringify("hello\u2029world")).toEqual("'hello\\u2029world'");
   });
 
+  test("escapes U+0000 as \\x00 when a decimal digit follows", () => {
+    // `\0` followed by a digit would be an octal escape, which JSON5.parse rejects.
+    expect(JSON5.stringify("\x00")).toEqual("'\\0'");
+    expect(JSON5.stringify("\x00a")).toEqual("'\\0a'");
+    expect(JSON5.stringify("\x001")).toEqual("'\\x001'");
+    expect(JSON5.stringify("a\x009")).toEqual("'a\\x009'");
+    expect(JSON5.stringify("\x00\x000")).toEqual("'\\0\\x000'");
+    expect(JSON5.stringify({ "\x000": "\x000" })).toEqual("{'\\x000':'\\x000'}");
+
+    for (const v of ["\x00", "\x00a", "\x001", "a\x009", "\x00\x000", "\x0012345"]) {
+      expect(JSON5.parse(JSON5.stringify(v))).toBe(v);
+    }
+    expect(JSON5.parse(JSON5.stringify({ "\x000": "\x000" }))).toEqual({ "\x000": "\x000" });
+  });
+
   test("space parameter with Infinity/NaN/large numbers", () => {
     expect(JSON5.stringify({ a: 1 }, null, Infinity)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
     expect(JSON5.stringify({ a: 1 }, null, -Infinity)).toEqual(JSON5.stringify({ a: 1 }));

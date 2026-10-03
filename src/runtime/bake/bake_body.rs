@@ -7,7 +7,7 @@
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use bun_alloc::Arena; // = bumpalo::Bump
+use bun_alloc::Arena;
 use bun_collections::StringArrayHashMap;
 use bun_core::Output;
 use bun_core::{ZBox, ZStr, strings};
@@ -15,10 +15,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_options_types::schema as bun_schema;
 use bun_paths::PathBuffer;
 
-// `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
-// Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
-// shares the same type the bundler pipeline uses.
-pub(crate) use crate::api::js_bundler::Plugin;
+use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
 // Note: parent `mod.rs` already declares `dev_server` / `framework_router`
@@ -149,10 +146,6 @@ impl UserOptions {
 }
 
 impl SplitBundlerOptions {
-    // Note: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
-    // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
-    // default. Callers updated to `SplitBundlerOptions::default()`.
-
     fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
@@ -345,7 +338,7 @@ impl Framework {
     pub(crate) fn auto(
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
-    ) -> crate::Result<Framework> {
+    ) -> Framework {
         let mut fw = Framework::default();
 
         if !file_system_router_types.is_empty() {
@@ -361,13 +354,13 @@ impl Framework {
             });
             let react_refresh_code: &[u8] =
                 bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js");
-            fw.built_in_modules.put(
+            bun_core::handle_oom(fw.built_in_modules.put(
                 b"react-refresh/runtime/index.js",
                 BuiltInModule::Code(react_refresh_code.into()),
-            )?;
+            ));
         }
 
-        Ok(fw)
+        fw
     }
 
     fn from_js(
@@ -510,7 +503,7 @@ impl Framework {
                     )));
                 }
 
-                let path = match get_optional_string(file, global, b"import")? {
+                let path = match file.get_optional_slice(global, b"import")? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -532,7 +525,7 @@ impl Framework {
                         )));
                     };
 
-                files.put_assume_capacity(&path, value);
+                files.put_assume_capacity(path.slice(), value);
                 i += 1;
             }
 
@@ -553,7 +546,6 @@ impl Framework {
                     "Framework can only define up to 256 file-system router types"
                 )));
             }
-            // Note: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
             let mut file_system_router_types = Vec::with_capacity(len as usize);
 
             let mut it = array.array_iterator(global)?;
@@ -702,7 +694,8 @@ impl Framework {
         Ok(framework)
     }
 
-    pub(crate) fn init_transpiler_with_options<'a>(
+    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    pub(crate) fn init_transpiler<'a>(
         &mut self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
@@ -710,10 +703,6 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-        source_map: bun_bundler::options::SourceMapOption,
-        minify_whitespace: Option<bool>,
-        minify_syntax: Option<bool>,
-        minify_identifiers: Option<bool>,
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
@@ -760,7 +749,7 @@ impl Framework {
         out.options.conditions = bun_bundler::options::ESMConditions::init(
             out.options.target.default_conditions(),
             out.options.target.is_server_side(),
-            bundler_options.conditions.keys(),
+            &[],
         )?;
         if renderer == Graph::Server && self.server_components.is_some() {
             out.options.conditions.append_slice(&[b"react-server"])?;
@@ -777,9 +766,11 @@ impl Framework {
 
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
-        out.options.minify_syntax = minify_syntax.unwrap_or(mode != Mode::Development);
-        out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
-        out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
+        // The dev server never minifies.
+        let minify = |option: Option<bool>| mode != Mode::Development && option.unwrap_or(true);
+        out.options.minify_syntax = minify(bundler_options.minify_syntax);
+        out.options.minify_identifiers = minify(bundler_options.minify_identifiers);
+        out.options.minify_whitespace = minify(bundler_options.minify_whitespace);
         out.options.css_chunking = true;
         // The bundler crate (lower tier) carries a TYPE_ONLY projection
         // (`bake_types::Framework`); construct it here and give it arena
@@ -790,11 +781,16 @@ impl Framework {
         // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
         out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
-        if let Some(ignore) = bundler_options.ignore_dce_annotations {
-            out.options.ignore_dce_annotations = ignore;
-        }
 
-        out.options.source_map = source_map;
+        out.options.source_map = match mode {
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
+            Mode::Development => bun_bundler::options::SourceMapOption::External,
+            Mode::ProductionStatic => {
+                bun_bundler::options::SourceMapOption::from_api(Some(bundler_options.source_map))
+            }
+        };
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();
@@ -818,7 +814,7 @@ impl Framework {
             },
         )?;
 
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
+        if !bundler_options.define.keys.is_empty() {
             debug_assert_eq!(
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
@@ -833,15 +829,6 @@ impl Framework {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
-            }
-
-            for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
-                    let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
-                    )?;
-                    out.options.define.insert(drop_item, parsed)?;
-                }
             }
         }
 
@@ -865,9 +852,8 @@ fn literals(list: &[&'static [u8]]) -> Vec<Cow<'static, [u8]>> {
 
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-    match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        Ok(res) => res.path_const().map(|path| super::resolved_path(path.text)),
+    match super::resolve_path(r, path) {
+        Ok(resolved) => Some(resolved),
         Err(_) => {
             r.log_mut().reset();
             None

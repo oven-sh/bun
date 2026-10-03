@@ -707,16 +707,12 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                // NOTE: bake owns the arena (created below and moved into
-                // `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
             };
             let init_ctx = &mut init_ctx_;
-            // arena/Vec are owned locals; drop on `?` automatically. Ownership
-            // transfers to args.bake on the success path via mem::take below.
             // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // Vec<StaticRouteEntry> drops elements (which deref route)
@@ -899,8 +895,7 @@ impl ServerConfig {
                     let framework = crate::bake::Framework::auto(
                         resolver,
                         core::mem::take(&mut init_ctx.framework_router_list),
-                    )
-                    .map_err(|e| global.throw_error(e, "Framework::auto"))?;
+                    );
 
                     let mut user_options = crate::bake::UserOptions {
                         arena: bun_alloc::Arena::new(),

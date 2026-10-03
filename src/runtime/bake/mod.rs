@@ -77,8 +77,8 @@ impl Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// In this and the types below, `Cow::Borrowed` is a literal default or a path
-/// the resolver interned, and `Cow::Owned` came from the user's configuration.
+/// In this and the types below, `Cow::Borrowed` is only ever a literal or a path
+/// the resolver interned.
 #[derive(Clone)]
 pub(crate) struct ServerComponents {
     pub(crate) separate_ssr_graph: bool,
@@ -114,7 +114,6 @@ impl Default for ReactFastRefresh {
     }
 }
 
-/// `bake.Framework.FileSystemRouterType`.
 pub(crate) struct FileSystemRouterType {
     pub(crate) root: Cow<'static, [u8]>,
     pub(crate) prefix: Cow<'static, [u8]>,
@@ -145,11 +144,22 @@ pub(crate) struct Framework {
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
 }
 
-pub(crate) fn resolved_path(text: &[u8]) -> Cow<'static, [u8]> {
-    match bun_resolver::fs::as_interned_path(text) {
+pub(crate) fn resolve_path(
+    r: &mut bun_resolver::Resolver,
+    path: &[u8],
+) -> Result<Cow<'static, [u8]>, bun_resolver::Error> {
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let result = r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)?;
+    // No path: disabled, by a "browser" map for example.
+    let text = result
+        .path_const()
+        .ok_or(bun_resolver::Error::ModuleNotFound)?
+        .text;
+    // `text` is typed `'static`, but is `path` for an external or `data:` result.
+    Ok(match bun_resolver::fs::as_interned_path(text) {
         Some(interned) => Cow::Borrowed(interned),
         None => Cow::Owned(text.to_vec()),
-    }
+    })
 }
 
 impl Framework {
@@ -198,38 +208,6 @@ impl Framework {
             server_components,
             react_fast_refresh,
             self.is_built_in_react,
-        )
-    }
-
-    /// [`Framework::init_transpiler_with_options`] with the options a mode implies.
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
-    pub(crate) fn init_transpiler<'a>(
-        &mut self,
-        arena: &'a bun_alloc::Arena,
-        log: &mut bun_ast::Log,
-        mode: Mode,
-        renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
-        bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
-        self.init_transpiler_with_options(
-            arena,
-            log,
-            mode,
-            renderer,
-            out,
-            bundler_options,
-            match mode {
-                // Source maps must always be external, as DevServer special cases
-                // the linking and part of the generation of these. It also relies
-                // on source maps always being enabled.
-                Mode::Development => bun_bundler::options::SourceMapOption::External,
-                // TODO: follow user configuration
-                Mode::ProductionStatic => bun_bundler::options::SourceMapOption::None,
-            },
-            None,
-            None,
-            None,
         )
     }
 
@@ -307,15 +285,7 @@ impl Framework {
             }
             return;
         }
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let resolved = r
-            .resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)
-            .and_then(|result| match result.path_const() {
-                Some(p) => Ok(resolved_path(p.text)),
-                // Disabled, by a "browser" map for example.
-                None => Err(bun_resolver::Error::ModuleNotFound),
-            });
-        match resolved {
+        match resolve_path(r, path) {
             Ok(resolved) => *path = resolved,
             Err(err) => {
                 // This routes through `Output::err` (stderr), not
@@ -360,11 +330,7 @@ pub(crate) struct SplitBundlerOptions {
     pub(crate) ssr: BuildConfigSubset,
 }
 
-/// `bake.SplitBundlerOptions.BuildConfigSubset`.
 pub(crate) struct BuildConfigSubset {
-    pub(crate) ignore_dce_annotations: Option<bool>,
-    pub(crate) conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub(crate) drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
     pub(crate) env: bun_options_types::schema::api::DotEnvBehavior,
     pub(crate) env_prefix: Option<Box<[u8]>>,
     pub(crate) define: bun_options_types::schema::api::StringMap,
@@ -379,9 +345,6 @@ impl Default for BuildConfigSubset {
     fn default() -> Self {
         use bun_options_types::schema::api;
         BuildConfigSubset {
-            ignore_dce_annotations: None,
-            conditions: bun_collections::ArrayHashMap::new(),
-            drop: bun_collections::ArrayHashMap::new(),
             env: api::DotEnvBehavior::_none,
             env_prefix: None,
             define: api::StringMap::EMPTY,

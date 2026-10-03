@@ -16,7 +16,7 @@ use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
-use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
+use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
@@ -299,12 +299,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         unresolved_config_entry_point = prefixed;
     }
 
-    let config_entry_point = match vm.transpiler.resolver.resolve(
-        cwd,
-        &unresolved_config_entry_point,
-        bun_ast::ImportKind::EntryPointBuild,
-    ) {
-        Ok(r) => r,
+    let config_entry_point_string = match vm
+        .transpiler
+        .resolver
+        .resolve(
+            cwd,
+            &unresolved_config_entry_point,
+            bun_ast::ImportKind::EntryPointBuild,
+        )
+        .and_then(|resolved| match resolved.path_const() {
+            Some(path) => Ok(BunString::clone_utf8(path.text)),
+            None => Err(bun_resolver::Error::ModuleNotFound),
+        }) {
+        Ok(string) => string,
         Err(err) => {
             if err == bun_resolver::Error::ModuleNotFound {
                 if ctx.args.entry_points.is_empty() {
@@ -330,9 +337,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             Global::crash();
         }
     };
-
-    let config_entry_point_string =
-        BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
@@ -418,7 +422,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler_with_options`
+    // In-place init via `MaybeUninit` (`init_transpiler`
     // keeps the out-param shape shared with the dev-server path).
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
@@ -426,47 +430,35 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler_with_options(
+    framework.init_transpiler(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Server,
         &mut server_transpiler,
         &options.bundler_options.server,
-        SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
-        options.bundler_options.server.minify_whitespace,
-        options.bundler_options.server.minify_syntax,
-        options.bundler_options.server.minify_identifiers,
     )?;
-    framework.init_transpiler_with_options(
+    framework.init_transpiler(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Client,
         &mut client_transpiler,
         &options.bundler_options.client,
-        SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
-        options.bundler_options.client.minify_whitespace,
-        options.bundler_options.client.minify_syntax,
-        options.bundler_options.client.minify_identifiers,
     )?;
     if separate_ssr_graph {
-        framework.init_transpiler_with_options(
+        framework.init_transpiler(
             &options.arena,
             vm_log,
             bake_body::Mode::ProductionStatic,
             bake_body::Graph::Ssr,
             &mut ssr_transpiler,
             &options.bundler_options.ssr,
-            SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
-            options.bundler_options.ssr.minify_whitespace,
-            options.bundler_options.ssr.minify_syntax,
-            options.bundler_options.ssr.minify_identifiers,
         )?;
     }
-    // SAFETY: written above by init_transpiler_with_options.
+    // SAFETY: written above by init_transpiler.
     let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler_with_options.
+    // SAFETY: written above by init_transpiler.
     let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
     // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
     // inside `if separate_ssr_graph` blocks below — Rust forbids forming
@@ -476,7 +468,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
         if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            // SAFETY: written above by init_transpiler when separate_ssr_graph.
             targets.push(unsafe { ssr_transpiler.assume_init_mut() });
         }
         for transpiler in targets {
@@ -599,7 +591,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
         let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            // SAFETY: written above by init_transpiler when separate_ssr_graph.
             core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
         } else {
             server_ptr

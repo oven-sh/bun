@@ -17,11 +17,6 @@ struct BunVmHandleRef;
 #include <wtf/URL.h>
 #include <JavaScriptCore/Weak.h>
 
-namespace uWS {
-template<bool isServer, bool isClient, typename UserData>
-struct WebSocketContext;
-}
-
 struct us_socket_t;
 struct us_socket_group_t;
 struct us_loop_t;

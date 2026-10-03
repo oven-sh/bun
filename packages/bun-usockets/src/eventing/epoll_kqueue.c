@@ -102,19 +102,11 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 
 #if defined(LIBUS_USE_EPOLL)
 
-#include <sys/syscall.h>
 #include <signal.h>
 #include <errno.h>
 #include <limits.h>
 
 static int has_epoll_pwait2 = -1;
-
-#ifndef SYS_epoll_pwait2
-// It's consistent on multiple architectures
-// https://github.com/torvalds/linux/blob/9d1ddab261f3e2af7c384dc02238784ce0cf9f98/include/uapi/asm-generic/unistd.h#L795
-// https://github.com/google/gvisor/blob/master/test/syscalls/linux/epoll.cc#L48C1-L50C7
-#define SYS_epoll_pwait2 441
-#endif
 
 extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
                               const struct timespec* timeout, const sigset_t* sigmask);

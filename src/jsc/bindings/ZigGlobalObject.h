@@ -841,11 +841,6 @@ class EvalGlobalObject : public GlobalObject {
 public:
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, RefPtr<JSC::ScriptFetcher>, JSC::JSValue, JSC::JSValue);
-
-    EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
-        : GlobalObject(vm, structure, &globalObjectMethodTable())
-    {
-    }
 };
 
 // The global object of a `bun build --compile` executable (main thread and workers): module-loader hooks that know every

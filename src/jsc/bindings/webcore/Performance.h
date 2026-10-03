@@ -108,8 +108,6 @@ public:
 
     static Seconds reduceTimeResolution(Seconds);
 
-    MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
-
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
     // ContextDestructionObserver.

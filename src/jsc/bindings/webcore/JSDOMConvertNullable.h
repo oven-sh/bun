@@ -98,18 +98,6 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
             return T::nullValue();
         return Converter<T>::convert(lexicalGlobalObject, value);
     }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject)
-    {
-        if (value.isUndefinedOrNull())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, thisObject);
-    }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
-    {
-        if (value.isUndefinedOrNull())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
-    }
     template<typename ExceptionThrower = DefaultExceptionThrower>
         requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)

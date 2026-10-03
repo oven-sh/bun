@@ -99,15 +99,11 @@ std::optional<WTF::String> CryptoErrorList::pop_back()
 // ============================================================================
 DataPointer DataPointer::Alloc(size_t len)
 {
-#ifdef OPENSSL_IS_BORINGSSL
     // Boringssl does not implement OPENSSL_zalloc
     auto ptr = OPENSSL_malloc(len);
     if (ptr == nullptr) return {};
     memset(ptr, 0, len);
     return DataPointer(ptr, len);
-#else
-    return DataPointer(OPENSSL_zalloc(len), len);
-#endif
 }
 
 DataPointer DataPointer::Copy(const Buffer<const void>& buffer)
@@ -162,11 +158,6 @@ void DataPointer::reset(void* data, size_t length)
     len_ = length;
 }
 
-void DataPointer::reset(const Buffer<void>& buffer)
-{
-    reset(buffer.data, buffer.len);
-}
-
 Buffer<void> DataPointer::release()
 {
     Buffer<void> buf {
@@ -196,11 +187,7 @@ DataPointer DataPointer::resize(size_t len)
 // ============================================================================
 bool isFipsEnabled()
 {
-#if OPENSSL_VERSION_MAJOR >= 3
-    return EVP_default_properties_is_fips_enabled(nullptr) == 1;
-#else
     return FIPS_mode() == 1;
-#endif
 }
 
 // ============================================================================
@@ -227,12 +214,8 @@ BignumPointer BignumPointer::New()
 
 BignumPointer BignumPointer::NewSecure()
 {
-#ifdef OPENSSL_IS_BORINGSSL
     // Boringssl does not implement BN_secure_new.
     return New();
-#else
-    return BignumPointer(BN_secure_new());
-#endif
 }
 
 BignumPointer& BignumPointer::operator=(BignumPointer&& other) noexcept
@@ -423,31 +406,13 @@ bool CSPRNG(void* buffer, size_t length)
     auto buf = reinterpret_cast<unsigned char*>(buffer);
     do {
         if (1 == RAND_status()) {
-#if OPENSSL_VERSION_MAJOR >= 3
-            if (1 == RAND_bytes_ex(nullptr, buf, length, 0)) {
-                return true;
-            }
-#else
             while (length > INT_MAX && 1 == RAND_bytes(buf, INT_MAX)) {
                 buf += INT_MAX;
                 length -= INT_MAX;
             }
             if (length <= INT_MAX && 1 == RAND_bytes(buf, static_cast<int>(length)))
                 return true;
-#endif
         }
-#if OPENSSL_VERSION_MAJOR >= 3
-        const auto code = ERR_peek_last_error();
-        // A misconfigured OpenSSL 3 installation may report 1 from RAND_poll()
-        // and RAND_status() but fail in RAND_bytes() if it cannot look up
-        // a matching algorithm for the CSPRNG.
-        if (ERR_GET_LIB(code) == ERR_LIB_RAND) {
-            const auto reason = ERR_GET_REASON(code);
-            if (reason == RAND_R_ERROR_INSTANTIATING_DRBG || reason == RAND_R_UNABLE_TO_FETCH_DRBG || reason == RAND_R_UNABLE_TO_CREATE_DRBG) {
-                return false;
-            }
-        }
-#endif
     } while (1 == RAND_poll());
 
     return false;
@@ -703,11 +668,7 @@ bool PrintGeneralName(const BIOPointer& out, const GENERAL_NAME* gen)
                 BIO_printf(out.get(), (j == 0) ? "%X" : ":%X", pair);
             }
         } else {
-#if OPENSSL_VERSION_MAJOR >= 3
-            BIO_printf(out.get(), "<invalid length=%d>", ip->length);
-#else
             BIO_printf(out.get(), "<invalid>");
-#endif
         }
     } else if (gen->type == GEN_RID) {
         // Unlike OpenSSL's default implementation, never print the OID as text and
@@ -1316,11 +1277,6 @@ BignumPointer DHPointer::FindGroup(const WTF::StringView name,
 #define V(n, p) \
     if (EqualNoCase(name, n)) return BignumPointer(p(nullptr));
     if (option != FindGroupOption::NO_SMALL_PRIMES) {
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not support the 768 and 1024 small primes
-        V("modp1"_s, BN_get_rfc2409_prime_768);
-        V("modp2"_s, BN_get_rfc2409_prime_1024);
-#endif
         V("modp5"_s, BN_get_rfc3526_prime_1536);
     }
     V("modp14"_s, BN_get_rfc3526_prime_2048);
@@ -1405,14 +1361,6 @@ DHPointer::CheckPublicKeyResult DHPointer::checkPublicKey(
     if (DH_check_pub_key(dh_.get(), pub_key.get(), &codes) != 1) {
         return DHPointer::CheckPublicKeyResult::CHECK_FAILED;
     }
-#ifndef OPENSSL_IS_BORINGSSL
-    // Boringssl does not define DH_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-    if (codes & DH_CHECK_PUBKEY_TOO_SMALL) {
-        return DHPointer::CheckPublicKeyResult::TOO_SMALL;
-    } else if (codes & DH_CHECK_PUBKEY_TOO_LARGE) {
-        return DHPointer::CheckPublicKeyResult::TOO_LARGE;
-    }
-#endif
     if (codes != 0) {
         return DHPointer::CheckPublicKeyResult::INVALID;
     }
@@ -2163,11 +2111,7 @@ Result<BIOPointer, bool> EVPKeyPointer::writePrivateKey(
         // PKCS1 is only permitted for RSA keys.
         if (id() != EVP_PKEY_RSA) return Result<BIOPointer, bool>(false);
 
-#if OPENSSL_VERSION_MAJOR >= 3
-        const RSA* rsa = EVP_PKEY_get0_RSA(get());
-#else
         RSA* rsa = EVP_PKEY_get0_RSA(get());
-#endif
         switch (config.format) {
         case PKFormatType::PEM: {
             err = PEM_write_bio_RSAPrivateKey(
@@ -2229,11 +2173,7 @@ Result<BIOPointer, bool> EVPKeyPointer::writePrivateKey(
         // SEC1 is only permitted for EC keys
         if (id() != EVP_PKEY_EC) return Result<BIOPointer, bool>(false);
 
-#if OPENSSL_VERSION_MAJOR >= 3
-        const EC_KEY* ec = EVP_PKEY_get0_EC_KEY(get());
-#else
         EC_KEY* ec = EVP_PKEY_get0_EC_KEY(get());
-#endif
         switch (config.format) {
         case PKFormatType::PEM: {
             err = PEM_write_bio_ECPrivateKey(
@@ -2284,11 +2224,7 @@ Result<BIOPointer, bool> EVPKeyPointer::writePublicKey(
 
     if (config.type == ncrypto::EVPKeyPointer::PKEncodingType::PKCS1) {
         // PKCS#1 is only valid for RSA keys.
-#if OPENSSL_VERSION_MAJOR >= 3
-        const RSA* rsa = EVP_PKEY_get0_RSA(get());
-#else
         RSA* rsa = EVP_PKEY_get0_RSA(get());
-#endif
         if (config.format == ncrypto::EVPKeyPointer::PKFormatType::PEM) {
             // Encode PKCS#1 as PEM.
             if (PEM_write_bio_RSAPublicKey(bio.get(), rsa) != 1) {
@@ -2400,11 +2336,7 @@ bool EVPKeyPointer::validateDsaParameters() const
 {
     if (!pkey_) return false;
     /* Validate DSA2 parameters from FIPS 186-4 */
-#if OPENSSL_VERSION_MAJOR >= 3
-    if (EVP_default_properties_is_fips_enabled(nullptr) && EVP_PKEY_DSA == id()) {
-#else
     if (FIPS_mode() && EVP_PKEY_DSA == id()) {
-#endif
         const DSA* dsa = EVP_PKEY_get0_DSA(pkey_.get());
         const BIGNUM* p;
         const BIGNUM* q;
@@ -2569,9 +2501,6 @@ bool Cipher::isSupportedAuthenticatedMode() const
     switch (getMode()) {
     case EVP_CIPH_CCM_MODE:
     case EVP_CIPH_GCM_MODE:
-#ifndef OPENSSL_NO_OCB
-    case EVP_CIPH_OCB_MODE:
-#endif
         return true;
     case EVP_CIPH_STREAM_CIPHER:
         return getNid() == NID_chacha20_poly1305;
@@ -3075,14 +3004,9 @@ int EVPKeyCtxPointer::initForSign()
 
 bool EVPKeyCtxPointer::setDhParameters(int prime_size, uint32_t generator)
 {
-#ifndef OPENSSL_IS_BORINGSSL
-    if (!ctx_) return false;
-    return EVP_PKEY_CTX_set_dh_paramgen_prime_len(ctx_.get(), prime_size) == 1 && EVP_PKEY_CTX_set_dh_paramgen_generator(ctx_.get(), generator) == 1;
-#else
     // TODO(jasnell): Boringssl appears not to support this operation.
     // Is there an alternative approach that Boringssl does support?
     return false;
-#endif
 }
 
 bool EVPKeyCtxPointer::setDsaParameters(uint32_t bits,

@@ -1467,16 +1467,16 @@ impl Template {
             // SAFETY: NUL-terminated above.
             let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
 
-            // With both Cursor & Claude, the cursor rule is a symlink to
-            // ../../CLAUDE.md, which then keeps the frontmatter the rule needs.
-            // Windows symlinks need Developer Mode, so there both are files.
+            // Both detected: link the cursor rule to CLAUDE.md. Not on Windows, where symlinks need Developer Mode.
+            let mut created_link = false;
             let mut linked = create_claude_md && cfg!(not(windows)) && {
                 let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
                 let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
                 target_z.push(0);
                 // SAFETY: NUL-terminated above.
                 let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_ok()
+                created_link = bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_ok();
+                created_link || Self::links_to_claude_md(dest_zstr)
             };
 
             if linked {
@@ -1484,13 +1484,17 @@ impl Template {
                     .is_ok()
                 {
                     create_claude_md = false;
-                    bun_core::prettyln!(
-                        " + <r><d>{} -\\> CLAUDE.md<r>",
-                        bstr::BStr::new(template_file.path),
-                    );
-                    Output::flush();
+                    if created_link {
+                        bun_core::prettyln!(
+                            " + <r><d>{} -\\> CLAUDE.md<r>",
+                            bstr::BStr::new(template_file.path),
+                        );
+                        Output::flush();
+                    }
                 } else {
-                    let _ = bun_sys::unlinkat(Fd::cwd(), dest_zstr);
+                    if created_link {
+                        let _ = bun_sys::unlinkat(Fd::cwd(), dest_zstr);
+                    }
                     linked = false;
                 }
             }
@@ -1514,6 +1518,15 @@ impl Template {
                 // SAFETY: literal is NUL-terminated
                 &Self::AGENT_RULE[end_of_frontmatter..],
             );
+        }
+    }
+
+    /// A cursor rule left by an earlier `bun init` that already points at CLAUDE.md.
+    fn links_to_claude_md(path: &ZStr) -> bool {
+        let mut buf = path_buffer_pool::get();
+        match bun_sys::readlinkat(Fd::cwd(), path, &mut buf[..]) {
+            Ok(len) => buf[..len] == *Self::CURSOR_RULE_PATH_TO_CLAUDE_MD,
+            Err(_) => false,
         }
     }
 

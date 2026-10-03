@@ -518,13 +518,22 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       return [binDir, ...rest].join(path.delimiter);
     }
 
-    async function initWith(env: Record<string, string | undefined>, files: Record<string, string> = {}) {
+    async function initWith(
+      env: Record<string, string | undefined>,
+      files: Record<string, string> = {},
+      setup: (dir: string) => void = () => {},
+    ) {
       const bin = tempDir("bun-init-claude-bin", {
         "claude.cmd": "@echo off\r\necho stub\r\n",
         "claude": "#!/bin/sh\necho stub\n",
       });
       fs.chmodSync(path.join(bin, "claude"), 0o755);
       const temp = tempDir("bun-init-agent-rule", files);
+      setup(String(temp));
+      const dispose = async () => {
+        await bin[Symbol.asyncDispose]();
+        await temp[Symbol.asyncDispose]();
+      };
 
       // Drop the detection switches the machine may carry. The test sets its own.
       const base: Record<string, string | undefined> = {};
@@ -546,16 +555,12 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         // the first case-insensitive match, so a plain `PATH` override loses.
         env: mergeWindowEnvs([base, { PATH: pathWithStubClaude(String(bin)), ...env }]),
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(exitCode).toBe(0);
-      return {
-        temp: String(temp),
-        stdout,
-        async [Symbol.asyncDispose]() {
-          await bin[Symbol.asyncDispose]();
-          await temp[Symbol.asyncDispose]();
-        },
-      };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) {
+        await dispose();
+        expect(exitCode, stdout + stderr).toBe(0);
+      }
+      return { temp: String(temp), stdout, [Symbol.asyncDispose]: dispose };
     }
 
     test("claude on PATH writes CLAUDE.md without the cursor frontmatter", async () => {
@@ -600,6 +605,18 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
       expect(fs.readFileSync(path.join(temp, cursorRule), "utf8")).toBe("mine\n");
       expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(strippedRule);
+    });
+
+    test.skipIf(isWindows)("an existing symlink to CLAUDE.md keeps the frontmatter in CLAUDE.md", async () => {
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" }, {}, dir => {
+        fs.mkdirSync(path.join(dir, ".cursor", "rules"), { recursive: true });
+        fs.symlinkSync("../../CLAUDE.md", path.join(dir, cursorRule));
+      });
+      const { temp, stdout } = init;
+
+      expect(stdout).toContain(" + CLAUDE.md");
+      expect(fs.readlinkSync(path.join(temp, cursorRule))).toBe("../../CLAUDE.md");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(ruleFrontmatter);
     });
 
     test("claude and cursor write CLAUDE.md and the cursor rule", async () => {

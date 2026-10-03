@@ -48,22 +48,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
     }
 
-    // Get the appropriate structure and create the DiffieHellmanGroup object
-    auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
-    JSC::JSValue newTarget = callFrame->newTarget();
-
-    if (zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        if (!newTarget) {
-            throwError(globalObject, scope, ErrorCode::ERR_INVALID_THIS, "Class constructor DiffieHellmanGroup cannot be invoked without 'new'"_s);
-            return {};
-        }
-
-        auto* functionGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(globalObject, newTarget.getObject()));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(functionGlobalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSDiffieHellmanGroupClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
 }

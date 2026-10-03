@@ -170,11 +170,7 @@ impl Default for Blob {
 }
 
 // Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
-// `*mut Blob` is opaque to C++ — only Rust dereferences it. The
-// `improper_ctypes` lint recurses through `Option<RefPtr<Store>>` → `NonNull<Store>`
-// and complains `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by
-// value, so silence it for the whole anon-const.
-#[allow(improper_ctypes)]
+// `*mut Blob` is opaque to C++ — only Rust dereferences it.
 const _: () = {
     use crate::generated::JSBlob;
 
@@ -950,16 +946,6 @@ pub mod store {
                 return bytes.slice();
             }
             &[]
-        }
-
-        /// Bump the intrusive refcount.
-        #[inline]
-        pub fn ref_(&self) {
-            // SAFETY: `self` is live; `ref_` only touches the interior-mutable
-            // atomic counter, never mutates through the pointer.
-            unsafe {
-                bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
-            };
         }
 
         #[inline]

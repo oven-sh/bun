@@ -6,8 +6,8 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir } from "harness";
+import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
@@ -50,7 +50,7 @@ function pad512(len: number): Buffer {
   return Buffer.alloc(pad, 0);
 }
 
-function tarFile(name: string, body: Buffer): Buffer[] {
+function tarFile(name: string, body: Buffer, mode?: Uint8Array): Buffer[] {
   // ustar stores at most 100 bytes of name; longer paths need a pax
   // 'x' record. npm's `tar` uses pax, so this exercises the resumable
   // `tar_read_header` path in the libarchive patch.
@@ -69,19 +69,19 @@ function tarFile(name: string, body: Buffer): Buffer[] {
       tarHeader("PaxHeader", pax.length, "x"),
       pax,
       pad512(pax.length),
-      tarHeader(name.slice(0, 99), body.length, "0"),
+      tarHeader(name.slice(0, 99), body.length, "0", mode),
       body,
       pad512(body.length),
     ];
   }
-  return [tarHeader(name, body.length, "0"), body, pad512(body.length)];
+  return [tarHeader(name, body.length, "0", mode), body, pad512(body.length)];
 }
 
-type Entry = { path: string; body: Buffer };
+type Entry = { path: string; body: Buffer; mode?: Uint8Array };
 
 function buildTarball(entries: Entry[]): { tgz: Buffer; shasum: string; integrity: string } {
   const blocks: Buffer[] = [];
-  for (const { path, body } of entries) blocks.push(...tarFile(`package/${path}`, body));
+  for (const { path, body, mode } of entries) blocks.push(...tarFile(`package/${path}`, body, mode));
   blocks.push(Buffer.alloc(1024, 0)); // two zero blocks = end-of-archive
   const tar = Buffer.concat(blocks);
   const tgz = gzipSync(tar);
@@ -237,9 +237,20 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
   };
 }
 
-async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
+async function runInstall(cwd: string, extraEnv: Record<string, string> = {}, umask?: number) {
+  const install = ["install", "--verbose", "--linker=hoisted"];
+  // The umask is process-wide, so a wrapper process sets it and then runs the install.
+  const underUmask = (umask: number) => [
+    "-e",
+    `process.umask(${umask});
+    const { exitCode } = Bun.spawnSync({
+      cmd: [process.execPath, ...${JSON.stringify(install)}],
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    process.exit(exitCode ?? 1);`,
+  ];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+    cmd: [bunExe(), ...(umask === undefined ? install : underUmask(umask))],
     cwd,
     env: {
       ...bunEnv,
@@ -1035,4 +1046,46 @@ test.concurrent.each([
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+});
+
+// Like npm (pacote's `fmode`), an install gives every file at least 0o666
+// before the umask, so a package packed with owner-only modes is still readable
+// by other users (#14467). Both extractors do it.
+test.concurrent.skipIf(isWindows).each([
+  ["streaming", {}],
+  ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+] as const)("installs owner-only files readable by every user (%s)", async (label, env) => {
+  const ownerOnly = Buffer.from(octal(0o600, 8));
+  const { tgz, shasum, integrity } = buildTarball([
+    {
+      path: "package.json",
+      body: Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" })),
+      mode: ownerOnly,
+    },
+    { path: "index.js", body: Buffer.from("module.exports = 'ok';\n"), mode: ownerOnly },
+    // Incompressible bulk so the body spans many reads and streaming commits.
+    { path: "bulk.bin", body: randomBytes(256 * 1024) },
+  ]);
+  await using reg = await makeRegistry(tgz, shasum, integrity, 4096);
+
+  using dir = tempDir("streaming-extract-owner-only", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+  });
+
+  const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_INSTALL_STREAMING_MIN_SIZE: "1024" }, 0o022);
+  expect(stderr).not.toContain("error:");
+  if (label === "streaming") {
+    expect(stderr).toContain("Streamed ");
+  } else {
+    expect(stderr).not.toContain("Streamed ");
+  }
+
+  const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+  const mode = (path: string) => (statSync(join(pkgRoot, path)).mode & 0o777).toString(8);
+  expect({ "package.json": mode("package.json"), "index.js": mode("index.js") }).toEqual({
+    "package.json": "644",
+    "index.js": "644",
+  });
+  expect(exitCode).toBe(0);
 });

@@ -1697,6 +1697,10 @@ describe("--compile-aot with a type table", () => {
     ["narrowed-tested-value", ["coalescesOptional"], ["coalescesParsed"]],
     ["calls:Add", [], ["coalescesOptional"]],
     ["calls:operationAOTValueAdd", [], ["coalescesOptional"]],
+    ["folds-property-of-constant-object:low", ["readsConstantLimits"], ["readsGivenLimits"]],
+    ["folds-property-of-constant-object:high", ["readsConstantLimits"], ["readsGivenLimits"]],
+    ["folds-property-of-constant-object:name", ["readsConstantLimits"], []],
+    ["typed-field-read", ["readsGivenLimits"], ["readsConstantLimits"]],
   ];
 
   test("a value of another type is refused with the property, what is expected and what it got", async () => {

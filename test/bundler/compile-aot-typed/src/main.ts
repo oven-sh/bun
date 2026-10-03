@@ -75,6 +75,14 @@ interface ParsedOptional { a: number; b?: number }
 function coalescesParsed(p: ParsedOptional) { return p.a + (p.b ?? 7); }
 out.push(coalescesParsed(JSON.parse('{"a":1,"b":2.5}')), coalescesParsed(JSON.parse('{"a":1}')), coalescesParsed(JSON.parse('{"a":1,"b":null}')), coalescesParsed(JSON.parse('{"a":1,"b":"x"}')));
 
+interface Limits { low: number; high: number; name: string }
+const limits: Limits = { low: 1, high: 9, name: "limits" };
+function readsConstantLimits(x: number) { return x < limits.low ? "below " + limits.name : x > limits.high ? "above " + limits.name : "within"; }
+const givenLimits: Limits = { low: 3, high: 30, name: "given" };
+function readsGivenLimits() { return givenLimits.low + givenLimits.high; }
+function widens(l: Limits) { l.high *= 2; return l.high; }
+out.push(readsConstantLimits(0), readsConstantLimits(5), readsConstantLimits(10), readsGivenLimits(), widens(givenLimits), readsGivenLimits());
+
 console.log(out.join());
 
 if (process.env.BREAK_TYPES) {

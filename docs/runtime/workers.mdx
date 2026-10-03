@@ -238,7 +238,7 @@ self.close();
 
 The worker stops when the current task ends. The script that calls `close()` runs to its end, then its microtasks and `process.nextTick()` callbacks run, so a `postMessage()` after `close()` still reaches the main thread. Pending timers and messages are discarded. The `process` `"exit"` listeners run, and the `"close"` event gets `process.exitCode`, which is 0 by default. An error that the task throws after `close()`, or a promise that it rejects, is reported like any other uncaught error.
 
-Callbacks that Bun delivers in one batch with the callback that called `close()` can still run before the worker stops. Examples are the other `"line"` events of a `readline` chunk, the callbacks of `dns.lookup()` calls that resolve together, and WebSocket messages that arrive together with the handshake response. Use `process.exit()` to stop the worker at once.
+Callbacks that Bun delivers in one batch with the callback that called `close()` can still run before the worker stops. Examples are the other `"line"` events of a `readline` chunk, the callbacks of `dns.lookup()` calls that resolve together, and WebSocket messages that arrive together with the handshake response. A `Response` that a `Bun.serve()` handler returns after it called `close()` is not sent, as after `process.exit()`. Use `process.exit()` to stop the worker at once.
 
 ### `"close"`
 

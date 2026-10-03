@@ -883,7 +883,11 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                if !self.exit_called.load(Ordering::Relaxed) && !self.entry_rejection_seen.get() {
+                // A load error; not a stop the worker chose (its code stands) or its parent asked for.
+                if !self.exit_called.load(Ordering::Relaxed)
+                    && !self.entry_rejection_seen.get()
+                    && !self.terminated_by_parent.load(Ordering::Relaxed)
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -945,19 +949,17 @@ impl WebWorker {
         vm.as_mut().tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
+        // `observe_entry` runs the 'uncaughtException' listeners, so the stop check follows it.
         while !stopped_by_entry && !stop_requested(vm) && vm.is_event_loop_alive() {
             vm.as_mut().tick();
-            if stop_requested(vm) {
-                break;
-            }
             if let EntryOutcome::Stop = observe_entry(vm) {
                 stopped_by_entry = true;
                 break;
             }
-            vm.as_mut().auto_tick_active();
             if stop_requested(vm) {
                 break;
             }
+            vm.as_mut().auto_tick_active();
             if let EntryOutcome::Stop = observe_entry(vm) {
                 stopped_by_entry = true;
             }

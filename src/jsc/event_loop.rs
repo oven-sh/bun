@@ -151,6 +151,8 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    /// The address of the worker's `WorkerGlobalScope.close()` request flag (JSVMClientData).
+    safe fn Zig__GlobalObject__workerCloseRequested(global: &JSGlobalObject) -> *const bool;
 }
 
 impl JSGlobalObject {
@@ -805,6 +807,14 @@ impl EventLoop {
                 self.global_ref()
                     .handle_rejected_promises()
                     .map_err(|_| Stopped)?;
+                // A worker's 'unhandledRejection' listener called close(): its checkpoint comes before
+                // the next task, not after it.
+                if self.vm_ref().worker.is_some()
+                    // SAFETY: a field of the VM's client data, which lives as long as the VM.
+                    && unsafe { Zig__GlobalObject__workerCloseRequested(global).read() }
+                {
+                    self.drain_microtasks_with_global(global, global_vm)?;
+                }
             }
             self.drain_microtasks_with_global(global, global_vm)?;
             if scope.has_exception() {

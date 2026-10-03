@@ -430,9 +430,9 @@ describe("web worker", () => {
       const [{ data }] = await once(worker, "message");
       expect(data).toBe("closing");
       worker.terminate();
-      // The close code is terminate()'s: the worker never reached the checkpoint that consumes close().
+      // The worker never reached the checkpoint that consumes close(): the parent stopped it, code 0.
       const [close] = await once(worker, "close");
-      expect(close.code).toBe(1);
+      expect(close.code).toBe(0);
     });
 
     // The worker chose to exit: the entry's unsettled top-level await is not the exit code 13.
@@ -519,6 +519,26 @@ describe("web worker", () => {
         );
       `);
       expect(result).toEqual({ events: ["rejection", "microtask of the listener"], code: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // The test runner takes a worker's uncaught errors itself, so this runs in a child process.
+    test("from an 'uncaughtException' listener after a rejected top-level await, no later task runs", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("uncaughtException", () => {
+                postMessage("caught");
+                self.close();
+              });
+              self.onmessage = e => postMessage("message:" + e.data);
+              await Promise.reject(new Error("boom"));
+            \`, true),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: ["caught"], code: 0 });
       expect(exitCode).toBe(0);
     });
 

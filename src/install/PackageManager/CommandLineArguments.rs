@@ -1459,6 +1459,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             if let Some(otp) = args.option(b"--otp") {
+                // Written verbatim into the `npm-otp` header.
+                if strings::contains_any(otp, b"\r\n\0") {
+                    Output::err_generic(
+                        "invalid `otp` value: must not contain a newline or NUL byte",
+                        (),
+                    );
+                    Global::exit(1);
+                }
                 cli.publish_config.otp = otp;
             }
 

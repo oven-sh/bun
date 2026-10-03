@@ -3479,25 +3479,41 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
-                        .map_err(|_| crate::CrateError::JSError)?;
-                    let ret = jsc::from_js_host_call_generic(global_ref, || {
-                        NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    // If the override stored a promise itself, use that; otherwise
-                    // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise() {
-                        return Ok(stored);
-                    }
-                    // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                    // which may throw.
-                    let resolved = jsc::call_check_slow(global_ref, || {
-                        JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    self.set_pending_internal_promise(Some(resolved));
-                    return Ok(resolved);
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
+                    let promise: *mut JSInternalPromise =
+                        match jsc::from_js_host_call_generic(global_ref, || {
+                            NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
+                        }) {
+                            Ok(ret) => {
+                                // If the override stored a promise itself, use that; otherwise
+                                // wrap its return value.
+                                if let Some(stored) = self.pending_internal_promise() {
+                                    return Ok(stored);
+                                }
+                                // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
+                                // which may throw.
+                                jsc::call_check_slow(global_ref, || {
+                                    JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                                })?
+                            }
+                            Err(err) => {
+                                let rejected =
+                                    crate::JSPromise::rejected_promise_with_caught_exception(
+                                        global_ref, err,
+                                    )?;
+                                // Nobody else looks at a promise the override stored, so that stays
+                                // the entry point's, and this one is left to the rejection tracker.
+                                if let Some(stored) = self.pending_internal_promise() {
+                                    return Ok(stored);
+                                }
+                                // Whoever loads the entry point reports its promise, so, like the
+                                // loader's, it is not for the rejection tracker as well.
+                                rejected.set_handled();
+                                core::ptr::from_mut(rejected).cast()
+                            }
+                        };
+                    self.set_pending_internal_promise(Some(promise));
+                    return Ok(promise);
                 }
             }
 
@@ -3515,8 +3531,7 @@ impl VirtualMachine {
             } else {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
-                })
-                .map_err(|_| crate::CrateError::JSError)?;
+                })?;
                 if p.is_null() {
                     return Err(crate::CrateError::JSError);
                 }

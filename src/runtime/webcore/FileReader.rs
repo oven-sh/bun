@@ -399,9 +399,9 @@ impl FileReader {
             self.reader().set_limit(self.max_size);
             // `open_file_blob` presumes that whatever it opened with `O_NONBLOCK` is pollable.
             #[cfg(unix)]
-            let watched = pollable && self.reader().start_presumed_pollable(self.fd.get());
+            let watchable = pollable && self.reader().start_presumed_pollable(self.fd.get());
             #[cfg(windows)]
-            let watched = true;
+            let watchable = true;
             let start_result = if cfg!(unix) && pollable {
                 Ok(())
             } else if let Some(offset) = self.start_offset {
@@ -410,8 +410,8 @@ impl FileReader {
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
-            // No callback comes for an fd that is not watched.
-            if need_io_ref && (start_result.is_err() || !watched) {
+            // No callback comes for an fd the event loop refuses to watch.
+            if need_io_ref && (start_result.is_err() || !watchable) {
                 self.waiting_for_on_reader_done.set(false);
                 let parent = self.parent();
                 // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.

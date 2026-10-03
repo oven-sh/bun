@@ -583,7 +583,7 @@ impl PosixBufferedReader {
 
     /// `start(fd, true)`, except that the event loop refusing to watch `fd` is not an error yet: it refuses what it has no
     /// readiness to report for (`/dev/null`, a block device), and those reads do not wait. One that would reports the refusal
-    /// when it arms the poll. Returns whether `fd` is watched.
+    /// when it arms the poll. Returns `false` for such a refusal.
     pub fn start_presumed_pollable(&mut self, fd: Fd) -> bool {
         let Err(err) = self.start_polling(fd) else {
             return true;

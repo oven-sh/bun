@@ -47,16 +47,46 @@ export function minify_error_test_with_options(source: string, expectedError: st
   });
 }
 
+// Every declaration block in a stylesheet goes through the same property handler instances, so state a
+// handler does not reset between blocks makes a block's output depend on the rules before it. Each test
+// below is therefore also run behind this rule, which leaves the handlers that keep per-block state
+// (logical vs. physical tracking, vendor prefix tracking, and the separate `!important` handlers) in
+// their non-default state, and is itself dropped from the output. The output must not change.
+const precedingRule = (() => {
+  const declarations = [
+    "margin-inline-start:1px",
+    "padding-inline-start:1px",
+    "inset-inline-start:1px",
+    "scroll-margin-inline-start:1px",
+    "scroll-padding-inline-start:1px",
+    "border-inline-start-color:red",
+    "border-start-start-radius:1px",
+    "inline-size:1px",
+    "background-image:-webkit-linear-gradient(red,blue)",
+  ];
+  return `@media not all{z{${[...declarations, ...declarations.map(d => d + "!important")].join(";")}}}`;
+})();
+
+function expectUnaffectedByPrecedingRule(run: (source: string) => string, source: string, output: string) {
+  // These at-rules are only valid before any other rule.
+  if (/@(?:charset|import|namespace)\b/.test(source)) return;
+  expect(run(precedingRule + source)).toBe(output);
+}
+
 export function minify_test(source: string, expected: string) {
   test(source, () => {
-    expect(minifyTestWithOptions(source, expected)).toEqual(expected);
+    const output = minifyTestWithOptions(source, expected);
+    expect(output).toEqual(expected);
+    expectUnaffectedByPrecedingRule(source => minifyTestWithOptions(source, expected), source, output);
   });
 }
 
 export function prefix_test(source: string, expected: string, targets: Browsers, skip?: boolean) {
   const testf = skip ? test.skip : test;
   testf(source, () => {
-    expect(prefixTest(source, expected, targets)).toEqualIgnoringWhitespace(expected);
+    const output = prefixTest(source, expected, targets);
+    expect(output).toEqualIgnoringWhitespace(expected);
+    expectUnaffectedByPrecedingRule(source => prefixTest(source, expected, targets), source, output);
   });
 }
 
@@ -69,6 +99,7 @@ export function cssTest(source: string, expected: string, browsers?: Browsers, s
     const output = _test(source, expected, browsers);
     console.log("Output", output);
     expect(output).toEqualIgnoringWhitespace(expected);
+    expectUnaffectedByPrecedingRule(source => _test(source, expected, browsers), source, output);
   });
 }
 

@@ -1233,27 +1233,6 @@ impl EventLoop {
         }
     }
 
-    /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
-    /// `context`: as for [`run_callback`](Self::run_callback).
-    pub fn run_callback_with_result_and_forcefully_drain_microtasks(
-        &mut self,
-        context: crate::ContextId,
-        callback: JSValue,
-        global_object: &JSGlobalObject,
-        this_value: JSValue,
-        arguments: &[JSValue],
-    ) -> JsResult<JSValue> {
-        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let result = callback.call(global_object, this_value, arguments)?;
-        result.ensure_still_alive();
-        let jsc_vm = global_object.bun_vm().jsc_vm();
-        self.drain_microtasks_with_global(global_object, jsc_vm)
-            .map_err(|stopped| stopped.throw(global_object))?;
-        Ok(result)
-    }
-
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
     #[cfg(not(windows))]

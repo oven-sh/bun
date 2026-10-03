@@ -1458,7 +1458,7 @@ impl Expect {
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    VirtualMachine::get().as_mut().run_error_handler(result, None);
+                    bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,

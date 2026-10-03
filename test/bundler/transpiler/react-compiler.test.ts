@@ -663,6 +663,24 @@ describe("bundler", () => {
     });
   }
 
+  // A JSX runtime whose elements say which export made them, and with which type.
+  const namedJsxRuntime = {
+    "/node_modules/react/compiler-runtime.js": `
+      exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+    `,
+    "/node_modules/react/index.js": `exports.createElement = () => null;`,
+    "/node_modules/react/jsx-runtime.js": `
+      exports.jsx = (type, props) => ({ $: "jsx", type: typeof type === "symbol" ? "Fragment" : type, props });
+      exports.jsxs = (type, props) => ({ $: "jsxs", type: typeof type === "symbol" ? "Fragment" : type, props });
+      exports.Fragment = Symbol.for("fragment");
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": `
+      exports.jsxDEV = (type, props) => ({ $: "jsxDEV", type: typeof type === "symbol" ? "Fragment" : type, props });
+      exports.Fragment = Symbol.for("fragment");
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.
@@ -678,20 +696,7 @@ describe("bundler", () => {
         }
         console.log(JSON.stringify(Comp({ a: "A", b: "B" })))
       `,
-      "/node_modules/react/compiler-runtime.js": `
-        exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
-      `,
-      "/node_modules/react/index.js": `exports.createElement = () => null;`,
-      "/node_modules/react/jsx-runtime.js": `
-        exports.jsx = (type, props) => ({ $: "jsx", type: typeof type === "symbol" ? "Fragment" : type, props });
-        exports.jsxs = (type, props) => ({ $: "jsxs", type: typeof type === "symbol" ? "Fragment" : type, props });
-        exports.Fragment = Symbol.for("fragment");
-      `,
-      "/node_modules/react/jsx-dev-runtime.js": `
-        exports.jsxDEV = (type, props) => ({ $: "jsxDEV", type: typeof type === "symbol" ? "Fragment" : type, props });
-        exports.Fragment = Symbol.for("fragment");
-      `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      ...namedJsxRuntime,
     },
     reactCompiler: true,
     target: "browser",
@@ -701,6 +706,75 @@ describe("bundler", () => {
         '{"$":"jsxDEV","type":"Fragment","props":{"children":[{"$":"jsxDEV","type":"span","props":{"children":"A"}},{"$":"jsxDEV","type":"span","props":{"children":["B","A","B"]}}]}}',
     },
   });
+
+  // The same runtime as ES modules. The bundler prints a CommonJS export as
+  // `$jsx` and an ES module export under its own name, `jsx`.
+  const namedJsxRuntimeEsm = Object.fromEntries(
+    Object.entries(namedJsxRuntime).map(([path, text]) => [
+      path,
+      text.replace(/exports\.(\w+) =/g, "export const $1 ="),
+    ]),
+  );
+
+  // A JSX runtime import is module-level: the visit pass declares it on
+  // `module_scope.generated`. It is not context of `list`, so it does not
+  // reserve its name in `Comp`. The locals come after `list` on purpose: a
+  // name that the context of `list` reserves gives `_0` to a later local only.
+  const localsNamedLikeJsxRuntimeImports = /* jsx */ `
+    export function Comp(props) {
+      function list() {
+        return <><i>{props.x}</i><b>{props.y}</b></>;
+      }
+      const jsx = props.a;
+      const jsxs = props.b;
+      const jsxDEV = props.c;
+      const Fragment = props.d;
+      return <div title={jsx + jsxs + jsxDEV + Fragment}>{list()}</div>;
+    }
+    console.log(JSON.stringify(Comp({ a: "A", b: "B", c: "C", d: "D", x: "X", y: "Y" })));
+  `;
+  for (const development of [true, false]) {
+    const mode = development ? "Dev" : "Prod";
+    const [jsx, jsxs] = development ? ["jsxDEV", "jsxDEV"] : ["jsx", "jsxs"];
+    const element = (by: string, type: string, props: object) => ({ $: by, type, props });
+    const options: Partial<BundlerTestInput> = {
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      jsx: { development },
+      run: {
+        stdout: JSON.stringify(
+          element(jsx, "div", {
+            title: "ABCD",
+            children: element(jsxs, "Fragment", {
+              children: [element(jsx, "i", { children: "X" }), element(jsx, "b", { children: "Y" })],
+            }),
+          }),
+        ),
+      },
+    };
+
+    itBundled(`react-compiler/JsxRuntimeImportIsNotContextOfANestedFunction-${mode}`, {
+      ...options,
+      files: { "/entry.jsx": localsNamedLikeJsxRuntimeImports, ...namedJsxRuntime },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        // `Comp` is compiled: it reads its memo cache.
+        expect(out).toMatch(/\$\[\d+\]/);
+        // The imports print as `$jsx`, so the bundler does not number a local.
+        // A suffix here can only be the `_0` of the compiler.
+        const locals = Array.from(out.matchAll(/(\w+) = props\.([abcd])\b/g), m => [m[2], m[1]]);
+        expect(Object.fromEntries(locals)).toEqual({ a: "jsx", b: "jsxs", c: "jsxDEV", d: "Fragment" });
+      },
+    });
+
+    // Here the imports print under their own names, and the locals keep theirs
+    // in the compiler. The bundler has to number the locals, or `list` calls one.
+    itBundled(`react-compiler/JsxRuntimeImportIsNotContextOfANestedFunction-${mode}-EsmRuntime`, {
+      ...options,
+      files: { "/entry.jsx": localsNamedLikeJsxRuntimeImports, ...namedJsxRuntimeEsm },
+    });
+  }
 
   // Regression: codegen.rs PropertyDelete/ComputedDelete/UnaryExpression emitted
   // `E::Unary` with `UnaryFlags::empty()`. The parser sets

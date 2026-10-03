@@ -823,31 +823,82 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
-  test("uploads held by a stream window of 0 and by Expect: 100-continue go out when the server lets them", async () => {
-    // After the warm-up GET the server sets SETTINGS_INITIAL_WINDOW_SIZE to 0,
-    // so a new upload cannot send a byte. The second upload also waits for a
-    // 100. A second GET tells the server that both wait. The server then sends
-    // the 100 and raises the window.
+  test("uploads held by their stream window go out when the server opens it", async () => {
+    // A stream's window is 1000 bytes. Each upload sends that much and waits.
+    // The server opens the window of the first upload with a WINDOW_UPDATE.
+    // When that upload is done, it opens the other with SETTINGS.
     const uploads: number[] = [];
     const received = new Map<number, number>();
+    let opened = false;
+    await withRawUploadServer(
+      initialWindow(1000),
+      ({ type, flags, id, len }) => {
+        const out: Buffer[] = [];
+        if (type === 1) {
+          // HEADERS with END_STREAM is the warm-up GET, without it an upload.
+          if (flags & 1) out.push(frame(1, 5, id, hpackStatus(200)));
+          else uploads.push(id);
+        }
+        if (type === 0) {
+          received.set(id, (received.get(id) ?? 0) + len);
+          if (!opened && uploads.length === 2 && uploads.every(upload => received.get(upload) === 1000)) {
+            opened = true;
+            out.push(frame(8, 0, uploads[0], u32be(19000)));
+          }
+          if (flags & 1) {
+            out.push(frame(1, 4, id, hpackStatus(200)), frame(0, 1, id, Buffer.from(String(received.get(id)))));
+            if (id === uploads[0]) out.push(frame(4, 0, 0, initialWindow(65535)));
+          }
+        }
+        return out;
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const opts = { method: "POST", duplex: "half", tls: { rejectUnauthorized: false } };
+          // Warmup so the uploads start with the window from the server's SETTINGS.
+          await fetch("${url}", { tls: opts.tls }).then(r => r.arrayBuffer());
+          const first = fetch("${url}", { ...opts, body: Buffer.alloc(20000, "a") }).then(r => r.text());
+          const second = fetch("${url}", {
+            ...opts,
+            body: new ReadableStream({
+              pull(controller) {
+                controller.enqueue(new Uint8Array(10000));
+                controller.close();
+              },
+            }),
+          }).then(r => r.text());
+          console.log(await first, await second);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("20000 10000");
+        expect(opened).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("a streamed body with Expect: 100-continue goes out when the 100 arrives", async () => {
+    // The server sends the 100 when it sees the GET that the client starts
+    // after the upload.
+    let upload = 0;
     let gets = 0;
-    let dataBeforeRelease = 0;
+    let received = 0;
+    let dataBefore100 = 0;
     await withRawUploadServer(
       Buffer.alloc(0),
       ({ type, flags, id, len }) => {
         const out: Buffer[] = [];
-        if (type === 1 && !(flags & 1)) uploads.push(id);
+        if (type === 1 && !(flags & 1)) upload = id;
         if (type === 1 && flags & 1) {
           out.push(frame(1, 5, id, hpackStatus(200)));
-          if (++gets === 1) out.push(frame(4, 0, 0, initialWindow(0)));
-          else out.push(frame(1, 4, uploads[1], hpackStatus(100)), frame(4, 0, 0, initialWindow(65535)));
+          // The first GET is the warm-up.
+          if (++gets === 2) out.push(frame(1, 4, upload, hpackStatus(100)));
         }
         if (type === 0) {
-          if (gets < 2) dataBeforeRelease += len;
-          received.set(id, (received.get(id) ?? 0) + len);
-          if (flags & 1) {
-            out.push(frame(1, 4, id, hpackStatus(200)), frame(0, 1, id, Buffer.from(String(received.get(id)))));
-          }
+          if (gets < 2) dataBefore100 += len;
+          received += len;
+          if (flags & 1) out.push(frame(1, 4, id, hpackStatus(200)), frame(0, 1, id, Buffer.from(String(received))));
         }
         return out;
       },
@@ -855,31 +906,25 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         await using proc = await spawnFetch(`
           const tls = { rejectUnauthorized: false };
           await fetch("${url}", { tls }).then(r => r.arrayBuffer());
-          const first = fetch("${url}", { method: "POST", tls, body: Buffer.alloc(20000, "a") }).then(r => r.text());
-          const fed = Promise.withResolvers();
-          let pulls = 0;
-          const second = fetch("${url}", {
+          const upload = fetch("${url}", {
             method: "POST",
             tls,
             headers: { Expect: "100-continue" },
             duplex: "half",
             body: new ReadableStream({
               pull(controller) {
-                if (++pulls === 1) return controller.enqueue(new Uint8Array(10000));
-                // The sink took the chunk.
-                fed.resolve();
+                controller.enqueue(new Uint8Array(5000));
                 controller.close();
               },
             }),
           }).then(r => r.text());
-          await fed.promise;
           await fetch("${url}", { tls }).then(r => r.arrayBuffer());
-          console.log(await first, await second);
+          console.log(await upload);
         `);
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        expect(stdout.trim()).toBe("20000 10000");
-        expect(dataBeforeRelease).toBe(0);
+        expect(stdout.trim()).toBe("5000");
+        expect(dataBefore100).toBe(0);
         expect(exitCode).toBe(0);
       },
     );

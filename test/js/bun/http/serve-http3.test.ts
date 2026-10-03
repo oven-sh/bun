@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
 
@@ -1692,9 +1692,127 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // Expect: 100-continue is handled at the uWS layer for both transports
-  // (HttpContext.h / Http3Context.h call writeContinue before routing); a
-  // curl --expect100-timeout assertion was flaky enough to drop here.
+  // https://github.com/oven-sh/bun/issues/33082
+  // Each case is the first request of its connection: a warm-up hides the bug.
+  describe.concurrent("Expect: 100-continue on the first request of a connection", () => {
+    const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop").toString();
+    // A failure on the large body prints a length and a hash, not 512 KB.
+    const summarize = (body: string) => (body.length > 64 ? `${body.length} bytes, hash ${Bun.hash(body)}` : body);
+    const streamed = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }),
+      );
+    const cases: Record<string, { serve: object; expected: { status: number; body: string } }> = {
+      "string body after reading the request body": {
+        serve: { fetch: async (req: Request) => new Response("body:" + (await req.bytes()).length) },
+        expected: { status: 200, body: "body:15" },
+      },
+      "string body without reading the request body": {
+        serve: { fetch: () => new Response("sync") },
+        expected: { status: 200, body: "sync" },
+      },
+      "body larger than the stream accepts in one write": {
+        serve: { fetch: () => new Response(big) },
+        expected: { status: 200, body: summarize(big) },
+      },
+      "ReadableStream body after reading the request body": {
+        serve: { fetch: async (req: Request) => (await req.bytes(), streamed()) },
+        expected: { status: 200, body: "streamed" },
+      },
+      "ReadableStream body without reading the request body": {
+        serve: { fetch: streamed },
+        expected: { status: 200, body: "streamed" },
+      },
+      "empty body": {
+        serve: { fetch: () => new Response("") },
+        expected: { status: 200, body: "" },
+      },
+      "204 with no body": {
+        serve: { fetch: () => new Response(null, { status: 204 }) },
+        expected: { status: 204, body: "" },
+      },
+      "static route": {
+        serve: { routes: { "/": new Response("static") } },
+        expected: { status: 200, body: "static" },
+      },
+    };
+    test.each(Object.entries(cases))("%s", async (_, { serve, expected }) => {
+      using server = Bun.serve({ port: 0, tls, http3: true, http1: false, ...serve } as Bun.Serve.Options<undefined>);
+      const res = await fetchH3(server.port, "/", {
+        method: "POST",
+        body: "request-content",
+        headers: { expect: "100-continue" },
+      });
+      expect({ status: res.status, body: summarize(await res.text()) }).toEqual(expected);
+    });
+
+    test("the 100 block, the final header block and the body arrive in that order", async () => {
+      using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: async req => new Response("body:" + (await req.bytes()).length),
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(`127.0.0.1:${server.port}`, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 5 },
+        onerror() {},
+      });
+      client.closed.catch(() => {});
+      const seen: string[] = [];
+      // No `await client.opened`: the request has to leave with the handshake.
+      const stream = await client.createBidirectionalStream({
+        headers: requestHeaders("/", { ":method": "POST", expect: "100-continue" }),
+        oninfo: (received: Record<string, string>) => seen.push("info " + received[":status"]),
+        onheaders: (received: Record<string, string>) => seen.push("headers " + received[":status"]),
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      if (!client.destroyed) client.close().catch(() => {});
+      expect([...seen, "body " + body]).toEqual(["info 100", "headers 200", "body body:0"]);
+    });
+
+    // Only a debug build has the lsquic log. If a lsquic update stops stashing the
+    // 100 block, the cases above pass without the resend. This one then fails.
+    test.skipIf(!isDebug)("lsquic refuses the final header block while the 100 block is pending", async () => {
+      const script = `
+        const server = Bun.serve({
+          port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+          fetch: () => new Response("sync"),
+        });
+        const res = await fetch("https://127.0.0.1:" + server.port + "/", {
+          protocol: "http3", tls: { rejectUnauthorized: false },
+          method: "POST", body: "request-content", headers: { expect: "100-continue" },
+        });
+        console.log(res.status, await res.text());
+        server.stop(true);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_DEBUG_lsquic: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const refusals = stderr
+        .split("\n")
+        .filter(line => line.includes("cannot send headers while previous header block"));
+      expect({ stdout, refusals: refusals.length }).toEqual({ stdout: "200 sync\n", refusals: 1 });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 async function h3Exchange(

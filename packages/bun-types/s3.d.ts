@@ -234,7 +234,8 @@ declare module "bun" {
     /**
      * Use a virtual hosted-style endpoint, where the bucket name is part of the
      * hostname. Defaults to `false`. When `true`, if `endpoint` is provided, the
-     * `bucket` option is ignored.
+     * `bucket` option is ignored, and `S3File.bucket` is the bucket in the
+     * hostname of the endpoint.
      *
      * @example
      * ```ts
@@ -635,9 +636,23 @@ declare module "bun" {
     /**
      * The bucket name containing the file.
      *
+     * With `virtualHostedStyle` and an `endpoint`, the bucket is in the
+     * hostname of the endpoint. This is then the bucket of an AWS S3 or
+     * Cloudflare R2 hostname, and `undefined` for any other hostname. The
+     * `bucket` option and the path do not name the bucket in that mode.
+     *
      * @example
      * ```ts
      * const file = s3.file("s3://my-bucket/file.txt");
+     * console.log(file.bucket); // "my-bucket"
+     * ```
+     *
+     * @example
+     * ```ts
+     * const file = s3.file("folder/file.txt", {
+     *   virtualHostedStyle: true,
+     *   endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com",
+     * });
      * console.log(file.bucket); // "my-bucket"
      * ```
      */

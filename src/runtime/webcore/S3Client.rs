@@ -27,14 +27,13 @@ macro_rules! pfmt {
 }
 
 // ── Local extension shims ─────────────────────────────────────────────────
-// `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
-// FREE fns and the JS-options parser lives in
+// `bun_s3_signing::S3Credentials` exposes `guessRegion` as a
+// FREE fn and the JS-options parser lives in
 // `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
 // an extension trait so call sites can use the associated-fn shape
 // (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
 pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
-    fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     fn get_credentials_with_options(
         // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
@@ -53,10 +52,6 @@ impl S3CredentialsExt for S3Credentials {
     #[inline]
     fn guess_region(endpoint: &[u8]) -> &[u8] {
         bun_s3_signing::credentials::guess_region(endpoint)
-    }
-    #[inline]
-    fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
-        bun_s3_signing::credentials::guess_bucket(endpoint)
     }
     #[inline]
     fn get_credentials_with_options(
@@ -304,15 +299,7 @@ impl S3Client {
         W: core::fmt::Write,
     {
         writer.write_str(pfmt!("<r>S3Client<r>", ENABLE_ANSI_COLORS))?;
-        // detect virtual host style bucket name
-        let bucket_name: &[u8] =
-            if self.credentials.virtual_hosted_style && !self.credentials.endpoint.is_empty() {
-                <S3Credentials as S3CredentialsExt>::guess_bucket(&self.credentials.endpoint)
-                    .unwrap_or(&self.credentials.bucket)
-            } else {
-                &self.credentials.bucket
-            };
-        if !bucket_name.is_empty() {
+        if let Some(bucket_name) = self.credentials.configured_bucket() {
             bun_core::write_pretty!(
                 writer,
                 ENABLE_ANSI_COLORS,

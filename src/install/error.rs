@@ -58,6 +58,8 @@ pub enum Error {
     NoMatchingVersion,
     #[error("TooRecentVersion")]
     TooRecentVersion,
+    #[error("UnreadablePublishTime")]
+    UnreadablePublishTime,
     #[error("MissingPackageJSON")]
     MissingPackageJSON,
     #[error("InstallFailed")]
@@ -270,6 +272,7 @@ impl Error {
             Self::DistTagNotFound => "DistTagNotFound",
             Self::NoMatchingVersion => "NoMatchingVersion",
             Self::TooRecentVersion => "TooRecentVersion",
+            Self::UnreadablePublishTime => "UnreadablePublishTime",
             Self::MissingPackageJSON => "MissingPackageJSON",
             Self::InstallFailed => "InstallFailed",
             Self::HTTPError => "HTTPError",

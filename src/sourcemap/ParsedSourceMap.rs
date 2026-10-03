@@ -17,8 +17,7 @@ use crate::{
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
     pub mappings: mapping::List,
-    /// What `parse_json` found in `sourcesContent`.
-    /// [`Self::original_line_bound`] reads it.
+    /// For [`Self::original_line_bound`].
     pub(crate) source_text: SourceText,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
@@ -78,10 +77,7 @@ impl Default for ParsedSourceMap {
     }
 }
 
-/// How much source text the JSON of a map carries in `sourcesContent`. A text
-/// of `n` bytes has at most `n + 1` lines, so the bytes held bound the lines
-/// that a mapping can name. Only `parse_json` makes one that is not
-/// `NoSources`.
+/// How much text `sourcesContent` has. A text of `n` bytes has at most `n + 1` lines.
 #[derive(Default)]
 pub(crate) enum SourceText {
     /// The map names no source, or it did not come from JSON.
@@ -98,25 +94,26 @@ pub(crate) struct PartialSourceText {
     longest: u32,
     /// Indices into `external_source_names`: the sources with no text.
     textless: Box<[u32]>,
-    /// What `count_lines_on_disk` found. It runs once, so every reader of
-    /// the map gets the same bound.
+    /// Counted once, so that every report of the map has the same bound.
     lines_on_disk: OnceLock<Result<u32, UnreadableSource>>,
 }
 
 impl SourceText {
-    /// `longest` is the byte length of the longest `sourcesContent` entry.
-    /// `textless` lists the sources whose entry is not a string with text.
-    pub(crate) fn new(source_count: usize, longest: usize, textless: Vec<u32>) -> SourceText {
+    pub(crate) fn new(
+        source_count: usize,
+        longest_text_len: usize,
+        textless_sources: Vec<u32>,
+    ) -> SourceText {
         if source_count == 0 {
             return SourceText::NoSources;
         }
-        let longest = u32::try_from(longest).unwrap_or(u32::MAX);
-        if textless.is_empty() {
+        let longest = u32::try_from(longest_text_len).unwrap_or(u32::MAX);
+        if textless_sources.is_empty() {
             return SourceText::Whole(longest);
         }
         SourceText::Partial(Box::new(PartialSourceText {
             longest,
-            textless: textless.into_boxed_slice(),
+            textless: textless_sources.into_boxed_slice(),
             lines_on_disk: OnceLock::new(),
         }))
     }
@@ -151,20 +148,14 @@ pub enum NoLineBound<'a> {
     Unreadable(&'a UnreadableSource),
 }
 
-/// One past the bytes of `path` that can end a line, counted until the result
-/// is `enough`. LF, CR and 0xE2 (the first byte of U+2028 and of U+2029) each
-/// count, so the result is never below the line count that
-/// [`crate::LineOffsetTable`] gives the same text. `Err` says why `path` is
-/// not a file to count in.
+/// An upper bound of the lines of `path`: 1 + its LF, CR and 0xE2 (U+2028, U+2029) bytes.
 fn count_lines_in_file(
     path: &bun_core::ZStr,
     chunk: &mut [u8],
     enough: u32,
 ) -> Result<u32, &'static [u8]> {
     use bun_sys::O;
-    // With O_NONBLOCK the open of a FIFO that has no writer returns at once.
-    // On Windows the flag opens the file for overlapped I/O, which the read
-    // below is not.
+    // The open of a FIFO with no writer blocks without it. On Windows it asks for overlapped I/O.
     let nonblock = if cfg!(unix) { O::NONBLOCK } else { 0 };
     let file = bun_sys::File::openat(
         bun_sys::Fd::cwd(),
@@ -178,8 +169,7 @@ fn count_lines_in_file(
         Ok(_) => return Err(b"not a regular file"),
         Err(err) => return Err(err.name()),
     }
-    // No parser takes a longer text, so a longer file is not a source. This
-    // also keeps the read below from taking a sparse file of any size.
+    // No parser takes a longer text. The check also keeps a sparse file of any size from the read.
     match file.get_end_pos() {
         Ok(len) if len <= bun_ast::Source::MAX_PARSEABLE_LEN => {}
         Ok(_) => return Err(b"larger than 2 GiB"),
@@ -378,16 +368,7 @@ impl ParsedSourceMap {
         self.internal.as_ref().map(|ism| ism.cursor())
     }
 
-    /// How many lines a reader that indexes by the original line of a mapping
-    /// makes room for. A mapping that names a line at or past the bound names
-    /// no line of a text that bun holds, and the reader drops it.
-    ///
-    /// A blob stores the line count of the text it was printed from. A map
-    /// from JSON has no stored count: the bound is one past the largest line
-    /// that a mapping names, and at most one past the bytes of the longest
-    /// source text. That text is the `sourcesContent` entry. For a source
-    /// with no entry it is the file that `sources` names, relative to
-    /// `generated_path`, and only its line ends are counted.
+    /// One past the largest original line to make room for, and no more than the source text has.
     pub fn original_line_bound(&self, generated_path: &[u8]) -> Result<u32, NoLineBound<'_>> {
         if let Some(internal) = &self.internal {
             return Ok((internal.input_line_count() as u32).saturating_add(1));
@@ -418,7 +399,6 @@ impl ParsedSourceMap {
             .map_err(NoLineBound::Unreadable)
     }
 
-    /// The largest [`count_lines_in_file`] of the files of `textless`.
     fn count_lines_on_disk(
         &self,
         textless: &[u32],

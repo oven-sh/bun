@@ -1320,6 +1320,106 @@ done
   expect(asyncOut.trim().split("\n")).toEqual(expected);
 });
 
+// Node emits 'close' after the process has ended and every stdio stream has
+// closed, the pipes at index >= 3 included. After 'exit' it also resumes each
+// stdio stream that nobody reads, so that the stream can reach EOF and close.
+// Each script runs as a process of its own: inside the test runner the exit
+// notification and the pipe reads arrive in a different order.
+describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  // The shell exits at once. Its background job keeps fd 3 and fd 4, waits for
+  // a line on fd 4 and only then writes to fd 3. The parent sends that line
+  // from its 'exit' listener, so the bytes cannot be there when 'exit' fires.
+  it.skipIf(isWindows)("'close' waits for bytes that arrive after 'exit'", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const child = spawn("/bin/sh", ["-c", '(read line <&4; printf "late:%s" "$line" >&3) & exit 0'], {
+        stdio: ["ignore", "ignore", "inherit", "pipe", "pipe"],
+      });
+      let got = "";
+      const order = [];
+      child.stdio[3].on("data", chunk => (got += chunk));
+      child.stdio[3].on("end", () => order.push("end"));
+      child.on("exit", () => {
+        order.push("exit");
+        child.stdio[4].write("go\\n");
+      });
+      child.on("close", () => {
+        order.push("close");
+        console.log(JSON.stringify({ got, order }));
+      });
+    `);
+    expect(result).toEqual({ stdout: '{"got":"late:go","order":["exit","end","close"]}\n', exitCode: 0 });
+  });
+
+  it("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const [file, args] =
+        process.platform === "win32"
+          ? [process.execPath, ["-e", "require('fs').writeSync(3, 'late')"]]
+          : ["/bin/sh", ["-c", "printf late >&3"]];
+      const child = spawn(file, args, { stdio: ["ignore", "ignore", "inherit", "pipe"] });
+      let got = "";
+      child.on("exit", () => child.stdio[3].on("data", chunk => (got += chunk)));
+      child.on("close", () => console.log(JSON.stringify({ got })));
+    `);
+    expect(result).toEqual({ stdout: '{"got":"late"}\n', exitCode: 0 });
+  });
+
+  // Without a reader the socket keeps its bytes and never ends. When nothing
+  // drains it at exit, 'close' never comes and this script prints nothing.
+  it("'close' comes when nobody reads the pipe", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const { once } = require("node:events");
+      (async () => {
+        const [file, args] =
+          process.platform === "win32"
+            ? [process.execPath, ["-e", "require('fs').writeSync(3, 'progress'); console.log('result')"]]
+            : ["/bin/sh", ["-c", "echo result; echo progress >&3"]];
+        const child = spawn(file, args, { stdio: ["ignore", "pipe", "inherit", "pipe"] });
+        let out = "";
+        child.stdout.on("data", chunk => (out += chunk));
+        await once(child, "close");
+        console.log("close came; stdout = " + JSON.stringify(out));
+      })();
+    `);
+    expect(result).toEqual({ stdout: 'close came; stdout = "result\\n"\n', exitCode: 0 });
+  });
+
+  // The child writes "two" only after the parent has paused the pipe, so "two"
+  // stays in the paused socket until something resumes it.
+  it.skipIf(isWindows)("'close' comes for a pipe the parent paused, after its remaining bytes", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const child = spawn("/bin/sh", ["-c", "printf one >&3; read line <&4; printf two >&3"], {
+        stdio: ["ignore", "ignore", "inherit", "pipe", "pipe"],
+      });
+      let got = "";
+      child.stdio[3].on("data", chunk => {
+        got += chunk;
+        if (got === "one") {
+          child.stdio[3].pause();
+          child.stdio[4].write("go\\n");
+        }
+      });
+      child.on("close", () => console.log(JSON.stringify({ got })));
+    `);
+    expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', exitCode: 0 });
+  });
+});
+
 describe("uid/gid options", () => {
   const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.

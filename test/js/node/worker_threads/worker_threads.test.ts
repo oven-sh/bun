@@ -1567,25 +1567,25 @@ describe("transfer list invalidated while the message is serialized", () => {
   test("port.postMessage honors markAsUntransferable applied to a listed port during serialization", () => {
     const { port1, port2 } = new MessageChannel();
     const { port1: listed, port2: peer } = new MessageChannel();
-    const buffer = new ArrayBuffer(16);
-    const message = {
-      buffer,
-      get markIt() {
-        markAsUntransferable(listed);
-        return 1;
-      },
-      listed,
-    };
-    expect(() => port1.postMessage(message, [buffer, listed])).toThrow(dataClone);
-    expect(buffer.byteLength).toBe(16);
-    expect(receiveMessageOnPort(port2)).toBeUndefined();
-    // The port was not transferred, so it still delivers.
-    listed.postMessage("still attached");
-    expect(receiveMessageOnPort(peer)).toEqual({ message: "still attached" });
-    port1.close();
-    port2.close();
-    listed.close();
-    peer.close();
+    try {
+      const buffer = new ArrayBuffer(16);
+      const message = {
+        buffer,
+        get markIt() {
+          markAsUntransferable(listed);
+          return 1;
+        },
+        listed,
+      };
+      expect(() => port1.postMessage(message, [buffer, listed])).toThrow(dataClone);
+      expect(buffer.byteLength).toBe(16);
+      expect(receiveMessageOnPort(port2)).toBeUndefined();
+      // The port was not transferred, so it still delivers.
+      listed.postMessage("still attached");
+      expect(receiveMessageOnPort(peer)).toEqual({ message: "still attached" });
+    } finally {
+      for (const port of [port1, port2, listed, peer]) port.close();
+    }
   });
 
   // The other direction of the same rule: once the buffers are detached, the listed ports go
@@ -1603,6 +1603,7 @@ describe("transfer list invalidated while the message is serialized", () => {
   ])("port.postMessage on a port closed %s still detaches %s", async (_when, _which, closeBeforeCall, listOwnPeer) => {
     const { port1: sender, port2: senderPeer } = new MessageChannel();
     const { port1: another, port2: anotherPeer } = new MessageChannel();
+    const { port1: other, port2: otherPeer } = new MessageChannel();
     const listed = listOwnPeer ? senderPeer : another;
     const { promise: anotherPeerSawClose, resolve } = Promise.withResolvers<void>();
     anotherPeer.on("close", () => resolve());
@@ -1622,23 +1623,18 @@ describe("transfer list invalidated while the message is serialized", () => {
       };
       expect(() => sender.postMessage(message, [buffer, listed])).not.toThrow();
       expect(buffer.byteLength).toBe(0);
-      const { port1: other, port2: otherPeer } = new MessageChannel();
       expect(() => other.postMessage(null, [listed])).toThrow("MessagePort in transfer list is already detached");
-      other.close();
-      otherPeer.close();
       if (listOwnPeer) {
         // The closed sender drops the message before the "posted to itself" branch, so nothing warns.
         for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
         expect(warnings.filter(message => message.includes("posted to itself"))).toEqual([]);
-        another.close();
       } else {
         // The transferred endpoint had no receiver, which closes the channel from the peer's view.
         await anotherPeerSawClose;
       }
     } finally {
       process.off("warning", onWarning);
-      anotherPeer.close();
-      senderPeer.close();
+      for (const port of [sender, senderPeer, another, anotherPeer, other, otherPeer]) port.close();
     }
   });
 });

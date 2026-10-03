@@ -1,8 +1,9 @@
-// Bun client for the "pooled socket that is mid-renegotiation" test in
+// Bun client for the "pooled socket mid-renegotiation" tests in
 // fetch.tls.test.ts.
-// argv: the <relayPort> <controlPort> of fetch.tls.renegotiation-peer-fixture.mjs
+// argv: the <relayPort> <controlPort> of fetch.tls.renegotiation-peer-fixture.mjs,
+//       then "await-second" to wait for the request that takes the pooled socket
 // env:  CA_CERT, the certificate of the origin
-const [relayPort, controlPort] = process.argv.slice(2);
+const [relayPort, controlPort, mode] = process.argv.slice(2);
 const origin = `https://127.0.0.1:${relayPort}/`;
 const control = (path: string) => fetch(`http://127.0.0.1:${controlPort}${path}`).then(res => res.text());
 // Verification stays on: fetch keeps no TLS session for a client without it.
@@ -17,15 +18,18 @@ console.log("first", await (await fetch(origin, { tls })).text());
 console.log("held record type", await control("/renegotiate"));
 
 // The pooled pickup. It is queued on the HTTP thread before the control
-// request below, so once that one is answered the pickup has run. The request
-// itself waits for the renegotiation, so its outcome is not part of the test.
-void fetch(origin, { tls }).then(
-  res => res.text(),
-  () => {},
-);
+// request below, so once that one is answered the pickup has run.
+const second = fetch(origin, { tls }).then(res => res.text());
+// Only "await-second" reads the outcome of that request.
+second.catch(() => {});
 console.log("after the pooled pickup", await control("/ping"));
 
 await control("/release");
+
+if (mode === "await-second") {
+  console.log("second", await second);
+  process.exit(0);
+}
 
 // `keepalive: false` takes a connection of its own, so the origin reports
 // whether the cached session is still there to offer.

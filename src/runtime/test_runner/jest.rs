@@ -155,6 +155,7 @@ pub(crate) struct TestRunner<'a> {
 }
 
 /// A run that executes its test files in this process, as opposed to a `--parallel` worker or coordinator.
+#[derive(Copy, Clone)]
 pub(crate) struct SerialRun {
     pub(crate) reporter: bun_ptr::BackRef<CommandLineReporter, bun_ptr::Mut>,
     /// In run order. The first `summary.files` of them have started.

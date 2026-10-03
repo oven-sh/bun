@@ -261,6 +261,7 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 The exit counts as one failed test when it leaves work undone:
 
 - A test that the file registered has no result yet.
+- The file has not registered all its tests yet: its top-level code or a `describe` callback is still running.
 - A test file did not start. When a `--preload` script calls `process.exit()`, no test file starts.
 
 `bun test` then prints an error at the line that called `process.exit()` and lists what did not run:
@@ -275,7 +276,7 @@ error: process.exit(0) was called while a.test.ts was running
 
 The exit code of the process is the code that you passed to `process.exit()`. When that code is `0` and the run failed, the exit code is `1`.
 
-A file that is the only file in the run, and that calls `process.exit()` before it registers a test, ends the run with its code. `bun test` prints no summary for it.
+A file that is the only file in the run, and that calls `process.exit()` before it registers a test or a `describe` block, ends the run with its code. `bun test` prints no summary for it.
 
 ### Signal Handling
 

@@ -1953,11 +1953,36 @@ describe("bun test", () => {
     });
 
     // Node's test harness skips a file and re-spawns it with flags this way.
-    test.each([0, 7])("a file that is the whole run and registers no test exits %d, with no report", async code => {
+    test.each([0, 7])("a file that is the whole run and registers nothing exits %d, with no report", async code => {
       const { stderr, exitCode } = await run({ "a.test.ts": `process.exit(${code});` }, ["./a.test.ts"]);
       expect(stderr).not.toContain("process.exit");
       expect(stderr).not.toContain("Ran ");
       expect(exitCode).toBe(code);
+    });
+
+    test.each([
+      ["a file that registers nothing", `process.exit(0);`],
+      ["a describe body", `describe("x", () => { process.exit(0); });`],
+    ])("%s, as the last file of two, has not registered its tests: a failure", async (_, exits) => {
+      const { stderr, exitCode } = await run({ "exits.test.ts": exits, "passes.test.ts": passes }, [
+        "./passes.test.ts",
+        "./exits.test.ts",
+      ]);
+      expect(stderr).toContain("error: process.exit(0) was called while exits.test.ts was running");
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(" 1 fail");
+      expect(stderr).toContain("Ran 2 tests across 2 files.");
+      expect(exitCode).toBe(1);
+    });
+
+    test("in a describe body of the only file, is a failure", async () => {
+      const { stderr, exitCode } = await run(
+        { "a.test.ts": `describe("x", () => { process.exit(0); test("never registered", () => {}); });` },
+        ["./a.test.ts"],
+      );
+      expect(stderr).toContain("error: process.exit(0) was called while a.test.ts was running");
+      expect(stderr).toContain(" 1 fail");
+      expect(exitCode).toBe(1);
     });
 
     test.each([
@@ -2002,12 +2027,8 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
-    const exitsInDescribe = `describe("x", () => { process.exit(0); });`;
-    describe.each([
-      ["afterAll", exitsInAfterAll],
-      ["a describe body", exitsInDescribe],
-    ])("in %s", (_, exits) => {
-      const files = { "exits.test.ts": exits, "passes.test.ts": passes };
+    describe("in afterAll, in a run of two files", () => {
+      const files = { "exits.test.ts": exitsInAfterAll, "passes.test.ts": passes };
 
       test("with a file still to run, is a failure", async () => {
         const { stderr, exitCode } = await run(files, ["./exits.test.ts", "./passes.test.ts"]);
@@ -2020,8 +2041,9 @@ describe("bun test", () => {
       test("after the last file, every test has a result, so the code is kept", async () => {
         const { stderr, exitCode } = await run(files, ["./passes.test.ts", "./exits.test.ts"]);
         expect(stderr).toContain("note: process.exit(0) was called while exits.test.ts was running");
+        expect(stderr).toContain(" 2 pass");
         expect(stderr).toContain(" 0 fail");
-        expect(stderr).toContain("across 2 files.");
+        expect(stderr).toContain("Ran 2 tests across 2 files.");
         expect(exitCode).toBe(0);
       });
     });

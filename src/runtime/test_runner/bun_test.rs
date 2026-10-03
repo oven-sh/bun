@@ -617,13 +617,15 @@ pub enum Phase {
     Done,
 }
 
-/// What a test file registered that has no result yet.
+/// What a test file has left to do.
 #[derive(Default, Copy, Clone)]
 pub(crate) struct Unfinished {
     /// Tests without a reported result.
     pub(crate) tests: usize,
-    /// `describe` callbacks that have not run, so their tests are not registered yet.
-    pub(crate) describes: usize,
+    /// The file has not registered all its tests: its module or a `describe` callback has not finished.
+    pub(crate) collecting: bool,
+    /// The file registered a test or a `describe`.
+    pub(crate) registered: bool,
 }
 
 pub(crate) struct BunTest {
@@ -693,19 +695,17 @@ impl BunTest {
         match self.phase {
             Phase::Collection => Unfinished {
                 tests: self.collection.root_scope.test_count(),
-                describes: self.collection.describe_callback_queue.len()
-                    + self.collection.current_scope_callback_queue.len(),
+                collecting: true,
+                registered: !self.collection.root_scope.entries.is_empty(),
             },
-            Phase::Execution => Unfinished {
-                tests: self
-                    .execution
-                    .sequences
-                    .iter()
-                    .filter(|sequence| sequence.test_entry.is_some() && sequence.active_entry.is_some())
-                    .count(),
-                describes: 0,
-            },
-            Phase::Done => Unfinished::default(),
+            Phase::Execution | Phase::Done => {
+                let tests = || self.execution.sequences.iter().filter(|sequence| sequence.test_entry.is_some());
+                Unfinished {
+                    tests: tests().filter(|sequence| sequence.active_entry.is_some()).count(),
+                    collecting: false,
+                    registered: tests().next().is_some(),
+                }
+            }
         }
     }
 

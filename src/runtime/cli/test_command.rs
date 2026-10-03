@@ -1731,6 +1731,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
 }
 
 /// What `TestCommand::report_run` reads that the reporter does not hold.
+#[derive(Copy, Clone)]
 struct ReportInputs<'a> {
     ctx: &'a Command::ContextData,
     /// The files of the run, after `--changed` and `--shard`.
@@ -3127,10 +3128,18 @@ pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
 /// Reports the run in place of the tail of `exec`, and keeps a run that failed, or that the
 /// exit cut short, from exiting 0.
 #[cold]
-fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
-    // SAFETY: `run_all_tests` and the frames above it borrow the reporter, and none of them
-    // runs again: the caller exits.
-    let reporter = unsafe { run.reporter.get_mut() };
+fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
+    let running_file =
+        jest::Jest::runner().and_then(|runner| runner.bun_test_root.clone_active_file());
+    // `TestCommand::run` lends its reporter to the file that it runs, and `handle_test_completed`
+    // reaches it through the file too. Between files, the reporter is the one of `run_all_tests`.
+    let reporter = running_file
+        .as_deref()
+        .and_then(|file| file.reporter)
+        .map_or_else(|| run.reporter.as_ptr(), core::ptr::NonNull::as_ptr);
+    // SAFETY: `exec` owns the reporter and never returns. `run_all_tests` and `run` borrow it
+    // while they are on the stack, and neither runs again: the caller exits the process.
+    let reporter = unsafe { &mut *reporter };
     let files: &[Interned] = &run.files;
 
     if should_drain_event_loop() {
@@ -3142,26 +3151,22 @@ fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, c
         return;
     }
 
-    let running = reporter
-        .jest
-        .bun_test_root
-        .active_file
+    let running = running_file
         .as_deref()
         .map(|file| (file.file_id, file.unfinished()));
     let unfinished = running
         .map(|(_, unfinished)| unfinished)
         .unwrap_or_default();
-    let nothing_unfinished = unfinished.tests == 0 && unfinished.describes == 0;
     let summary = reporter.jest.summary;
     let nothing_reported =
         summary.pass + summary.fail + summary.skip + summary.todo + summary.skipped_because_label
             == 0
             && reporter.jest.unhandled_errors_between_tests == 0;
 
-    // A file that is the whole run and exits before it registers a test is a script: its
-    // status is its result. Node's test harness does this to skip a file (`common.skip()`)
-    // and to re-spawn it with its `// Flags:`.
-    if files.len() == 1 && !vm.is_in_preload && nothing_reported && nothing_unfinished {
+    // A file that is the whole run and exits before it registers a test or a `describe` is a
+    // script: its status is its result. Node's test harness does this to skip a file
+    // (`common.skip()`) and to re-spawn it with its `// Flags:`.
+    if files.len() == 1 && !vm.is_in_preload && nothing_reported && !unfinished.registered {
         return;
     }
 
@@ -3177,9 +3182,10 @@ fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, c
         .min(files.len());
     let not_started = &files[started..];
 
-    // The exit is one failure when it leaves work undone: a registered test without a result,
-    // or a file that did not start. A run that lost nothing keeps the code of the exit.
-    let is_failure = !nothing_unfinished || !not_started.is_empty();
+    // The exit is one failure when it leaves work undone: a test without a result, a file that
+    // has not registered all its tests, or a file that did not start. A run that lost nothing
+    // keeps the code of the exit.
+    let is_failure = unfinished.tests > 0 || unfinished.collecting || !not_started.is_empty();
 
     if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {
         pretty_error!("<r>\n");

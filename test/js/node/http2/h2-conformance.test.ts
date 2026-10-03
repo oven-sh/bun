@@ -1718,6 +1718,78 @@ describe("inbound stream lifecycle", () => {
   });
 });
 
+// A pushStream() whose PUSH_PROMISE fails header validation reserves a stream id that never
+// reaches the wire. The session releases the pushed stream right away. A client frame on that
+// id afterwards (the peer never learned of it, so it is a protocol slip on the client's side)
+// must not be reported to the released stream a second time: that would lower the session's
+// open-stream count twice, and session.close() would then destroy the session while a real
+// request stream is still open.
+describe("push reserved but never announced", () => {
+  const triggers: Array<[string, (c: RawH2) => void]> = [
+    ["RST_STREAM", c => c.sendFrame(FrameType.RST_STREAM, 0, 2, Buffer.from([0, 0, 0, ErrorCode.CANCEL]))],
+    ["WINDOW_UPDATE with a zero increment", c => c.sendFrame(FrameType.WINDOW_UPDATE, 0, 2, Buffer.alloc(4))],
+    ["DATA", c => c.sendFrame(FrameType.DATA, 0, 2, Buffer.from("x"))],
+  ];
+  test.each(triggers)(
+    "session.close() still waits for the open request stream after %s on the released push id",
+    async (_name, trigger) => {
+      let session: http2.ServerHttp2Session | undefined;
+      let main: http2.ServerHttp2Stream | undefined;
+      const pushed = Promise.withResolvers<string | null>();
+      const sessionClosed = Promise.withResolvers<void>();
+      const server = http2.createServer();
+      server.on("session", s => {
+        session = s;
+        s.on("close", () => sessionClosed.resolve());
+      });
+      server.on("stream", (stream: any) => {
+        main = stream;
+        stream.on("error", () => {});
+        stream.pushStream({ ":path": "/p", "bad header": "x" }, (err: any) => {
+          stream.respond({ ":status": 200 });
+          // Keep stream 1 open: close() has to wait for it.
+          stream.write("m");
+          pushed.resolve(err ? err.code : null);
+        });
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        // ACK the server's SETTINGS: an unACKed SETTINGS gives close() a grace period that
+        // would hide a session destroyed too early.
+        await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+        c.sendSettingsAck();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        expect(await pushed.promise).toBe("ERR_INVALID_HTTP_TOKEN");
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+
+        trigger(c);
+        // The PING ACK proves the server consumed the frame on stream 2.
+        c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+        expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+
+        session!.close();
+        await c.waitFor(f => f.type === FrameType.GOAWAY);
+        expect({ mainDestroyed: main!.destroyed, sessionDestroyed: session!.destroyed }).toEqual({
+          mainDestroyed: false,
+          sessionDestroyed: false,
+        });
+        main!.end("done");
+        const last = await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+        expect(last.payload.toString()).toBe("done");
+        await sessionClosed.promise;
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    },
+  );
+});
+
 // A DATA frame that cannot be written right away (the peer's flow-control window is used up, the
 // socket has backpressure, or another stream on the session already has frames waiting) is put on
 // the session's outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains

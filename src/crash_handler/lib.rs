@@ -604,7 +604,7 @@ mod draft {
         /// Some of these are enabled in release builds, which may encourage users to
         /// attach the affected files to crash report. Others, which may have low crash
         /// rate or only crash due to assertion failures, are debug-only. See `Action`.
-        static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
+        static CURRENT_ACTION: Cell<Option<Action<'static>>> = const { Cell::new(None) };
     }
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
@@ -697,21 +697,15 @@ mod draft {
     }
 
     #[derive(Clone, Copy)]
-    pub enum Action {
-        // These slices are stored in the `CURRENT_ACTION` thread-local, so they
-        // are typed `'static`. Callers pass `Source.path` data whose
-        // `Path<'static>` is itself an upstream `into_static()` lifetime
-        // erasure of arena-owned bytes (see paths/lib.rs); the data is not
-        // truly `'static`. Correctness relies on the `scoped_action` RAII
-        // guard restoring the thread-local before the owning arena is freed.
-        Parse(&'static [u8]),
-        Visit(&'static [u8]),
-        Print(&'static [u8]),
+    pub enum Action<'a> {
+        Parse(&'a [u8]),
+        Visit(&'a [u8]),
+        Print(&'a [u8]),
         Resolver,
-        Dlopen(&'static [u8]),
+        Dlopen(&'a [u8]),
     }
 
-    impl fmt::Display for Action {
+    impl fmt::Display for Action<'_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 Action::Parse(path) => write!(writer, "parsing {}", bstr::BStr::new(path)),
@@ -728,21 +722,26 @@ mod draft {
     /// Snapshot the thread-local `CURRENT_ACTION` for save/restore around a scoped
     /// operation (e.g. `js_printer::print_with_writer_and_platform`).
     #[inline]
-    pub(crate) fn current_action() -> Option<Action> {
+    pub(crate) fn current_action() -> Option<Action<'static>> {
         CURRENT_ACTION.with(|c| c.get())
     }
 
     /// Set (or clear) the thread-local `CURRENT_ACTION`. Paired with
     /// [`current_action`] for scoped restore via `scopeguard`.
     #[inline]
-    fn set_current_action(action: Option<Action>) {
+    fn set_current_action(action: Option<Action<'static>>) {
         CURRENT_ACTION.with(|c| c.set(action));
     }
 
     /// RAII guard returned by [`scoped_action`] / [`set_current_action_resolver`].
-    /// Restores the previous `CURRENT_ACTION` on drop.
-    pub struct ActionGuard(Option<Action>);
-    impl Drop for ActionGuard {
+    /// Restores the previous `CURRENT_ACTION` on drop. `'a` keeps the installed
+    /// action's path borrowed until then.
+    pub struct ActionGuard<'a>(
+        Option<Action<'static>>,
+        // `*const ()`: the thread-local it restores is this thread's.
+        core::marker::PhantomData<(Action<'a>, *const ())>,
+    );
+    impl Drop for ActionGuard<'_> {
         #[inline]
         fn drop(&mut self) {
             set_current_action(self.0);
@@ -752,19 +751,27 @@ mod draft {
     /// Scoped `CURRENT_ACTION = action`. Snapshots the previous value, installs
     /// `action`, and returns an [`ActionGuard`] that restores the previous value
     /// on drop.
+    ///
+    /// # Safety
+    /// The guard must be dropped, and before any guard that was live when it was
+    /// made: otherwise the thread-local keeps `action` past `'a`.
     #[inline]
     #[must_use]
-    pub fn scoped_action(action: Action) -> ActionGuard {
+    pub unsafe fn scoped_action(action: Action<'_>) -> ActionGuard<'_> {
         let prev = current_action();
-        set_current_action(Some(action));
-        ActionGuard(prev)
+        // SAFETY: the guard borrows the path for `'a`; the rest is the caller's.
+        set_current_action(Some(unsafe {
+            core::mem::transmute::<Action<'_>, Action<'static>>(action)
+        }));
+        ActionGuard(prev, core::marker::PhantomData)
     }
 
     /// Scoped `CURRENT_ACTION = Resolver`.
     #[inline]
     #[cfg(debug_assertions)]
-    pub fn set_current_action_resolver() -> ActionGuard {
-        scoped_action(Action::Resolver)
+    pub fn set_current_action_resolver() -> ActionGuard<'static> {
+        // SAFETY: `Action::Resolver` borrows nothing.
+        unsafe { scoped_action(Action::Resolver) }
     }
 
     /// Where the crash trace is seeded from. Each call site has exactly one.

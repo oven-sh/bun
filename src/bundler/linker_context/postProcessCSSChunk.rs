@@ -133,7 +133,7 @@ pub(crate) fn post_process_css_chunk(
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards), graph
-    // source paths (`Path<'static>`), or `'static` literals; `watcher.input` is
+    // source paths, or `'static` literals; `watcher.input` is
     // `chunk.unique_key` (`&'static`). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the linker
     // graph are alive.

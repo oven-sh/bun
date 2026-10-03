@@ -86,8 +86,7 @@ pub(crate) enum ContentsOrFdTag {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct ParseTask {
-    // lifetime-erased `'static` — paths borrow from `DirnameStore`
-    // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
+    // Lifetime-erased: interned, or in the arena of the bundle (`BundleV2::task_path`).
     pub(crate) path: Fs::Path<'static>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
@@ -190,7 +189,7 @@ impl WatcherData {
 
 pub(crate) struct Success {
     pub(crate) ast: JSAst<'static>,
-    pub(crate) source: Source,
+    pub(crate) source: Source<'static>,
     pub(crate) log: Log,
     pub(crate) use_directive: UseDirective,
     pub(crate) side_effects: bun_ast::SideEffects,
@@ -247,13 +246,13 @@ impl ParseTask {
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
-    pub(crate) fn init(
-        resolve_result: &_resolver::Result,
+    pub(crate) fn init<'a>(
+        resolve_result: &_resolver::Result<'a>,
         source_index: Index,
         // Take `*mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
-        ctx: *mut BundleV2<'_>,
+        ctx: *mut BundleV2<'a>,
     ) -> ParseTask {
         let (package_name, package_version) = match resolve_result.package_json {
             // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
@@ -275,7 +274,8 @@ impl ParseTask {
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
             ctx: Some(ctx_ref),
-            path: resolve_result.path_pair.primary,
+            // SAFETY: as for `ctx`: `'a` is the bundle's, which outlives the task.
+            path: unsafe { resolve_result.path_pair.primary.into_static() },
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
@@ -396,7 +396,7 @@ unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 
 pub(crate) struct RuntimeSource {
     pub(crate) parse_task: ParseTask,
-    pub(crate) source: Source,
+    pub(crate) source: Source<'static>,
 }
 
 // When the `require` identifier is visited, it is replaced with e_require_call_target
@@ -628,9 +628,6 @@ pub mod parse_worker {
             is_entry_point: false,
         };
         let source = Source {
-            // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
-            // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // directly rather than `clone()` across the type boundary.
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
@@ -665,7 +662,7 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &'static Source,
+        source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
@@ -686,7 +683,7 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &'static Source,
+        source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
@@ -816,7 +813,7 @@ pub mod parse_worker {
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
-        source: &'static Source,
+        source: &'static Source<'static>,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
@@ -906,7 +903,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Yaml => {
@@ -932,7 +929,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Json5 => {
@@ -954,7 +951,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Xml => {
@@ -985,7 +982,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Text => {
@@ -1308,7 +1305,7 @@ pub mod parse_worker {
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
-                        let _ = temp_log.append_to_maybe_recycled(log, source);
+                        temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
                 };
@@ -1329,7 +1326,7 @@ pub mod parse_worker {
                 ) {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
-                    let _ = temp_log.append_to_maybe_recycled(log, source);
+                    temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
@@ -1355,7 +1352,7 @@ pub mod parse_worker {
                     b"",
                     symbols,
                 );
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
@@ -1795,7 +1792,7 @@ pub mod parse_worker {
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
+                // `append` copies the bytes into the `Msg` before that returns.
                 return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
             }
             b""
@@ -1807,33 +1804,21 @@ pub mod parse_worker {
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
+                // `append` copies the bytes into the `Msg` before that returns.
                 return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
             }
             b""
         }
 
-        fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-            // `Location.{file,line_text}`
-            // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
-            // (freed when the Log drops) and returns a lifetime-erased borrow —
-            // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
-            // a raw slice into C-plugin memory may be
-            // freed after `log_fn` returns, so duping is required.
+        fn append(&self, log: &mut Log, namespace: &[u8]) {
             let source_line_text = self.source_line_text();
-            let file = log.dupe(self.path());
-            let line_text = if !source_line_text.is_empty() {
-                Some(log.dupe(source_line_text))
-            } else {
-                None
-            };
             let location = Location::init(
-                file,
+                self.path(),
                 namespace,
                 self.line.max(-1),
                 self.column.max(-1),
                 (self.column_end - self.column).max(0) as u32,
-                line_text,
+                (!source_line_text.is_empty()).then_some(source_line_text),
             );
             let mut msg = Msg {
                 data: bun_ast::Data {
@@ -2433,11 +2418,8 @@ pub mod parse_worker {
         let topts = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
-        // `&'bump Source` parameter is satisfied (`bump` is the same arena).
-        let source: &'static Source = bump.alloc(Source {
-            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
-            // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // field-by-field across the type boundary.
+        // `&'bump Source<'bump>` parameter is satisfied (`bump` is the same arena).
+        let source: &'static Source<'static> = bump.alloc(Source {
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
@@ -2446,13 +2428,12 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // `entry.contents` is owned by `task.stage` (written back by
-            // the caller after parse — see `ParseTask::run`). `Source` is stored in
-            // `Success` which lives no longer than the `ParseTask` itself, so this
-            // borrow is sound. Routed through the audited `StoreStr` arena-erasure
-            // path (single `from_raw_parts` in `StoreStr::slice`); replace with
-            // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-            contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+            // SAFETY: `entry.contents` is owned by `task.stage` (written back by the
+            // caller after parse — see `ParseTask::run`), and the task lives in the
+            // arena of the bundle whose graph this `Source` ends up in.
+            contents: std::borrow::Cow::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(entry_contents)
+            }),
             contents_is_recycled: false,
             ..Default::default()
         });
@@ -2931,33 +2912,13 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
-    fn drop_result_owned_fields(result: &mut Result) {
-        match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
-            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
-            ResultValue::Empty { .. } => {}
-        }
-    }
-
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx`.
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // SAFETY: `result` is uniquely owned (callback contract).
-        drop_result_owned_fields(unsafe { &mut *result });
-        // `drop(heap::take(result))` would run full Drop glue:
-        // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
-        // graph's placeholder and moves `result.ast` out, so post-swap
-        // `result.value` holds the *placeholder* `Source` whose
-        // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
-        // graph's swapped-in Source still references (asan use-after-poison at
-        // process_files_to_copy:4241 in bundler_loader/_plugin tests). So:
-        // dealloc the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // above; uniquely owned.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 
     /// # Safety
@@ -2975,11 +2936,9 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
-        drop_result_owned_fields(r);
-        // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // above; uniquely owned.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 } // end mod parse_worker
 

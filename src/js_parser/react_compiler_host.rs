@@ -30,7 +30,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn module_scope(&self) -> &js_ast::Scope {
         &self.p.module_scope
     }
-    fn import_records(&self) -> &[js_ast::ImportRecord] {
+    fn import_records(&self) -> &[js_ast::ImportRecord<'_>] {
         self.p.import_records.items()
     }
     fn source(&self) -> &[u8] {

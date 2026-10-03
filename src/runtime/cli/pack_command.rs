@@ -61,7 +61,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
 /// can't depend on `bun_logger`, but `bun_runtime` already does).
-fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
+fn file_to_source_at<'p>(dir: &Dir, path: &'p ZStr) -> bun_sys::Maybe<bun_ast::Source<'p>> {
     let bytes = File::read_from(dir.fd, path)?;
     Ok(bun_ast::Source::init_path_string_owned(
         path.as_bytes(),

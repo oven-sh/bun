@@ -409,9 +409,8 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
-    // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
-    // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
+    // The slices borrow the Box'd buffer allocated in `transpile()` and freed in
+    // `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
@@ -676,14 +675,13 @@ impl TranspilerJob {
         };
 
         let mut log = bun_ast::Log::init();
-        // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
         let _log_clone_guard = scopeguard::guard(
             (ptr::addr_of_mut!(self.log), ptr::addr_of_mut!(log)),
             |(dst, src)| {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = bun_ast::Log::init();
-                    (*src).clone_to_with_recycled(&mut *dst, true);
+                    (*src).append_to(&mut *dst);
                 }
             },
         );
@@ -901,7 +899,7 @@ impl TranspilerJob {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file(
                             input_file_fd,
                             path.text,
                             hash,
@@ -928,7 +926,7 @@ impl TranspilerJob {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file(
                         input_file_fd,
                         path.text,
                         hash,

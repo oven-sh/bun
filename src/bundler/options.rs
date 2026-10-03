@@ -463,7 +463,7 @@ pub enum GetLoaderAndVirtualSourceErr {
 
 pub struct LoaderResult<'a> {
     pub loader: Option<Loader>,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
@@ -475,7 +475,7 @@ pub struct LoaderResult<'a> {
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
-    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
@@ -485,11 +485,11 @@ pub fn get_loader_and_virtual_source<'a>(
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
-    let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
-        let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
+        let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
         // The eval/stdin entry path uses the platform path separator
         // (`/` becomes `\` on Windows), so the suffix is per-platform.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
@@ -529,12 +529,8 @@ pub fn get_loader_and_virtual_source<'a>(
             }
 
             if !jsc_vm.blob_needs_read_file(blob) {
-                // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
-                // or normalized specifier), which outlives the `virtual_source`
-                // returned to the caller.
-                let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
-                    path: bun_paths::fs::Path::init(static_text),
+                    path: bun_paths::fs::Path::init(path.text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
                     ..Default::default()
                 });

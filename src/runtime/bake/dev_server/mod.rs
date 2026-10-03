@@ -1406,17 +1406,10 @@ impl DirectoryWatchStore {
             }
         });
 
-        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
-        // retains the path until eviction runs (deferred onto `evict_list` and
-        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
-        // transient `dirname()` view of a thread-local path buffer. A borrowed
-        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
-        // the watcher reads it on a file event. Owning the copy also lets the
-        // map keep its own boxed key independently, so no extra intermediate
-        // `Box` is needed here.
-        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
+        // `dir_name_to_watch` is a view of a thread-local path buffer.
+        let watch_index = match self.dev_bun_watcher().add_directory(
             fd,
-            dir_name_to_watch,
+            bun_watcher::WatchPath::Copied(dir_name_to_watch),
             bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),

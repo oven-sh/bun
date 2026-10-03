@@ -568,7 +568,6 @@ impl Framework {
     }
 
     pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
-        let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
@@ -582,8 +581,7 @@ impl Framework {
                     "\""
                 )
                 .as_bytes(),
-            )
-            .clone_line_text(clone_line_text),
+            ),
             ..Default::default()
         });
         Ok(())
@@ -679,12 +677,6 @@ impl Framework {
                 return;
             }
         };
-        // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
-        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
-        // `FilenameStore` singleton). No widen needed; the previous
-        // `arena_erase` here laundered an already-`'static` slice and falsely
-        // implied arena ownership. See `bun_ptr::Interned` for the type that
-        // `Path::text` should eventually become.
         *path = result.path().unwrap().text;
     }
 
@@ -1291,11 +1283,9 @@ impl Default for ReactFastRefresh {
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
+fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &'static [u8]) -> Option<&'static [u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
-        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
         Ok(res) => Some(res.path_const().unwrap().text),
         Err(_) => {
             r.log_mut().reset();

@@ -17,7 +17,7 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
 // but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
-pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
+pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
 /// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
 /// stores it, in `MacroContext.javascript_object`); re-exported here.
@@ -331,7 +331,13 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
+    fn _resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+    ) -> crate::Result<resolver::Result<'e>>
+    where
+        'a: 'e,
+    {
         let top_level_dir = self.fs().top_level_dir;
         let first = match self.resolver.resolve_with_framework(
             top_level_dir,
@@ -356,15 +362,14 @@ impl<'a> Transpiler<'a> {
             let mut prefixed = Vec::with_capacity(2 + entry_point.len());
             prefixed.extend_from_slice(b"./");
             prefixed.extend_from_slice(entry_point);
-            // `Resolver::resolve` interns the path internally,
-            // so the heap buffer can drop after the call.
             if let Ok(r) = self.resolver.resolve(
                 top_level_dir,
                 &prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
                 if !r.flags.is_external() {
-                    return Ok(r);
+                    // SAFETY: resolved from `prefixed`.
+                    return Ok(unsafe { r.detach_from(&prefixed) }?);
                 }
             }
             // return the original result
@@ -374,7 +379,13 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
-    pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
+    pub fn resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+    ) -> crate::Result<resolver::Result<'e>>
+    where
+        'a: 'e,
+    {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
@@ -452,11 +463,11 @@ impl<'a> Transpiler<'a> {
 
     /// A disabled module imports as `{}` and an external one stays an import. An entry point has
     /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
-    fn reject_unbundleable_entry_point(
+    fn reject_unbundleable_entry_point<'e>(
         &self,
-        resolved: resolver::Result,
+        resolved: resolver::Result<'e>,
         entry_point: &[u8],
-    ) -> crate::Result<resolver::Result> {
+    ) -> crate::Result<resolver::Result<'e>> {
         let is_builtin = if resolved.flags.is_external() {
             true
         } else if resolved.path_const().is_some() {
@@ -777,7 +788,7 @@ impl AlreadyBundled {
 // so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'a>,
     pub loader: options::Loader,
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
@@ -798,10 +809,9 @@ pub struct ParseResult<'a> {
 
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
-    /// decoded `data:` URL. `bun_ast::Source.contents` is `&'static [u8]`
-    /// (the AST crate's `Str` convention) so the backing must live at least as long as
+    /// decoded `data:` URL. The backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
-    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
+    /// recycled.
     /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,
@@ -834,7 +844,7 @@ impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
         arena: &'a bun_alloc::Arena,
-        source: bun_ast::Source,
+        source: bun_ast::Source<'a>,
         loader: options::Loader,
         source_contents_backing: resolver::cache::Contents,
     ) -> Self {
@@ -875,7 +885,7 @@ pub struct ParseOptions<'a, 'b> {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
-    pub virtual_source: Option<&'b bun_ast::Source>,
+    pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
@@ -1286,7 +1296,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'a bun_ast::Source = arena.alloc('brk: {
+        let source: &'a bun_ast::Source<'a> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1343,8 +1353,7 @@ impl<'a> Transpiler<'a> {
                 // SAFETY: `source_backing` is moved into the returned
                 // `ParseResult` (or drops on `return None`); the re-borrow is
                 // sound for the lifetime of `source.contents`' consumers, which
-                // never outlive the `ParseResult`. A real lifetime can be
-                // threaded once `bun_ast::Source.contents` becomes `Cow`.
+                // never outlive the `ParseResult`.
                 let contents: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
@@ -1380,8 +1389,7 @@ impl<'a> Transpiler<'a> {
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
                 *file_fd_ptr = entry.fd;
             }
-            // `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live either in the per-thread shared
+            // The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
             // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
             // bulk-freed by `mi_heap_destroy` when the per-call arena is
@@ -1750,7 +1758,7 @@ impl<'a> Transpiler<'a> {
 #[cold]
 #[inline(never)]
 fn parse_data_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2011,7 +2019,7 @@ fn parse_data_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_text_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2051,7 +2059,7 @@ fn parse_text_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_md_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2107,7 +2115,7 @@ fn parse_md_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_wasm_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2553,7 +2561,7 @@ impl<'a> Transpiler<'a> {
 
     /// Returns only the count and lets
     /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
-    fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
+    fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
         // snapshot entry points so the `&mut self` resolver call
@@ -2562,11 +2570,7 @@ impl<'a> Transpiler<'a> {
         let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
-            let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
-                self.normalize_entry_point_path(_entry)
-            } else {
-                _entry
-            };
+            let entry = self.normalize_entry_point_path(_entry);
 
             let _reset = bun_ast::StoreResetGuard::new();
 
@@ -2611,7 +2615,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
-        let _ = self.enqueue_entry_points::<true>();
+        let _ = self.enqueue_entry_points();
 
         // `log` is the same `*mut Log` stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.

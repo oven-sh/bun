@@ -157,7 +157,7 @@ pub struct TOML;
 
 impl TOML {
     pub fn parse<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         log: &mut Log,
         bump: &'a Bump,
         redact_logs: bool,
@@ -232,7 +232,7 @@ struct Scanner<'a, 'log> {
     src: &'a [u8],
     pos: usize,
     bump: &'a Bump,
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &'log mut Log,
     redact: bool,
 }

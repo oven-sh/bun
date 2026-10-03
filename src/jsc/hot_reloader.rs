@@ -63,7 +63,7 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file<const COPY_FILE_PATH: bool>(
+    pub fn add_file(
         &mut self,
         fd: Fd,
         file_path: &[u8],
@@ -75,7 +75,8 @@ impl ImportWatcher {
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+                let file_path = bun_watcher::WatchPath::Copied(file_path);
+                watcher.add_file(fd, file_path, hash, dir_fd, package_json)
             }
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }

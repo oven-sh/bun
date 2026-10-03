@@ -43,7 +43,7 @@ pub(crate) struct JSTranspiler {
     /// resting-state log that `transpiler.log: *mut Log` points at between
     /// host-fn calls. `JsCell` so a `*mut Log` can be projected from `&self`.
     pub(crate) config: JsCell<Config>,
-    pub(crate) scan_pass_result: JsCell<ScanPassResult>,
+    pub(crate) scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
@@ -752,10 +752,11 @@ impl TransformTask {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
-            name,
-            self.input_code.slice(),
-        ));
+        // SAFETY: as for `arena_ref`: `self.input_code` outlives every use through
+        // `self.transpiler` in this fn body.
+        let source: &bun_ast::Source = arena_ref.alloc(unsafe {
+            bun_ast::Source::init_path_string(name, self.input_code.slice()).into_static()
+        });
         self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
@@ -1184,7 +1185,9 @@ impl JSTranspiler {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn get_parse_result(
+    /// # Safety
+    /// `arena` and `code` must outlive the returned `ParseResult`.
+    unsafe fn get_parse_result(
         &self,
         arena: &'static Arena,
         code: &[u8],
@@ -1212,8 +1215,10 @@ impl JSTranspiler {
             code
         };
 
-        let source: &bun_ast::Source =
-            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
+        // SAFETY: the caller's.
+        let source: &bun_ast::Source = arena.alloc(unsafe {
+            bun_ast::Source::init_path_string(name, processed_code).into_static()
+        });
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1307,7 +1312,9 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        // SAFETY: `arena`, `code` and `parse_result` are locals of this frame.
+        let parse_result =
+            unsafe { self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO) };
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1492,7 +1499,8 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
+        // SAFETY: `arena`, `code` and `parse_result` are locals of this frame.
+        let parse_result = unsafe { self.get_parse_result(arena_ref, code, loader, macro_js_ctx) };
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1689,15 +1697,13 @@ impl JSTranspiler {
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.
-        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
-        let scan_result = bun_bundler::cache::JavaScript::init().scan(
-            &arena,
-            unsafe { self.scan_pass_result.get_mut() },
-            opts,
-            define,
-            &mut log,
-            &source,
-        );
+        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS. The
+        // field is kept for its buffers: the records `scan()` leaves in it borrow
+        // `arena` and `code`, and the `reset()` below drops them before either.
+        let scan_pass =
+            unsafe { &mut *self.scan_pass_result.as_ptr().cast::<ScanPassResult<'_>>() };
+        let scan_result = bun_bundler::cache::JavaScript::init()
+            .scan(&arena, scan_pass, opts, define, &mut log, &source);
 
         // `scan_pass_result` must be reset on every exit past this point
         // (including the error paths). Compute the result, then reset

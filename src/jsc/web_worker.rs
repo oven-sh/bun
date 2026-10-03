@@ -1347,9 +1347,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     };
 
-    // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
-    // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
-    // copy the slice out and let `resolved_entry_point` drop on the stack.
     Some(
         resolved_entry_point
             .path_const()

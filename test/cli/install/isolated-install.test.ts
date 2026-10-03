@@ -2109,6 +2109,112 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
+// A dependency whose scripts were blocked on the first install already has a
+// complete store entry, so the warm install only re-checks its symlinks. Trust
+// that arrives afterwards (package.json `trustedDependencies`, or `--trust`)
+// must still run the scripts, like the hoisted linker does.
+describe("trusting an already installed dependency", () => {
+  async function scriptOutputs(packageDir: string) {
+    const read = async (...parts: string[]) => {
+      const f = file(join(packageDir, "node_modules", ...parts));
+      return (await f.exists()) ? await f.text() : null;
+    };
+    return {
+      postinstall: await read("lifecycle-postinstall", "postinstall.txt"),
+      allPreinstall: await read("all-lifecycle-scripts", "preinstall.txt"),
+      allInstall: await read("all-lifecycle-scripts", "install.txt"),
+      allPostinstall: await read("all-lifecycle-scripts", "postinstall.txt"),
+    };
+  }
+
+  function lockfileTrustedDependencies(packageDir: string): string[] {
+    const match = readFileSync(join(packageDir, "bun.lock"), "utf8").match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+    return match ? [...match[1].matchAll(/"([^"]+)"/g)].map(m => m[1]).sort() : [];
+  }
+
+  test("adding it to trustedDependencies runs its lifecycle scripts on the next install", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const pkg: Record<string, unknown> = {
+      name: "test-pkg-trust-after-install",
+      dependencies: {
+        "lifecycle-postinstall": "1.0.0",
+        "all-lifecycle-scripts": "1.0.0",
+      },
+    };
+    await write(packageJson, JSON.stringify(pkg));
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await scriptOutputs(packageDir)).toEqual({
+      postinstall: null,
+      allPreinstall: null,
+      allInstall: null,
+      allPostinstall: null,
+    });
+    expect(lockfileTrustedDependencies(packageDir)).toEqual([]);
+
+    pkg.trustedDependencies = ["lifecycle-postinstall", "all-lifecycle-scripts"];
+    await write(packageJson, JSON.stringify(pkg));
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await scriptOutputs(packageDir)).toEqual({
+      postinstall: "postinstall!",
+      allPreinstall: "preinstall!",
+      allInstall: "install!",
+      allPostinstall: "postinstall!",
+    });
+    expect(lockfileTrustedDependencies(packageDir)).toEqual(["all-lifecycle-scripts", "lifecycle-postinstall"]);
+
+    // Nothing is newly trusted on a third install, so the scripts do not run
+    // again (the fixtures rewrite their marker as "<script> exists!" when re-run).
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await scriptOutputs(packageDir)).toEqual({
+      postinstall: "postinstall!",
+      allPreinstall: "preinstall!",
+      allInstall: "install!",
+      allPostinstall: "postinstall!",
+    });
+  });
+
+  test("--trust runs its lifecycle scripts and records it in package.json and bun.lock", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-trust-flag-after-install",
+        dependencies: {
+          "lifecycle-postinstall": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    expect((await scriptOutputs(packageDir)).postinstall).toBeNull();
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "--trust", "lifecycle-postinstall@1.0.0"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed lifecycle-postinstall@1.0.0");
+    expect(exitCode).toBe(0);
+
+    expect((await scriptOutputs(packageDir)).postinstall).toBe("postinstall!");
+    expect(await file(packageJson).json()).toEqual({
+      name: "test-pkg-trust-flag-after-install",
+      dependencies: {
+        "lifecycle-postinstall": "1.0.0",
+      },
+      trustedDependencies: ["lifecycle-postinstall"],
+    });
+    expect(lockfileTrustedDependencies(packageDir)).toEqual(["lifecycle-postinstall"]);
+  });
+});
+
 // Self-contained HTTP server that serves package manifests & tarballs
 // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).

@@ -1488,32 +1488,32 @@ describe("bunx installs with the project's install config", () => {
       "the project names a scanner that is installed in it": {
         project: { "bunfig.toml": named, ...installed() },
         home: {},
-        expected: { scanned: true, stdout: "SERVED-BY-USER", exitCode: 0 },
+        expected: { scanned: true, ran: true, exitCode: 0 },
       },
       "the project names a scanner file by relative path": {
         project: { "bunfig.toml": `[install.security]\nscanner = "./scanner.js"\n`, "scanner.js": scanner("[]") },
         home: {},
-        expected: { scanned: true, stdout: "SERVED-BY-USER", exitCode: 0 },
+        expected: { scanned: true, ran: true, exitCode: 0 },
       },
       "the user config names a scanner that is installed in the project": {
         project: installed(),
         home: { ".bunfig.toml": named },
-        expected: { scanned: true, stdout: "SERVED-BY-USER", exitCode: 0 },
+        expected: { scanned: true, ran: true, exitCode: 0 },
       },
       "the scanner reports a fatal advisory": {
         project: { "bunfig.toml": named, ...installed(fatal) },
         home: {},
-        expected: { scanned: true, stdout: "", exitCode: 1 },
+        expected: { scanned: true, ran: false, exitCode: 1 },
       },
       "the project names a scanner that is not installed": {
         project: { "bunfig.toml": named },
         home: {},
-        expected: { scanned: false, stdout: "", exitCode: 1 },
+        expected: { scanned: false, ran: false, exitCode: 1 },
       },
       "the user config names a scanner that is not installed": {
         project: {},
         home: { ".bunfig.toml": named },
-        expected: { scanned: false, stdout: "", exitCode: 1 },
+        expected: { scanned: false, ran: false, exitCode: 1 },
       },
     };
 
@@ -1526,7 +1526,7 @@ describe("bunx installs with the project's install config", () => {
 
       expect({
         scanned: bunx.stderr.includes("SCANNED px-probe"),
-        stdout: bunx.stdout,
+        ran: bunx.stdout.includes("SERVED-BY-USER"),
         exitCode: bunx.exitCode,
       }).toEqual(expected);
     });

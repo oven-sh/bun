@@ -60,27 +60,6 @@ import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts"
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  // Windows: re-exec inside the VS dev shell if not already there.
-  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
-  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
-  // subsequent runs in the same terminal.
-  if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
-    const vsShell = join(import.meta.dirname, "vs-shell.ps1");
-    const result = spawnSync(
-      "pwsh",
-      ["-NoProfile", "-NoLogo", "-File", vsShell, process.argv0, import.meta.filename, ...process.argv.slice(2)],
-      { stdio: "inherit" },
-    );
-    if (result.error) {
-      throw new BuildError(`Failed to spawn pwsh`, {
-        cause: result.error,
-        hint: "Is PowerShell 7+ (pwsh) installed?",
-      });
-    }
-    process.exit(result.status ?? 1);
-  }
-
   // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
   // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
   if (args.ninjaTool !== undefined) {
@@ -121,7 +100,7 @@ async function main(): Promise<void> {
   // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
-  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
+  // definition. Native Windows builds and
   // every other target keep the environment as provisioned.
   const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
@@ -469,6 +448,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   macosSdk: "string",
   osxDeploymentTarget: "string",
   winsysroot: "string",
+  acceptMicrosoftLicenses: "boolean",
   nodejsVersion: "string",
   nodejsAbiVersion: "string",
   nodejsV8Version: "string",
@@ -553,6 +533,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--timings") {
       timings = true;
+      continue;
+    }
+
+    // A config field that reads as a statement, so it needs no `=on`.
+    if (arg === "--accept-microsoft-licenses") {
+      overrides.acceptMicrosoftLicenses = true;
       continue;
     }
 
@@ -660,10 +646,14 @@ Options:
                                   package.json files the build needs),
                                   buildDir, mode (full|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
-                                  winsysroot (Windows cross-compile SDK root)
+                                  winsysroot (MSVC CRT + Windows SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
-  --timings               After the build (or, with --configure-only, without
+  --accept-microsoft-licenses
+                          Let a build for Windows download the MSVC C++ runtime
+                          and Windows SDK. Needed once per machine: the build
+                          that has to download them names the license terms.
+  --timings              After the build (or, with --configure-only, without
                           one), report where the time went: totals per rule,
                           the slowest edges, the critical path, and how
                           parallel the last build was; and write the same as

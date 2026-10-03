@@ -4100,6 +4100,17 @@ pub(super) fn finalize_bundle(
         }
     }
 
+    // A failed stylesheet gets a server-side entry too, so its route has an edge to it.
+    for index in result.failed_css_imported_on_server.keys() {
+        let key = ctx.sources[index.get() as usize]
+            .path
+            .key_for_incremental_graph();
+        if dev.client_graph.get_file_index(key).is_some() {
+            dev.server_graph
+                .insert_css_file_on_server(&mut ctx, *index, key)?;
+        }
+    }
+
     for chunk in html_chunks_mut.iter_mut() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html {

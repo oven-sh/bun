@@ -38,9 +38,7 @@ impl From<bun_sys::Error> for Error {
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
-/// Why `Archiver::extract_to_dir` or `Archiver::extract_to_disk` stopped.
-/// [`Error`] keeps an errno at most. This keeps what a caller needs to report
-/// the failure.
+/// Why an extraction stopped, with the detail that [`Error`] drops.
 #[derive(Debug)]
 pub enum ExtractFailure {
     /// The destination directory could not be opened.
@@ -51,8 +49,7 @@ pub enum ExtractFailure {
         /// The entry's path relative to the destination. UTF-8 on Windows.
         path: Box<[u8]>,
     },
-    /// libarchive could not read the archive. The bytes are its message, empty
-    /// if it set none.
+    /// libarchive's message for a failed read. Empty if it set none.
     Archive(Box<[u8]>),
     Other(Error),
 }

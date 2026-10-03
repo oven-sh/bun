@@ -997,11 +997,11 @@ describe("Bun.Archive", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A debug build prints a warning to stderr when `pwrite` fails.
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
         stdout: JSON.stringify({ code: "EFBIG", syscall: "write", path: join(dest, "big.bin") }),
-        stderr: "",
         exitCode: 0,
       });
     });

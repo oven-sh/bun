@@ -387,8 +387,7 @@ pub mod lib {
         }
 
         /// Reads the data of the current entry and writes it to `fd` through
-        /// an [`EntryWriter`]. `Err` is a failed call on `fd`. `Ok` is
-        /// libarchive's status for the data of the entry.
+        /// an [`EntryWriter`].
         pub fn read_data_into_fd(
             &self,
             fd: Fd,
@@ -1222,9 +1221,7 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> core::result::Result<(), LoopF
     })
 }
 
-/// Why the loop in `Archiver::extract_entries` stopped. `extract_to_dir` adds
-/// the entry's path or libarchive's message, which need the live archive
-/// handle, to make the [`ExtractFailure`].
+/// An [`ExtractFailure`] without the entry path or the message, which `extract_to_dir` adds.
 enum LoopFailure {
     /// A syscall on the destination failed for the entry the loop is at.
     Sys(bun_sys::Error),
@@ -1242,8 +1239,7 @@ impl LoopFailure {
         depth_to_skip: usize,
     ) -> ExtractFailure {
         match self {
-            // A syscall fails for an entry only after `read_next_header`
-            // returned it, so `entry` is not null here.
+            // `Sys` comes from the arm of an entry, so `entry` is not null.
             LoopFailure::Sys(error) => ExtractFailure::Entry {
                 error,
                 path: resolved_entry_path(lib::Entry::opaque_ref(entry), depth_to_skip),
@@ -1281,8 +1277,7 @@ impl From<bun_paths::Error> for LoopFailure {
     }
 }
 
-/// Drops the first `depth` components of an entry's path and the separators
-/// in front of the rest. `None` when the path ends before that.
+/// Skips `depth` leading components of an entry path. `None` when the path ends first.
 #[inline]
 fn skip_components(mut remaining: &[OSPathChar], depth: usize) -> Option<&[OSPathChar]> {
     let sep: OSPathChar = b'/' as OSPathChar;
@@ -1314,8 +1309,7 @@ fn skip_components(mut remaining: &[OSPathChar], depth: usize) -> Option<&[OSPat
     Some(remaining)
 }
 
-/// The path `Archiver::extract_entries` resolves for `entry`, relative to the
-/// destination. UTF-8 on Windows.
+/// Where `extract_entries` puts `entry`, relative to the destination. UTF-8 on Windows.
 fn resolved_entry_path(entry: &lib::Entry, depth_to_skip: usize) -> Box<[u8]> {
     #[cfg(windows)]
     let pathname_z = entry.pathname_w();
@@ -1576,8 +1570,7 @@ impl Archiver {
         })
     }
 
-    /// The loop of `extract_to_dir`. `current_entry` is the entry the loop is
-    /// at when it returns.
+    /// The loop of `extract_to_dir`. On return, `current_entry` is the entry it stopped at.
     fn extract_entries<A: ArchiveAppender>(
         stream: &BufferReadStream,
         current_entry: &mut *mut lib::Entry,

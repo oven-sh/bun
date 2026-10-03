@@ -1651,7 +1651,7 @@ pub(crate) mod __gated_printer {
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
     > {
-        pub(crate) import_records: &'a [ImportRecord],
+        pub(crate) import_records: &'a [ImportRecord<'a>],
 
         pub(crate) needs_semicolon: bool,
         pub(crate) stmt_start: i32,
@@ -2678,7 +2678,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
+        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord<'a> {
             // detached from `&self` so callers can interleave `&mut self` printing.
             &self.import_records[import_record_index]
         }
@@ -6973,7 +6973,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn init(
             writer: W,
             bump: &'a bun_alloc::Arena,
-            import_records: &'a [ImportRecord],
+            import_records: &'a [ImportRecord<'a>],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder<'a>,
@@ -7950,7 +7950,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     ast: &Ast,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
@@ -7981,7 +7981,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     ast: &Ast,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
@@ -8022,7 +8022,7 @@ pub(crate) fn print_with_writer_and_platform<
     ast: &Ast,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {

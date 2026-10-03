@@ -1685,11 +1685,11 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    pub(super) fn validate_css_import_composes(
-        this: &mut LinkerContext,
+    pub(super) fn validate_css_import_composes<'g>(
+        this: &mut LinkerContext<'g>,
         id: usize,
         css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList<'_>],
+        import_records_list: *mut [ImportRecordList<'g>],
         input_files: *mut [Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
@@ -1766,11 +1766,11 @@ mod __css_validation {
     /// 2. Composing from the global scope is pretty rare
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
-    fn validate_composes_from_properties(
-        this: &mut LinkerContext,
+    fn validate_composes_from_properties<'g>(
+        this: &mut LinkerContext<'g>,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList<'_>],
+        import_records_list: *mut [ImportRecordList<'g>],
         all_css_asts: *mut [CssCol],
     ) {
         #[derive(Default)]
@@ -1785,7 +1785,7 @@ mod __css_validation {
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source<'static>],
+            all_sources: *mut [Source<'bump>],
             log: &'a mut Log,
         }
 

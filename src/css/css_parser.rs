@@ -705,7 +705,7 @@ pub struct BundlerAtRuleParser<'a> {
     /// SharedRW provenance (see `parse_bundler`); each materialises a
     /// short-lived `&mut` only at the point of use, so accesses interleave
     /// soundly under Stacked Borrows.
-    pub(crate) import_records: *mut Vec<ImportRecord>,
+    pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
     pub(crate) layer_names: Vec<LayerName>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
@@ -2521,7 +2521,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: ParserOptions<'static>,
-            import_records: Option<&mut Vec<ImportRecord>>,
+            import_records: Option<&mut Vec<ImportRecord<'static>>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2553,7 +2553,7 @@ mod stylesheet_impl {
             code: &[u8],
             options: ParserOptions<'static>,
             at_rule_parser: &mut P,
-            import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+            import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // TODO: 'bump lifetime threading — every arena-backed slice the
@@ -2657,7 +2657,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: &ParserOptions,
-            import_records: &mut Vec<ImportRecord>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<StyleAttribute, Err<ParserError>> {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
@@ -2726,7 +2726,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: ParserOptions<'static>,
-            import_records: &mut Vec<ImportRecord>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // `import_records` is shared by both `BundlerAtRuleParser` and the
@@ -3006,7 +3006,7 @@ pub struct Parser<'a> {
     /// be invalidated under Stacked Borrows the moment `on_import_rule`
     /// derives its own `&mut` from the sibling raw pointer. Each access site
     /// materialises a fresh short-lived `&mut` instead.
-    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
     pub(crate) extra: Option<&'a mut ParserExtra>,
 }
 
@@ -3116,7 +3116,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+        import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {

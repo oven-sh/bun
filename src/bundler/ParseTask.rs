@@ -86,8 +86,7 @@ pub(crate) enum ContentsOrFdTag {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct ParseTask {
-    // lifetime-erased `'static` — paths borrow from `DirnameStore`
-    // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
+    // Lifetime-erased: interned, or in the arena of the bundle (`BundleV2::task_path`).
     pub(crate) path: Fs::Path<'static>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
@@ -247,13 +246,13 @@ impl ParseTask {
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
-    pub(crate) fn init(
-        resolve_result: &_resolver::Result,
+    pub(crate) fn init<'a>(
+        resolve_result: &_resolver::Result<'a>,
         source_index: Index,
         // Take `*mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
-        ctx: *mut BundleV2<'_>,
+        ctx: *mut BundleV2<'a>,
     ) -> ParseTask {
         let (package_name, package_version) = match resolve_result.package_json {
             // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
@@ -275,7 +274,8 @@ impl ParseTask {
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
             ctx: Some(ctx_ref),
-            path: resolve_result.path_pair.primary,
+            // SAFETY: as for `ctx`: `'a` is the bundle's, which outlives the task.
+            path: unsafe { resolve_result.path_pair.primary.into_static() },
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,

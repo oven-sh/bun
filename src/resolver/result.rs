@@ -16,17 +16,16 @@ use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
 
-// NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
-// DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
-// without a per-site lifetime annotation.
-type Path = crate::fs::Path<'static>;
+use crate::fs::Path;
 
-pub struct PathPair {
-    pub primary: Path,
-    pub secondary: Option<Path>,
+/// `'a`: a resolved file's path is interned (`DirnameStore`/`FilenameStore`),
+/// but an external, `data:` or disabled result carries the caller's specifier.
+pub struct PathPair<'a> {
+    pub primary: Path<'a>,
+    pub secondary: Option<Path<'a>>,
 }
 
-impl Default for PathPair {
+impl Default for PathPair<'_> {
     fn default() -> Self {
         Self {
             primary: Path::empty(),
@@ -35,15 +34,15 @@ impl Default for PathPair {
     }
 }
 
-pub(crate) struct PathPairIter<'a> {
+pub(crate) struct PathPairIter<'i, 'a> {
     index: u8,
-    ctx: &'a mut PathPair,
+    ctx: &'i mut PathPair<'a>,
 }
 
-impl<'a> PathPairIter<'a> {
-    pub(crate) fn next(&mut self) -> Option<&mut Path> {
+impl<'i, 'a> PathPairIter<'i, 'a> {
+    pub(crate) fn next(&mut self) -> Option<&mut Path<'a>> {
         if let Some(path_) = self.next_() {
-            let p: *mut Path = path_;
+            let p: *mut Path<'a> = path_;
             // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
             // coerced to a raw pointer so `self` can be re-borrowed for the
             // recursive call; `p` is not dereferenced after that call, so no two
@@ -58,7 +57,7 @@ impl<'a> PathPairIter<'a> {
         None
     }
 
-    fn next_(&mut self) -> Option<&mut Path> {
+    fn next_(&mut self) -> Option<&mut Path<'a>> {
         let ind = self.index;
         self.index = self.index.saturating_add(1);
 
@@ -70,8 +69,8 @@ impl<'a> PathPairIter<'a> {
     }
 }
 
-impl PathPair {
-    pub(crate) fn iter(&mut self) -> PathPairIter<'_> {
+impl<'a> PathPair<'a> {
+    pub(crate) fn iter(&mut self) -> PathPairIter<'_, 'a> {
         PathPairIter {
             ctx: self,
             index: 0,
@@ -85,8 +84,8 @@ impl PathPair {
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
-pub struct Result {
-    pub path_pair: PathPair,
+pub struct Result<'a> {
+    pub path_pair: PathPair<'a>,
 
     pub jsx: options::jsx::Pragma,
 
@@ -108,7 +107,7 @@ pub struct Result {
     pub flags: ResultFlags,
 }
 
-impl Default for Result {
+impl Default for Result<'_> {
     fn default() -> Self {
         Self {
             path_pair: PathPair::default(),
@@ -217,14 +216,14 @@ impl ResultFlags {
     }
 }
 
-pub enum ResultUnion {
-    Success(Result),
+pub enum ResultUnion<'a> {
+    Success(Result<'a>),
     Failure(crate::Error),
     Pending(PendingResolution),
     NotFound,
 }
 
-impl Result {
+impl<'a> Result<'a> {
     /// Read-only view of the `package_json` field. It stores `Option<*const _>`
     /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
     /// bit-valid. Takes the `Copy` field, not `&self`, so a site that already
@@ -243,7 +242,7 @@ impl Result {
         ptr.map(|p| unsafe { &*p })
     }
 
-    pub fn path(&mut self) -> Option<&mut Path> {
+    pub fn path(&mut self) -> Option<&mut Path<'a>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
         }
@@ -257,7 +256,7 @@ impl Result {
         None
     }
 
-    pub fn path_const(&self) -> Option<&Path> {
+    pub fn path_const(&self) -> Option<&Path<'a>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&self.path_pair.primary);
         }
@@ -362,8 +361,8 @@ impl DebugLogs {
     }
 }
 
-pub struct MatchResult {
-    pub(crate) path_pair: PathPair,
+pub struct MatchResult<'a> {
+    pub(crate) path_pair: PathPair<'a>,
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
@@ -373,7 +372,7 @@ pub struct MatchResult {
     pub(crate) is_external: bool,
 }
 
-impl Default for MatchResult {
+impl Default for MatchResult<'_> {
     fn default() -> Self {
         Self {
             path_pair: PathPair::default(),

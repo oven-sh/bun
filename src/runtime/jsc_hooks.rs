@@ -3356,8 +3356,7 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                let added =
-                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
+                let added = watcher.add_file(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
                 if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
                     // Not adopted (already watched, or add failed); close the
                     // fd this arm opened.
@@ -3450,7 +3449,7 @@ fn maybe_watch_file(
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
     if matches!(
-        watcher.add_file::<true>(
+        watcher.add_file(
             input_file_fd,
             path.text,
             hash,

@@ -17,7 +17,7 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
 // but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
-pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
+pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
 /// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
 /// stores it, in `MacroContext.javascript_object`); re-exported here.
@@ -331,7 +331,13 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
+    fn _resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+    ) -> crate::Result<resolver::Result<'e>>
+    where
+        'a: 'e,
+    {
         let top_level_dir = self.fs().top_level_dir;
         let first = match self.resolver.resolve_with_framework(
             top_level_dir,
@@ -353,14 +359,13 @@ impl<'a> Transpiler<'a> {
         if !bun_paths::is_absolute(entry_point)
             && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
         {
-            let mut prefixed = Vec::with_capacity(2 + entry_point.len());
-            prefixed.extend_from_slice(b"./");
-            prefixed.extend_from_slice(entry_point);
-            // `Resolver::resolve` interns the path internally,
-            // so the heap buffer can drop after the call.
+            let prefixed: &'a mut [u8] =
+                self.arena.alloc_slice_fill_copy(2 + entry_point.len(), 0u8);
+            prefixed[..2].copy_from_slice(b"./");
+            prefixed[2..].copy_from_slice(entry_point);
             if let Ok(r) = self.resolver.resolve(
                 top_level_dir,
-                &prefixed,
+                prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
                 if !r.flags.is_external() {
@@ -374,7 +379,13 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
-    pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
+    pub fn resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+    ) -> crate::Result<resolver::Result<'e>>
+    where
+        'a: 'e,
+    {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
@@ -452,11 +463,11 @@ impl<'a> Transpiler<'a> {
 
     /// A disabled module imports as `{}` and an external one stays an import. An entry point has
     /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
-    fn reject_unbundleable_entry_point(
+    fn reject_unbundleable_entry_point<'e>(
         &self,
-        resolved: resolver::Result,
+        resolved: resolver::Result<'e>,
         entry_point: &[u8],
-    ) -> crate::Result<resolver::Result> {
+    ) -> crate::Result<resolver::Result<'e>> {
         let is_builtin = if resolved.flags.is_external() {
             true
         } else if resolved.path_const().is_some() {
@@ -2559,10 +2570,11 @@ impl<'a> Transpiler<'a> {
         let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
-            let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
+            // The queued result can carry the specifier.
+            let entry: &'static [u8] = if NORMALIZE_ENTRY_POINT {
                 self.normalize_entry_point_path(_entry)
             } else {
-                _entry
+                crate::linker::dupe(_entry)
             };
 
             let _reset = bun_ast::StoreResetGuard::new();

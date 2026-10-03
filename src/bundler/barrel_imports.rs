@@ -377,7 +377,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         bun_alloc::ArenaVec::new_in(heap),
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
-    let source_path: &'static [u8] = source.path.text;
+    let source_path = source.path.text;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
@@ -488,7 +488,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    let mut dedup_fallback: StringArrayHashMap<&[u8]> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)

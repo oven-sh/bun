@@ -52,7 +52,7 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: Vec<ImportRecord>,
+    pub import_records: Vec<ImportRecord<'static>>,
     pub log: &'a mut Log,
     pub source: &'a Source<'a>,
 }

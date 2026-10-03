@@ -1391,8 +1391,8 @@ impl Default for PropertyOpts {
     }
 }
 
-pub struct ScanPassResult {
-    pub import_records: Vec<ImportRecord>,
+pub struct ScanPassResult<'a> {
+    pub import_records: Vec<ImportRecord<'a>>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
 }
@@ -1405,8 +1405,8 @@ pub struct ParsePassSymbolUse {
 
 pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
-impl ScanPassResult {
-    pub fn init() -> ScanPassResult {
+impl<'a> ScanPassResult<'a> {
+    pub fn init() -> ScanPassResult<'a> {
         ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),

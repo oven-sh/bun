@@ -55,7 +55,7 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 pub struct HTMLImportManifest<'a> {
     pub(crate) index: u32,
     pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk],
+    pub(crate) chunks: &'a [Chunk<'a>],
     pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 

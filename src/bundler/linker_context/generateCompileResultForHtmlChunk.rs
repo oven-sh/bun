@@ -77,11 +77,11 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     current_import_record_index: u32,
     /// This task's HTML chunk, an element of `chunks`.
-    chunk: &'a Chunk,
-    chunks: &'a [Chunk],
+    chunk: &'a Chunk<'a>,
+    chunks: &'a [Chunk<'a>],
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,
@@ -364,8 +364,8 @@ impl<'a> HTMLLoader<'a> {
 
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
-    chunk: &'a Chunk,
-    chunks: &'a [Chunk],
+    chunk: &'a Chunk<'a>,
+    chunks: &'a [Chunk<'a>],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();

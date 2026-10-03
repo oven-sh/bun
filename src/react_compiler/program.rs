@@ -60,7 +60,7 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 

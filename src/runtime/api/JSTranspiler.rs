@@ -43,7 +43,7 @@ pub(crate) struct JSTranspiler {
     /// resting-state log that `transpiler.log: *mut Log` points at between
     /// host-fn calls. `JsCell` so a `*mut Log` can be projected from `&self`.
     pub(crate) config: JsCell<Config>,
-    pub(crate) scan_pass_result: JsCell<ScanPassResult>,
+    pub(crate) scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
@@ -1693,15 +1693,13 @@ impl JSTranspiler {
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.
-        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
-        let scan_result = bun_bundler::cache::JavaScript::init().scan(
-            &arena,
-            unsafe { self.scan_pass_result.get_mut() },
-            opts,
-            define,
-            &mut log,
-            &source,
-        );
+        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS. The
+        // field is kept for its buffers: the records `scan()` leaves in it borrow
+        // `arena` and `code`, and the `reset()` below drops them before either.
+        let scan_pass =
+            unsafe { &mut *self.scan_pass_result.as_ptr().cast::<ScanPassResult<'_>>() };
+        let scan_result = bun_bundler::cache::JavaScript::init()
+            .scan(&arena, scan_pass, opts, define, &mut log, &source);
 
         // `scan_pass_result` must be reset on every exit past this point
         // (including the error paths). Compute the result, then reset

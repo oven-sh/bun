@@ -900,7 +900,7 @@ impl TranspilerJob {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file(
                             input_file_fd,
                             path.text,
                             hash,
@@ -927,7 +927,7 @@ impl TranspilerJob {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file(
                         input_file_fd,
                         path.text,
                         hash,

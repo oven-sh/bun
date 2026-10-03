@@ -40,7 +40,7 @@ pub(crate) struct AstBuilder<'a, 'bump> {
     pub(crate) stmts: Vec<Stmt>,
     pub(crate) scopes: Vec<*mut Scope>,
     pub(crate) symbols: Vec<Symbol>,
-    pub(crate) import_records: Vec<ImportRecord>,
+    pub(crate) import_records: Vec<ImportRecord<'bump>>,
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
     pub(crate) import_records_for_current_part: Vec<u32>,

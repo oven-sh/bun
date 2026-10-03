@@ -115,7 +115,7 @@ impl JavaScript {
     pub fn scan<'a>(
         &mut self,
         bump: &'a Bump,
-        scan_pass_result: &mut js_parser::ScanPassResult,
+        scan_pass_result: &'a mut js_parser::ScanPassResult<'a>,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,

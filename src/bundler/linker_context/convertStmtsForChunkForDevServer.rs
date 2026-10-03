@@ -42,12 +42,12 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
-pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    c: &mut LinkerContext,
+pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
+    c: &mut LinkerContext<'a>,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
-    ast: &mut JSAst<'_>,
+    ast: &mut JSAst<'a>,
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);

@@ -508,7 +508,7 @@ impl Linker {
 
     pub(crate) fn enqueue_resolve_result(
         &mut self,
-        resolve_result: resolver::Result,
+        resolve_result: resolver::Result<'static>,
     ) -> crate::Result<bool> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 

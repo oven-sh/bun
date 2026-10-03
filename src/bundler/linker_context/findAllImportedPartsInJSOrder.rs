@@ -7,9 +7,9 @@ use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
 use bun_core::perf;
 
-pub(crate) fn find_all_imported_parts_in_js_order(
-    this: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn find_all_imported_parts_in_js_order<'a>(
+    this: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
     if chunks.is_empty() {
@@ -39,7 +39,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         struct WalkCtx<'a, 'f> {
             c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
             plan: &'f WalkPlan,
-            chunks: &'f [Chunk],
+            chunks: &'f [Chunk<'f>],
         }
         let walk_ctx = WalkCtx {
             // SAFETY: `this` is the live `&mut LinkerContext` for the link step.

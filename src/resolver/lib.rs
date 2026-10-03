@@ -513,12 +513,14 @@ pub mod fs {
         /// sub-string of `text`, `pretty` and any not-yet-interned
         /// `text`/`namespace` go in `alloc` (the per-build bundle arena)
         /// instead. See the impl for why.
-        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
-        -> crate::CrateResult<Path<'static>>;
-        fn dupe_alloc_fix_pretty(
+        fn dupe_alloc<'b>(
             &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>>;
+            alloc: &'b bun_alloc::MimallocArena,
+        ) -> crate::CrateResult<Path<'b>>;
+        fn dupe_alloc_fix_pretty<'b>(
+            &self,
+            alloc: &'b bun_alloc::MimallocArena,
+        ) -> crate::CrateResult<Path<'b>>;
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader>;
     }
 
@@ -534,10 +536,10 @@ pub mod fs {
         /// Skipping this check makes the append-only `FilenameStore` grow without
         /// bound across repeated in-process `Bun.build()` calls, eventually
         /// tripping the overflow-block cap (index-out-of-bounds panic).
-        fn dupe_alloc(
+        fn dupe_alloc<'b>(
             &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>> {
+            alloc: &'b bun_alloc::MimallocArena,
+        ) -> crate::CrateResult<Path<'b>> {
             let is_interned = |slice: &[u8]| as_interned_path(slice).is_some();
             // Returning `self` unchanged widens `text`/`pretty`/`namespace` to
             // `'static`; the caller has already proven `text`/`pretty` are
@@ -615,14 +617,12 @@ pub mod fs {
                         // per-build arena rather than growing the append-only stores
                         // on every `Bun.build()`. Holders that outlive the bundle (the
                         // file watcher) copy.
-                        let arena_z = |s: &[u8]| -> &'static [u8] {
-                            let buf: &mut [u8] = alloc.alloc_slice_fill_copy(s.len() + 1, 0u8);
+                        let arena_z = |s: &[u8]| -> &'b [u8] {
+                            let buf: &'b mut [u8] = alloc.alloc_slice_fill_copy(s.len() + 1, 0u8);
                             buf[..s.len()].copy_from_slice(s);
-                            // SAFETY: arena memory lives for the whole bundle pass; the
-                            // consuming `Path` (graph/import-record) never outlives it.
-                            unsafe { core::slice::from_raw_parts(buf.as_ptr(), s.len()) }
+                            &buf[..s.len()]
                         };
-                        let mut p = Path::<'static>::init(
+                        let mut p = Path::<'b>::init(
                             as_interned_path(self.text).unwrap_or_else(|| arena_z(self.text)),
                         );
                         p.pretty = arena_z(self.pretty);
@@ -641,10 +641,10 @@ pub mod fs {
             }
         }
 
-        fn dupe_alloc_fix_pretty(
+        fn dupe_alloc_fix_pretty<'b>(
             &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>> {
+            alloc: &'b bun_alloc::MimallocArena,
+        ) -> crate::CrateResult<Path<'b>> {
             #[cfg(not(windows))]
             {
                 self.dupe_alloc(alloc)
@@ -665,9 +665,7 @@ pub mod fs {
                 // process-lifetime `FilenameStore` (it is recomputed each build).
                 let pretty: &mut [u8] = alloc.alloc_slice_copy(self.pretty);
                 bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
-                // SAFETY: arena memory lives for the whole bundle pass; the
-                // consuming `Path` never outlives it.
-                new.pretty = unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
+                new.pretty = pretty;
                 new.assert_pretty_is_valid();
                 Ok(new)
             }

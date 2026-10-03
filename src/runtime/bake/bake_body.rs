@@ -1289,7 +1289,7 @@ impl Default for ReactFastRefresh {
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
+fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &'static [u8]) -> Option<&'static [u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         // `path_const().text` is `&'static [u8]` already (`FilenameStore`-

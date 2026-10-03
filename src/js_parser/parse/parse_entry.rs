@@ -468,7 +468,7 @@ impl<'a> Parser<'a> {
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -479,7 +479,7 @@ impl<'a> Parser<'a> {
     #[cold]
     fn _scan_imports<const TS: bool>(
         &mut self,
-        scan_pass: &'a mut ScanPassResult,
+        scan_pass: &'a mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
         // `Lexer` owns `Vec`s and `Options` owns

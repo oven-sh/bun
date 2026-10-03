@@ -221,7 +221,7 @@ impl<'a> LinkerContext<'a> {
     /// `generate_isolated_hash`) must continue to deref the raw
     /// `self.parse_graph` field directly.
     #[inline]
-    pub(crate) fn parse_graph(&self) -> &Graph<'_> {
+    pub(crate) fn parse_graph(&self) -> &Graph<'a> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -491,11 +491,11 @@ impl<'a> LinkerContext<'a> {
     /// allocates the duped display path from it, and `MimallocArena` asserts
     /// single-thread ownership, so passing the wrong arena is a cross-thread
     /// allocation (debug panic / release heap corruption).
-    pub(crate) fn path_with_pretty_initialized(
+    pub(crate) fn path_with_pretty_initialized<'b>(
         &mut self,
-        path: &bun_paths::fs::Path<'static>,
-        arena: &Bump,
-    ) -> Result<bun_paths::fs::Path<'static>, BunError> {
+        path: &bun_paths::fs::Path<'b>,
+        arena: &'b Bump,
+    ) -> Result<bun_paths::fs::Path<'b>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
@@ -857,7 +857,7 @@ impl<'a> LinkerContext<'a> {
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
-    ) -> Result<Box<[Chunk]>, LinkError> {
+    ) -> Result<Box<[Chunk<'a>]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
@@ -1823,12 +1823,12 @@ pub struct GenerateChunkCtx<'a> {
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
     /// `*mut Chunk`.
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
+    pub(crate) chunk: bun_ptr::BackRef<Chunk<'a>, bun_ptr::Mut>,
 }
 // SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
 // shared reads are read-only.
@@ -1902,7 +1902,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 ) -> (
     &'a PendingPartRange<'a>,
     *mut LinkerContext<'a>,
-    *mut Chunk,
+    *mut Chunk<'a>,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,
         impl FnOnce(&'static mut crate::thread_pool::Worker),
@@ -1920,7 +1920,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 }
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
+    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &'a Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -3330,7 +3330,7 @@ impl<'a> LinkerContext<'a> {
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source<'static> {
+    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'a Source<'a> {
         // Note: callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.

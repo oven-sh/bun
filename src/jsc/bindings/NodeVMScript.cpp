@@ -543,10 +543,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
 
-    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Context must be an object"_s);
-        return {};
-    }
+    NodeVM::validateContextArg(scope, globalObject, contextObjectValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue contextOptionsArg = callFrame->argument(1);
     NodeVMContextOptions contextOptions {};

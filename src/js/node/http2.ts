@@ -3744,11 +3744,6 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-function rejectNoPayloadContentLengthNT(req) {
-  req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-  req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
-}
-
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     if (stream.destroyed && stream.listenerCount("error") === 0) {
@@ -6164,7 +6159,6 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      let rejectContentLengthOnNoPayload = false;
       if (NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
@@ -6173,17 +6167,6 @@ class ClientHttp2Session extends Http2Session {
           options = { endStream: true };
         } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
-        }
-        // nghttp2 refuses content-length on a request whose HEADERS carry END_STREAM (no payload
-        // can follow): reset with PROTOCOL_ERROR after creation (an async stream error, not a
-        // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
-        if (options.endStream) {
-          for (const key of Object.keys(headers)) {
-            if (key.toLowerCase() === "content-length") {
-              rejectContentLengthOnNoPayload = true;
-              break;
-            }
-          }
         }
       }
 
@@ -6207,18 +6190,6 @@ class ClientHttp2Session extends Http2Session {
             }
           }
         }
-      }
-
-      if (rejectContentLengthOnNoPayload) {
-        // Reject before a stream id is allocated and before the concurrency queue, so queued
-        // requests are validated exactly like immediate ones. No native stream state means no
-        // late native callbacks; node surfaces this as a stream error with no 'end' event.
-        const req = new ClientHttp2Stream(undefined, this, headers);
-        req.authority = authority;
-        req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        process.nextTick(rejectNoPayloadContentLengthNT, req);
-        process.nextTick(emitEventNT, req, "ready");
-        return req;
       }
 
       // Like Node, a request whose signal is already aborted never touches the

@@ -47,6 +47,8 @@ pub(crate) struct FileResponseStream {
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
+    /// Bytes of `StartOptions::length` not sent yet; `None` streams to EOF.
+    remaining: Cell<Option<u64>>,
 
     state: Cell<State>,
 }
@@ -61,7 +63,6 @@ pub enum Mode {
 struct Sendfile {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     socket_fd: Fd,
-    remain: u64,
     offset: u64,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     has_set_on_writable: bool,
@@ -77,7 +78,6 @@ impl Default for Sendfile {
         Self {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_fd: Fd::INVALID,
-            remain: 0,
             offset: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             has_set_on_writable: false,
@@ -180,6 +180,7 @@ impl FileResponseStream {
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
                 sendfile: JsCell::new(Sendfile::default()),
+                remaining: Cell::new(opts.length),
                 state: Cell::new(State::default()),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
@@ -214,7 +215,6 @@ impl FileResponseStream {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
-                remain: opts.length.expect("can_sendfile gates None"),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 has_set_on_writable: false,
             });
@@ -314,12 +314,10 @@ impl FileResponseStream {
 
         let resp = self.resp.get();
         resp.timeout(self.idle_timeout.get());
+        self.charge_remaining(chunk.len() as u64);
 
         if state == ReadState::Eof {
-            self.insert_state(State::RESPONSE_DONE);
-            self.detach_resp();
-            resp.end(chunk, resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
+            self.complete(|resp, close| resp.end(chunk, close));
             return false;
         }
 
@@ -406,8 +404,8 @@ impl FileResponseStream {
     fn on_sendfile(&self) -> bool {
         bun_output::scoped_log!(
             FileResponseStream,
-            "onSendfile remain={} offset={}",
-            self.sendfile.get().remain,
+            "onSendfile remain={:?} offset={}",
+            self.remaining.get(),
             self.sendfile.get().offset
         );
         if self.state.get().contains(State::RESPONSE_DONE) {
@@ -433,8 +431,9 @@ impl FileResponseStream {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
-            let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
-                let adjusted = sf.remain.min(i32::MAX as u64);
+            let remain = self.remaining.get().expect("can_sendfile gates None");
+            let (errno, sent) = self.sendfile.with_mut(|sf| {
+                let adjusted = remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
                 // SAFETY: both fds are valid open file descriptors owned by `self`;
                 // `off` is a stack local.
@@ -451,9 +450,11 @@ impl FileResponseStream {
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
                         .unwrap();
                 sf.offset = u64::try_from(off).expect("int cast");
-                sf.remain = sf.remain.saturating_sub(sent);
-                (errno, sent, sf.remain)
+                (errno, sent)
             });
+            let remain = self
+                .charge_remaining(sent)
+                .expect("can_sendfile gates None");
 
             match errno {
                 sys::E::SUCCESS => {
@@ -506,11 +507,8 @@ impl FileResponseStream {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return;
         }
-        self.insert_state(State::RESPONSE_DONE);
-        self.detach_resp();
+        self.complete(|resp, close| resp.end_send_file(self.sendfile.get().offset, close));
         let resp = self.resp.get();
-        resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
-        self.deliver(resp, StreamEnd::Complete);
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
         // because this frame returns `false` to it. Run the gate here — after
@@ -542,6 +540,23 @@ impl FileResponseStream {
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();
+    }
+
+    fn charge_remaining(&self, sent: u64) -> Option<u64> {
+        let remaining = self.remaining.get().map(|n| n.saturating_sub(sent));
+        self.remaining.set(remaining);
+        remaining
+    }
+
+    /// The one way a body ends without an abort or an error; `end` hands it to uWS.
+    /// A body that still owes bytes takes the connection down once it has drained.
+    fn complete(&self, end: impl FnOnce(AnyResponse, bool)) {
+        self.insert_state(State::RESPONSE_DONE);
+        self.detach_resp();
+        let resp = self.resp.get();
+        let short = self.remaining.get().is_some_and(|n| n > 0);
+        end(resp, short || resp.should_close_connection());
+        self.deliver(resp, StreamEnd::Complete);
     }
 
     fn fail_with(&self, err: sys::Error) {
@@ -579,15 +594,11 @@ impl FileResponseStream {
         self.insert_state(State::FINISHED);
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
-            self.insert_state(State::RESPONSE_DONE);
-            self.detach_resp();
-            let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
+            self.complete(|resp, close| resp.end_without_body(close));
             // This end runs uncorked (reader callbacks), so no cork or parser
             // gate will run the close check; do it here, after `on_complete`
             // like `end_sendfile`, so the callbacks see a live socket.
-            resp.close_if_done_and_marked();
+            self.resp.get().close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry

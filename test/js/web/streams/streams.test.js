@@ -1895,6 +1895,35 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     await expect(new Response(source([42])).text()).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
   });
 
+  // The text of string chunks is one string of the sum of their lengths, 16-bit when a chunk is.
+  const unresolvedRopes = () => {
+    const part = Buffer.alloc(40, "p").toString();
+    return [1, 2, 3].map(i => part + i + (i === 2 ? "\u20AC" : "\u00E9") + part);
+  };
+  it.each([
+    ["Latin-1 chunks", () => ["caf\u00E9", "", " au lait"], "caf\u00E9 au lait"],
+    ["a 16-bit chunk after Latin-1 chunks", () => ["abc", "d\u00E9", "\u20AC"], "abcd\u00E9\u20AC"],
+    ["a Latin-1 chunk after a 16-bit chunk", () => ["\u4F60\u597D", "abc"], "\u4F60\u597Dabc"],
+    ["only empty chunks", () => ["", ""], ""],
+    ["chunks that are ropes", unresolvedRopes, unresolvedRopes().join("")],
+    ["a BOM before the text", () => ["\uFEFF", "abc"], "abc"],
+    ["two BOMs before the text", () => ["\uFEFF", "\uFEFFabc"], "abc"],
+    ["three BOMs before the text", () => ["\uFEFF\uFEFF", "\uFEFFabc"], "\uFEFFabc"],
+    ["only a BOM", () => ["\uFEFF", ""], ""],
+    ["two BOMs and text in one chunk", () => ["\uFEFF\uFEFFab", "c"], "abc"],
+    ["BOMs with empty chunks between them", () => ["", "\uFEFF", "", "\uFEFF", "abc"], "abc"],
+    ["a BOM after the first character", () => ["a", "\uFEFFbc"], "a\uFEFFbc"],
+    ["a BOM at the start of a rope", () => ["\uFEFF" + unresolvedRopes()[1], "abc"], unresolvedRopes()[1] + "abc"],
+    [
+      "a BOM at the start of a part of another string",
+      () => [("x\uFEFF" + unresolvedRopes()[0]).slice(1), "abc"],
+      unresolvedRopes()[0] + "abc",
+    ],
+  ])("text: string chunks join in order: %s", async (_name, chunks, text) => {
+    expect(await Bun.readableStreamToText(source(chunks()))).toBe(text);
+    expect(await new Response(source(chunks())).text()).toBe(text);
+  });
+
   it("a detached chunk throws", () => {
     const chunk = new Uint8Array([1, 2, 3]);
     structuredClone(chunk.buffer, { transfer: [chunk.buffer] });

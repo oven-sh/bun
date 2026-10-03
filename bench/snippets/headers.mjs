@@ -153,4 +153,43 @@ bench("Object.fromEntries(headers)", function () {
   return Object.fromEntries(big);
 });
 
+// One name that repeats. A repeated name holds one joined value, so each
+// append to it does a join. The cases go from a short joined value to a long one.
+function appendRepeated(name, value, count) {
+  const headers = new Headers();
+  for (let i = 0; i < count; i++) headers.append(name, value);
+  return headers;
+}
+
+const accept = "text/html,application/xhtml+xml";
+const chunk = Buffer.alloc(98, "v").toString();
+// The same characters in a 16-bit string.
+const chunk16 = Buffer.from(chunk, "utf16le").toString("utf16le");
+const pairs = Array.from({ length: 60 }, () => ["x-custom", chunk]);
+const longCookie = Buffer.alloc(6000, "c").toString();
+const withLongCookie = new Headers({ cookie: longCookie, accept, host: "example.com" });
+
+bench("headers.append x2 (same name, 64 B joined)", () => appendRepeated("x-custom", accept, 2));
+bench("headers.append x10 (same name, 328 B joined)", () => appendRepeated("x-custom", accept, 10));
+bench("headers.append x10 (accept, 328 B joined)", () => appendRepeated("accept", accept, 10));
+bench("headers.append x20 (same name, 2 KB joined)", () => appendRepeated("x-custom", chunk, 20));
+bench("headers.append x40 (same name, 4 KB joined)", () => appendRepeated("x-custom", chunk, 40));
+bench("headers.append x80 (same name, 8 KB joined)", () => appendRepeated("x-custom", chunk, 80));
+bench("headers.append x80 (same name, 8 KB joined, 16-bit values)", () => appendRepeated("x-custom", chunk16, 80));
+bench("headers.append x1000 (same name, 100 KB joined)", () => appendRepeated("x-custom", chunk, 1000));
+bench("new Headers([60 pairs of one name]) (6 KB joined)", () => new Headers(pairs));
+
+// One join to a value that is long already: what a proxy does to a Cookie header.
+bench("new Headers(headers) + append to a 6 KB cookie", () => {
+  const headers = new Headers(withLongCookie);
+  headers.append("cookie", "a=b");
+  return headers;
+});
+bench("new Headers([[cookie, 6 KB], [cookie, short]])", () => {
+  return new Headers([
+    ["cookie", longCookie],
+    ["cookie", "a=b"],
+  ]);
+});
+
 await run();

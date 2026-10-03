@@ -13,6 +13,9 @@ Bun.serve({
     message(ws, message) {
       expectType(ws.data).is<undefined>();
       expectType(message).is<string | Buffer<ArrayBuffer>>();
+      expectType(ws.pause()).is<void>();
+      expectType(ws.resume()).is<void>();
+      expectType(ws.isPaused).is<boolean>();
     },
   },
 });

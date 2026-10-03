@@ -2473,6 +2473,51 @@ export const wrong: number = { a: make() };
       expect(exitCode).toBe(1);
     });
 
+    test("the default library of \`target: es5\` is lib.d.ts", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "target": "es5", "noEmit": true, "types": [] } }
+`,
+        "a.ts": `export const a = [1].length;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"tsconfig.json(1,34): error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration."`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the default library is checked without \`skipLibCheck\`", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck: false } }),
+        "globals.d.ts": `interface Array<T> {
+  readonly length: number;
+}
+`,
+        "a.ts": `export const a = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      // In the order of the paths: the library is in node_modules.
+      expect(stdout.replace(/^.*\/(lib\.[a-z0-9.]+\.d\.ts)\(\d+,\d+\)/gm, "$1(N,N)")).toMatchInlineSnapshot(`
+        "globals.d.ts(2,12): error TS2687: All declarations of 'length' must have identical modifiers.
+        lib.es5.d.ts(N,N): error TS2687: All declarations of 'length' must have identical modifiers."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a name that is printed from the text counts with the white space before it", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        // The white space in it counts.
+        "package.json": `{"exports": {"./entry0": {"types": "t", "default": "d"}, "./entry1": {"types": "t", "node": null, "default": "d"}, "./entry2": {"types": "t", "default": "d"}, "./entry3": {"types": "t", "default": "d"}, "./entry4": {"types": "t", "default": "d"}, "./entry5": {"types": "t", "default": "d"}, "./entry6": {"types": "t", "default": "d"}, "./entry7": {"types": "t", "default": "d"}, "./entry8": {"types": "t", "default": "d"}, "./entry9": {"types": "t", "default": "d"}, "./entry10": {"types": "t", "default": "d"}, "./entry11": {"types": "t", "default": "d"}, "./entry12": {"types": "t", "default": "d"}, "./entry13": {"types": "t", "default": "d"}}}`,
+        "a.ts": `import json from "./package.json";
+export const a: number = json.exports;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '{ "./entry0": { types: string; default: string; }; "./entry1": { types: string; node: null; default: string; }; "./entry2": { types: string; default: string; }; "./entry3": { types: string; default: string; }; "./entry4": { types: string; default: string; }; "./entry5": { types: string; default: string; }; ... 7 mor...' is not assignable to type 'number'."`);
+      expect(exitCode).toBe(1);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

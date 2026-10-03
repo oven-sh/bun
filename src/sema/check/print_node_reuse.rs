@@ -680,8 +680,40 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
+    /// `tryReuseExistingNodeHelper` for the name of the property `p` of an object literal: the
+    /// length counted is `Loc.End() - Loc.Pos()`, which includes the leading trivia.
+    fn count_reused_property_name(&mut self, file: FileId, p: PropId) {
+        let hir = self.c.hir(file);
+        let prop = hir[p];
+        let pos = if prop.start == prop.pos {
+            self.pos_of_declaration(file, hir.node(p))
+        } else {
+            // The end of the modifier, `get`, `set` or `*` before it.
+            let mut token = prop.start;
+            loop {
+                let end = self.c.end_of_token_at(file, token);
+                let next = self.c.skip_trivia_from(file, end);
+                if next >= prop.pos || next <= token {
+                    break Some(end);
+                }
+                token = next;
+            }
+        };
+        let end = match prop.key {
+            PropKey::Computed(e) => {
+                let end = self.c.end_of_expr(file, e);
+                self.c.skip_trivia_from(file, end) + 1
+            }
+            _ => self.c.end_of_token_at(file, prop.pos),
+        };
+        if let Some(pos) = pos {
+            self.approximate_length += end.saturating_sub(pos) as usize;
+        }
+    }
+
     /// `reuseName` for the name of the property `p` of an object literal.
-    fn pseudo_property_name(&self, file: FileId, p: PropId, is_method: bool) -> Vec<u8> {
+    fn pseudo_property_name(&mut self, file: FileId, p: PropId, is_method: bool) -> Vec<u8> {
+        self.count_reused_property_name(file, p);
         let hir = self.c.hir(file);
         let prop = hir[p];
         let PropKey::Name(name) = prop.key else {
@@ -829,13 +861,14 @@ impl<'p> Printer<'_, 'p> {
         self.approximate_length = length_before;
         match reused {
             Some(reused) => {
-                let length = if self.c.hir(file).text.is_empty() {
-                    reused.text.len()
+                let text = &self.c.hir(file).text;
+                self.approximate_length += if text.is_empty() {
+                    reused.text.len() + 1
                 } else {
-                    let start = self.c.hir(file)[node].pos;
-                    self.c.end_of_type_node(file, node).saturating_sub(start) as usize
+                    let start = self.c.hir(file)[node].pos as usize;
+                    let pos = super::spans::start_of_leading_trivia(text, start);
+                    (self.c.end_of_type_node(file, node) as usize).saturating_sub(pos)
                 };
-                self.approximate_length += length + 1;
                 reused
             }
             None => {

@@ -3181,9 +3181,19 @@ impl<'p> Printer<'_, 'p> {
         {
             return Vec::new();
         }
+        let Some(pos) = self.pos_of_declaration(file, node) else {
+            return Vec::new();
+        };
         let hir = self.c.hir(file);
-        // `node.Pos()`
-        let pos = match hir.data(node) {
+        let comments = super::spans::get_leading_comment_ranges(&hir.text, pos as usize);
+        super::errors_declaration_emit::comments_text(&hir.text, comments, indent)
+    }
+
+    /// `node.Pos()`, which is before the leading trivia, of a member, a parameter or a property of
+    /// an object literal.
+    pub(super) fn pos_of_declaration(&self, file: FileId, node: hir::Node) -> Option<u32> {
+        let hir = self.c.hir(file);
+        match hir.data(node) {
             NodeData::Member(m) => Some(hir[m].loc.pos),
             NodeData::Param(p) => (hir[p].loc.end != 0).then_some(hir[p].loc.pos),
             // The end of the `{` or the comma before it.
@@ -3203,12 +3213,7 @@ impl<'p> Printer<'_, 'p> {
                 _ => None,
             },
             _ => None,
-        };
-        let Some(pos) = pos else {
-            return Vec::new();
-        };
-        let comments = super::spans::get_leading_comment_ranges(&hir.text, pos as usize);
-        super::errors_declaration_emit::comments_text(&hir.text, comments, indent)
+        }
     }
 
     /// Everything printed from now on is a member of a type literal. The result is restored to

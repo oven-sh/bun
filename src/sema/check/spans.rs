@@ -103,6 +103,25 @@ pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     }
 }
 
+/// `node.Pos()` of the node whose first token is at `start`: the end of the token before it. White
+/// space and `/* */` comments are trivia. A `//` comment is not looked for: whether a line ends in
+/// one cannot be told from its end.
+pub(super) fn start_of_leading_trivia(text: &[u8], start: usize) -> usize {
+    let mut pos = start.min(text.len());
+    loop {
+        while pos > 0 && matches!(text[pos - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            pos -= 1;
+        }
+        match text[..pos].strip_suffix(b"*/") {
+            Some(before) => match bun_core::strings::last_index_of(before, b"/*") {
+                Some(open) => pos = open,
+                None => return pos,
+            },
+            None => return pos,
+        }
+    }
+}
+
 /// `GetLeadingCommentRanges`
 pub(super) fn get_leading_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize, usize)> {
     iterate_comment_ranges(text, pos, false)

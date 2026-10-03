@@ -1485,6 +1485,9 @@ pub(crate) fn jsx_runtime_of(options: &Options, hir: &File, atoms: &Interner) ->
 }
 
 fn lib_file(options: &Options, lib: &[u8]) -> Vec<u8> {
+    if lib.is_empty() {
+        return [&options.lib_dir[..], b"/lib.d.ts"].concat();
+    }
     [&options.lib_dir[..], b"/lib.", lib, b".d.ts"].concat()
 }
 
@@ -2830,8 +2833,8 @@ impl Files {
         text: Cow<'static, [u8]>,
     ) -> (hir::File, Bound) {
         let mut hir = host.parse(path, &text, atoms, options);
-        // The source text of the default library is never consulted.
-        if !is_lib {
+        // The source text of the default library is only consulted where it is checked.
+        if !is_lib || !(options.skip_lib_check || options.skip_default_lib_check) {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: the other conditions that make a file without imports or

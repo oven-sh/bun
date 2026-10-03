@@ -588,8 +588,10 @@ impl Options {
         options.libs = match (list(b"lib"), target.as_deref()) {
             _ if options.no_lib => Vec::new(),
             (Some(libs), _) => libs.into_iter().map(lib_name).collect(),
-            // The default library for the target.
+            // `GetDefaultLibFileName`. The empty name is `lib.d.ts`, for a target that
+            // `targetToLibMap` does not have.
             (None, Some(b"es6" | b"es2015")) => vec![b"es6".to_vec()],
+            (None, Some(b"es3" | b"es5")) => vec![Vec::new()],
             (None, target) => vec![[target.unwrap_or(b"es2025"), b".full"].concat()],
         };
         options.types = words(b"types");

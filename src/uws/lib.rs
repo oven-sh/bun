@@ -174,6 +174,8 @@ pub mod ssl_wrapper {
         };
     }
 
+    use bun_core::UnwrapOrOom;
+
     use crate::us_bun_verify_error_t;
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
@@ -231,9 +233,17 @@ pub mod ssl_wrapper {
         /// Room for every record of one write, so that the queue grows once.
         fn reserve_outgoing(&self, plaintext_len: usize) {
             let records = plaintext_len / MAX_RECORD_PLAINTEXT + 1;
+            let sealed_len = plaintext_len + records * MAX_RECORD_OVERHEAD;
             self.outgoing
                 .borrow_mut()
-                .reserve(plaintext_len + records * MAX_RECORD_OVERHEAD);
+                .try_reserve(sealed_len)
+                .unwrap_or_oom();
+        }
+
+        fn push_outgoing(&self, data: &[u8]) {
+            let mut outgoing = self.outgoing.borrow_mut();
+            outgoing.try_reserve(data.len()).unwrap_or_oom();
+            outgoing.extend_from_slice(data);
         }
 
         /// The caller owns the bytes, so a write made while it hands them out queues behind them.
@@ -258,7 +268,9 @@ pub mod ssl_wrapper {
         }
 
         fn push_incoming(&self, data: &[u8]) {
-            self.incoming.borrow_mut().extend(data);
+            let mut incoming = self.incoming.borrow_mut();
+            incoming.try_reserve(data.len()).unwrap_or_oom();
+            incoming.extend(data);
         }
 
         fn free(&self) {
@@ -286,7 +298,7 @@ pub mod ssl_wrapper {
                 core::slice::from_raw_parts(data.cast::<u8>(), count),
             )
         };
-        ciphertext.outgoing.borrow_mut().extend_from_slice(data);
+        ciphertext.push_outgoing(data);
         len
     }
 
@@ -700,7 +712,7 @@ pub mod ssl_wrapper {
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
-            // SAFETY: `ssl` and its BIO are live. The box outlives them, `deinit` frees `ssl` first.
+            // SAFETY: `ssl` and its BIO are live. The box outlives them, `deinit` frees them first.
             unsafe {
                 boring_sys::BIO_set_data(
                     bio.as_ptr(),

@@ -1289,6 +1289,109 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+describe("response :status value (RFC 9113 §8.3.2)", () => {
+  // HPACK "literal without indexing, indexed name" (static index 8 = :status): the value reaches
+  // the client's decoder exactly as written.
+  const statusBlock = (value: string) => Buffer.concat([Buffer.from([0x08]), hpackLiteral(value)]);
+
+  /** Answers one request with a HEADERS frame per `statuses` entry, then a DATA frame that ends the stream. */
+  async function probe(statuses: string[]) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const events: string[] = [];
+      req.on("headers", headers => events.push(`headers ${headers[":status"]}`));
+      req.on("response", headers => events.push(`response ${headers[":status"]}`));
+      req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      const body: Buffer[] = [];
+      req.on("data", (d: Buffer) => body.push(d));
+      const closed = new Promise<void>(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1, 10_000);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      for (const status of statuses) {
+        raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, statusBlock(status));
+      }
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body"));
+      await closed;
+      // PING as a barrier: once the ACK arrives, every frame the client sent for stream 1 is in.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0, 10_000);
+      const rst = raw.frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      return {
+        events,
+        body: Buffer.concat(body).toString(),
+        rstCode: req.rstCode,
+        wireRst: rst?.payload.readUInt32BE(0),
+      };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  const streamProtocolError = {
+    events: ["error ERR_HTTP2_STREAM_ERROR"],
+    body: "",
+    rstCode: ErrorCode.PROTOCOL_ERROR,
+    wireRst: ErrorCode.PROTOCOL_ERROR,
+  };
+
+  // nghttp2 (parse_status_code) accepts three ASCII digits from 100 to 999 other than 101, so
+  // none of these may be coerced to a number and delivered. Node with nghttp2 1.69 (v26.3.0)
+  // still delivers "099" and "000". Node with nghttp2 1.70 (v26.9.0) resets them like the rest.
+  test.each([
+    "200.5",
+    "0200",
+    "2e2",
+    "0xC8",
+    " 200 ",
+    "4294967496",
+    "+20",
+    "20",
+    "2000",
+    "2x0",
+    "1xx",
+    "101",
+    "099",
+    "000",
+  ])("a response with :status %j is RST with PROTOCOL_ERROR and never delivered", async status => {
+    expect(await probe([status])).toEqual(streamProtocolError);
+  });
+
+  // Above 100 the rule does not look at the range: node delivers 600 to 999 too.
+  test.each([
+    ["200", 200],
+    ["600", 600],
+    ["999", 999],
+  ] as const)("a response with :status %j is delivered", async (status, expected) => {
+    expect(await probe([status])).toEqual({
+      events: [`response ${expected}`],
+      body: "body",
+      rstCode: ErrorCode.NO_ERROR,
+      wireRst: undefined,
+    });
+  });
+
+  test("a final response after a 1xx block is delivered", async () => {
+    expect(await probe(["103", "200"])).toEqual({
+      events: ["headers 103", "response 200"],
+      body: "body",
+      rstCode: ErrorCode.NO_ERROR,
+      wireRst: undefined,
+    });
+  });
+
+  test("a malformed :status after a 1xx block is RST with PROTOCOL_ERROR", async () => {
+    expect(await probe(["103", "2e2"])).toEqual({
+      ...streamProtocolError,
+      events: ["headers 103", "error ERR_HTTP2_STREAM_ERROR"],
+    });
+  });
+});
+
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans
 // the machine stack conservatively and honors interior pointers, so a stale word left in a native
 // frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins

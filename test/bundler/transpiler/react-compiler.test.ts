@@ -1531,6 +1531,330 @@ describe("bundler", () => {
     },
   });
 
+  // A fake React for the three test pairs below. `render` keeps one memo cache
+  // per component, as React does per fiber, so a render can hit the cache of
+  // the render before it. Each pair builds the same entry without and with the
+  // compiler, and every render has to print what the plain build prints. The
+  // compiled build also prints the `_c(n)` of a function that the compiler did
+  // not skip.
+  const reactThatKeepsOneCachePerComponent = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      const fibers = new Map();
+      let current;
+      exports.render = (Component, props) => {
+        current = fibers.get(Component);
+        if (!current) fibers.set(Component, (current = { cache: null, size: null }));
+        return Component(props);
+      };
+      exports.memoCache = size => {
+        current.size = size;
+        return (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+      };
+      exports.cacheSize = Component => fibers.get(Component).size;
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+  };
+  // Prints one line per `[Component, listOfProps]` pair in `renders`.
+  const printRenders = (withCacheSizes: boolean) => /* js */ `
+    for (const [Component, list] of renders) {
+      const out = list.map(props => JSON.stringify(render(Component, props) ?? "nothing"));
+      const size = ${withCacheSizes} ? cacheSize(Component) : null;
+      console.log([Component.name, ...out, ...(size == null ? [] : ["_c(" + size + ")"])].join(" "));
+    }
+  `;
+  const withoutCacheSizes = (stdout: string) => stdout.replace(/ _c\(\d+\)/g, "");
+
+  // In a `try`, every instruction ends its own block with a `MaybeThrow`
+  // terminal, and the catch block has a phi for a local that the `try` assigns
+  // and the code after the `catch` reads. Dead code elimination empties the
+  // blocks of an unused local, and constant propagation leaves only a literal
+  // in the block of a folded read. The second PruneMaybeThrows removes their
+  // edge to the catch block, so the phi there has to lose their operand too.
+  // Otherwise the pass raises `Invariant: Expected non-existing phi operand's
+  // predecessor to have been mapped to a new terminal` and the function is not
+  // compiled.
+  //
+  // 5, 6, 5 and 7 are the sizes that babel-plugin-react-compiler 1.0.0 emits.
+  // 1.0.0 raises the same invariant for `UnusedLogicalInTry`.
+  const deadCodeInTryBodyOutput = [
+    `UnusedLocalInTry {"items":[1]} {"items":[1]} {"items":[]} {"items":[2]} {"items":[]} _c(5)`,
+    `ConstantLocalInTry {"items":[1]} {"items":[]} {"items":[]} {"items":[2]} _c(6)`,
+    `UnusedLogicalInTry {"children":"k0"} {"children":"init"} {"children":"init"} {"children":"f"} _c(2)`,
+    `UnusedLocalInNestedTry {"items":[1]} {"items":[1]} {"items":[]} {"items":[2]} {"items":[]} _c(5)`,
+    `TwoLocalsInTry {"items":[1],"total":1} {"items":[1],"total":1} {"items":[],"total":0} {"items":[2],"total":2} {"items":[],"total":0} _c(7)`,
+  ].join("\n");
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/DeadCodeInTryBody-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { cacheSize, render } from "react";
+
+          const List = "list";
+          const report = () => {};
+
+          function UnusedLocalInTry({ json }) {
+            let data = [];
+            try {
+              const parsed = JSON.parse(json);
+              const version = parsed.version;
+              data = parsed.items;
+            } catch (e) {
+              report(e);
+            }
+            return <List items={data} />;
+          }
+          // Constant propagation turns the read of \`max\` into a literal. That
+          // block is not empty, but it cannot throw.
+          function ConstantLocalInTry({ json, retries }) {
+            let data = [];
+            try {
+              const max = 3;
+              if (retries < max) {
+                data = JSON.parse(json).items;
+              }
+            } catch (e) {
+              report(e);
+            }
+            return <List items={data} />;
+          }
+          function UnusedLogicalInTry(props) {
+            let l2 = props.l2;
+            try {
+              if (props.c1) {
+                const k9 = props.d6 ?? props.l4;
+                l2 = props.a ? props.k0 : props.f;
+              }
+            } catch {}
+            do {} while (props.w < 3);
+            return <div>{l2}</div>;
+          }
+          function UnusedLocalInNestedTry({ json }) {
+            let data = [];
+            try {
+              try {
+                const length = json.length;
+                data = JSON.parse(json).items;
+              } catch (e) {
+                report(e);
+              }
+            } catch {}
+            return <List items={data} />;
+          }
+          // The catch block has two phis.
+          function TwoLocalsInTry({ json }) {
+            let items = [];
+            let total = 0;
+            try {
+              const parsed = JSON.parse(json);
+              const version = parsed.version;
+              items = parsed.items;
+              total = parsed.total;
+            } catch (e) {
+              report(e);
+            }
+            return <List items={items} total={total} />;
+          }
+
+          const one = '{"items":[1],"total":1,"version":2}';
+          const two = '{"items":[2],"total":2,"version":2}';
+          const bad = "{";
+          const jsons = [{ json: one }, { json: one }, { json: bad }, { json: two }, { json: bad }];
+          const logical = { l2: "init", c1: true, k0: "k0", f: "f", w: 3 };
+          const renders = [
+            [UnusedLocalInTry, jsons],
+            [
+              ConstantLocalInTry,
+              [{ json: one, retries: 1 }, { json: one, retries: 3 }, { json: bad, retries: 1 }, { json: two, retries: 1 }],
+            ],
+            [
+              UnusedLogicalInTry,
+              [
+                { ...logical, a: true },
+                { ...logical, c1: false },
+                { ...logical, get a() { throw new Error("a"); } },
+                { ...logical, a: false },
+              ],
+            ],
+            [UnusedLocalInNestedTry, jsons],
+            [TwoLocalsInTry, jsons],
+          ];
+          ${printRenders(true)}
+        `,
+        ...reactThatKeepsOneCachePerComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? deadCodeInTryBodyOutput : withoutCacheSizes(deadCodeInTryBodyOutput) },
+    });
+  }
+
+  // Dead code elimination can empty a whole `try` body. PruneMaybeThrows then
+  // removes the catch blocks and turns the `try` terminal into a goto. The try
+  // body jumps to the block after the `try` with a goto that BuildReactiveFunction
+  // ignores, because the `try` terminal visits that block. When the catch body
+  // has more than one block, the cleanup does not merge that block into the try
+  // body, so nothing visited it and everything after the `try` was lost, the
+  // same as with babel-plugin-react-compiler 1.0.0: `function
+  // BranchingCatch(props) { ; }`. BuildReactiveFunction now raises an invariant
+  // for such a goto and the function is skipped. A function that a later change
+  // compiles has to render the same, so this pair does not print cache sizes.
+  //
+  // In `InnerTryInOuterTry` each instruction of the inner catch body ends its own
+  // block, because the outer `try` can catch it.
+  const deadTryBodyOutput = [
+    `BranchingCatch {"children":"a"} {"children":"a"} {"children":"b"}`,
+    `ProductionOnlyGuard {"children":"a"} {"children":"a"} {"children":"b"}`,
+    `InnerTryInOuterTry {"children":"f"} {"children":"caught"} {"children":"g"} {"children":"caught"}`,
+  ].join("\n");
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/DeadTryBodyKeepsTheCodeAfterIt-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { cacheSize, render } from "react";
+
+          const report = () => {};
+          const track = () => {};
+
+          function BranchingCatch(props) {
+            try {
+              props.store.ready;
+            } catch (e) {
+              if (props.debug) report(e);
+            }
+            return <div>{props.a}</div>;
+          }
+          // The guard folds to \`false\` in a development build, so the whole
+          // \`try\` body is dead. The optional call gives the catch body more
+          // than one block.
+          function ProductionOnlyGuard(props) {
+            try {
+              const isProduction = process.env.NODE_ENV === "production";
+              if (isProduction) track(props);
+            } catch (e) {
+              props.onError?.(e);
+            }
+            return <div>{props.a}</div>;
+          }
+          function InnerTryInOuterTry(props) {
+            let a;
+            try {
+              try {
+                props.store.ready;
+              } catch (e) {
+                report(e);
+              }
+              a = props.f();
+            } catch {
+              a = "caught";
+            }
+            return <div>{a}</div>;
+          }
+
+          const store = {};
+          const f = () => "f";
+          const g = () => "g";
+          const throws = () => {
+            throw new Error("f");
+          };
+          const renders = [
+            [BranchingCatch, [{ store, a: "a" }, { store, a: "a" }, { store, a: "b" }]],
+            [ProductionOnlyGuard, [{ a: "a" }, { a: "a" }, { a: "b" }]],
+            [InnerTryInOuterTry, [{ store, f }, { store, f: throws }, { store, f: g }, { store, f: throws }]],
+          ];
+          ${printRenders(false)}
+        `,
+        ...reactThatKeepsOneCachePerComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      define: { "process.env.NODE_ENV": '"development"' },
+      run: { stdout: deadTryBodyOutput },
+    });
+  }
+
+  // The same dead `try` body, with a phi after it that still has the operand of
+  // a removed catch block. Babel raises an invariant for each of these and
+  // skips the function, so no line has a `_c(n)`. The port aborted the build
+  // instead: `assert_eq!` in merge_consecutive_blocks for the first (`Found a
+  // block with a single predecessor but where a phi has multiple (2)
+  // operands`), `Option::unwrap()` on a `None` value in infer_reactive_places
+  // for the second. The third was skipped before, for the operand of its unused
+  // local. It must stay skipped.
+  const deadTryBodyWithAStalePhiOperandOutput = [
+    `CatchAssignsLocal {"children":"a"} {"children":null} {"children":"b"}`,
+    `InnerCatchAssignsLocal {"children":"none"} "nothing" {"children":"none"}`,
+    `InnerCatchAssignsLocalAndUnusedLocal {"children":"none"} "nothing" {"children":"none"}`,
+  ].join("\n");
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/DeadTryBodyWithAStalePhiOperandIsSkipped-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { cacheSize, render } from "react";
+
+          function CatchAssignsLocal(props) {
+            let ok = true;
+            try {
+              props.store.ready;
+            } catch {
+              ok = false;
+            }
+            return <div>{ok ? props.a : null}</div>;
+          }
+          function InnerCatchAssignsLocal(props) {
+            let mode = "none";
+            try {
+              try {
+                props.store.ready;
+              } catch {
+                mode = "unsupported";
+                return null;
+              }
+              props.onLoad();
+            } catch {}
+            return <span>{mode}</span>;
+          }
+          function InnerCatchAssignsLocalAndUnusedLocal(props) {
+            let mode = "none";
+            try {
+              try {
+                props.store.ready;
+              } catch {
+                mode = "unsupported";
+                return null;
+              }
+              const parsed = JSON.parse(props.json);
+              const version = parsed.version;
+              props.onLoad(parsed);
+            } catch {}
+            return <span>{mode}</span>;
+          }
+
+          const store = {};
+          const onLoad = () => {};
+          const renders = [
+            [CatchAssignsLocal, [{ store, a: "a" }, { a: "a" }, { store, a: "b" }]],
+            [InnerCatchAssignsLocal, [{ store, onLoad }, { onLoad }, { store, onLoad }]],
+            [
+              InnerCatchAssignsLocalAndUnusedLocal,
+              [{ store, json: "{}", onLoad }, { json: "{}", onLoad }, { store, json: "{", onLoad }],
+            ],
+          ];
+          ${printRenders(true)}
+        `,
+        ...reactThatKeepsOneCachePerComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: deadTryBodyWithAStalePhiOperandOutput },
+    });
+  }
+
   // A temporary that has to survive as a variable is "promoted": the compiler
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the

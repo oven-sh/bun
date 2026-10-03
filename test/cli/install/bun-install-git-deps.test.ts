@@ -493,8 +493,8 @@ test.concurrent(
   30_000,
 );
 
-// With the isolated linker, a cold-cache frozen install re-enqueues each
-// dependency after the shared clone completes; the checkout id was derived
+// With the isolated linker, a cold-cache frozen install re-enqueued each
+// dependency after the shared clone completed; the checkout id was derived
 // from the branch committish's current tip instead of the lockfile's pinned
 // SHA, so a branch that moved after the lockfile was written installed the
 // wrong commit and stranded the install context. The hoisted linker had the
@@ -608,7 +608,7 @@ function storeEntryOf(dir: string, name: string) {
 }
 
 // `<root>/project`, a workspace root with no dependencies of its own, and its
-// one member `packages/m`. bun links a workspace with the isolated linker.
+// one member `packages/m`. A new workspace gets the isolated linker.
 function writeWorkspace(root: string, dependencies: Record<string, string>) {
   const project = join(root, "project");
   const member = join(project, "packages", "m");
@@ -786,9 +786,9 @@ test.concurrent(
   30_000,
 );
 
-// `overrides` puts a git commit in place of a's registry dependency `b`. In
-// bun.lock that dependency keeps its range `^1.0.0` and resolves to the git
-// package, so it is no git dependency either.
+// `overrides` puts a git commit in place of a's registry dependency `b`. When
+// the clone ended, the install sent that dependency through the resolver, which
+// found the package of the pinned commit already loaded and started no checkout.
 test.concurrent(
   "isolated linker installs a git package that an override puts in place of a registry dependency, from a cold cache",
   async () => {
@@ -862,6 +862,7 @@ test.concurrent(
     const name = nameOf("b");
     const repoUrl = `git+${pathToFileURL(sharedBare)}`;
     const lockedUrl = repoUrl.replace(/\/shared-repo\.git$/, "/./shared-repo.git");
+    expect(lockedUrl).not.toBe(repoUrl);
     const sha = sharedCommits["pkg-b"];
     const project = writeProject(root, { [name]: `${repoUrl}#pkg-b` });
     writeFileSync(
@@ -890,7 +891,10 @@ test.concurrent(
 // repository was cloned earlier in the same process, here to resolve the new
 // dependency `c`. The package to patch was looked up by the name of the
 // dependency, which an alias does not share with it: `panic: Package not found`.
-for (const added of ["`bun install <url>`", "an edit of package.json"] as const) {
+for (const [added, editsPackageJson] of [
+  ["`bun install <url>`", false],
+  ["an edit of package.json", true],
+] as const) {
   test.concurrent(
     `patches a git package under an alias when ${added} adds another package of its repository`,
     async () => {
@@ -934,7 +938,7 @@ index 0000000000000000000000000000000000000000..11111111111111111111111111111111
       // a fresh machine: keep bun.lock, drop node_modules + cache, and add `c`
       rmSync(join(project, "node_modules"), { recursive: true });
       const args: string[] = [];
-      if (added === "an edit of package.json") writePackageJson({ "b-alias": `${repoUrl}#b`, c: `${repoUrl}#c` });
+      if (editsPackageJson) writePackageJson({ "b-alias": `${repoUrl}#b`, c: `${repoUrl}#c` });
       else args.push(`${repoUrl}#c`);
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, ...args);
       expect(stderr).toContain("Saved lockfile");

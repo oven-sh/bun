@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe.skipIf(Bun.semver.satisfies(Bun.version.split("-")[0], "< 1.3"))("CI restrictions", () => {
   describe("test.only restrictions", () => {
@@ -86,6 +88,148 @@ describe.only("CI test", () => {
       expect(stderr).toContain(
         "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
       );
+    });
+  });
+
+  describe.each([
+    ["CI=true", { CI: "true" }],
+    ["GITHUB_ACTIONS=1", { CI: undefined, GITHUB_ACTIONS: "1" }],
+  ] as const)("read-only snapshots with %s", (_, env) => {
+    test.each(["missing directory", "missing file", "empty file"])("does not write a snapshot with %s", async state => {
+      const dir = tempDirWithFiles("ci-no-snapshot-writes", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+test("new snapshot", () => {
+  expect("first").toMatchSnapshot();
+});
+test("new snapshot", () => {
+  expect("second").toMatchSnapshot();
+});
+        `,
+      });
+      const snapshotDir = join(dir, "__snapshots__");
+      const snapshotPath = join(snapshotDir, "test.test.js.snap");
+      if (state !== "missing directory") mkdirSync(snapshotDir);
+      if (state === "empty file") writeFileSync(snapshotPath, "");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "test.test.js"],
+        env: { ...bunEnv, ...env },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
+      expect(stderr).toContain('Snapshot name: "new snapshot 1"');
+      expect(stderr).toContain('Snapshot name: "new snapshot 2"');
+      if (state === "missing directory") {
+        expect(existsSync(snapshotDir)).toBe(false);
+      } else if (state === "missing file") {
+        expect(readdirSync(snapshotDir)).toEqual([]);
+      } else {
+        expect(await Bun.file(snapshotPath).text()).toBe("");
+      }
+    });
+
+    test("does not rewrite existing snapshots", async () => {
+      const snapshot = 'exports[`existing snapshot 1`] = `"hello world"`;\n';
+      const dir = tempDirWithFiles("ci-no-snapshot-rewrites", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+test("existing snapshot", () => {
+  expect("hello world").toMatchSnapshot();
+});
+test("new snapshot", () => {
+  expect("new").toMatchSnapshot();
+});
+        `,
+        "__snapshots__/test.test.js.snap": snapshot,
+      });
+      const snapshotPath = join(dir, "__snapshots__", "test.test.js.snap");
+      const timestamp = new Date("2000-01-01T00:00:00Z");
+      utimesSync(snapshotPath, timestamp, timestamp);
+      const mtime = statSync(snapshotPath).mtimeMs;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "test.test.js"],
+        env: { ...bunEnv, ...env },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("1 fail");
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
+      expect(await Bun.file(snapshotPath).text()).toBe(snapshot);
+      expect(statSync(snapshotPath).mtimeMs).toBe(mtime);
+    });
+
+    test("keeps snapshots scoped to each file", async () => {
+      const source = `
+import { test, expect } from "bun:test";
+test("snapshot", () => {
+  expect("hello world").toMatchSnapshot();
+});
+      `;
+      const snapshot = 'exports[`snapshot 1`] = `"hello world"`;';
+      const dir = tempDirWithFiles("ci-snapshot-file-switch", {
+        "first.test.js": source,
+        "missing.test.js": source,
+        "last.test.js": source,
+        "__snapshots__/first.test.js.snap": snapshot,
+        "__snapshots__/last.test.js.snap": snapshot,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "first.test.js", "missing.test.js", "last.test.js"],
+        env: { ...bunEnv, ...env },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("1 fail");
+      expect(stderr).toContain('Snapshot name: "snapshot 1"');
+      expect(readdirSync(join(dir, "__snapshots__")).sort()).toEqual(["first.test.js.snap", "last.test.js.snap"]);
+    });
+
+    // Windows chmod does not implement POSIX file permissions.
+    test.skipIf(isWindows)("can read a read-only snapshot file", async () => {
+      const dir = tempDirWithFiles("ci-read-only-snapshot", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+test("existing snapshot", () => {
+  expect("hello world").toMatchSnapshot();
+});
+        `,
+        "__snapshots__/test.test.js.snap": 'exports[`existing snapshot 1`] = `"hello world"`;',
+      });
+      const snapshotPath = join(dir, "__snapshots__", "test.test.js.snap");
+      chmodSync(snapshotPath, 0o444);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "test.test.js"],
+          env: { ...bunEnv, ...env },
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(exitCode).toBe(0);
+        expect(stderr).toContain("1 pass");
+      } finally {
+        chmodSync(snapshotPath, 0o644);
+      }
     });
   });
 
@@ -201,6 +345,9 @@ test("new snapshot allowed", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
       expect(stderr).toContain("snapshots: +1 added");
+      expect(await Bun.file(join(dir, "__snapshots__", "test.test.js.snap")).text()).toContain(
+        'exports[`new snapshot allowed 1`] = `"this should work"`;',
+      );
     });
 
     test("toMatchInlineSnapshot should work for existing inline snapshots when GITHUB_ACTIONS=1", async () => {
@@ -303,6 +450,9 @@ test("new snapshot with update flag", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
       expect(stderr).toContain("snapshots: +1 added");
+      expect(await Bun.file(join(dir, "__snapshots__", "test.test.js.snap")).text()).toContain(
+        'exports[`new snapshot with update flag 1`] = `"new snapshot content"`;',
+      );
     });
 
     test("toMatchInlineSnapshot should allow updates with --update-snapshots even when GITHUB_ACTIONS=1", async () => {

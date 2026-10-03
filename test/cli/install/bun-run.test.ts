@@ -616,6 +616,28 @@ describe.concurrent("bun run", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/10581 (`run-p build:*`)
+  it("--shell=bun passes a glob with no match to the command as written", async () => {
+    using dir = tempDir("bun-run-unmatched-glob", {
+      "package.json": JSON.stringify({ scripts: { build: "bun print-args.js build:* dist/*" } }),
+      "print-args.js": `console.log(JSON.stringify(process.argv.slice(2)));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "build"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("$ bun print-args.js build:* dist/*\n");
+    expect(stdout).toBe('["build:*","dist/*"]\n');
+    expect(exitCode).toBe(0);
+  });
+
   const cases = [
     ["yarn run", "run"],
     ["yarn add", "passthrough"],

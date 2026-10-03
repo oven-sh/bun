@@ -1091,15 +1091,9 @@ impl Request {
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                // Spec step 45's transfer applies only when this Request is
-                // the *input* (arguments[0]); a Request supplied as *init*
-                // (Bun extension) keeps the non-consuming tee, matching the
-                // sibling Response-as-init branch below. The input is the
-                // last slot: `new Request(a, a)` visits `a` as init first.
+                // The input is the last slot: `new Request(a, a)` visits `a` as init first.
                 let is_input = !is_first_argument_a_url && slot + 1 == values_to_try.len();
-                // The input is matched by class: a Bun.serve `routes:` BunRequest
-                // and a `class X extends Request` instance are Requests too.
-                // Given as init, those two are read through their getters below.
+                // Only the input is matched by class (BunRequest, subclasses).
                 let request = if is_input {
                     value.as_class_ref::<Request>()
                 } else {
@@ -1164,8 +1158,7 @@ impl Request {
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
                             BodyValue::Null => {}
-                            // Init made the request GET/HEAD: the body is copied as
-                            // before, so the input keeps it.
+                            // Init made the request GET/HEAD: copy, so the input keeps its body.
                             _ if is_input
                                 && !(init_set_method
                                     && matches!(req.method, Method::GET | Method::HEAD)) =>

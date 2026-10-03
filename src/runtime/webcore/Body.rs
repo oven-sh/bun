@@ -1731,9 +1731,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// Shared body-clone for `clone_into` / `clone_value`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
-    /// Every copy that leaves this owner readable passes here, so the
-    /// fetch-spec usability check lives here and not in the callers.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
+        // Every copy that keeps this owner readable passes here.
         self.throw_if_body_unusable(cx.global())?;
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {
@@ -1755,11 +1754,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    /// Fetch §Request ctor step 45: throw when this body is unusable, else
-    /// move it out and leave this owner `Used`. `Null` passes through; a
-    /// stream JS may hold is proxied (45.2), so the caller's handle locks and
-    /// stays this owner's `.body`; the result is strongly `Held` because the
-    /// slot cleared here was its root.
+    /// Fetch Request ctor step 45: throw if unusable, else move the body out and leave
+    /// this owner `Used`. A stream JS may hold is proxied (45.2) and stays its locked `.body`.
     fn transfer_body_value(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
         let global_this = cx.global();
         if matches!(self.get_body_value(), Value::Null) {
@@ -1826,8 +1822,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(body)
     }
 
-    /// `.body` stays the stream script could already reach (`seen`, locked
-    /// now), and the wrapper stops rooting a stream for the moved body.
+    /// `.body` stays the stream script could reach (`seen`, now locked).
     fn set_body_cache_after_transfer(
         &self,
         global_this: &JSGlobalObject,

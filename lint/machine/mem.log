@@ -1,11 +1,3 @@
-10-02_14:23:02 anon=13MB pids=30 load=569.34 top=mariadbd:7MB
-10-02_14:23:35 anon=215MB pids=35 load=521.07 top=node-MainThread:250MB
-10-02_14:24:05 anon=13MB pids=30 load=492.24 top=mariadbd:7MB
-10-02_14:24:36 anon=13MB pids=27 load=499.00 top=mariadbd:7MB
-10-02_14:25:07 anon=12MB pids=27 load=495.01 top=mariadbd:7MB
-10-02_14:25:37 anon=16MB pids=37 load=488.22 top=postgres:7MB
-10-02_14:26:09 anon=15MB pids=32 load=521.71 top=postgres:7MB
-10-02_14:26:39 anon=14MB pids=30 load=521.99 top=postgres:7MB
 10-02_14:27:10 anon=511MB pids=98 load=517.52 top=rustc:335MB
 10-02_14:27:43 anon=816MB pids=81 load=549.89 top=rustc:320MB
 10-02_14:28:13 anon=676MB pids=64 load=564.14 top=rustc:278MB
@@ -398,3 +390,11 @@
 10-03_01:13:54 anon=103MB pids=45 load=2097.96 top=bun:134MB
 10-03_01:14:28 anon=4MB pids=31 load=2047.07 top=mariadbd:14MB
 10-03_01:15:00 anon=17MB pids=29 load=2020.37 top=python3:20MB
+10-03_01:15:32 anon=122MB pids=56 load=2048.82 top=rustc:127MB
+10-03_01:16:03 anon=364MB pids=63 load=1879.25 top=rustc:348MB
+10-03_01:16:34 anon=221MB pids=63 load=1761.43 top=rustc:177MB
+10-03_01:17:08 anon=788MB pids=60 load=1731.92 top=rustc:355MB
+10-03_01:17:40 anon=723MB pids=63 load=1749.03 top=rustc:399MB
+10-03_01:18:12 anon=478MB pids=66 load=1660.29 top=rustc:397MB
+10-03_01:18:46 anon=586MB pids=57 load=1646.98 top=rustc:342MB
+10-03_01:19:50 anon=694MB pids=75 load=1646.36 top=rustc:355MB

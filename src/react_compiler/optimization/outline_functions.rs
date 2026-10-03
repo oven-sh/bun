@@ -17,6 +17,7 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     FunctionId, HirFunction, IdentifierId, InstructionValue, NonLocalBinding, NonLocalKind,
 };
+use crate::imports::ProgramContext;
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Outline anonymous function expressions that have no captured context variables.
@@ -25,6 +26,7 @@ use crate::ssa::enter_ssa::placeholder_function;
 pub(crate) fn outline_functions(
     func: &mut HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     fbt_operands: &HashSet<IdentifierId>,
 ) {
     // Collect per-instruction actions to maintain depth-first name allocation order.
@@ -85,7 +87,7 @@ pub(crate) fn outline_functions(
                     &mut env.functions[function_id.0 as usize],
                     placeholder_function(),
                 );
-                outline_functions(&mut inner_func, env, fbt_operands);
+                outline_functions(&mut inner_func, env, context, fbt_operands);
                 env.functions[function_id.0 as usize] = inner_func;
             }
             Action::RecurseAndOutline {
@@ -97,7 +99,7 @@ pub(crate) fn outline_functions(
                     &mut env.functions[function_id.0 as usize],
                     placeholder_function(),
                 );
-                outline_functions(&mut inner_func, env, fbt_operands);
+                outline_functions(&mut inner_func, env, context, fbt_operands);
                 env.functions[function_id.0 as usize] = inner_func;
 
                 // Then generate the name and outline (after recursion, matching TS order)
@@ -105,7 +107,7 @@ pub(crate) fn outline_functions(
                     .id
                     .or(env.functions[function_id.0 as usize].name_hint);
                 let generated_name =
-                    env.generate_globally_unique_identifier_name(hint.map(|s| s.slice()));
+                    context.generate_globally_unique_identifier_name(hint.map(|s| s.slice()));
 
                 // Set the id on the inner function
                 env.functions[function_id.0 as usize].id = Some(generated_name);

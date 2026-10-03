@@ -47,6 +47,8 @@ pub(crate) struct ProgramContext {
 
     // Internal state
     known_referenced_names: IndexSet<String>,
+    /// Next suffix to try per uid base name. A name is never removed, so lower suffixes stay taken.
+    next_uid_suffix: IndexMap<String, u32>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
 }
 
@@ -70,6 +72,7 @@ impl ProgramContext {
             hook_guard_name: None,
             renames: Vec::new(),
             known_referenced_names: IndexSet::new(),
+            next_uid_suffix: IndexMap::new(),
             imports: IndexMap::new(),
         }
     }
@@ -125,6 +128,65 @@ impl ProgramContext {
         uid
     }
 
+    /// TS `generateGloballyUniqueIdentifierName`: Babel's `generateUid`, one set of names per file.
+    pub(crate) fn generate_globally_unique_identifier_name(
+        &mut self,
+        name: Option<&[u8]>,
+    ) -> StoreStr {
+        let base = name.unwrap_or(b"temp");
+        // Babel's `toIdentifier`: drop leading digits and non-identifier chars, then camel-case.
+        let mut camel = String::with_capacity(base.len());
+        let mut iter = base.iter().copied().peekable();
+        while let Some(&c) = iter.peek() {
+            let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+            if c.is_ascii_digit() || !is_ident {
+                iter.next();
+            } else {
+                break;
+            }
+        }
+        let mut upper_next = false;
+        for c in iter {
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                if upper_next {
+                    camel.push(char::from(c.to_ascii_uppercase()));
+                    upper_next = false;
+                } else {
+                    camel.push(char::from(c));
+                }
+            } else {
+                upper_next = true;
+            }
+        }
+        // Strip leading '_' and trailing digits (Babel's generateUid behavior)
+        let stripped = camel
+            .trim_start_matches('_')
+            .trim_end_matches(|c: char| c.is_ascii_digit());
+        let uid_base = if stripped.is_empty() {
+            "temp"
+        } else {
+            stripped
+        };
+
+        // Babel's generateUid loop: `_<name>`, `_<name>2`, `_<name>3`, ... until a name is free.
+        let next_suffix = self.next_uid_suffix.entry(uid_base.to_owned()).or_insert(1);
+        let uid = loop {
+            let uid = if *next_suffix > 1 {
+                format!("_{uid_base}{next_suffix}")
+            } else {
+                format!("_{uid_base}")
+            };
+            *next_suffix += 1;
+            if !self.known_referenced_names.contains(&uid) {
+                break uid;
+            }
+        };
+
+        let result = arena_str(uid.as_bytes());
+        self.known_referenced_names.insert(uid);
+        result
+    }
+
     /// Add the memo cache import (the `c` function from the compiler runtime).
     pub(crate) fn add_memo_cache_import(&mut self, host: &mut dyn Host) -> NonLocalImportSpecifier {
         self.add_import_specifier(host, self.react_runtime_module, "c", Some("_c"))
@@ -166,17 +228,6 @@ impl ProgramContext {
     /// Register a name as referenced so future uid generation avoids it.
     pub(crate) fn add_new_reference(&mut self, name: String) {
         self.known_referenced_names.insert(name);
-    }
-
-    /// Get the set of known referenced names for seeding per-function Environment UID generation.
-    pub(crate) fn known_referenced_names(&self) -> &IndexSet<String> {
-        &self.known_referenced_names
-    }
-
-    /// Merge UID names generated during a function compilation back into the program context,
-    /// so subsequent function compilations avoid collisions.
-    pub(crate) fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
-        self.known_referenced_names.extend(names.iter().cloned());
     }
 }
 

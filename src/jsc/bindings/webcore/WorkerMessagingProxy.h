@@ -124,6 +124,7 @@ private:
 
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
+    void dropUndeliveredWorkerMessages();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);

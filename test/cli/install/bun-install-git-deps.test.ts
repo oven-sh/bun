@@ -735,6 +735,7 @@ const noGitTooling = {
   GIT_SSH_COMMAND: undefined,
   GIT_CONFIG_COUNT: undefined,
   GIT_CONFIG_GLOBAL: undefined,
+  SSH_AUTH_SOCK: undefined,
   XDG_CONFIG_HOME: undefined,
 };
 const noProxy = {
@@ -841,7 +842,10 @@ test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the us
   const project = writeProject(root, { "pkg": "git+ssh://git@localhost/scope/pkg.git" });
   const ranFromDotenv = join(root, "ran-from-dotenv");
   const ranFromGitconfig = join(root, "ran-from-gitconfig");
-  writeFileSync(join(project, ".env"), `GIT_SSH_COMMAND='${shCommand(join(root, "ssh.js"), ranFromDotenv)}'\n`);
+  writeFileSync(
+    join(project, ".env"),
+    `GIT_SSH_COMMAND='${shCommand(join(root, "ssh.js"), ranFromDotenv)}'\nSSH_AUTH_SOCK=/agent-of-the-project\n`,
+  );
   // The user's own ssh command, from their global git config.
   const home = join(root, "home");
   mkdirSync(home);
@@ -861,7 +865,55 @@ test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the us
     ranFromGitconfig: true,
   });
   expect(stderr).toContain('"git clone" for "pkg" failed');
-  expect(stderr).toContain("note: bun install reads GIT_SSH_COMMAND from the environment only, not from .env files.");
+  expect(stderr).toContain(
+    "note: bun install reads GIT_SSH_COMMAND, SSH_AUTH_SOCK from the environment only, not from .env files.",
+  );
+  expect(exitCode).toBe(1);
+});
+
+// A host answers a clone of a private repository without credentials with "not
+// found". The install prints no git output for that answer, and still says
+// which variables its git did not get.
+test.concurrent("git credentials in the project's .env are not sent, and the failed clone names them", async () => {
+  const seen: SeenRequest[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+      // git prints a text/plain error body as "remote: ..." lines.
+      return new Response("Repository not found.\n", { status: 404, headers: { "content-type": "text/plain" } });
+    },
+  });
+
+  using dir = tempDir("git-dep-dotenv-credentials", {});
+  const root = String(dir);
+  const project = writeProject(root, { "pkg": `git+http://127.0.0.1:${server.port}/scope/private.git` });
+  writeFileSync(
+    join(project, ".env"),
+    [
+      "GIT_CONFIG_COUNT=1",
+      "GIT_CONFIG_KEY_0=http.extraHeader",
+      "GIT_CONFIG_VALUE_0='Authorization: Basic dXNlcjpTRUNSRVQ='",
+      "",
+    ].join("\n"),
+  );
+  // No global git config of the machine: it can carry an `http.extraHeader` of its own.
+  const home = join(root, "home");
+  mkdirSync(home);
+
+  const { stderr, exitCode } = await runInstall(
+    project,
+    join(root, "cache"),
+    { ...noGitTooling, HOME: home, USERPROFILE: home },
+    "--ignore-scripts",
+  );
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen.map(request => request.auth)).toEqual(seen.map(() => null));
+  expect(stderr).toContain(
+    "note: bun install reads GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 from the environment only, not from .env files.",
+  );
+  expect(stderr).toContain('"git clone" for "pkg" failed');
   expect(exitCode).toBe(1);
 });
 

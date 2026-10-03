@@ -777,8 +777,11 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        if !ok && !not_found {
-            this.report_failure(status, stderr);
+        if !ok {
+            if !not_found {
+                this.report_failure(status, stderr);
+            }
+            this.manager().note_dotenv_only_vars(ProcessOnlyEnv::Git);
         }
         let name = BStr::new(&this.name);
         match step {
@@ -887,7 +890,6 @@ impl GitSubprocess {
             }
         }
         Output::flush();
-        self.manager().note_dotenv_only_vars(ProcessOnlyEnv::Git);
     }
 
     /// Fails the task with `err`. Frees `this`.

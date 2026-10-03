@@ -1388,7 +1388,7 @@ impl ProcessOnlyEnv {
                 b"NODE_TLS_REJECT_UNAUTHORIZED",
             ]
             .contains(&key),
-            Self::Git => key.starts_with(b"GIT_"),
+            Self::Git => key.starts_with(b"GIT_") || key.starts_with(b"SSH_"),
         }
     }
 }

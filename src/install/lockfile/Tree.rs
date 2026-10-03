@@ -127,8 +127,7 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
-    /// `Hoisted` onto another version the optional peer's range accepts. The slot moves to
-    /// that version unless the binding is already decided; see the `Rebind` arm.
+    /// `Hoisted` onto another version the optional peer's range accepts; the slot may follow.
     Rebind(PackageID),
     Placement(Placement),
 }
@@ -435,8 +434,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // could be visited multiple times before it's resolved.
     pub(crate) pending_optional_peers:
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// An optional peer got bound after a placement of its dependent was processed; see
-    /// `Lockfile::resolve`.
+    /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
@@ -534,8 +532,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         Ok(CleanResult { trees, dep_ids })
     }
 
-    /// Whether this pass processed another placement of `pkg_id` before the one
-    /// `dependency_id` names. That placement read the package's optional-peer slots.
+    /// Whether this pass already processed another placement of `pkg_id` than `dependency_id`.
     #[cold]
     fn processed_earlier_placement(&self, pkg_id: PackageID, dependency_id: DependencyID) -> bool {
         // The root has no tree entry and its pass comes first.
@@ -551,8 +548,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 }
 
-/// The placements of `pkg_id` a pass has taken off its queue, the one in progress included:
-/// its tree entries minus the queued ones. An entry bound late was never queued and counts.
+/// Tree entries of `pkg_id` that are not queued: its placements processed so far.
 #[cold]
 #[inline(never)]
 fn processed_placements(
@@ -889,11 +885,6 @@ impl Tree {
                         builder.late_bound_optional_peer = true;
                     }
                     builder.resolutions[dep_id as usize] = res_id;
-                    debug_assert!(
-                        !builder
-                            .pending_optional_peers
-                            .contains_key(&dependency.name_hash)
-                    );
 
                     if let Some(entry) = builder
                         .pending_optional_peers
@@ -954,8 +945,7 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    // Every placement of the package shares the slot, and an earlier one
-                    // was built from it: only the first placement of a pass moves it.
+                    // Only the first placement of a pass moves the slot: the others were built from it.
                     if !builder.lockfile().pinned_optional_peers.contains(&dep_id)
                         && !builder.processed_earlier_placement(parent_pkg_id, dependency_id)
                     {

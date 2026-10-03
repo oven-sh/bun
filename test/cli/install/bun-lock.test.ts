@@ -2325,6 +2325,39 @@ describe.each(["hoisted", "isolated"] as const)("optional peer of a package at s
     );
   });
 
+  it("a peer that a top-level package waits for behind another one: a bundled placement binds both", async () => {
+    using registry = await serveManifests({
+      kbundle: {
+        "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.1.0" }, bundleDependencies: ["plugin", "runtime"] },
+      },
+      other: {
+        "1.0.0": { peerDependencies: { runtime: "^1.1.0" }, peerDependenciesMeta: { runtime: { optional: true } } },
+      },
+      plugin,
+      runtime: { "1.1.0": { dependencies: { leaf: "1.0.0" } } },
+      leaf: { "1.0.0": {} },
+    });
+    using dir = createProject(registry.url, { kbundle: "1.0.0", other: "1.0.0", plugin: "2.0.0" });
+
+    // `other` is processed first and finds no runtime, and the top-level plugin waits behind
+    // it. kbundle/plugin then binds plugin's peer to the runtime kbundle ships. The top-level
+    // copy that follows from it has to be placed with what it depends on.
+    await expectFreshInstall(
+      String(dir),
+      {
+        kbundle: "kbundle@1.0.0",
+        leaf: "leaf@1.0.0",
+        other: "other@1.0.0",
+        plugin: "plugin@2.0.0",
+        runtime: "runtime@1.1.0",
+        "kbundle/leaf": "leaf@1.0.0",
+        "kbundle/plugin": "plugin@2.0.0",
+        "kbundle/runtime": "runtime@1.1.0",
+      },
+      { everyRowInstalled: false },
+    );
+  });
+
   it("a file: package bound at the first placement is not nested again next to a copy the range accepts", async () => {
     using registry = await serveManifests({ dep: { "1.0.0": {} } });
     const optionalPeerOnDep = { peerDependencies: { dep: "*" }, peerDependenciesMeta: { dep: { optional: true } } };

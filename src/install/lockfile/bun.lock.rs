@@ -3314,12 +3314,7 @@ pub(crate) fn parse_into_binary_lockfile(
     Ok(())
 }
 
-/// A package printed at several paths has one slot for an optional peer, and its rows walked
-/// to different copies. Two kinds of row prove what the hoister bound the slot to: an entry
-/// in the row's own path (only the bound package nests there), and a copy the hoister does
-/// not dedupe a peer onto (with any other binding the row would have an entry of its own).
-/// Such a slot is pinned. Without proof the slot is left unbound and the hoister binds it
-/// again, the way it did when the file was written.
+/// The rows of a package disagree on an optional peer: bind it from a row that proves it.
 #[cold]
 fn bind_optional_peers_by_row(
     conflicts: &mut Vec<PackageID>,
@@ -3348,6 +3343,7 @@ fn bind_optional_peers_by_row(
             }
             let range = catalogs.resolve_range(string_buf, dep);
 
+            // Without proof the slot stays unbound and the hoister binds it again.
             let mut proved = invalid_package_id;
             for row in pkg_rows {
                 let pkg_path = row.key.slice();
@@ -3363,6 +3359,7 @@ fn bind_optional_peers_by_row(
                 ) else {
                     continue;
                 };
+                // Only the bound package is nested in the row's own path.
                 if found_at == FoundAt::Own {
                     proved = found;
                     break;
@@ -3382,6 +3379,7 @@ fn bind_optional_peers_by_row(
                         dependencies[root_dep_id as usize].name_hash == dep.name_hash
                             && resolutions[root_dep_id as usize] == found
                     });
+                // Any other binding would be nested next to a copy it cannot dedupe onto.
                 if !in_range && !root_dependency {
                     proved = found;
                 }

@@ -182,8 +182,7 @@ pub struct Lockfile {
     pub workspace_versions: VersionHashMap,
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
-    /// Optional-peer edges whose binding the rows of bun.lock prove
-    /// (`bun_lock::bind_optional_peers_by_row`). The hoister does not move them. Not saved.
+    /// Optional-peer edges whose binding the rows of bun.lock prove. Not saved.
     pub(crate) pinned_optional_peers: Vec<DependencyID>,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -1407,8 +1406,6 @@ impl<'a> Cloner<'a> {
 
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
-    /// A bound slot only moves at the first placement of its package, so the last pass builds
-    /// every placement from the bindings it ends with.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         Ok(())

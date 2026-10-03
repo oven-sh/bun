@@ -580,6 +580,25 @@ it("ReadableStream (direct): an underlyingSource close() hook that throws is not
   await expect(stream2.getReader().read()).rejects.toThrow("close hook threw");
 });
 
+it("ReadableStream (direct): a close() hook that throws under Body.textStream() unlocks the source", async () => {
+  // The hook's exception leaves the read that the text stream makes of the source. The text
+  // stream takes the error and lets go of the source.
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  const reader = new Response(stream).textStream().getReader();
+  expect(await reader.read()).toEqual({ value: "hello", done: false });
+  await expect(reader.read()).rejects.toThrow("close hook threw");
+  expect(stream.locked).toBe(false);
+});
+
 it("ReadableStream (direct): controller.close() outside pull with a throwing close() hook settles the pending read and throws to the closer", async () => {
   let controller;
   const pulled = Promise.withResolvers();

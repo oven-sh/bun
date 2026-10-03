@@ -1144,9 +1144,6 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
 }
 
 void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
-  if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
-  /* A resumed handshake can complete after the FIN, and node offers no session for another server name. */
-  if (SSL_get_session(s_ssl(s))) return;
   s->ssl_first_flight_before_fin = 1;
 }
 
@@ -2099,12 +2096,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
-  /* A close does not wait for the first flight: the FIN that was held back for it leaves now. */
-  s->ssl_first_flight_before_fin = 0;
-  if (s->ssl_shutdown_after_first_flight) {
-    s->ssl_shutdown_after_first_flight = 0;
-    us_internal_ssl_shutdown(s);
-  }
   ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 
@@ -2146,7 +2137,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
  * re-enters while a handshake is in progress: the socket keeps reading after
  * our FIN or close_notify, and the peer's next flight can still complete that
  * handshake. For every other caller a half-closed socket's handshake is over. */
-static void ssl_handshake_step(struct us_socket_t *s, int fin_ends_handshake) {
+static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
    * it; clear it before this socket's handshake step so any reason captured
@@ -2232,20 +2223,6 @@ static void ssl_handshake_step(struct us_socket_t *s, int fin_ends_handshake) {
   s->ssl_write_wants_read = 1;
 }
 
-/* A handshake step, then the FIN that us_internal_ssl_shutdown held back for the first one. */
-static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
-  ssl_handshake_step(s, fin_ends_handshake);
-  if (ssl_gone(s)) return;
-  s->ssl_first_flight_before_fin = 0;
-  if (s->ssl_shutdown_after_first_flight) {
-    s->ssl_shutdown_after_first_flight = 0;
-    /* Nothing of ours leaves after this FIN, so the chain's verdict can wait for the end of the handshake:
-     * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1661 */
-    s->ssl_inline_reject = 0;
-    us_internal_ssl_shutdown(s);
-  }
-}
-
 /* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
 
 struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client,
@@ -2256,6 +2233,12 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
   ssl_update_handshake(result, 1);
+  if (ssl_gone(result)) return result;
+  result->ssl_first_flight_before_fin = 0;
+  if (result->ssl_shutdown_after_first_flight) {
+    result->ssl_shutdown_after_first_flight = 0;
+    us_internal_ssl_shutdown(result);
+  }
   return result;
 }
 
@@ -2424,7 +2407,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
-  /* See ssl_handshake_step: start this socket's SSL processing with a clean
+  /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
   ERR_clear_error();
@@ -2699,8 +2682,7 @@ restart:
  * and the expensive crypto work is the first step, so deprioritising
  * mid-handshake sockets keeps fully-established ones responsive under load. */
 int us_internal_ssl_is_low_prio(struct us_socket_t *s) {
-  /* The peer's FIN closes a socket that sent its own, so what the peer sent before it cannot wait in the queue. */
-  return SSL_in_init(s_ssl(s)) && us_internal_socket_can_raw_write(s);
+  return SSL_in_init(s_ssl(s));
 }
 
 /* ── Socket-level accessors / write / shutdown ───────────────────────────── */

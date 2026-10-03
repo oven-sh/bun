@@ -2647,7 +2647,9 @@ impl<'p> Checker<'p> {
 
     /// `lateBindMember` for `f[key] = value`: it declares the property named by the type of `key`,
     /// together with the `f.name = value` declarations of that name. A key whose type is not usable
-    /// as a property name declares nothing.
+    /// as a property name declares nothing. `this[key] = value` in a class declares a static
+    /// property, in an instance member too: `getResolvedMembersOrExportsOfSymbol` only binds these
+    /// declarations for the exports.
     fn add_late_bound_expandos(&mut self, b: &mut Builder, owner: Sym) {
         let files = self.files();
         let Some(all) = files.export(owner, known::assignment_declaration) else {
@@ -2658,7 +2660,7 @@ impl<'p> Checker<'p> {
             return;
         }
         for &(file, decl) in files.decls_of(all).iter() {
-            if let Decl::Expando(e) = decl
+            if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                 && let ExprKind::Assign { target, .. } = self.hir(file)[e].kind
                 && let ExprKind::Index { index, .. } = self.hir(file)[target].kind
                 && let Some(name) = self.declared_member_name(file, PropKey::Computed(index))
@@ -3711,7 +3713,7 @@ impl<'p> Checker<'p> {
                         ExprKind::Assign { target, value, .. } => {
                             if assignment_declaration_kind(hir, e)
                                 == JsDeclarationKind::ThisProperty
-                                && self.contains_same_named_this_property(file, name, target, value)
+                                && self.contains_same_named_this_property(file, target, value)
                             {
                                 continue;
                             }
@@ -3823,12 +3825,11 @@ impl<'p> Checker<'p> {
         Some(self.type_of_property_or_index_signature(ty, name)?.0)
     }
 
-    /// `containsSameNamedThisProperty`: whether `value`, the right side of `target = value`, mentions `this.name` outside of
+    /// `containsSameNamedThisProperty`: whether `value`, the right side of `target = value`, mentions `target` outside of
     /// nested function-like nodes.
     fn contains_same_named_this_property(
-        &self,
+        &mut self,
         file: FileId,
-        name: Atom,
         target: ExprId,
         value: ExprId,
     ) -> bool {
@@ -3836,27 +3837,17 @@ impl<'p> Checker<'p> {
         if value.is_none() {
             return false;
         }
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some(reference) = self.reference_of(file, target) else {
+            return false;
+        };
+        let bound = self.bound(file);
         let class_expr = |class: ClassId| match bound.class_owner[class.idx()] {
             ClassOwner::Expr(e) => e,
             ClassOwner::Stmt(_) => ExprId::NONE,
         };
         // Lowering numbers expressions in post-order and lowers `target` before `value`, so this range is the subtree of `value`.
         (target.0 + 1..=value.0).map(ExprId).any(|e| {
-            // `isMatchingReference`
-            let is_match = match hir[e].kind {
-                ExprKind::Dot {
-                    obj,
-                    name: accessed,
-                    ..
-                } => accessed == name && matches!(hir[obj].kind, ExprKind::This),
-                ExprKind::Index { obj, index, .. } => {
-                    matches!(hir[obj].kind, ExprKind::This)
-                        && matches!(hir[index].kind, ExprKind::String(key) if key == name)
-                }
-                _ => false,
-            };
-            if !is_match {
+            if !self.matches(&reference, e) {
                 return false;
             }
             // Walk up to `value`. A class is not function-like: its heritage clause and its property initializers are visited.

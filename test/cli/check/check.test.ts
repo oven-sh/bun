@@ -1807,6 +1807,46 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    test("a property copied from `export { a as b }` by a spread is not narrowed", async () => {
+      using dir = project({
+        "utils.ts": `declare const _n: string | undefined;
+export { _n as n };
+`,
+        "a.ts": `import * as utils from "./utils";
+const copy = { ...utils };
+export const t = copy.n && copy.n.length;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(3,28): error TS18048: 'copy.n' is possibly 'undefined'."`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`this[key] = value` in a JavaScript class declares a static property", async () => {
+      using dir = project({
+        "a.js": `const key = Symbol();
+export class A {
+  static s() {
+    const made = (this[key] = this[key] = { n: 1 });
+    return made.n + this[key].n;
+  }
+}
+export const a = A[key].n;
+export class B {
+  m() {
+    this[key] = 1;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--allowJs", "true", "--checkJs", "true"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.js(11,5): error TS7053: Element implicitly has an 'any' type because expression of type 'unique symbol' can't be used to index type 'B'.
+          Property '[key]' does not exist on type 'B'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("an import shadowed by a variable counts as used where `a.b` is resolved as an entity name", async () => {
       const file = (returned: string, type: string) => `import { policy, used } from "./a";
 export function f(s: { data: ${type} }) {

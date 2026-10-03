@@ -1120,7 +1120,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn matches(&mut self, reference: &Reference, e: ExprId) -> bool {
+    /// `isMatchingReference(reference, e)`
+    pub(super) fn matches(&mut self, reference: &Reference, e: ExprId) -> bool {
         self.matches_prefix(reference, reference.path.len(), e)
     }
 
@@ -4037,12 +4038,26 @@ impl<'p> Checker<'p> {
 
     /// `prop.Flags&(SymbolFlagsVariable|SymbolFlagsProperty|SymbolFlagsAccessor) != 0`
     fn is_variable_property_or_accessor(&self, prop: &Prop) -> bool {
-        match prop.source {
-            PropSource::Symbol(sym) => {
+        let symbol = match &prop.source {
+            PropSource::Symbol(sym) => Some(*sym),
+            // The symbol itself (`getSpreadSymbol`), or one with its flags (`createSymbolWithType`).
+            // So `{ ...namespace }` has the alias that `export { a as b }` declares, which is none
+            // of the three. A recreated symbol is a property, even if the original is not.
+            PropSource::Copy(_, parts, true) => match &parts[..] {
+                [only] => match only.source {
+                    PropSource::Symbol(sym) => Some(sym),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        match symbol {
+            Some(sym) => {
                 let flags = self.files().flags(sym);
                 flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ACCESSOR)
             }
-            _ => !prop.flags.contains(PropFlags::METHOD),
+            None => !prop.flags.contains(PropFlags::METHOD),
         }
     }
 

@@ -8,10 +8,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
-use bun_sys as Syscall;
 
 use crate::bun_fs::FileSystem;
 
@@ -295,11 +293,6 @@ impl PackageManager {
     }
 
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
-        let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &[b"binding.gyp"],
-        );
-
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
@@ -308,11 +301,11 @@ impl PackageManager {
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
         // `defer top_level_dir.deinit()` — handled by Drop
 
-        if root_package.scripts.has_any() {
-            let add_node_gyp_rebuild_script = root_package.scripts.install.is_empty()
-                && root_package.scripts.preinstall.is_empty()
-                && Syscall::exists(binding_dot_gyp_path.as_bytes());
+        let add_node_gyp_rebuild_script = root_package
+            .scripts
+            .wants_default_node_gyp(FileSystem::instance().top_level_dir());
 
+        if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 &self.lockfile,
                 buf,
@@ -320,16 +313,6 @@ impl PackageManager {
                 name,
                 ResolutionTag::Root,
                 add_node_gyp_rebuild_script,
-            );
-        } else if Syscall::exists(binding_dot_gyp_path.as_bytes()) {
-            // no scripts exist but auto node gyp script needs to be added
-            self.root_lifecycle_scripts = root_package.scripts.create_list(
-                &self.lockfile,
-                buf,
-                &mut top_level_dir,
-                name,
-                ResolutionTag::Root,
-                true,
             );
         }
     }

@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { spawn as nodeSpawn } from "node:child_process";
+import { lstatSync, realpathSync, symlinkSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { join } from "path";
 import { splitWindowsCommandLine } from "./windows-command-line";
 
@@ -35,6 +37,103 @@ test("args exclude run", async () => {
     console.count("Run");
   }
 });
+
+describe.each(["mjs", "cjs"])("%s entry argv preserves symlinks", extension => {
+  for (const linkKind of ["file", "directory"]) {
+    test.concurrent.each([
+      ["direct absolute", [], "absolute"],
+      ["direct relative", [], "relative"],
+      ["direct dot-relative", [], "dot-relative"],
+      ["run absolute", ["run"], "absolute"],
+      ["run relative", ["run"], "relative"],
+      ["run dot-relative", ["run"], "dot-relative"],
+      ["direct with --cwd", [], "cwd"],
+      ["run with --cwd", ["run"], "cwd"],
+      ["node alias relative", ["--bun", "node"], "relative"],
+    ])(`${linkKind} symlink with %s`, async (_name, command, spelling) => {
+      const source =
+        extension === "mjs"
+          ? `import marker from "./sibling.cjs";
+           console.log(JSON.stringify({ argv: process.argv.slice(1), url: import.meta.url, marker }));`
+          : `console.log(JSON.stringify({ argv: process.argv.slice(1),
+             url: require("node:url").pathToFileURL(__filename).href, marker: require("./sibling.cjs") }));`;
+      using dir = tempDir("entry-argv-symlink", {
+        [`real/entry.${extension}`]: source,
+        "real/sibling.cjs": 'module.exports = "physical sibling";',
+        "sibling.cjs": 'module.exports = "wrong sibling";',
+      });
+      const root = realpathSync(String(dir));
+      const physicalEntry = join(root, "real", `entry.${extension}`);
+      const link = join(root, linkKind === "file" ? `linked.${extension}` : "linked");
+      symlinkSync(
+        linkKind === "file" ? physicalEntry : join(root, "real"),
+        link,
+        linkKind === "file" ? "file" : isWindows ? "junction" : "dir",
+      );
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      const relativeEntry = linkKind === "file" ? `linked.${extension}` : join("linked", `entry.${extension}`);
+      const lexicalEntry = join(root, relativeEntry);
+      const entry =
+        spelling === "absolute" ? lexicalEntry : spelling === "dot-relative" ? `./${relativeEntry}` : relativeEntry;
+      const args = ["--version", "arg with spaces", "", "literal;arg", "Ω"];
+      await using child = spawn({
+        cmd: [bunExe(), ...command, ...(spelling === "cwd" ? ["--cwd", root] : []), entry, ...args],
+        cwd: spelling === "cwd" ? import.meta.dir : root,
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect(JSON.parse(stdout)).toEqual({
+        argv: [lexicalEntry, ...args],
+        url: pathToFileURL(physicalEntry).href,
+        marker: "physical sibling",
+      });
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+  }
+});
+
+test.concurrent.each(["extensionless", "directory", "package directory"])(
+  "resolved %s entry argv preserves symlinks",
+  async kind => {
+    using dir = tempDir("resolved-entry-argv-symlink", {
+      "real/entry.js": `console.log(JSON.stringify({ argv: process.argv.slice(1), filename: __filename,
+        marker: require("./sibling.cjs") }));`,
+      "real/package.json": JSON.stringify({ main: "entry.js" }),
+      "real/sibling.cjs": 'module.exports = "physical sibling";',
+      "node_modules/.keep": "",
+    });
+    const root = realpathSync(String(dir));
+    const link =
+      kind === "package directory" ? join(root, "node_modules", "lexical-argv-package") : join(root, "linked");
+    symlinkSync(join(root, "real"), link, isWindows ? "junction" : "dir");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const entry =
+      kind === "package directory"
+        ? "node_modules/lexical-argv-package"
+        : kind === "directory"
+          ? "linked"
+          : "linked/entry";
+    const args = ["--version", "arg with spaces"];
+    await using child = spawn({
+      cmd: [bunExe(), "run", entry, ...args],
+      cwd: root,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      argv: [join(link, "entry.js"), ...args],
+      filename: join(root, "real", "entry.js"),
+      marker: "physical sibling",
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  },
+);
 
 // Whatever goes into Bun.spawn's argv array must come out of the child's
 // process.argv unchanged: this exercises the parent's Windows command-line

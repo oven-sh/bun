@@ -171,6 +171,23 @@ public:
     ExceptionOr<void> send(JSC::ArrayBufferView&);
     ExceptionOr<void> send(JSBlob*);
 
+    // send() with the frame type that the caller names. For the built-in `ws` module: jsWebSocketSendFrame.
+    ExceptionOr<void> sendFrame(const String& message, Opcode opcode)
+    {
+        if (m_state != OPEN) [[unlikely]]
+            return didNotSendFrame(message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).length());
+        sendWebSocketString(message, opcode);
+        return {};
+    }
+    ExceptionOr<void> sendFrame(std::span<const uint8_t> payload, Opcode opcode)
+    {
+        if (m_state != OPEN) [[unlikely]]
+            return didNotSendFrame(payload.size());
+        sendWebSocketData(byteCast<char>(payload).data(), payload.size(), opcode);
+        return {};
+    }
+    ExceptionOr<void> sendFrame(JSBlob*, Opcode);
+
     ExceptionOr<void> ping();
     ExceptionOr<void> ping(const String& message);
     ExceptionOr<void> ping(JSC::ArrayBuffer&);
@@ -315,6 +332,9 @@ private:
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    // What send() does on a socket that is not OPEN: it throws while CONNECTING, and after that the frame only
+    // counts in bufferedAmount.
+    ExceptionOr<void> didNotSendFrame(size_t payloadSize);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     State m_state { CONNECTING };

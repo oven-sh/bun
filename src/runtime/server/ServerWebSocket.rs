@@ -216,6 +216,61 @@ pub(super) fn blob_payload<'a>(
     Ok(Some(blob.shared_view()))
 }
 
+/// `(socket, data, binary, compress)`: the frame entry of the built-in `ws` module, which binds it with
+/// `$newRustFunction`. `send()` takes the frame type from the JS type of `data`; npm ws takes it from
+/// `options.binary`, so here the caller names it.
+///
+/// Returns `undefined` for a `data` that is not a string, an ArrayBuffer, a view or a Blob, and throws what
+/// `send()` throws for a `compress` or a Blob that it does not take. Neither depends on the socket: a `ws`
+/// socket that is not open yet passes `null`, and its caller still gets them.
+///
+/// Returns `false` for a frame that did not go out, which the caller keeps and sends again on `open` or
+/// `drain`: there is no open socket, or uWS dropped the frame. Returns `true` for a frame that uWS wrote or
+/// buffered. An empty payload is not a drop, which `send()`'s byte count cannot tell apart.
+#[bun_jsc::host_fn]
+pub(crate) fn js_send_frame(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [socket, data, binary, compress_value] = callframe.arguments_as_array::<4>();
+    let compress = ServerWebSocket::parse_compress_arg(
+        global_this,
+        "send",
+        compress_value,
+        callframe.arguments_count() as usize,
+    )?;
+    // The `ws` module passes a boolean.
+    let opcode = if binary == JSValue::TRUE {
+        Opcode::Binary
+    } else {
+        Opcode::Text
+    };
+
+    let this = socket
+        .as_class_ref::<ServerWebSocket>()
+        .filter(|this| !this.is_closed());
+    let send = |payload: &[u8]| match this {
+        Some(this) => this.websocket().send(payload, opcode, compress, true),
+        None => SendStatus::Dropped,
+    };
+
+    let status = if data.is_string_literal() {
+        let view = data.to_js_string_view(global_this)?;
+        let utf8 = view.to_utf8();
+        send(utf8.slice())
+    } else if let Some(buffer) = data.as_array_buffer(global_this) {
+        send(buffer.slice())
+    } else if let Some(slice) = blob_payload(global_this, "send", data)? {
+        let status = send(slice);
+        data.ensure_still_alive();
+        status
+    } else {
+        return Ok(JSValue::UNDEFINED);
+    };
+
+    Ok(JSValue::js_boolean(!matches!(status, SendStatus::Dropped)))
+}
+
 /// Handler state a `publish*` method reads once up front (`publish_ctx`).
 #[derive(Clone, Copy)]
 struct PublishCtx {

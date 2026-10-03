@@ -8,9 +8,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::env_path::is_node_modules_bin_dir;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal, join_abs_string_z, platform};
-use bun_paths::{AutoAbsPath, DELIMITER, EnvPath};
+use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
@@ -359,8 +358,7 @@ impl PackageManager {
             return Ok(());
         }
 
-        // Before the node-gyp shim, the shell lookup and the `node`/`ccache`
-        // lookups read PATH.
+        // First: everything below reads PATH.
         let demoted_bin_dirs = self.demote_inherited_bin_dirs()?;
 
         self.ensure_temp_node_gyp_script()?;
@@ -371,14 +369,9 @@ impl PackageManager {
             dependency_id,
         } = list.owner
         {
-            crate::package_installer::link_owner_dependency_bins(
-                self,
-                &list.cwd,
-                package_id,
-                tree_id,
-                dependency_id,
-            );
+            crate::package_installer::link_owner_bins(self, package_id, tree_id, dependency_id)?;
         }
+        let project_node_gyp = self.project_node_gyp();
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
@@ -407,6 +400,11 @@ impl PackageManager {
             demoted_bin_dirs,
         )?;
         script_env.put(b"PATH", path.slice())?;
+        if let Some(node_gyp) = project_node_gyp {
+            if script_env.get(b"npm_config_node_gyp").is_none() {
+                script_env.put(b"npm_config_node_gyp", node_gyp)?;
+            }
+        }
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
@@ -451,61 +449,42 @@ impl PackageManager {
         Ok(())
     }
 
-    /// `bun run`, `npm run` and bunx put every ancestor `node_modules/.bin` at
-    /// the front of the PATH that a `bun install` they start inherits. Takes
-    /// the entries for the install root, and for the directories above and
-    /// inside it, out of PATH once and returns them, so that
-    /// `lifecycle_script_path` can put them behind the user's PATH. Any other
-    /// `node_modules/.bin` on the user's PATH stays where the user put it.
-    /// Call it before a lookup of a program that the install itself runs.
-    pub(crate) fn demote_inherited_bin_dirs(&self) -> Result<&'static [u8], crate::Error> {
+    /// Takes the install's `node_modules/.bin` entries out of the inherited PATH and returns them.
+    fn demote_inherited_bin_dirs(&self) -> Result<&'static [u8], crate::Error> {
         static DEMOTED: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
         if let Some(demoted) = DEMOTED.get() {
             return Ok(demoted);
         }
-
-        let install_root = FileSystem::instance().top_level_dir();
-        let is_install_bin_dir = |entry: &[u8]| {
-            is_node_modules_bin_dir(entry)
-                && bun_paths::dirname(strings::without_trailing_slash(entry))
-                    .and_then(bun_paths::dirname)
-                    .is_some_and(|dir| {
-                        !matches!(
-                            is_parent_or_equal(dir, install_root),
-                            ParentEqual::Unrelated
-                        ) || !matches!(
-                            is_parent_or_equal(install_root, dir),
-                            ParentEqual::Unrelated
-                        )
-                    })
-        };
-
-        let inherited = self.env().get(b"PATH").unwrap_or(b"");
-        let mut kept: Vec<u8> = Vec::with_capacity(inherited.len());
-        let mut kept_any = false;
-        let mut demoted: Vec<u8> = Vec::new();
-        for entry in strings::split(inherited, &[DELIMITER]) {
-            if is_install_bin_dir(entry) {
-                if !demoted.is_empty() {
-                    demoted.push(DELIMITER);
-                }
-                demoted.extend_from_slice(entry);
-            } else {
-                if kept_any {
-                    kept.push(DELIMITER);
-                }
-                kept_any = true;
-                kept.extend_from_slice(entry);
-            }
-        }
+        let (kept, demoted) = bun_paths::env_path::split_bin_dirs_of(
+            self.env().get(b"PATH").unwrap_or(b""),
+            FileSystem::instance().top_level_dir(),
+        );
         if !demoted.is_empty() {
             self.env_mut().map.put(b"PATH", &kept)?;
         }
         Ok(DEMOTED.get_or_init(|| demoted.into_boxed_slice()))
     }
 
-    /// The owner of a dependency that is installed at `dir`, for a caller that
-    /// does not know which linker installed it (`bun pm trust`).
+    /// `bin/node-gyp.js` of a `node-gyp` that the root package itself depends on.
+    fn project_node_gyp(&self) -> Option<&'static [u8]> {
+        static PINNED: std::sync::OnceLock<Option<Box<[u8]>>> = std::sync::OnceLock::new();
+        PINNED
+            .get_or_init(|| {
+                let lockfile = &self.lockfile;
+                let deps = lockfile.buffers.dependencies.as_slice();
+                let string_buf = lockfile.buffers.string_bytes.as_slice();
+                let root_deps = *lockfile.packages.slice().items_dependencies().first()?;
+                (root_deps.begin()..root_deps.end())
+                    .any(|id| deps[id as usize].name.slice(string_buf) == b"node-gyp")
+                    .then_some(())?;
+                let mut path = AutoAbsPath::init_top_level_dir();
+                let _ = path.append(b"node_modules/node-gyp/bin/node-gyp.js");
+                Syscall::exists(path.slice()).then(|| Box::from(path.slice()))
+            })
+            .as_deref()
+    }
+
+    /// For `bun pm trust`, which does not know which linker installed `dir`.
     pub fn installed_dependency_owner(
         dir: &ZStr,
         package_id: PackageID,
@@ -556,13 +535,7 @@ impl PackageManager {
     }
 }
 
-/// The PATH the scripts of `owner` run with. The first match wins:
-/// 1. The `node_modules/.bin` directories that hold only the owner's own
-///    dependencies: the one in `cwd`, then the store entry's for a
-///    `StoreEntry`, or each one up to the install root for a `Project`.
-/// 2. `inherited`: the user's PATH, then bun's `node-gyp` and `node` shims.
-/// 3. Every other `node_modules/.bin` above `cwd`, then `demoted`. Any
-///    installed package can put a file in these.
+/// The owner's `.bin` directories, `inherited`, every other `.bin` above `cwd`, then `demoted`.
 fn lifecycle_script_path(
     owner: ScriptsOwner,
     cwd: &[u8],
@@ -614,10 +587,7 @@ fn lifecycle_script_path(
     Ok(path)
 }
 
-/// The `node_modules` directory of the isolated store entry that holds `cwd`:
-/// `node_modules/.bun/<entry>/node_modules`. `bun pm trust` runs a script
-/// through the project-level symlink to the entry, so a symlinked `cwd` is
-/// followed once. Any other shape has no store directory.
+/// `node_modules/.bun/<entry>/node_modules` for a `cwd` in a store entry, or one symlink away.
 fn store_entry_node_modules(cwd: &ZStr) -> Option<Vec<u8>> {
     let mut link_buf = bun_paths::path_buffer_pool::get();
     let mut join_buf = bun_paths::path_buffer_pool::get();

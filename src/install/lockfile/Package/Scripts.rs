@@ -427,18 +427,14 @@ pub struct List {
     pub(crate) owner: Owner,
 }
 
-/// Whose scripts a [`List`] holds. The owner decides which `node_modules/.bin`
-/// directories stand ahead of the user's PATH when the scripts run; see
-/// `PackageManager::spawn_package_lifecycle_scripts`.
+/// Whose scripts a [`List`] holds. It decides the PATH they run with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Owner {
     /// The root package or a workspace member.
     Project,
-    /// A dependency in an isolated store entry. The entry's own
-    /// `node_modules/.bin` holds the bins of its declared dependencies.
+    /// A dependency in an isolated store entry.
     StoreEntry,
-    /// A dependency in a hoisted `node_modules` tree. `dependency_id` is the
-    /// entry that placed it in `tree_id`.
+    /// A dependency in a hoisted tree, placed in `tree_id` by `dependency_id`.
     Hoisted {
         package_id: PackageID,
         tree_id: bun_install::lockfile::tree::Id,

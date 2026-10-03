@@ -80,7 +80,7 @@ Any installed package can declare a `bin` entry with any name, such as `node` or
 
 A dependency's `postinstall` that runs `node build.js` therefore runs the `node` on your `PATH`, even when another package has linked a `node` bin into the project's `node_modules/.bin`. A command that only exists in the project's `node_modules/.bin` is still found in step 4.
 
-A dependency that calls `node-gyp` without declaring it gets the one on your `PATH`, or else Bun's shim, which runs the `node-gyp` from the registry with `bunx`. To make dependencies build with a specific copy, set the `npm_config_node_gyp` environment variable to the path of its `bin/node-gyp.js`.
+A dependency that calls `node-gyp` without declaring it gets the one on your `PATH`, or else Bun's shim. The shim runs the `node-gyp` that your project itself depends on. Without one, it runs the `node-gyp` from the registry with `bunx`. To choose another copy, set the `npm_config_node_gyp` environment variable to the path of its `bin/node-gyp.js`.
 
 <Note>
   The project's own lifecycle scripts, `bun run`, and `bunx` search the project's `node_modules/.bin` before your

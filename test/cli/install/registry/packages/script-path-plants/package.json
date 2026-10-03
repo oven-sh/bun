@@ -17,8 +17,8 @@
       "version": "1.0.0",
       "_id": "script-path-plants@1.0.0",
       "dist": {
-        "integrity": "sha512-lGOwvXo0Y0hm5INfoMiEV2ipzgU45O2G2MMmdM9K/9f72yvU23M4pPgFSLghSimWIzLw0B1SFcoyFl7KO7SWmA==",
-        "shasum": "c48e3493c6bbf544eb3b178bce90a83314b8d409",
+        "integrity": "sha512-gLsr+B8bNq0h8OFy1TaZxb4DpjvE3LPNcJa3jIy1K1nc6be6zMZi2NJcVAM6s9NK7ePVq64KKYQ+jPVcnrwucA==",
+        "shasum": "39a511ba30ef3b0d7452d9bc957a508f0c6efd21",
         "tarball": "http://localhost:4873/script-path-plants/-/script-path-plants-1.0.0.tgz"
       }
     }

@@ -21,6 +21,38 @@ pub fn is_node_modules_bin_dir(entry: &[u8]) -> bool {
         && crate::dirname(entry).is_some_and(|parent| crate::basename(parent) == b"node_modules")
 }
 
+/// Splits `path` into the entries to keep and the `node_modules/.bin` entries of `root` and of the
+/// directories above and inside it.
+pub fn split_bin_dirs_of(path: &[u8], root: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    use crate::resolve_path::{ParentEqual, is_parent_or_equal};
+    let is_related = |dir: &[u8]| {
+        !matches!(is_parent_or_equal(dir, root), ParentEqual::Unrelated)
+            || !matches!(is_parent_or_equal(root, dir), ParentEqual::Unrelated)
+    };
+    let mut kept: Vec<u8> = Vec::with_capacity(path.len());
+    let mut kept_any = false;
+    let mut taken: Vec<u8> = Vec::new();
+    for entry in strings::split(path, &[DELIMITER]) {
+        let of_root = is_node_modules_bin_dir(entry)
+            && crate::dirname(strings::without_trailing_slash(entry))
+                .and_then(crate::dirname)
+                .is_some_and(is_related);
+        if of_root {
+            if !taken.is_empty() {
+                taken.push(DELIMITER);
+            }
+            taken.extend_from_slice(entry);
+        } else {
+            if kept_any {
+                kept.push(DELIMITER);
+            }
+            kept_any = true;
+            kept.extend_from_slice(entry);
+        }
+    }
+    (kept, taken)
+}
+
 #[derive(Default)]
 pub struct EnvPath {
     buf: Vec<u8>,

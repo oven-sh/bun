@@ -14,12 +14,17 @@
  * - script-path-native          `preinstall` and `postinstall` run
  *                               `node build.js <hook>`, which appends the hook
  *                               name to `built.txt`.
- * - script-path-tool            `bin`: `script-path-tool`, which writes
- *                               `tool.txt`.
+ * - script-path-tool            `bin`: `script-path-tool`, which writes its
+ *                               version to `tool.txt`. 1.0.0 and 2.0.0.
  * - script-path-uses-tool       Depends on script-path-tool and runs
  *                               `script-path-tool` in `postinstall`.
  * - script-path-self            `bin`: `script-path-self`, which writes
  *                               `self.txt`. Its `postinstall` runs it.
+ * - script-path-bunx            `postinstall` runs `bun x script-path-tool`.
+ *                               It does not depend on script-path-tool.
+ * - script-path-node-gyp        `bin`: `node-gyp` at `bin/node-gyp.js`, the
+ *                               layout of the real node-gyp. It writes
+ *                               `pinned.txt`.
  * - script-path-gyp             Ships a `binding.gyp` and no `node-gyp`
  *                               dependency, so `node-gyp rebuild` runs through
  *                               bun's `node-gyp` shim.
@@ -33,7 +38,22 @@ const version = "1.0.0";
 
 const plant = `#!/bin/sh\necho "\${0##*/}" >> planted.txt\n`;
 
-const packages: { pkgJson: Record<string, unknown> & { name: string }; files?: Record<string, string> }[] = [
+const tool = (toolVersion: string) => ({
+  version: toolVersion,
+  pkgJson: {
+    name: "script-path-tool",
+    bin: { "script-path-tool": "tool.js" },
+  },
+  files: {
+    "tool.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("tool.txt", "script-path-tool@${toolVersion}\\n");\n`,
+  },
+});
+
+const packages: {
+  pkgJson: Record<string, unknown> & { name: string };
+  files?: Record<string, string>;
+  version?: string;
+}[] = [
   {
     pkgJson: {
       name: "script-path-plants",
@@ -56,15 +76,8 @@ const packages: { pkgJson: Record<string, unknown> & { name: string }; files?: R
     },
     files: { "build.js": `require("fs").appendFileSync("built.txt", process.argv[2] + "\\n");\n` },
   },
-  {
-    pkgJson: {
-      name: "script-path-tool",
-      bin: { "script-path-tool": "tool.js" },
-    },
-    files: {
-      "tool.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("tool.txt", "script-path-tool@${version}\\n");\n`,
-    },
-  },
+  tool("1.0.0"),
+  tool("2.0.0"),
   {
     pkgJson: {
       name: "script-path-uses-tool",
@@ -83,14 +96,30 @@ const packages: { pkgJson: Record<string, unknown> & { name: string }; files?: R
     },
   },
   {
+    pkgJson: {
+      name: "script-path-bunx",
+      scripts: { postinstall: "bun x --silent script-path-tool" },
+    },
+  },
+  {
+    pkgJson: {
+      name: "script-path-node-gyp",
+      bin: { "node-gyp": "bin/node-gyp.js" },
+    },
+    files: {
+      "bin/node-gyp.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("pinned.txt", "script-path-node-gyp@${version}\\n");\n`,
+    },
+  },
+  {
     pkgJson: { name: "script-path-gyp" },
     files: { "binding.gyp": "" },
   },
 ];
 
-for (const { pkgJson, files = {} } of packages) {
+const packuments = new Map<string, { latest: string; versions: Record<string, object> }>();
+for (const { pkgJson, files = {}, version: packageVersion = version } of packages) {
   const { name } = pkgJson;
-  const manifest = { ...pkgJson, version };
+  const manifest = { ...pkgJson, version: packageVersion };
   const dir = join(packagesDir, name);
   await mkdir(dir, { recursive: true });
 
@@ -99,32 +128,28 @@ for (const { pkgJson, files = {} } of packages) {
     entries[`package/${path}`] = content;
   }
 
-  const tarball = join(dir, `${name}-${version}.tgz`);
+  const tarball = join(dir, `${name}-${packageVersion}.tgz`);
   await Bun.Archive.write(tarball, entries, { compress: "gzip" });
 
   const bytes = await Bun.file(tarball).bytes();
+  const packument = packuments.get(name) ?? { latest: packageVersion, versions: {} };
+  packument.latest = packageVersion;
+  packument.versions[packageVersion] = {
+    ...manifest,
+    _id: `${name}@${packageVersion}`,
+    dist: {
+      integrity: `sha512-${Buffer.from(new Bun.CryptoHasher("sha512").update(bytes).digest()).toString("base64")}`,
+      shasum: new Bun.CryptoHasher("sha1").update(bytes).digest("hex"),
+      tarball: `http://localhost:4873/${name}/-/${name}-${packageVersion}.tgz`,
+    },
+  };
+  packuments.set(name, packument);
+}
+
+for (const [name, { latest, versions }] of packuments) {
   await writeFile(
-    join(dir, "package.json"),
-    JSON.stringify(
-      {
-        _id: name,
-        name,
-        "dist-tags": { latest: version },
-        versions: {
-          [version]: {
-            ...manifest,
-            _id: `${name}@${version}`,
-            dist: {
-              integrity: `sha512-${Buffer.from(new Bun.CryptoHasher("sha512").update(bytes).digest()).toString("base64")}`,
-              shasum: new Bun.CryptoHasher("sha1").update(bytes).digest("hex"),
-              tarball: `http://localhost:4873/${name}/-/${name}-${version}.tgz`,
-            },
-          },
-        },
-      },
-      null,
-      2,
-    ),
+    join(packagesDir, name, "package.json"),
+    JSON.stringify({ _id: name, name, "dist-tags": { latest }, versions }, null, 2),
   );
 }
 

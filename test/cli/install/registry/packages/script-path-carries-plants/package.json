@@ -13,8 +13,8 @@
       "version": "1.0.0",
       "_id": "script-path-carries-plants@1.0.0",
       "dist": {
-        "integrity": "sha512-7X/v2uLQmzfLvN5sNaLdWTC2QcmNg+3iDjaIBSnbrcqH3hkFKuqHHtOGZD+qU04hSxtJME08RNMwcfPGMoU9ZA==",
-        "shasum": "7852227806cdcaee86e0d8ed48bb1cac55506b36",
+        "integrity": "sha512-rZPCCrpMKkjiXzcY1Ba1m+9eqtO1/UHGprmQfrsJV110zdihDjb1WeOQ86+jfAi1kAF2OYJTKnEnrkOw9/EJjg==",
+        "shasum": "e60f11db19b5e1edce673f34695c7daa9be4386d",
         "tarball": "http://localhost:4873/script-path-carries-plants/-/script-path-carries-plants-1.0.0.tgz"
       }
     }

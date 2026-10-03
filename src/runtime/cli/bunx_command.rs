@@ -805,7 +805,7 @@ impl BunxCommand {
         // names without risking a collision with an unrelated binary in the user's
         // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
         // delimiter so empty segments are ignored.
-        let local_bin_dirs: Vec<u8> =
+        let mut local_bin_dirs: Vec<u8> =
             if !original_path.is_empty() && strings::ends_with(&path, &original_path) {
                 path[0..path.len() - original_path.len()].to_vec()
             } else {
@@ -813,21 +813,51 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
-        // `bun install` sets `BUN_WHICH_IGNORE_CWD` for a lifecycle script, to
-        // the directory of its `node-gyp` shim. The script's PATH already has
-        // the order it must keep, so take the `node_modules/.bin` walk that
-        // was prepended above back out, for the lookup below and for the
-        // process that is spawned.
+        // A lifecycle script's PATH ranks its `.bin` directories: its own ahead of the shim, the shared ones behind.
+        let mut lifecycle_lookup_path: Option<Vec<u8>> = None;
         if !ignore_cwd.is_empty() {
-            let mut kept: Vec<u8> = Vec::with_capacity(path.len());
+            let same = |a: &[u8], b: &[u8]| {
+                strings::eql_long(
+                    strings::without_trailing_slash(a),
+                    strings::without_trailing_slash(b),
+                    true,
+                )
+            };
+            let mut front: Vec<u8> = Vec::new();
             for entry in strings::tokenize(&local_bin_dirs, &[DELIMITER]) {
-                if !bun_paths::env_path::is_node_modules_bin_dir(entry) {
-                    kept.extend_from_slice(entry);
-                    kept.push(DELIMITER);
+                if !strings::tokenize(&original_path, &[DELIMITER])
+                    .any(|ranked| same(ranked, entry))
+                {
+                    front.extend_from_slice(entry);
+                    front.push(DELIMITER);
                 }
             }
-            kept.extend_from_slice(&original_path);
-            path = kept;
+
+            // The shim would find itself, and `bunx` does not take a bin from behind it.
+            let mut lookup = front.clone();
+            let mut bin_dirs = front.clone();
+            let mut behind_shim = false;
+            for entry in strings::tokenize(&original_path, &[DELIMITER]) {
+                if same(entry, &ignore_cwd) {
+                    behind_shim = true;
+                    continue;
+                }
+                let is_bin_dir = bun_paths::env_path::is_node_modules_bin_dir(entry);
+                if behind_shim && is_bin_dir {
+                    continue;
+                }
+                lookup.extend_from_slice(entry);
+                lookup.push(DELIMITER);
+                if is_bin_dir {
+                    bin_dirs.extend_from_slice(entry);
+                    bin_dirs.push(DELIMITER);
+                }
+            }
+
+            path = front;
+            path.extend_from_slice(&original_path);
+            local_bin_dirs = bin_dirs;
+            lifecycle_lookup_path = Some(lookup);
         }
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
@@ -915,37 +945,7 @@ impl BunxCommand {
 
         let temp_dir = RealFS::platform_temp_dir();
 
-        let path_for_bin_dirs: Vec<u8> = 'brk: {
-            if ignore_cwd.is_empty() {
-                break 'brk path.clone();
-            }
-
-            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
-            //
-            // The shim is `node-gyp` at its place in PATH. The entries behind
-            // it are the `node_modules/.bin` directories that any installed
-            // package links into, and they do not outrank it.
-            let stop_at_shim = initial_bin_name == b"node-gyp";
-            let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            for segment in strings::tokenize(&path, &[DELIMITER]) {
-                if strings::eql_long(
-                    strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(&ignore_cwd),
-                    true,
-                ) {
-                    if stop_at_shim {
-                        break;
-                    }
-                    continue;
-                }
-                if !new_path.is_empty() {
-                    new_path.push(DELIMITER);
-                }
-                new_path.extend_from_slice(segment);
-            }
-
-            break 'brk new_path;
-        };
+        let path_for_bin_dirs: Vec<u8> = lifecycle_lookup_path.unwrap_or_else(|| path.clone());
 
         // The bunx cache path is at the following location
         //

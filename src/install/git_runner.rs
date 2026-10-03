@@ -593,8 +593,6 @@ impl GitSubprocess {
     /// Spawns `git <args>` with stdout and stderr captured. On `Ok` the child
     /// may already have exited and freed `this`.
     fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
-        // `git` must not come from a `node_modules/.bin` that `bun run` put on PATH.
-        this.manager().demote_inherited_bin_dirs()?;
         let env = GitEnv::get(this.manager().env_mut());
         let Some(git) = &env.git else {
             this.log_error(format_args!(

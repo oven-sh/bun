@@ -365,8 +365,7 @@ fn abs_node_modules_path(
     abs
 }
 
-/// The platform package the native binlink optimization links `package_id`'s
-/// bins to, and the tree that holds it, resolved from `<tree_id>/<alias>/`.
+/// The platform package that `package_id`'s bins link to, and its tree.
 fn native_binlink_target(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -406,41 +405,33 @@ fn native_binlink_target(
     Some((target_tree_id, replacement_pkg_id))
 }
 
-/// True when `path` itself is a symlink (a junction on Windows), or cannot be
-/// read.
-fn is_symlink(path: &ZStr) -> bool {
+fn is_real_dir(path: &ZStr) -> bool {
     #[cfg(windows)]
     {
-        Syscall::get_file_attributes(path).is_none_or(|attributes| attributes.is_reparse_point)
+        Syscall::get_file_attributes(path)
+            .is_some_and(|attributes| attributes.is_directory && !attributes.is_reparse_point)
     }
     #[cfg(not(windows))]
     {
-        Syscall::lstat(path)
-            .map(|st| Syscall::posix::s_islnk(st.st_mode as u32))
-            .unwrap_or(true)
+        Syscall::lstat(path).is_ok_and(|st| Syscall::posix::s_isdir(st.st_mode as u32))
     }
 }
 
-/// `<owner>/node_modules`, resolved through symlinks, and the bin names its
-/// `.bin` already holds.
+/// `<owner>/node_modules` as a real path, and the names its `.bin` already holds.
 struct OwnerBinDir {
     node_modules: AbsPath,
-    /// No component of the owner's path is a symlink, so every directory
-    /// above it is a real path too.
     owner_path_is_real: bool,
     seen: StringHashMap<()>,
 }
 
 impl OwnerBinDir {
     fn open(owner_dir: &ZStr) -> Option<Self> {
-        // A symlinked owner (`link:`, a workspace) is a directory outside the
-        // tree; nothing is written there.
-        if is_symlink(owner_dir) {
+        // A linked package is the user's own directory: write nothing there.
+        if !is_real_dir(owner_dir) {
             return None;
         }
 
-        // The tree path can cross a workspace symlink. A relative bin link is
-        // only right between real paths.
+        // Relative bin links need real paths: a tree path can cross a workspace symlink.
         let mut real_buf = bun_paths::path_buffer_pool::get();
         let real_owner = Syscall::realpath(owner_dir, &mut real_buf).ok()?;
         let owner_path_is_real =
@@ -481,19 +472,14 @@ impl OwnerBinDir {
     }
 }
 
-/// Links `package_id`'s own bins, and the bins of its declared dependencies
-/// that are installed in a tree above it, into `<owner_dir>/node_modules/.bin`.
-/// A lifecycle script of the package then finds its own tools before any
-/// `.bin` directory that other packages link into. Names already in that
-/// directory are kept.
+/// Links the owner's bins and its declared dependencies' bins into `<owner_dir>/node_modules/.bin`.
 #[cold]
-pub(crate) fn link_owner_dependency_bins(
+pub(crate) fn link_owner_bins(
     manager: &PackageManager,
-    owner_dir: &ZStr,
     package_id: PackageID,
     tree_id: lockfile::tree::Id,
     dependency_id: DependencyID,
-) {
+) -> Result<(), crate::Error> {
     let lockfile: &Lockfile = &manager.lockfile;
     let trees = lockfile.buffers.trees.as_slice();
     let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
@@ -508,16 +494,17 @@ pub(crate) fn link_owner_dependency_bins(
         || dependency_id as usize >= deps.len()
         || package_id as usize >= bins.len()
     {
-        return;
+        return Ok(());
     }
 
     let owner_alias = deps[dependency_id as usize].name.slice(string_buf);
+    // The path in the tree, not the script's cwd: Windows resolves that one through a junction.
+    let mut owner_dir = abs_node_modules_path(lockfile, string_buf, tree_id);
+    owner_dir.append(owner_alias).unwrap_or_oom();
     let nested_tree_id = trees
         .iter()
         .find(|t| t.parent == tree_id && t.folder_name(deps, string_buf) == owner_alias)
         .map(|t| t.id);
-    // Where `require(name)` from the owner resolves: its nested tree, its own
-    // tree, then each ancestor.
     let resolve = |name_hash: PackageNameHash| -> Option<(lockfile::tree::Id, DependencyID)> {
         let find = |id: lockfile::tree::Id| {
             trees[id as usize]
@@ -558,8 +545,7 @@ pub(crate) fn link_owner_dependency_bins(
             && resolutions[placed_dep_id as usize] == resolutions[edge as usize])
             .then_some((dep_tree_id, placed_dep_id))
     });
-    // The package's own bins first: the root `.bin` can hold another package's
-    // bin under the same name.
+    // The owner's own bins too: the root `.bin` can hold another package's bin of that name.
     for (dep_tree_id, placed_dep_id) in core::iter::once((tree_id, dependency_id)).chain(declared) {
         let dep_package_id = resolutions[placed_dep_id as usize];
         if dep_package_id as usize >= bins.len() {
@@ -573,8 +559,8 @@ pub(crate) fn link_owner_dependency_bins(
         let owner_bin_dir = match &mut owner_bin_dir {
             Some(opened) => opened,
             slot @ None => {
-                let Some(opened) = OwnerBinDir::open(owner_dir) else {
-                    return;
+                let Some(opened) = OwnerBinDir::open(owner_dir.slice_z()) else {
+                    return Ok(());
                 };
                 bin::Linker::ensure_umask();
                 slot.insert(opened)
@@ -600,16 +586,21 @@ pub(crate) fn link_owner_dependency_bins(
             let mut target_node_modules = abs_node_modules_path(lockfile, string_buf, target.0);
             let above_real_owner = owner_bin_dir.owner_path_is_real
                 && owner_dir
-                    .as_bytes()
+                    .slice()
                     .strip_prefix(target_node_modules.slice())
                     .is_some_and(|rest| rest.first() == Some(&SEP));
             if !above_real_owner {
-                let Ok(real_target) =
-                    Syscall::realpath(target_node_modules.slice_z(), &mut real_buf)
-                else {
-                    break;
-                };
-                target_node_modules = AbsPath::from(real_target).unwrap_or_oom();
+                match Syscall::realpath(target_node_modules.slice_z(), &mut real_buf) {
+                    Ok(real_target) => {
+                        target_node_modules = AbsPath::from(real_target).unwrap_or_oom();
+                    }
+                    Err(_) if can_retry_without_native_binlink => {
+                        can_retry_without_native_binlink = false;
+                        target = (dep_tree_id, strings::StringOrTinyString::init(alias));
+                        continue;
+                    }
+                    Err(_) => break,
+                }
             }
 
             let mut bin_linker = bin::Linker {
@@ -638,20 +629,13 @@ pub(crate) fn link_owner_dependency_bins(
                 continue;
             }
 
-            // Not fatal: without the link the name resolves from the user's
-            // PATH or the shared `.bin` directories, as it did before.
             if let Some(err) = bin_linker.err {
-                bun_output::scoped_log!(
-                    PackageInstaller,
-                    "owner bin link {} -> {}: {}",
-                    bstr::BStr::new(owner_alias),
-                    bstr::BStr::new(alias),
-                    err.name()
-                );
+                return Err(err);
             }
             break;
         }
     }
+    Ok(())
 }
 
 /// A dependency alias becomes the install destination inside `node_modules`

@@ -335,6 +335,15 @@ describe.concurrent("lifecycle script PATH", () => {
     return files;
   }
 
+  // A script that runs `bun x` finds `bun` on PATH. This makes it the bun under test.
+  async function bunOnPath({ packageDir, env }: TestCtx) {
+    const userBin = join(packageDir, "user-bin");
+    await mkdir(userBin, { recursive: true });
+    await symlink(bunExe(), join(userBin, "bun"));
+    env.PATH = userBin + delimiter + env.PATH;
+    env.BUN_CONFIG_REGISTRY = verdaccio.registryUrl();
+  }
+
   test.each([
     ["transitive", "script-path-carries-plants"],
     ["direct", "script-path-plants"],
@@ -521,16 +530,10 @@ describe.concurrent("lifecycle script PATH", () => {
   });
 
   // script-path-gyp does not declare node-gyp, so `node-gyp rebuild` goes through bun's shim
-  // while node_modules/.bin has a `node-gyp` and a `node` bin of script-path-plants. The shim
-  // runs `bun x node-gyp`, so `bun` on PATH has to be the bun under test.
+  // while node_modules/.bin has a `node-gyp` and a `node` bin of script-path-plants.
   test.skipIf(isWindows)("`node-gyp rebuild` through bun's node-gyp shim", async () => {
     using ctx = await setupTest();
-    const { packageDir, env } = ctx;
-    const userBin = join(packageDir, "user-bin");
-    await mkdir(userBin);
-    await symlink(bunExe(), join(userBin, "bun"));
-    env.PATH = userBin + delimiter + env.PATH;
-    env.BUN_CONFIG_REGISTRY = verdaccio.registryUrl();
+    await bunOnPath(ctx);
     await writeFile(
       ctx.packageJson,
       JSON.stringify({
@@ -542,7 +545,77 @@ describe.concurrent("lifecycle script PATH", () => {
 
     const { err, exitCode } = await bun(ctx, "install");
     expect(await written(ctx, "script-path-gyp")).toEqual({});
-    expect(await exists(join(packageDir, "node_modules", "script-path-gyp", "build.node"))).toBeTrue();
+    expect(await exists(join(ctx.packageDir, "node_modules", "script-path-gyp", "build.node"))).toBeTrue();
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test("`node-gyp rebuild` runs the node-gyp that the project itself depends on", async () => {
+    using ctx = await setupTest();
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "node-gyp": "npm:script-path-node-gyp@1.0.0",
+          "script-path-gyp": "1.0.0",
+          "script-path-plants": "1.0.0",
+        },
+        trustedDependencies: ["script-path-gyp"],
+      }),
+    );
+
+    const { err, exitCode } = await bun(ctx, "install");
+    expect(await written(ctx, "script-path-gyp")).toEqual({ "pinned.txt": "script-path-node-gyp@1.0.0\n" });
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)(
+    "`bun x` in a dependency's script does not run a bin of the project's node_modules/.bin",
+    async () => {
+      using ctx = await setupTest();
+      await bunOnPath(ctx);
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "script-path-bunx": "1.0.0", "script-path-plants": "1.0.0" },
+          trustedDependencies: ["script-path-bunx"],
+        }),
+      );
+
+      const { err, exitCode } = await bun(ctx, "install");
+      // script-path-bunx does not depend on script-path-tool, so `bun x` runs the registry's latest.
+      expect(await written(ctx, "script-path-bunx")).toEqual({ "tool.txt": "script-path-tool@2.0.0\n" });
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(isWindows)("`bun x` after `cd` in the project's script runs the bin of that directory", async () => {
+    using ctx = await setupTest("isolated");
+    await bunOnPath(ctx);
+    const x = { ...ctx, packageDir: join(ctx.packageDir, "packages", "x") };
+    await mkdir(x.packageDir, { recursive: true });
+    await Promise.all([
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          scripts: { postinstall: "cd packages/x && bun x --silent script-path-tool" },
+        }),
+      ),
+      writeFile(
+        join(x.packageDir, "package.json"),
+        JSON.stringify({ name: "x", dependencies: { "script-path-tool": "1.0.0" } }),
+      ),
+    ]);
+
+    const { err, exitCode } = await bun(ctx, "install");
+    // x has 1.0.0 in its own node_modules/.bin. The registry's latest is 2.0.0.
+    expect(await written(x)).toEqual({ "tool.txt": "script-path-tool@1.0.0\n" });
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
   });

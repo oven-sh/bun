@@ -1,0 +1,22 @@
+{
+  "_id": "script-path-bunx",
+  "name": "script-path-bunx",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-bunx",
+      "scripts": {
+        "postinstall": "bun x --silent script-path-tool"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-bunx@1.0.0",
+      "dist": {
+        "integrity": "sha512-chYJQUj+w2tNebu1PmUVF9CqXWOuEvHwCxaZLoLWy+BQlaG/hfZk82NjmuCFko5EQpSEVFyS3JrBZOb1NYIytA==",
+        "shasum": "ccf82534d1cf7d24818a1c36f52e787f0da17809",
+        "tarball": "http://localhost:4873/script-path-bunx/-/script-path-bunx-1.0.0.tgz"
+      }
+    }
+  }
+}

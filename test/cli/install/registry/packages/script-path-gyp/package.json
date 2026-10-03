@@ -10,8 +10,8 @@
       "version": "1.0.0",
       "_id": "script-path-gyp@1.0.0",
       "dist": {
-        "integrity": "sha512-OlboOrwdswd3Nuzu5wSlLIhaZxLTM2ekIIgFaS6cPY6qMgp3pJtDKy+XmE1KhOOiplNbqXU6vLD0QDLlqdZMlA==",
-        "shasum": "2565871e39bed07832ba263fe0120028042569f9",
+        "integrity": "sha512-8FiK4fUqKdrQJSjyMxOvb2pZFTCy5VfkZ6cvUdssv/zGEiug8BMTjvTXK4Rq/rrOsEaa81oLbm7dxmcI0i0K0g==",
+        "shasum": "b71cee28966edfdea9a0d55d2b23e3876fb5c670",
         "tarball": "http://localhost:4873/script-path-gyp/-/script-path-gyp-1.0.0.tgz"
       }
     }

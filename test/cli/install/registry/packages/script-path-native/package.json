@@ -14,8 +14,8 @@
       "version": "1.0.0",
       "_id": "script-path-native@1.0.0",
       "dist": {
-        "integrity": "sha512-H4GZaw68/Q3qx0o/ZFNX7tFo08b/ogSXhAcJ25ZqDPkDov1IqJKXJd/sT401KsM3tomePKSKQXFtA7Wc7nrKNw==",
-        "shasum": "39991bfc514ea41825ce611c27da9ec2233eb289",
+        "integrity": "sha512-zRG9Ox+dl4WsZKoxdDSvr9HIgcrVDEVatAsFESBvCb3keX57VmlRU85vinsmEXPQIufK3rEIDLN+p0+TNdyUCQ==",
+        "shasum": "26bd4f7957394a319f1ab5445f23f1f302f77139",
         "tarball": "http://localhost:4873/script-path-native/-/script-path-native-1.0.0.tgz"
       }
     }

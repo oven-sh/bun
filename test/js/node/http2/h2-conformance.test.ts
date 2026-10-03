@@ -965,14 +965,17 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
   let pings = 0;
   /**
    * Sends `bytes` and a PING. The other side answers frames in order, so its PING ACK comes after
-   * everything that `bytes` made it send. Returns the errors among that, as [stream id, error code].
+   * everything that `bytes` made it send. A GOAWAY ends the wait too: a session that failed sends
+   * no PING ACK. Returns the errors among the answers, as [stream id, error code].
    */
   async function errorsAfter(peer: Peer, ...bytes: Buffer[]) {
     const seen = peer.frames.length;
     const payload = Buffer.alloc(8);
     payload.writeUInt32BE(++pings, 4);
     peer.send(Buffer.concat([...bytes, encodeFrame(FrameType.PING, 0, 0, payload)]));
-    await peer.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+    const ends = (f: Frame) =>
+      f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+    await peer.waitFor(f => ends(f) && peer.frames.lastIndexOf(f) >= seen);
     return peer.frames
       .slice(seen)
       .filter(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY)
@@ -1009,6 +1012,60 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
       },
     };
   }
+
+  /**
+   * A bun server with a response open on stream 1 of a raw client, which grants `credit` bytes on
+   * that stream. `stream` is the server's side of it.
+   */
+  async function openResponse({ credit = 0, connectionCredit = 16 << 20 } = {}) {
+    const opened = Promise.withResolvers<http2.ServerHttp2Stream>();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      opened.resolve(stream);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const raw = await RawH2.connect((server.address() as net.AddressInfo).port);
+    raw.sendPreface();
+    raw.sendEmptySettings();
+    await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    raw.send(Buffer.concat([settingsAck, encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"))]));
+    const stream = await opened.promise;
+    const credits: Buffer[] = [];
+    if (connectionCredit > 0) credits.push(windowUpdate(0, connectionCredit));
+    if (credit > 0) credits.push(windowUpdate(1, credit));
+    await errorsAfter(raw, ...credits);
+    return {
+      raw,
+      stream,
+      [Symbol.dispose]() {
+        raw.destroy();
+        server.close();
+      },
+    };
+  }
+
+  /** A bun endpoint that sends DATA on stream 1 to a raw peer. */
+  const senders = {
+    async client(options?: { credit?: number }) {
+      const opened = await openUpload(options);
+      return {
+        raw: opened.raw as Peer,
+        end: (body: Buffer) => void opened.req.end(body),
+        [Symbol.dispose]: () => opened[Symbol.dispose](),
+      };
+    },
+    async server(options?: { credit?: number }) {
+      const opened = await openResponse(options);
+      return {
+        raw: opened.raw as Peer,
+        end: (body: Buffer) => void opened.stream.end(body),
+        [Symbol.dispose]: () => opened[Symbol.dispose](),
+      };
+    },
+  };
 
   // The response HEADERS are the first frame the inbound engine sees for a stream that the client
   // opened. A window count that starts there misses the bytes the stream sent before.
@@ -1098,40 +1155,83 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     });
   });
 
-  test("the client sends no DATA past a window that the peer lowered", async () => {
-    using opened = await openUpload();
-    const { raw, req } = opened;
-    await errorsAfter(raw, initialWindowSize(0));
-    req.end(Buffer.alloc(100_000, 0x61));
-    await errorsAfter(raw);
-    const sentIntoNoWindow = dataBytes(raw);
-    await errorsAfter(raw, windowUpdate(1, 100));
-    expect({ sentIntoNoWindow, sentInto100: dataBytes(raw) }).toEqual({ sentIntoNoWindow: 0, sentInto100: 100 });
-  });
+  // The client uploads to a raw server. The server responds to a raw client.
+  describe.each(["client", "server"] as const)("a bun %s that sends DATA", role => {
+    test("sends none past a window that the peer lowered", async () => {
+      using sender = await senders[role]();
+      const { raw } = sender;
+      await errorsAfter(raw, initialWindowSize(0));
+      sender.end(Buffer.alloc(100_000, 0x61));
+      await errorsAfter(raw);
+      const sentIntoNoWindow = dataBytes(raw);
+      await errorsAfter(raw, windowUpdate(1, 100));
+      expect({ sentIntoNoWindow, sentInto100: dataBytes(raw) }).toEqual({ sentIntoNoWindow: 0, sentInto100: 100 });
+    });
 
-  test("the client keeps its WINDOW_UPDATE credit when the peer raises INITIAL_WINDOW_SIZE", async () => {
-    const credit = 10_000;
-    const raised = 100_000;
-    using opened = await openUpload({ credit });
-    const { raw, req } = opened;
-    req.end(Buffer.alloc(256 * 1024, 0x61));
-    await raw.waitFor(() => dataBytes(raw) >= DEFAULT_WINDOW + credit);
-    await errorsAfter(raw);
-    const sentBefore = dataBytes(raw);
-    await errorsAfter(raw, initialWindowSize(raised));
-    expect({ sentBefore, sentAfter: dataBytes(raw) }).toEqual({
-      sentBefore: DEFAULT_WINDOW + credit,
-      sentAfter: raised + credit,
+    test("keeps its WINDOW_UPDATE credit when the peer raises INITIAL_WINDOW_SIZE", async () => {
+      const credit = 10_000;
+      const raised = 100_000;
+      using sender = await senders[role]({ credit });
+      const { raw } = sender;
+      sender.end(Buffer.alloc(256 * 1024, 0x61));
+      await raw.waitFor(() => dataBytes(raw) >= DEFAULT_WINDOW + credit);
+      await errorsAfter(raw);
+      const sentBefore = dataBytes(raw);
+      await errorsAfter(raw, initialWindowSize(raised));
+      expect({ sentBefore, sentAfter: dataBytes(raw) }).toEqual({
+        sentBefore: DEFAULT_WINDOW + credit,
+        sentAfter: raised + credit,
+      });
+    });
+
+    // The second change starts from 100000, not from 65535.
+    test("moves its window by the difference at every change of INITIAL_WINDOW_SIZE", async () => {
+      using sender = await senders[role]();
+      const { raw } = sender;
+      const sentAfter = async (...bytes: Buffer[]) => {
+        await errorsAfter(raw, ...bytes);
+        return dataBytes(raw);
+      };
+      sender.end(Buffer.alloc(256 * 1024, 0x61));
+      await raw.waitFor(() => dataBytes(raw) >= DEFAULT_WINDOW);
+      expect({
+        initial: await sentAfter(),
+        raisedTo100000: await sentAfter(initialWindowSize(100_000)),
+        loweredTo80000: await sentAfter(initialWindowSize(80_000)),
+        granted30000: await sentAfter(windowUpdate(1, 30_000)),
+        raisedTo120000: await sentAfter(initialWindowSize(120_000)),
+      }).toEqual({
+        initial: DEFAULT_WINDOW,
+        raisedTo100000: 100_000,
+        loweredTo80000: 100_000,
+        granted30000: 110_000,
+        raisedTo120000: 150_000,
+      });
     });
   });
 
-  /** A server that lowers its initialWindowSize to `lowered` at the first DATA of stream 1. */
-  async function serverThatLowersItsWindow(lowered: number, onEnd: (bytes: number, id: number) => void = () => {}) {
+  /**
+   * A server that lowers its initialWindowSize to `lowered` at the first DATA of stream 1, and
+   * then calls `andThen`.
+   */
+  async function serverThatLowersItsWindow(
+    lowered: number,
+    {
+      onEnd = () => {},
+      andThen = () => {},
+    }: { onEnd?: (bytes: number, id: number) => void; andThen?: (session: http2.Http2Session) => void } = {},
+  ) {
     const server = http2.createServer();
     server.on("stream", stream => {
       let bytes = 0;
+      const session = stream.session!;
       stream.on("error", () => {});
-      if (stream.id === 1) stream.once("data", () => stream.session!.settings({ initialWindowSize: lowered }));
+      if (stream.id === 1) {
+        stream.once("data", () => {
+          session.settings({ initialWindowSize: lowered });
+          andThen(session);
+        });
+      }
       stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
       stream.on("end", () => {
         onEnd(bytes, stream.id!);
@@ -1154,9 +1254,13 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     return false;
   }
 
-  test("a server that lowers initialWindowSize grants window against the new size", async () => {
+  // setLocalWindowSize() raises the initialWindowSize that the session keeps, and sends no SETTINGS.
+  test.each([
+    ["", (_: http2.Http2Session) => {}],
+    [" and then calls setLocalWindowSize()", (session: http2.Http2Session) => session.setLocalWindowSize(1 << 20)],
+  ])("a server that lowers initialWindowSize%s grants window against the new size", async (_, andThen) => {
     const lowered = 1024;
-    const server = await serverThatLowersItsWindow(lowered);
+    const server = await serverThatLowersItsWindow(lowered, { andThen });
     const c = await RawH2.connect((server.address() as net.AddressInfo).port);
     try {
       c.sendPreface();
@@ -1177,11 +1281,135 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     }
   });
 
+  test("a client that lowers initialWindowSize grants window against the new size", async () => {
+    const lowered = 1024;
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.once("data", () => client.settings({ initialWindowSize: lowered }));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.send(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          settingsAck,
+          response,
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61)),
+        ]),
+      );
+      await raw.waitFor(f => setsInitialWindowSize(f, lowered));
+      raw.send(settingsAck);
+      const update = await raw.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect(update.payload.readUInt32BE(0)).toBe(1000);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The peer still sends against 65535 per stream: setLocalWindowSize() is about the connection.
+  test("a stream gets its window back after setLocalWindowSize() raised the connection window", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      client.setLocalWindowSize(1 << 20);
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const half = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16384, 0x61));
+      raw.send(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0, 0), settingsAck, response, half, half]));
+      const update = await raw.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect(update.payload.readUInt32BE(0)).toBe(2 * 16384);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  /**
+   * A bun server stream that the handler does not read, and the raw client that uploads on it.
+   * The first 65535 bytes come back as window. They leave the readable buffer one byte below its
+   * high-water mark, so the `more` bytes behind them pause the stream. `counted` is what the
+   * server has then counted and not returned. `onSession` runs before the first stream.
+   */
+  async function pausedUpload(more: number, onSession: (session: http2.Http2Session) => void = () => {}) {
+    const opened = Promise.withResolvers<http2.ServerHttp2Stream>();
+    const server = http2.createServer();
+    server.on("session", onSession);
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      opened.resolve(stream);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const raw = await RawH2.connect((server.address() as net.AddressInfo).port);
+    raw.sendPreface();
+    raw.sendEmptySettings();
+    await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    raw.send(Buffer.concat([settingsAck, encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"))]));
+    const stream = await opened.promise;
+    const data = (bytes: number) => encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(bytes, 0x61));
+    await errorsAfter(raw, data(16384), data(16384), data(16384), data(16383));
+    await errorsAfter(raw, data(more));
+    await errorsAfter(raw);
+    const returned = raw.frames.reduce(
+      (n, f) => (f.type === FrameType.WINDOW_UPDATE && f.streamId === 1 ? n + f.payload.readUInt32BE(0) : n),
+      0,
+    );
+    return {
+      raw,
+      stream,
+      counted: DEFAULT_WINDOW + more - returned,
+      [Symbol.dispose]() {
+        raw.destroy();
+        server.close();
+      },
+    };
+  }
+
+  // A resume is the only place that returns window to a stream that was paused.
+  test("a paused stream gets its bytes back at resume, against a lowered initialWindowSize", async () => {
+    using paused = await pausedUpload(1000);
+    const { raw, stream, counted } = paused;
+    stream.session!.settings({ initialWindowSize: 1024 });
+    await raw.waitFor(f => setsInitialWindowSize(f, 1024));
+    await errorsAfter(raw, settingsAck);
+    await errorsAfter(raw);
+    const seen = raw.frames.length;
+    stream.resume();
+    const update = await raw.waitFor(
+      f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1 && raw.frames.lastIndexOf(f) >= seen,
+    );
+    expect(update.payload.readUInt32BE(0)).toBe(counted);
+  });
+
+  // The stream opens after the settings() call, so its window is 1 from the start. Its bytes are
+  // in flight until the client sends the ACK, and a paused stream returns none of them.
+  test("an empty END_STREAM frame is accepted on a paused stream that holds more than a lowered initialWindowSize", async () => {
+    using paused = await pausedUpload(1000, session => session.settings({ initialWindowSize: 1 }));
+    const { raw, stream, counted } = paused;
+    const errors = [
+      ...(await errorsAfter(raw, settingsAck)),
+      ...(await errorsAfter(raw, encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1))),
+    ];
+    expect({ counted, errors }).toEqual({ counted: 1000, errors: [] });
+    let bytes = 0;
+    const ended = Promise.withResolvers<number>();
+    stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
+    stream.on("end", () => ended.resolve(bytes));
+    expect(await ended.promise).toBe(DEFAULT_WINDOW + 1000);
+  });
+
   // The client cannot know of the lower value when it sends the 2000 bytes of stream 3. Its ACK
   // makes that value the limit, and the empty frame behind it takes no window (§6.9.1).
   test("an empty END_STREAM frame is accepted when the bytes in flight exceed a lowered initialWindowSize", async () => {
     const ended = Promise.withResolvers<number>();
-    const server = await serverThatLowersItsWindow(1, (bytes, id) => id === 3 && ended.resolve(bytes));
+    const server = await serverThatLowersItsWindow(1, { onEnd: (bytes, id) => id === 3 && ended.resolve(bytes) });
     const c = await RawH2.connect((server.address() as net.AddressInfo).port);
     try {
       c.sendPreface();
@@ -1213,7 +1441,7 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
   test("an upload finishes when the server lowers initialWindowSize while it runs", async () => {
     const total = 128 * 1024;
     const received = Promise.withResolvers<number>();
-    const server = await serverThatLowersItsWindow(1024, received.resolve);
+    const server = await serverThatLowersItsWindow(1024, { onEnd: received.resolve });
     const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
     client.on("error", received.reject);
     try {

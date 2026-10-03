@@ -645,6 +645,15 @@ impl Connection {
         }
     }
 
+    /// INITIAL_WINDOW_SIZE as last sent. setLocalWindowSize() raises `local_settings` past it.
+    fn advertised_initial_window(&self) -> u32 {
+        let sent = match self.pending_local_settings_acks.back() {
+            Some(pending) => pending.settings.initial_window_size,
+            None => self.acked_local_initial_window,
+        };
+        sent.min(self.local_settings.initial_window_size)
+    }
+
     /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
     fn replenish_windows(&mut self, sink: &impl Sink) {
         if self.recv_window.needs_update() {
@@ -655,7 +664,7 @@ impl Connection {
         }
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
-        let advertised = self.local_settings.initial_window_size;
+        let advertised = self.advertised_initial_window();
         for (id, s) in self.streams.iter_mut() {
             if s.state != State::Closed
                 && s.recv_window.needs_update_within(advertised)
@@ -2078,7 +2087,7 @@ impl Connection {
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
-        let advertised = self.local_settings.initial_window_size;
+        let advertised = self.advertised_initial_window();
         let inc = match self.streams.get_mut(&stream_id) {
             Some(s)
                 if s.state != State::Closed && s.recv_window.needs_update_within(advertised) =>

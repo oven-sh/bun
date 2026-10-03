@@ -7501,6 +7501,8 @@ pub mod bv2_impl {
                     // a borrowed alias. Keep the owner: `process_files_to_copy`
                     // will later `mem::take` it.
                     if matches!(previous.contents, std::borrow::Cow::Owned(_)) {
+                        // The AST points into what this assignment drops.
+                        debug_assert!(matches!(slot.contents, std::borrow::Cow::Borrowed(_)));
                         slot.contents = previous.contents;
                     }
                     // Borrowck forbids holding `&input_files.source[i]` while writing

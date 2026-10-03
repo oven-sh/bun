@@ -2929,14 +2929,11 @@ pub mod parse_worker {
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
         // SAFETY: `result` is uniquely owned (callback contract).
         drop_result_owned_fields(unsafe { &mut *result });
-        // `drop(heap::take(result))` would run full Drop glue:
-        // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
-        // graph's placeholder and moves `result.ast` out, so post-swap
-        // `result.value` holds the *placeholder* `Source` whose
-        // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
-        // graph's swapped-in Source still references (asan use-after-poison at
-        // process_files_to_copy:4241 in bundler_loader/_plugin tests). So:
-        // dealloc the box without running Drop.
+        // `drop(heap::take(result))` would run full Drop glue over what
+        // `on_parse_task_complete` left in `result.value`, and free plugin-/
+        // loader-provided bytes the graph still references (asan use-after-poison
+        // in `process_files_to_copy`, bundler_loader/_plugin tests). So: dealloc
+        // the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
         unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };

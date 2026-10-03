@@ -300,6 +300,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
+  /// One entry per begin() whose callback is still running; close() rejects them.
+  private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -476,6 +478,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       const onclose = this.connectionInfo.onclose;
       if (onclose) onclose(this.storedError);
     } catch {}
+
+    const closeHandlers = this.closeHandlers;
+    if (closeHandlers.size > 0) {
+      this.closeHandlers = new Set();
+      const err = this.connectionClosedError();
+      for (const handler of closeHandlers) {
+        handler(err);
+      }
+    }
   }
 
   flush() {
@@ -499,6 +510,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
+
+  attachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.add(handler);
+  }
+
+  detachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.delete(handler);
+  }
+
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
     throw new Error("SQLite doesn't support arrays");
   }

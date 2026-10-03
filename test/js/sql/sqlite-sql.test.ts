@@ -2080,6 +2080,50 @@ describe("Connection management", () => {
     }
   });
 
+  test("close() rejects a begin() whose callback is still running", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    const started = Promise.withResolvers<void>();
+    const begin = sql.begin(async tx => {
+      await tx`SELECT 1`;
+      started.resolve();
+      await new Promise(() => {});
+    });
+    const rejection = begin.catch(err => err);
+
+    await started.promise;
+    await sql.close();
+
+    // Like postgres and mysql after a forced close: begin() is settled by the time close() resolves.
+    expect(Bun.peek.status(begin)).toBe("rejected");
+    expect(await rejection).toMatchObject({
+      name: "SQLiteError",
+      code: "ERR_SQLITE_CONNECTION_CLOSED",
+      message: "Connection closed",
+    });
+  });
+
+  test("a begin() callback that outlives close() gets ERR_SQLITE_CONNECTION_CLOSED from its queries", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    const started = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const queryAfterClose = Promise.withResolvers<unknown>();
+    const begin = sql.begin(async tx => {
+      await tx`SELECT 1`;
+      started.resolve();
+      await closed.promise;
+      queryAfterClose.resolve(tx`SELECT 2`.catch(err => err));
+    });
+    const rejection = begin.catch(err => err);
+
+    await started.promise;
+    await sql.close();
+    closed.resolve();
+
+    const connectionClosed = { name: "SQLiteError", code: "ERR_SQLITE_CONNECTION_CLOSED" };
+    expect(await queryAfterClose.promise).toMatchObject(connectionClosed);
+    expect(await rejection).toMatchObject(connectionClosed);
+  });
+
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 

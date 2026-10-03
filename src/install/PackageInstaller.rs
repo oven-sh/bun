@@ -156,6 +156,43 @@ impl NodeModulesFolder {
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
+    /// Whether the entry `file_path` in this folder is a symlink (on Windows a
+    /// symlink or a junction). `None` when the entry is missing or the probe
+    /// fails.
+    #[inline(never)]
+    pub(crate) fn entry_is_symlink(
+        &self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> Option<bool> {
+        if file_path.len() + self.path.len() * 2 >= MAX_PATH_BYTES {
+            #[cfg(windows)]
+            {
+                return None;
+            }
+            #[cfg(not(windows))]
+            {
+                let dir = self.open_dir(root_node_modules_dir).ok()?;
+                let stat = bun_sys::lstatat(&dir, file_path).ok()?;
+                return Some(bun_sys::posix::s_islnk(stat.st_mode as u32));
+            }
+        }
+
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
+        let path = join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts);
+        #[cfg(windows)]
+        {
+            // `lstatat` opens the reparse point and reports a junction as a directory.
+            Some(bun_sys::get_file_attributes(path)?.is_reparse_point)
+        }
+        #[cfg(not(windows))]
+        {
+            let stat = bun_sys::lstatat(root_node_modules_dir.fd(), path).ok()?;
+            Some(bun_sys::posix::s_islnk(stat.st_mode as u32))
+        }
+    }
+
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn open_file_without_opening_directories(
@@ -1399,6 +1436,7 @@ impl<'a> PackageInstaller<'a> {
             // site stays safe.
             lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
+            symlink_at_destination: false,
         };
         bun_output::scoped_log!(
             PackageInstaller,
@@ -1556,7 +1594,23 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let needs_install = self.force_install
+        // A symlink is not the installed copy of a package that installs a
+        // real directory. Its `package.json`, and the `node_modules` below it,
+        // belong to the directory it points at. A `node_modules` that this
+        // install created has no entry to check.
+        let entry_is_symlink =
+            if self.skip_delete || PackageInstall::installs_symlink(resolution.tag) {
+                Some(false)
+            } else {
+                installer.node_modules.entry_is_symlink(
+                    &self.root_node_modules_folder,
+                    installer.destination_dir_subpath,
+                )
+            };
+        installer.symlink_at_destination = entry_is_symlink == Some(true);
+
+        let needs_install = entry_is_symlink != Some(false)
+            || self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
@@ -1904,6 +1958,26 @@ impl<'a> PackageInstaller<'a> {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                     self.summary.success += (!is_duplicate) as u32;
                     self.successfully_installed.set(package_id as usize);
+
+                    // `bun link` registers a package as a symlink at the top
+                    // level of the global `node_modules`.
+                    if installer.symlink_at_destination
+                        && self.current_tree_id == 0
+                        && self.manager().options.global
+                        && log_level != Options::LogLevel::Silent
+                    {
+                        bun_core::warn!(
+                            "<b>{}@{}<r> replaced the symlink at {}{}{}",
+                            bstr::BStr::new(pkg_name.slice(string_buf!())),
+                            resolution.fmt(string_buf!(), PathSep::Posix),
+                            bun_core::fmt::fmt_path(
+                                self.node_modules.path.as_slice(),
+                                Default::default(),
+                            ),
+                            SEP as char,
+                            bstr::BStr::new(alias.slice(string_buf!())),
+                        );
+                    }
 
                     if log_level.show_progress() {
                         self.node.complete_one();

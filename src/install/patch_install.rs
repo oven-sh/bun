@@ -489,6 +489,7 @@ impl PatchTask {
             // dummy value
             node_modules: &dummy_node_modules,
             lockfile,
+            symlink_at_destination: false,
         };
 
         match pkg_install.install(

@@ -42,6 +42,10 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
+
+    /// The entry at the destination is a symlink, and this resolution
+    /// installs a real directory there.
+    pub(crate) symlink_at_destination: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -235,6 +239,7 @@ pub enum Step {
     OpeningDestDir,
     CopyingFiles,
     LinkingDependency,
+    RemovingSymlink,
 }
 
 impl Step {
@@ -245,6 +250,7 @@ impl Step {
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
+            Step::RemovingSymlink => b"removing the symlink at node_modules/package",
         }
     }
 }
@@ -807,6 +813,16 @@ impl<'a> PackageInstall<'a> {
             repo.resolved.slice(&self.lockfile.buffers.string_bytes),
             &bun_tag_file.bytes,
             true,
+        )
+    }
+
+    /// `install_from_link` writes a symlink at the destination. Every other
+    /// install writes a real directory (a `file:` folder becomes a directory
+    /// of per-file symlinks).
+    pub(crate) fn installs_symlink(tag: resolution::Tag) -> bool {
+        matches!(
+            tag,
+            resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
         )
     }
 
@@ -1930,6 +1946,23 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
+    /// `uninstall_before_install` ignores a failed rename. A symlink that stays
+    /// would send every file of this install into the directory it points at,
+    /// so its removal is checked.
+    fn remove_symlink_at_destination(&self, destination_dir: &Dir) -> Result<(), sys::Error> {
+        #[cfg(windows)]
+        {
+            // `rmdir` removes a junction or a directory symlink. `unlink` removes a file symlink.
+            if sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath).is_ok() {
+                return Ok(());
+            }
+        }
+        match sys::unlinkat(destination_dir, self.destination_dir_subpath) {
+            Err(err) if err.get_errno() != sys::E::ENOENT => Err(err),
+            _ => Ok(()),
+        }
+    }
+
     pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
@@ -2311,9 +2344,13 @@ impl<'a> PackageInstall<'a> {
     ) -> InstallResult {
         let _tracer = bun_core::perf::trace("PackageInstaller.install");
 
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
+        if self.symlink_at_destination {
+            if let Err(err) = self.remove_symlink_at_destination(destination_dir) {
+                return InstallResult::fail(err.into(), Step::RemovingSymlink, None);
+            }
+        } else if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
+            // If this fails, we don't care.
+            // we'll catch it the next error
             self.uninstall_before_install(destination_dir);
         }
 

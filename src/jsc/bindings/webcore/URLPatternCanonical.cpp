@@ -67,18 +67,17 @@ bool isAbsolutePathname(StringView input, BaseURLStringType inputType)
     return false;
 }
 
-// https://urlpattern.spec.whatwg.org/#canonicalize-a-protocol, combined with https://urlpattern.spec.whatwg.org/#process-protocol-for-init
+// https://urlpattern.spec.whatwg.org/#canonicalize-a-protocol
+// The trailing ':' removal from https://urlpattern.spec.whatwg.org/#process-protocol-for-init is done by the caller.
 ExceptionOr<String> canonicalizeProtocol(StringView value, BaseURLStringType valueType)
 {
     if (value.isEmpty())
         return value.toString();
 
-    auto strippedValue = value.endsWith(':') ? value.left(value.length() - 1) : value;
-
     if (valueType == BaseURLStringType::Pattern)
-        return strippedValue.toString();
+        return value.toString();
 
-    URL dummyURL(makeString(strippedValue, "://w/"_s));
+    URL dummyURL(makeString(value, "://w/"_s));
 
     if (!dummyURL.isValid())
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL protocol string."_s };
@@ -221,37 +220,37 @@ ExceptionOr<String> processPathname(StringView pathnameValue, const StringView p
     return canonicalizeOpaquePathname(pathnameValue);
 }
 
-// https://urlpattern.spec.whatwg.org/#canonicalize-a-search, combined with https://urlpattern.spec.whatwg.org/#process-search-for-init
+// https://urlpattern.spec.whatwg.org/#canonicalize-a-search
+// The leading '?' removal from https://urlpattern.spec.whatwg.org/#process-search-for-init is done by the caller.
 ExceptionOr<String> canonicalizeSearch(StringView value, BaseURLStringType valueType)
 {
     if (value.isEmpty())
         return value.toString();
 
-    auto strippedValue = value[0] == '?' ? value.substring(1) : value;
-
     if (valueType == BaseURLStringType::Pattern)
-        return strippedValue.toString();
+        return value.toString();
 
+    // The spec parses value with the query state as the state override: a '?' stays as is and a '#' is
+    // percent-encoded. URL::setQuery instead treats a leading '?' as the delimiter and a '#' as the fragment.
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setQuery(strippedValue);
+    dummyURL.setQuery(makeString('?', makeStringByReplacingAll(value.toString(), '#', "%23"_s)));
     ASSERT(dummyURL.isValid());
 
     return dummyURL.query().toString();
 }
 
-// https://urlpattern.spec.whatwg.org/#canonicalize-a-hash, combined with https://urlpattern.spec.whatwg.org/#process-hash-for-init
+// https://urlpattern.spec.whatwg.org/#canonicalize-a-hash
+// The leading '#' removal from https://urlpattern.spec.whatwg.org/#process-hash-for-init is done by the caller.
 ExceptionOr<String> canonicalizeHash(StringView value, BaseURLStringType valueType)
 {
     if (value.isEmpty())
         return value.toString();
 
-    auto strippedValue = value[0] == '#' ? value.substring(1) : value;
-
     if (valueType == BaseURLStringType::Pattern)
-        return strippedValue.toString();
+        return value.toString();
 
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setFragmentIdentifier(strippedValue);
+    dummyURL.setFragmentIdentifier(value);
     ASSERT(dummyURL.isValid());
 
     return dummyURL.fragmentIdentifier().toString();

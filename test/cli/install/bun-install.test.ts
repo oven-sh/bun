@@ -3941,18 +3941,25 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("the root package's own dependency follows the npm: alias that the root declares in another group", async () => {
+  it.each<{ name: string; manifest: object }>([
+    {
+      name: "in another dependency group",
+      manifest: { devDependencies: { kept: "npm:short@1.0.0" }, peerDependencies: { kept: "^1.0.0" } },
+    },
+    {
+      name: "through a catalog",
+      manifest: {
+        workspaces: { packages: [], catalog: { kept: "npm:short@1.0.0" } },
+        devDependencies: { kept: "catalog:" },
+        peerDependencies: { kept: "^1.0.0" },
+      },
+    },
+  ])("the root package's own dependency follows the npm: alias that the root declares $name", async ({ manifest }) => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       // the registry has no "kept", and bun does not ask for it
       setContextHandler(ctx, aliasRegistry(ctx, urls, { short }));
-      await writeProject(ctx, {
-        "package.json": {
-          name: "foo",
-          devDependencies: { kept: "npm:short@1.0.0" },
-          peerDependencies: { kept: "^1.0.0" },
-        },
-      });
+      await writeProject(ctx, { "package.json": { name: "foo", ...manifest } });
       expect({ packages: await installAndReadLock(ctx), requests: urls.sort() }).toEqual({
         packages: { "kept": "short@1.0.0" },
         requests: ["short", "short-1.0.0.tgz"],

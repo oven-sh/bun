@@ -3,6 +3,7 @@ use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::borrow::Cow;
 
 use crate::bun_fs::FileSystem;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
@@ -758,26 +759,31 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
-/// A direct dependency of the root package follows only an `npm:` alias that the root package.json declares.
-fn follows_npm_alias(
-    lockfile: &Lockfile::Lockfile,
+/// The `npm:` alias that a plain dependency follows. A direct dependency of the root package follows only the alias that the root package.json declares.
+fn followed_npm_alias<'a>(
+    this: &'a PackageManager,
     id: DependencyID,
+    is_root: bool,
     name_hash: PackageNameHash,
-) -> bool {
-    let Some(root_dependencies) = lockfile.packages.items_dependencies().first() else {
-        return true;
+) -> Option<Cow<'a, dependency::Version>> {
+    let known = this.known_npm_aliases.get(&name_hash)?;
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    // `is_root` is an import that the runtime resolves, not a row of the root package.json.
+    let root_dependencies = lockfile
+        .packages
+        .items_dependencies()
+        .first()
+        .filter(|root| !is_root && root.contains(id));
+    let Some(root_dependencies) = root_dependencies else {
+        return Some(Cow::Borrowed(known));
     };
-    if !root_dependencies.contains(id) {
-        return true;
-    }
     root_dependencies
         .get(lockfile.buffers.dependencies.as_slice())
         .iter()
-        .any(|dep| {
-            dep.name_hash == name_hash
-                && dep.version.tag == dependency::version::Tag::Npm
-                && dep.version.npm().is_alias
-        })
+        .filter(|dep| dep.name_hash == name_hash)
+        .filter_map(|dep| lockfile.resolve_catalog_dependency(dep))
+        .find(|version| version.tag == dependency::version::Tag::Npm && version.npm().is_alias)
+        .map(Cow::Owned)
 }
 
 /// Q: "What do we do with a dependency in a package.json?"
@@ -822,11 +828,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
-            if let Some(aliased) = this
-                .known_npm_aliases
-                .get(&name_hash)
-                .filter(|_| follows_npm_alias(&this.lockfile, id, name_hash))
-            {
+            if let Some(aliased) = followed_npm_alias(this, id, is_root, name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
@@ -841,7 +843,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             name = aliased.npm().name;
                             name_hash =
                                 Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                            break 'version aliased.clone();
+                            break 'version aliased.into_owned();
                         }
                         curr = query.next.as_deref();
                     }

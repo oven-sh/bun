@@ -47,7 +47,7 @@ pub(crate) struct FileResponseStream {
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
-    /// Bytes still owed against the Content-Length the caller wrote; `None` streams to EOF.
+    /// Bytes of `StartOptions::length` not sent yet; `None` streams to EOF.
     remaining: Cell<Option<u64>>,
 
     state: Cell<State>,
@@ -133,8 +133,6 @@ pub(crate) enum StreamOwner {
 enum StreamEnd {
     Complete,
     Abort,
-    /// The file ended before the committed length.
-    Truncated,
     Error(sys::Error),
 }
 
@@ -149,7 +147,7 @@ impl StreamOwner {
                 on_abort,
                 on_error,
             } => match end {
-                StreamEnd::Complete | StreamEnd::Truncated => on_complete(ctx, resp),
+                StreamEnd::Complete => on_complete(ctx, resp),
                 StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
                 StreamEnd::Error(err) => on_error(ctx, resp, err),
             },
@@ -509,11 +507,7 @@ impl FileResponseStream {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return;
         }
-        let ended =
-            self.complete(|resp, close| resp.end_send_file(self.sendfile.get().offset, close));
-        if !ended {
-            return;
-        }
+        self.complete(|resp, close| resp.end_send_file(self.sendfile.get().offset, close));
         let resp = self.resp.get();
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
@@ -554,43 +548,24 @@ impl FileResponseStream {
         remaining
     }
 
-    /// The one way a body ends as complete; `end` hands it to uWS. A body that
-    /// still owes bytes closes the connection instead, and this returns false.
-    fn complete(&self, end: impl FnOnce(AnyResponse, bool)) -> bool {
-        if self.remaining.get().is_some_and(|n| n > 0) {
-            self.end_truncated();
-            return false;
-        }
+    /// The one way a body ends without an abort or an error; `end` hands it to uWS.
+    /// A body that still owes bytes is not one the connection can be reused after.
+    fn complete(&self, end: impl FnOnce(AnyResponse, bool)) {
         self.insert_state(State::RESPONSE_DONE);
         self.detach_resp();
         let resp = self.resp.get();
-        end(resp, resp.should_close_connection());
+        let short = self.remaining.get().is_some_and(|n| n > 0);
+        end(resp, short || resp.should_close_connection());
         self.deliver(resp, StreamEnd::Complete);
-        true
     }
 
     fn fail_with(&self, err: sys::Error) {
-        self.close_with(StreamEnd::Error(err));
-    }
-
-    /// The committed Content-Length can no longer be honoured, so a close is
-    /// the only signal left that tells the client the body is short.
-    fn end_truncated(&self) {
-        bun_output::scoped_log!(
-            FileResponseStream,
-            "endTruncated remaining={:?}",
-            self.remaining.get()
-        );
-        self.close_with(StreamEnd::Truncated);
-    }
-
-    fn close_with(&self, end: StreamEnd) {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE | State::ERRORED);
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();
-            self.deliver(resp, end);
+            self.deliver(resp, StreamEnd::Error(err));
         }
         self.finish();
     }
@@ -619,14 +594,11 @@ impl FileResponseStream {
         self.insert_state(State::FINISHED);
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
-            // A close from `complete` re-enters `finish()`, which returns at the guard above.
-            let ended = self.complete(|resp, close| resp.end_without_body(close));
-            if ended {
-                // This end runs uncorked (reader callbacks), so no cork or parser
-                // gate will run the close check; do it here, after `on_complete`
-                // like `end_sendfile`, so the callbacks see a live socket.
-                self.resp.get().close_if_done_and_marked();
-            }
+            self.complete(|resp, close| resp.end_without_body(close));
+            // This end runs uncorked (reader callbacks), so no cork or parser
+            // gate will run the close check; do it here, after `on_complete`
+            // like `end_sendfile`, so the callbacks see a live socket.
+            self.resp.get().close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry

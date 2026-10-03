@@ -34,7 +34,9 @@ struct WorkerOptions {
     // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
-    std::optional<HashMap<String, String>> env;
+    // The worker's whole initial environment in enumeration order, consumed on the parent
+    // thread by WebWorker__create. If nullopt, the worker clones the parent's env loader.
+    std::optional<Vector<std::pair<String, String>>> env;
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;

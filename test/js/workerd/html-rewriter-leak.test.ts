@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
@@ -1331,6 +1331,31 @@ describe("every end tag runs the callback of its own element", () => {
     expect(output).toBe("<a><b><c>u[c2][b1][a0]</a><a><b><c>v[c5][b4][a3]</a>");
   });
 
+  // Each callback parks the rewrite. While the callback of <c> is parked at </a>, those of <b> and <a>
+  // wait in the array, and <d> takes a freed slot while <r> still waits for its own.
+  test("when the callbacks are async and one end tag closes several elements", async () => {
+    const order: string[] = [];
+    let serial = 0;
+    const output = await new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          const label = `${el.tagName}${serial++}`;
+          el.onEndTag(async end => {
+            order.push(`${label}@</${end.name}>`);
+            await tick();
+            Bun.gc(true);
+            end.before(`[${label}]`);
+          });
+        },
+      })
+      .transform(new Response("<r><a><b><c>x</a><d>y</d></r>"))
+      .text();
+    expect({ output, order }).toEqual({
+      output: "<r><a><b><c>x[c3][b2][a1]</a><d>y[d4]</d>[r0]</r>",
+      order: ["c3@</a>", "b2@</a>", "a1@</a>", "d4@</d>", "r0@</r>"],
+    });
+  });
+
   // The rewrite is over at the cancel, but lol-html still runs the handlers for the rest of the chunk.
   test("when a handler cancelled the output earlier in the chunk", async () => {
     const calls: string[] = [];
@@ -1541,52 +1566,64 @@ test.concurrent(
   },
 );
 
-// Cancelling the output cuts the stream's edge to the transform cell before the
-// pipe tells its input. A collection that finished in between swept the input
-// stream, its pump and its sink controller: the input's cancel() never ran, and
-// the pipe went on to use them (a release ASAN build stops with a SEGV, or with
+// Cancelling the output cut the stream's edge to the transform cell before the
+// pipe told its input. A collection in between freed the input stream, its
+// pump and its sink controller: the input's cancel() never ran, and the pipe
+// went on to use them (a release ASAN build stops with a SEGV, or with
 // "ASSERTION FAILED: status() == Status::Pending" when a promise took a dead
 // one's place).
-test.concurrent("cancelling the output cancels a JS stream input while a collection is in flight", async () => {
-  // A collector thread that never stops puts a collection inside that window.
-  // It is too slow for Windows and for debug builds.
-  const stress = !isWindows && !isDebug;
-  const N = stress ? 100 : 50;
-  const code = /* js */ `
-    const N = ${N};
-    const encoder = new TextEncoder();
-    let cancelled = 0;
-    for (let i = 0; i < N; i++) {
-      let controller;
-      const input = new ReadableStream({
-        start: c => void (controller = c),
-        cancel: () => void cancelled++,
-      });
-      // The output Response is a temporary: only its reader is kept.
-      const reader = new HTMLRewriter()
-        .on("div", { element() {} })
-        .transform(new Response(input))
-        .body.getReader();
-      controller.enqueue(encoder.encode("<div>x"));
-      controller = undefined;
-      if ((await reader.read()).done) throw new Error("the output ended early");
-      Bun.gc(false);
-      await reader.cancel();
-    }
-    process.stdout.write(JSON.stringify({ rewrites: N, cancelled }));
-  `;
+//
+// slowPathAllocsBetweenGCs collects every N slow-path allocations, so a
+// collection lands inside that window in every run. It is allocation-count
+// sensitive, as that option is: on unfixed debug and release builds N of 1 to 6
+// lose a cancel() and N of 7 does not. A value that does not fire still has to
+// cancel every input, so this cannot flake on a fixed build.
+test.concurrent.each([2, 3, 5])(
+  "cancelling the output cancels a JS stream input when a collection runs inside the cancel (every %i allocations)",
+  async period => {
+    const N = 2;
+    const code = /* js */ `
+      const N = ${N};
+      const encoder = new TextEncoder();
+      let cancelled = 0;
+      for (let i = 0; i < N; i++) {
+        let controller;
+        const input = new ReadableStream({
+          start: c => void (controller = c),
+          cancel: () => void cancelled++,
+        });
+        // The output Response is a temporary: only its reader is kept.
+        const reader = new HTMLRewriter()
+          .on("div", { element() {} })
+          .transform(new Response(input))
+          .body.getReader();
+        controller.enqueue(encoder.encode("<div>x"));
+        controller = undefined;
+        if ((await reader.read()).done) throw new Error("the output ended early");
+        // From a macrotask: a cancel() in the continuation of an await lost no input on the unfixed build.
+        await new Promise(resolve =>
+          setImmediate(() => {
+            reader.cancel();
+            resolve();
+          }),
+        );
+      }
+      console.log(JSON.stringify({ rewrites: N, cancelled }));
+    `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: stress ? { ...bunEnv, BUN_JSC_collectContinuously: "1" } : bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(withoutAsanWarning(stderr)).toBe("");
-  expect(stdout).toBe(JSON.stringify({ rewrites: N, cancelled: N }));
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: String(period) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe(JSON.stringify({ rewrites: N, cancelled: N }) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // A handler parks on a promise that nothing can settle, and the whole rewrite
 // dies with it. The task that abandons the rewrite can run before the sweep:

@@ -1114,6 +1114,109 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
+describe.each(["import", "require"])(
+  "a module that build.module() replaced while it was evaluating does not leave its error on the replacement",
+  how => {
+    it.concurrent(how, async () => {
+      const load = how === "import" ? "(await import(import.meta.path))" : "require(import.meta.path)";
+      using dir = tempDir("plugin-module-replaced-then-threw", {
+        "replaces-itself.mjs": `
+          Bun.plugin({
+            name: "replace this module",
+            setup(build) {
+              build.module(import.meta.path, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+            },
+          });
+          console.log("while evaluating:", ${load}.from);
+          throw new Error("the replaced module threw");
+        `,
+        "import.ts": `
+          console.log("first:", await import("./replaces-itself.mjs").then(module => module.from, error => error.message));
+          console.log("next:", await import("./replaces-itself.mjs").then(module => module.from, error => error.message));
+        `,
+        "require.cjs": `
+          try {
+            console.log("first:", require("./replaces-itself.mjs").from);
+          } catch (error) {
+            console.log("first:", error.message);
+          }
+          import("./replaces-itself.mjs").then(module => console.log("next:", module.from), error => console.log("next:", error.message));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), how === "import" ? "import.ts" : "require.cjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "while evaluating: build.module()\nfirst: the replaced module threw\nnext: build.module()\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// target.ts has no registry entry yet when build.module() replaces it: its onLoad is still running. That onLoad then
+// fails with the error of another module's import(). The loader has tagged that error, and a fetch that fails with a
+// tagged error stores it under its key.
+it.concurrent(
+  "an onLoad that rejects with another module's error does not leave it on the module build.module() put in its place",
+  async () => {
+    using dir = tempDir("plugin-onload-rejects-with-tagged-error", {
+      "target.ts": `export const from = "file";`,
+      "throws.ts": `throw new Error("another module threw");`,
+      "entry.ts": `
+      import { join } from "node:path";
+      const onLoadStarted = Promise.withResolvers<void>();
+      const onLoadMayFail = Promise.withResolvers<void>();
+      const target = join(import.meta.dir, "target.ts");
+      Bun.plugin({
+        name: "the onLoad of target.ts imports a module that throws",
+        setup(build) {
+          build.onLoad({ filter: /target\\.ts$/ }, async () => {
+            onLoadStarted.resolve();
+            await onLoadMayFail.promise;
+            await import("./throws.ts");
+            return { contents: "export const from = 'onLoad';", loader: "ts" };
+          });
+        },
+      });
+      const settled = (promise: Promise<{ from: string }>) => promise.then(module => module.from, error => "rejected: " + error.message);
+
+      const first = settled(import(target));
+      await onLoadStarted.promise;
+      Bun.plugin({
+        name: "replace target.ts",
+        setup(build) {
+          build.module(target, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      console.log("replacement:", await settled(import(target)));
+      onLoadMayFail.resolve();
+      console.log("first:", await first);
+      console.log("next:", await settled(import(target)));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "replacement: build.module()\nfirst: rejected: another module threw\nnext: build.module()\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 it.concurrent(
   "import() after delete require.cache of a module that onResolve redirected a resolved path to",
   async () => {

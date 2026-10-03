@@ -745,6 +745,22 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "index app\nsettings app" },
   });
+  // The import of a type prints nothing.
+  itBundled("splitting/EntrySetupImportWithTypeImportRunsBeforeSharedCode", {
+    files: {
+      "/index.ts": setupBeforeShared["/index.js"],
+      "/setup.ts": `import { Config } from "./types";\nglobalThis.APP = { name: "app" } as Config;`,
+      "/types.ts": `export interface Config { name: string }`,
+      "/store.ts": setupBeforeShared["/store.js"],
+      "/settings.ts": setupBeforeShared["/settings.js"],
+    },
+    entryPoints: ["/index.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
   itBundled("splitting/EntrySetupImportThatThrowsLeavesSharedCodeToLazyChunk", {
     files: {
       ...setupBeforeShared,
@@ -883,6 +899,17 @@ describe("bundler", () => {
         "/settings.js": `import "./late.js";\n` + setupBeforeShared["/settings.js"],
       },
       {},
+    ],
+    // legacy runs where setup.js starts it. In a chunk ahead of index.js, that is ahead of the chunk graph that its `import()` reads.
+    [
+      "StartsSharedCommonJSPackageWithImportCallInBrowserBuild",
+      {
+        "/setup.js": `import "legacy"; globalThis.APP = { name: "app" };`,
+        "/admin.js": `import "legacy";`,
+        "/node_modules/legacy/index.js": `globalThis.widget = import("./widget.js"); module.exports = {};`,
+        "/node_modules/legacy/widget.js": `console.log("widget");`,
+      },
+      { target: "browser", entryPoints: ["/index.js", "/admin.js"] },
     ],
     // The runtime is in a chunk that both entry points import, so setup.js could import it.
     [

@@ -742,6 +742,14 @@ fn entry_files_ahead_of_parent(
     let import_records = this.graph.ast.items_import_records();
     let module_scopes = this.graph.ast.items_module_scope();
     let is_live = |file: u32| this.graph.files_live.is_set(file as usize);
+    // The early chunk runs ahead of `__chunks()` and of what a split `require()` loads.
+    let loads_a_chunk = |file: u32| {
+        import_records[file as usize].iter().any(|record| {
+            record.source_index.is_valid()
+                && this.is_external_dynamic_import(record, file)
+                && (this.module_preload() || record.kind == ImportKind::Require)
+        })
+    };
     let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut is_early = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut early: Vec<u32> = Vec::new();
@@ -786,15 +794,20 @@ fn entry_files_ahead_of_parent(
                     return Ok(Vec::new());
                 }
                 parent_ran = true;
-            } else if flags[file as usize].wrap != WrapKind::None
-                && let Some(importer) = ancestors().next()
-                && is_own(importer)
-            {
+            } else if flags[file as usize].wrap != WrapKind::None {
+                // An early file would start it, or a wrapped file that one starts.
+                if !parent_ran && loads_a_chunk(file) {
+                    return Ok(Vec::new());
+                }
                 // The file that imports a wrapped file starts it there.
-                if parent_ran {
-                    own_chunk_followed = true;
-                } else {
-                    must_be_early.push(importer);
+                if let Some(importer) = ancestors().next()
+                    && is_own(importer)
+                {
+                    if parent_ran {
+                        own_chunk_followed = true;
+                    } else {
+                        must_be_early.push(importer);
+                    }
                 }
             }
             continue;
@@ -803,7 +816,7 @@ fn entry_files_ahead_of_parent(
             own_chunk_followed = true;
             continue;
         }
-        // The chunk is another file, so no code in it may tell which file holds it. It runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the
+        // The chunk is another file, so no code in it may tell which file holds it. It imports neither the
         // entry point's chunk, which no chunk may, nor the parent, which would run first. A wrapped file runs where it is called.
         let mut can_move = flags[file as usize].wrap == WrapKind::None
             && !ast_flags[file as usize].intersects(
@@ -811,13 +824,12 @@ fn entry_files_ahead_of_parent(
                     | crate::bundled_ast::Flags::HAS_COMPUTED_SPECIFIER,
             )
             && !module_scopes[file as usize].contains_direct_eval
+            && !loads_a_chunk(file)
             && !import_records[file as usize].iter().any(|record| {
-                if record.source_index.is_valid() {
-                    this.is_external_dynamic_import(record, file)
-                        && (this.module_preload() || record.kind == ImportKind::Require)
-                } else {
-                    record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../")
-                }
+                !record.source_index.is_valid()
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && !record.path.is_disabled
+                    && (record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../"))
             });
         this.for_each_file_loaded_by(file, |other| {
             can_move &= is_early.is_set(other as usize) || !(is_own(other) || is_in_parent(other));

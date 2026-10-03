@@ -1,6 +1,25 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+// The project has no lockfile, so `bun update --interactive` prints its header
+// and exits before the prompt. It never reads stdin. The "n" keystroke is
+// handed over as a Blob so the parent never writes to a pipe the child may
+// already have closed.
+async function runUpdateInteractive(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "--interactive", "--dry-run"],
+    cwd: dir,
+    env: bunEnv,
+    stdin: new Blob(["n\n"]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  return { stdout: normalizeOutput(stdout), stderr, exitCode };
+}
+
 describe("bun update --interactive snapshots", () => {
   it("should not crash with various package name lengths", async () => {
     await using dir = tempDir("update-interactive-snapshot-test", {
@@ -30,33 +49,16 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    // Test that the command doesn't crash with mixed package lengths
-    const result = await Bun.spawn({
-      cmd: [bunExe(), "update", "--interactive", "--dry-run"],
-      cwd: dir,
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    // Send 'n' to exit without selecting anything
-    result.stdin.write("n\n");
-    result.stdin.end();
-
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
-
-    // Replace version numbers and paths to avoid flakiness
-    const normalizedOutput = normalizeOutput(stdout);
+    const { stdout, stderr, exitCode } = await runUpdateInteractive(String(dir));
 
     // The output should show proper column spacing and formatting
-    expect(normalizedOutput).toMatchSnapshot("update-interactive-no-crash");
+    expect(stdout).toMatchSnapshot("update-interactive-no-crash");
 
     // Should not crash or have formatting errors
-    expect(stderr).not.toContain("panic");
+    expect(stderr).toContain("missing lockfile, nothing to update");
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("overflow");
+    expect(exitCode).toBe(1);
   });
 
   it("should handle extremely long package names without crashing", async () => {
@@ -72,27 +74,13 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
-      cmd: [bunExe(), "update", "--interactive", "--dry-run"],
-      cwd: dir,
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    result.stdin.write("n\n");
-    result.stdin.end();
-
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
-
-    const normalizedOutput = normalizeOutput(stdout);
+    const { stdout, stderr, exitCode } = await runUpdateInteractive(String(dir));
 
     // Should not crash
-    expect(normalizedOutput).toMatchSnapshot("update-interactive-long-names");
-    expect(stderr).not.toContain("panic");
+    expect(stdout).toMatchSnapshot("update-interactive-long-names");
+    expect(stderr).toContain("missing lockfile, nothing to update");
     expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(1);
   });
 
   it("should handle complex version strings without crashing", async () => {
@@ -108,27 +96,13 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
-      cmd: [bunExe(), "update", "--interactive", "--dry-run"],
-      cwd: dir,
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    result.stdin.write("n\n");
-    result.stdin.end();
-
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
-
-    const normalizedOutput = normalizeOutput(stdout);
+    const { stdout, stderr, exitCode } = await runUpdateInteractive(String(dir));
 
     // Should not crash
-    expect(normalizedOutput).toMatchSnapshot("update-interactive-complex-versions");
-    expect(stderr).not.toContain("panic");
+    expect(stdout).toMatchSnapshot("update-interactive-complex-versions");
+    expect(stderr).toContain("missing lockfile, nothing to update");
     expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(1);
   });
 });
 

@@ -1,9 +1,11 @@
 //! The types of named values: variables, parameters, functions, classes, imports; and the return
 //! types of functions.
 
+use super::context::{IncludePatternInType, ReportErrors};
 use super::decl::declarations_of;
 use super::mapped::AccessNode;
 use super::related::Place;
+use super::shape::SpreadSymbolOptions;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
@@ -99,14 +101,23 @@ pub(super) enum IterationUse {
     Destructuring,
     YieldStar,
     AsyncYieldStar,
+    GeneratorReturnType,
+    AsyncGeneratorReturnType,
 }
 
 impl IterationUse {
+    /// `IterationUseAllowsSyncIterablesFlag`
+    fn allows_sync(self) -> bool {
+        self != IterationUse::AsyncGeneratorReturnType
+    }
+
     /// `IterationUseAllowsAsyncIterablesFlag`
     pub(super) fn allows_async(self) -> bool {
         matches!(
             self,
-            IterationUse::ForAwaitOf | IterationUse::AsyncYieldStar
+            IterationUse::ForAwaitOf
+                | IterationUse::AsyncYieldStar
+                | IterationUse::AsyncGeneratorReturnType
         )
     }
 
@@ -115,13 +126,14 @@ impl IterationUse {
         matches!(self, IterationUse::ForOf | IterationUse::ForAwaitOf)
     }
 
-    /// The error code reported when `next` does not accept the sent type.
-    fn code_for_sent_type(self) -> u32 {
+    /// The error code reported when `next` does not accept the sent type. `None`: nothing is sent.
+    fn code_for_sent_type(self) -> Option<u32> {
         match self {
-            IterationUse::ForOf | IterationUse::ForAwaitOf => 2763,
-            IterationUse::Spread => 2764,
-            IterationUse::Destructuring => 2765,
-            IterationUse::YieldStar | IterationUse::AsyncYieldStar => 2766,
+            IterationUse::ForOf | IterationUse::ForAwaitOf => Some(2763),
+            IterationUse::Spread => Some(2764),
+            IterationUse::Destructuring => Some(2765),
+            IterationUse::YieldStar | IterationUse::AsyncYieldStar => Some(2766),
+            IterationUse::GeneratorReturnType | IterationUse::AsyncGeneratorReturnType => None,
         }
     }
 }
@@ -2054,13 +2066,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return self.non_nullable(ty);
             }
         }
-        let initializer = match bound.pat_parent[pattern.idx()] {
-            PatParent::Var(d) => hir[d].init,
-            PatParent::Param(p) => hir[p].default,
-            PatParent::Prop(_, prop) => hir[prop].default,
-            PatParent::Elem(_, elem) => hir[elem].default,
-            PatParent::None => ExprId::NONE,
-        };
+        let initializer = bound.pat_parent[pattern.idx()].initializer(hir);
         if initializer.is_none() {
             return ty;
         }
@@ -2388,11 +2394,14 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::EMPTY_OBJECT;
         };
         let mut shape = Shape::new_in(self.arena);
-        let owner_is_generic = self.has_type_variables(apparent);
+        let options = SpreadSymbolOptions {
+            owner_is_generic: self.has_type_variables(apparent),
+            readonly: false,
+            resolves: false,
+        };
         for i in kept {
             let prop = &members.shape().props[i];
-            let (source, mapper, read_with) =
-                self.get_spread_symbol(prop, members.mapper, owner_is_generic, false, false);
+            let (source, mapper, read_with) = self.get_spread_symbol(prop, members.mapper, options);
             let anew = prop
                 .flags
                 .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
@@ -2538,7 +2547,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `getTypeFromBindingPattern`: the type implied by the pattern itself.
             if !is_name {
                 return self
-                    .implied_by_pattern(file, decl.pat, false, true)
+                    .implied_by_pattern(file, decl.pat, IncludePatternInType::No, ReportErrors::Yes)
                     .unwrap_or(TypeId::ANY);
             }
             // `widenTypeForVariableLikeDeclaration` with no type.
@@ -2696,7 +2705,7 @@ impl<'p, 's> Checker<'p, 's> {
             // determines the type.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
                 return self
-                    .implied_by_pattern(file, param.pat, false, false)
+                    .implied_by_pattern(file, param.pat, IncludePatternInType::No, ReportErrors::No)
                     .unwrap_or(ty);
             }
             if param.default.is_none() {
@@ -2745,8 +2754,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getTypeFromBindingPattern`, for a rest parameter too: `any[]` is only for one with no
         // type information at all.
-        let report_errors = !self.is_parameter_type_never_requested(file, func, p);
-        if let Some(implied) = self.implied_by_pattern(file, param.pat, false, report_errors) {
+        let report_errors = if self.is_parameter_type_never_requested(file, func, p) {
+            ReportErrors::No
+        } else {
+            ReportErrors::Yes
+        };
+        if let Some(implied) =
+            self.implied_by_pattern(file, param.pat, IncludePatternInType::No, report_errors)
+        {
             return implied;
         }
         // `widenTypeForVariableLikeDeclaration` with no type. `hasBindableName`: the property a
@@ -2896,7 +2911,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_from_defaulted_element(&mut self, file: FileId, pat: PatId, default: ExprId) -> TypeId {
         // `checkDeclarationInitializer`
         let contextual_type = self
-            .implied_by_pattern(file, pat, true, false)
+            .context_implied_by_pattern(file, pat)
             .unwrap_or(TypeId::UNKNOWN);
         let ty = self.check_expression_with_contextual_type(
             file,
@@ -3206,7 +3221,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // The next type: the contextual types of the `yield` expressions.
             let next = if star {
-                self.iterable_types(operand, true, is_async, false, None).n
+                let usage = if is_async {
+                    IterationUse::AsyncYieldStar
+                } else {
+                    IterationUse::YieldStar
+                };
+                self.iterable_types(operand, usage, None).n
             } else {
                 self.contextual_type(file, e, ContextFlags::empty())
             };
@@ -3856,17 +3876,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let iterable_exists = self.global_type_of_arity(known::Iterable, 3).is_some();
         if iterable_exists || allows_async {
-            let types = self.iterable_types(
-                ty,
-                true,
-                allows_async,
-                usage.is_for_of(),
-                error_node.filter(|_| iterable_exists),
-            );
+            let types = self.iterable_types(ty, usage, error_node.filter(|_| iterable_exists));
+            let head_message = usage.code_for_sent_type();
             if error_node.is_some()
+                && head_message.is_some()
                 && let Some(next) = types.n
             {
-                let head_message = Some(usage.code_for_sent_type());
                 self.check_type_assignable_to(sent, next, error_node, head_message);
             }
             if types.y.is_some() || iterable_exists {
@@ -3885,7 +3900,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_array_like(arrays) {
             if let Some(error_node) = error_node {
                 // `getIterationDiagnosticDetails`
-                let yielded = self.iterable_types(ty, true, allows_async, usage.is_for_of(), None);
+                let yielded = self.iterable_types(ty, usage, None);
                 let is_later_iterable = matches!(self.data(ty), TypeData::Ref { target, .. } if matches!(
                     self.atoms().bytes(self.files().symbol(*target).name),
                     b"Float32Array" | b"Float64Array" | b"Int16Array" | b"Int32Array" | b"Int8Array" | b"NodeList" | b"Uint16Array" | b"Uint32Array" | b"Uint8Array" | b"Uint8ClampedArray"
@@ -3985,12 +4000,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         let mut yielded_type = Some(yield_expression_type);
+        let usage = if is_async {
+            IterationUse::AsyncYieldStar
+        } else {
+            IterationUse::YieldStar
+        };
         if star && !self.is_any(yield_expression_type) {
-            let usage = if is_async {
-                IterationUse::AsyncYieldStar
-            } else {
-                IterationUse::YieldStar
-            };
             let sent = iteration_types.n.unwrap_or(TypeId::ANY);
             let error_node = Some(error_node(self));
             yielded_type =
@@ -4013,7 +4028,7 @@ impl<'p, 's> Checker<'p, 's> {
             );
         }
         if star {
-            let types = self.iterable_types(yield_expression_type, true, is_async, false, None);
+            let types = self.iterable_types(yield_expression_type, usage, None);
             return types.r.unwrap_or(TypeId::ANY);
         }
         if return_type.is_some() {
@@ -4074,7 +4089,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The same, but missing types stay missing.
     fn generator_return_types(&mut self, ty: TypeId, is_async: bool) -> Iter3 {
-        let types = self.iterable_types(ty, !is_async, is_async, false, None);
+        let usage = if is_async {
+            IterationUse::AsyncGeneratorReturnType
+        } else {
+            IterationUse::GeneratorReturnType
+        };
+        let types = self.iterable_types(ty, usage, None);
         if types.has_types() {
             types
         } else {
@@ -4083,19 +4103,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getIterationTypesOfIterable`: the iteration types of `ty`, through its
-    /// `[Symbol.asyncIterator]` if `asynchronous`, otherwise through its `[Symbol.iterator]` if
-    /// `sync`. `for_of`: the use is a `for..of`, with or without `await` (`IterationUseForOfFlag`).
+    /// `[Symbol.asyncIterator]` if `usage` allows async iterables, otherwise through its
+    /// `[Symbol.iterator]` if it allows sync ones.
     /// tsgo caches the result per checker, so errors found while computing it are reported only on
     /// the first request, which depends on which caller is first. Here they are reported for every
     /// `error_node`.
     pub(super) fn iterable_types(
         &mut self,
         ty: TypeId,
-        sync: bool,
-        asynchronous: bool,
-        for_of: bool,
+        usage: IterationUse,
         error_node: Option<Place>,
     ) -> Iter3 {
+        let (sync, asynchronous) = (usage.allows_sync(), usage.allows_async());
+        let for_of = usage.is_for_of();
         let ty = self.reduced(ty);
         if self.is_any(ty) {
             return Iter3::all(ty);
@@ -4105,7 +4125,7 @@ impl<'p, 's> Checker<'p, 's> {
             let parts = self.parts(ty);
             let mut all = Vec::with_capacity(parts.len());
             for &part in parts {
-                let types = self.iterable_types(part, sync, asynchronous, for_of, None);
+                let types = self.iterable_types(part, usage, None);
                 if !types.has_types() {
                     self.report_type_not_iterable(error_node, ty, asynchronous, for_of, Vec::new());
                     return Iter3::default();
@@ -4121,7 +4141,7 @@ impl<'p, 's> Checker<'p, 's> {
             let types = if apparent == ty || self.is_any(apparent) {
                 Iter3::default()
             } else {
-                self.iterable_types(apparent, sync, asynchronous, for_of, None)
+                self.iterable_types(apparent, usage, None)
             };
             if !types.has_types() {
                 self.report_type_not_iterable(error_node, ty, asynchronous, for_of, Vec::new());

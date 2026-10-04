@@ -274,13 +274,6 @@ impl<A: Alloc> Clone for Bases<A> {
 }
 
 impl<A: Alloc> Bases<A> {
-    pub fn new(lengths: impl Iterator<Item = usize>) -> Self
-    where
-        A: Default,
-    {
-        Self::new_in(lengths, &A::default())
-    }
-
     pub fn new_in(lengths: impl Iterator<Item = usize>, alloc: &A) -> Self {
         let mut total = 0usize;
         let mut bases = vec![0u32];
@@ -447,13 +440,6 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
         u64::MAX
     };
 
-    pub fn new(bases: &Bases<A>) -> Self
-    where
-        A: Default,
-    {
-        Self::new_in(bases, A::default())
-    }
-
     pub fn new_in(bases: &Bases<A>, alloc: A) -> Self {
         let bases = if P::IS_FILE_LOCAL {
             Bases::none_in(&alloc)
@@ -533,13 +519,6 @@ pub struct ByNodeIndirect<K, T, P: Policy = Frozen, A: Alloc = Global> {
 impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
     pub fn footprint(&self) -> Footprint {
         self.handles.footprint().with_indirect(&self.kept)
-    }
-
-    pub fn new(bases: &Bases<A>) -> Self
-    where
-        A: Default,
-    {
-        Self::new_in(bases, A::default())
     }
 
     pub fn new_in(bases: &Bases<A>, alloc: A) -> Self {
@@ -1723,21 +1702,34 @@ where
 
 // ───────────────────────────── `FileLocal` ─────────────────────────────
 
+/// Where a `FileLocal` table has the value of a node.
+struct Place {
+    /// The index of the word among those of the file.
+    word: u32,
+    /// The bit offset of the node within the word.
+    shift: u32,
+}
+
 /// There is no shared part. The storage is in 64-bit words. A value of one or two bits shares its
 /// word with the values of the neighbouring nodes.
 impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
-    /// The word for the node `index`, and the bit offset of the node within it.
     #[inline]
-    fn place(index: u32) -> (u32, u32) {
+    fn place(index: u32) -> Place {
         match V::BITS {
-            0 => (index, 0),
-            bits => (index / (64 / bits), index % (64 / bits) * bits),
+            0 => Place {
+                word: index,
+                shift: 0,
+            },
+            bits => Place {
+                word: index / (64 / bits),
+                shift: index % (64 / bits) * bits,
+            },
         }
     }
 
     #[inline]
     pub fn get(&self, task: &Task, key: &K) -> Option<V> {
-        let (word, shift) = Self::place(key.index());
+        let Place { word, shift } = Self::place(key.index());
         let raw = task.file_local().cell(self.slot, key.file().0, word) >> shift & Self::MASK;
         (raw != 0).then(|| V::unpack(V::Cell::narrow(raw)))
     }
@@ -1768,7 +1760,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
             return;
         }
         let (file, raw) = (key.file().0, V::Cell::widen(value.pack()));
-        let (word, shift) = Self::place(key.index());
+        let Place { word, shift } = Self::place(key.index());
         let raw = match V::BITS {
             0 => raw,
             _ => {

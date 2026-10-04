@@ -1247,7 +1247,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let one = c.types().mapper(pairs);
                     if for_constraint {
-                        c.resolve_conditional(file, node, one, mapper, None)
+                        // The type arguments of the union that is distributed over.
+                        let for_constraint = mapper;
+                        c.resolve_conditional(file, node, one, for_constraint, None)
                     } else {
                         c.conditional_type(file, node, one)
                     }

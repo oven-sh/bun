@@ -214,7 +214,7 @@ impl Drop for Turn<'_> {
 }
 
 /// The full contents of the file `name` in `directory`.
-fn read_file(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     /// Few files are bigger.
     const FIRST_READ: usize = 64 * 1024;
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
@@ -248,9 +248,19 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     })
 }
 
-/// The parent directory of `path`, and its base name.
-fn split(path: &[u8]) -> (&[u8], &[u8]) {
-    (dirname::<Posix>(path), basename_posix(path))
+/// The two parts of a path.
+struct Split<'a> {
+    /// The parent directory.
+    parent: &'a [u8],
+    /// The base name.
+    name: &'a [u8],
+}
+
+fn split(path: &[u8]) -> Split<'_> {
+    Split {
+        parent: dirname::<Posix>(path),
+        name: basename_posix(path),
+    }
 }
 
 /// Whether `path` is a directory (true) or a regular file (false), following symlinks. `None`: it does not exist, or it is neither.
@@ -329,7 +339,7 @@ impl Disk {
             return known;
         }
         // An entry that its parent does not list does not exist, so no system call is needed.
-        let (parent, name) = split(path);
+        let Split { parent, name } = split(path);
         if !name.is_empty()
             && !Self::is_above_listings(parent)
             && let Directory::Listed(listing) = self.directory(parent)
@@ -345,7 +355,7 @@ impl Disk {
 
     /// `None`: the system has to be queried.
     fn find(&self, path: &[u8]) -> Option<Option<(&[u8], bool)>> {
-        let (parent, name) = split(path);
+        let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return None;
         }
@@ -364,7 +374,7 @@ impl Disk {
 
     /// `path` is there.
     fn real_path_of(&self, path: &[u8]) -> Vec<u8> {
-        let (parent, name) = split(path);
+        let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return Self::ask_for_real_path(path);
         }
@@ -548,7 +558,7 @@ impl Host for Disk {
             return Some(Cow::Owned(text));
         }
         let _reading = Spent::on(self, Phase::Read);
-        let (parent, name) = split(path);
+        let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return bun_sys::File::read_from(Fd::cwd(), to_native(path))
                 .ok()
@@ -573,7 +583,7 @@ impl Host for Disk {
             let Reader { handle, buffer, .. } = &mut reader;
             handle
                 .as_ref()
-                .map(|directory| read_file(directory, name, buffer))
+                .map(|directory| read_file(directory.fd(), name, buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));

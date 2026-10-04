@@ -22,3 +22,7 @@ bun_paths.workspace = true
 libc.workspace = true
 
 [lints]
+
+[lints.rust]
+# Set with `RUSTFLAGS=--cfg bun_sema_mimalloc` to link the real mimalloc.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_sema_mimalloc)'] }

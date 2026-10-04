@@ -1471,10 +1471,8 @@ impl<'p, 's> Checker<'p, 's> {
         let name = hir[tp].name;
         for (of, decl) in declarations_of(self.files(), self.files().sym(file, owner)) {
             let other = self.hir(of);
-            let theirs = match decl {
-                Decl::Class(c) => other[c].type_params,
-                Decl::Interface(i) => other[i].type_params,
-                _ => continue,
+            let Some(theirs) = decl.type_params_of_class_or_interface(other) else {
+                continue;
             };
             if let Some(p) = theirs
                 .iter()
@@ -3507,7 +3505,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let ty = self.type_from_node(file, node);
-        self.single_call_signature(ty, false)
+        self.single_call_signature(ty)
     }
 
     /// `getSignaturesOfSymbol`: the signature the declaration `func` adds to its symbol.

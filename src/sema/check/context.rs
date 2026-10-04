@@ -2,6 +2,7 @@
 //! position.
 
 use super::infer::{Inference, Parts};
+use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use smallvec::SmallVec;
@@ -9,6 +10,21 @@ use smallvec::SmallVec;
 /// The names of the discriminant properties of a union, each with the type of the value given for
 /// it.
 type Discriminants = SmallVec<[(Atom, TypeId); 8]>;
+
+/// `includePatternInType` of `getTypeFromBindingPattern`: the type is the contextual type of the
+/// initializer of the pattern.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum IncludePatternInType {
+    No,
+    Yes,
+}
+
+/// `reportErrors`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum ReportErrors {
+    No,
+    Yes,
+}
 
 impl<'p, 's> Checker<'p, 's> {
     /// `getContainingFunctionOrClassStaticBlock`
@@ -177,7 +193,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         pat: PatId,
     ) -> Option<TypeId> {
-        self.implied_by_pattern(file, pat, true, false)
+        self.implied_by_pattern(file, pat, IncludePatternInType::Yes, ReportErrors::No)
     }
 
     /// `getTypeFromBindingPattern(pat, includePatternInType, reportErrors)`. `None` for a plain name.
@@ -185,10 +201,10 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         pat: PatId,
-        for_context: bool,
-        report_errors: bool,
+        for_context: IncludePatternInType,
+        report_errors: ReportErrors,
     ) -> Option<TypeId> {
-        if !for_context
+        if for_context == IncludePatternInType::No
             || matches!(
                 self.hir(file)[pat].kind,
                 PatKind::Missing | PatKind::Ident(_)
@@ -278,15 +294,15 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         pat: PatId,
-        for_context: bool,
-        report_errors: bool,
+        for_context: IncludePatternInType,
+        report_errors: ReportErrors,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getTypeFromBindingElement`
         let of_element = |c: &mut Self, pat: PatId, default: ExprId| -> TypeId {
             if default.is_some() {
                 let contextual_type = c
-                    .implied_by_pattern(file, pat, true, false)
+                    .context_implied_by_pattern(file, pat)
                     .unwrap_or(TypeId::UNKNOWN);
                 let ty = c.check_expression_with_contextual_type(
                     file,
@@ -309,7 +325,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let ty = if is_constant { ty } else { c.widen_literal(ty) };
                 // The implied type is widened as a whole where it becomes the type of a
                 // declaration. The contextual type is not.
-                let ty = if for_context {
+                let ty = if for_context == IncludePatternInType::Yes {
                     ty
                 } else {
                     c.get_widened_type(ty)
@@ -317,7 +333,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return c.optional(ty);
             }
             let implied = c.implied_by_pattern(file, pat, for_context, report_errors);
-            if implied.is_none() && report_errors {
+            if implied.is_none() && report_errors == ReportErrors::Yes {
                 c.report_implicit_any_of_name(file, pat, TypeId::ANY);
             }
             implied.unwrap_or(TypeId::ANY)
@@ -410,7 +426,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .props
                     .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
                 // `patternForType`
-                if for_context {
+                if for_context == IncludePatternInType::Yes {
                     shape.literal = if has_computed_names {
                         Literalness::PatternWithComputedNames
                     } else {
@@ -2098,9 +2114,9 @@ impl<'p, 's> Checker<'p, 's> {
                     .compare_signatures_identical(
                         first,
                         sig,
-                        false,
-                        true,
-                        true,
+                        PartialMatch::No,
+                        IgnoreThisTypes::Yes,
+                        IgnoreReturnTypes::Yes,
                         &mut Self::compare_types_identical,
                     )
                     .holds()

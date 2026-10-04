@@ -256,29 +256,6 @@ impl<'a, T> BabyVec<'a, T> {
         self.truncate(kept);
     }
 
-    /// `Vec::swap_remove` parity.
-    pub fn swap_remove(&mut self, index: usize) -> T {
-        let len = self.len();
-        assert!(
-            index < len,
-            "BabyVec::swap_remove index {index} >= len {len}"
-        );
-        self.swap(index, len - 1);
-        self.pop().unwrap()
-    }
-
-    /// `Vec::resize` parity.
-    pub fn resize(&mut self, new_len: usize, value: T)
-    where
-        T: Clone,
-    {
-        self.truncate(new_len);
-        self.reserve(new_len - self.len());
-        while self.len() < new_len {
-            self.push(value.clone());
-        }
-    }
-
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]

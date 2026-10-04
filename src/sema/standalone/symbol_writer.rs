@@ -9,7 +9,7 @@ use super::enclosing_declaration::Enclosing;
 use super::print::quoted;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind};
 
 /// `typeWriterResult`
 pub struct SymbolAtLocation {
@@ -537,7 +537,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 {
                     return match bound.fns[function.idx()].owner {
                         FnOwner::Member(m) if !hir[m].flags.contains(Flags::STATIC) => {
-                            self.container_of_member(file, m).map(Found::Symbol)
+                            self.c.symbol_of_member_owner(file, m).map(Found::Symbol)
                         }
                         _ => None,
                     };
@@ -1081,17 +1081,6 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         }
     }
 
-    /// The class or interface `member` is declared in.
-    fn container_of_member(&self, file: FileId, member: MemberId) -> Option<Sym> {
-        let bound = self.c.bound(file);
-        let symbol = match bound.member_owner[member.idx()] {
-            MemberOwner::Class(class) => bound.class_symbol[class.idx()],
-            MemberOwner::Interface(interface) => bound.interface_symbol[interface.idx()],
-            _ => return None,
-        };
-        symbol.is_some().then(|| self.c.files().sym(file, symbol))
-    }
-
     /// `symbol.Parent` of a property. The symbol of a type literal or an object literal is never
     /// printed.
     fn parent_of_property(&mut self, prop: &Prop) -> Option<PropertyParent> {
@@ -1121,7 +1110,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             PropSource::Copy(_, of, true) => return self.parent_of_property(&of[0]),
             _ => return None,
         };
-        self.container_of_member(file, member)
+        self.c
+            .symbol_of_member_owner(file, member)
             .map(PropertyParent::Symbol)
     }
 

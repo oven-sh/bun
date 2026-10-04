@@ -66,6 +66,30 @@ pub(super) enum CallLike {
     Jsx(JsxId),
 }
 
+/// Whether the caller of `resolve_call` reads `ret`. If not, `ret` is `any` and the return type of
+/// the signature is not resolved: `checkCallExpression` returns `anyType` for `new` of a call
+/// signature before it calls `getReturnTypeOfSignature`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum ExpectsReturn {
+    No,
+    Yes,
+}
+
+/// `SignatureKind`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum SignatureKind {
+    Call,
+    Construct,
+}
+
+/// `allowMembers` of `getSingleSignature`. If not, a type that has a property or an index signature
+/// has no single signature.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum AllowMembers {
+    No,
+    Yes,
+}
+
 /// `CallState`
 pub(super) struct CallState<'a> {
     pub(super) file: FileId,
@@ -87,6 +111,15 @@ pub(super) struct CallState<'a> {
     pub(super) candidates_for_argument_error: Sigs,
     pub(super) candidate_for_argument_arity_error: Option<SigId>,
     pub(super) candidate_for_type_argument_error: Option<SigId>,
+}
+
+/// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
+struct OutsideInferenceContext {
+    mode_of_recheck: CheckMode,
+    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
+    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// The argument for `end_recheck`.
+    recheck: (usize, usize),
 }
 
 pub(super) type Args = SmallVec<[Arg; 8]>;
@@ -586,7 +619,15 @@ impl<'p, 's> Checker<'p, 's> {
             let args = self.effective_call_arguments(file, call, node);
             let this_arg = self.this_argument_of_call(file, call, node);
             return self.resolve_call(
-                file, call, node, &sigs, &type_args, &args, this_arg, true, true, None,
+                file,
+                call,
+                node,
+                &sigs,
+                &type_args,
+                &args,
+                this_arg,
+                ExpectsReturn::Yes,
+                None,
             );
         }
         if let ExprKind::Binary {
@@ -675,8 +716,7 @@ impl<'p, 's> Checker<'p, 's> {
             &[],
             &args,
             None,
-            true,
-            true,
+            ExpectsReturn::Yes,
             None,
         )
     }
@@ -823,7 +863,11 @@ impl<'p, 's> Checker<'p, 's> {
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
-        let expects_return = !(is_call_by_new && self.p.files.options.no_implicit_any);
+        let expects_return = if is_call_by_new && self.p.files.options.no_implicit_any {
+            ExpectsReturn::No
+        } else {
+            ExpectsReturn::Yes
+        };
         let resolved = self.resolve_call(
             file,
             call,
@@ -832,7 +876,6 @@ impl<'p, 's> Checker<'p, 's> {
             &type_args,
             &args,
             this_arg,
-            true,
             expects_return,
             None,
         );
@@ -892,8 +935,7 @@ impl<'p, 's> Checker<'p, 's> {
             &[],
             &args,
             Some(right),
-            true,
-            true,
+            ExpectsReturn::Yes,
             Some(2860),
         )
     }
@@ -944,7 +986,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let called = self.type_of_expr(file, self.hir(file)[c].callee);
         let callee = self.check_non_null_type(file, self.hir(file)[c].callee, called);
-        let only = self.single_signature(callee, true, true)?;
+        let only = self.single_signature(callee, SignatureKind::Construct, AllowMembers::Yes)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
         }
@@ -970,16 +1012,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let called = self.type_of_expr(file, callee);
         let callee = self.check_non_null_type(file, callee, called);
-        let only = self.single_signature(callee, false, true)?;
+        let only = self.single_signature(callee, SignatureKind::Call, AllowMembers::Yes)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
         }
         Some(self.sig_return(only))
     }
 
-    /// `resolveCall`. `report_errors`: `reportErrors`.
-    /// `expects_return`: the caller reads `ret`. Otherwise `ret` is `any` and the return type of the signature is not resolved:
-    /// `checkCallExpression` returns `anyType` for `new` of a call signature before it calls `getReturnTypeOfSignature`.
+    /// `resolveCall`
     pub(super) fn resolve_call(
         &mut self,
         file: FileId,
@@ -989,8 +1029,7 @@ impl<'p, 's> Checker<'p, 's> {
         type_args: &[TypeId],
         args: &[Arg],
         this_arg: Option<ExprId>,
-        report_errors: bool,
-        expects_return: bool,
+        expects_return: ExpectsReturn,
         head_message: Option<u32>,
     ) -> ResolvedCall {
         let candidates = self.candidates_in_order(signatures);
@@ -1048,13 +1087,13 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = ResolvedCall {
             sig: Some(sig),
             // Not requested yet: see `with_return_type`.
-            ret: if expects_return {
+            ret: if expects_return == ExpectsReturn::Yes {
                 TypeId::UNRESOLVED
             } else {
                 TypeId::ANY
             },
         };
-        if !is_chosen && report_errors {
+        if !is_chosen {
             // `resolvedSignature = result`, before the errors are reported.
             self.resolved_meanwhile.push((file, call, resolved));
             let since = self.reported.len();
@@ -1231,7 +1270,7 @@ impl<'p, 's> Checker<'p, 's> {
                             })
                             .unwrap_or(contextual_type);
                         let inference_source_type =
-                            match self.single_call_signature(instantiated_type, false) {
+                            match self.single_call_signature(instantiated_type) {
                                 Some(generic) if !self.sig_type_params(generic).is_empty() => {
                                     let plain = self.without_filling_in_type_arguments(generic);
                                     self.type_of_signature(plain, false)
@@ -2460,8 +2499,23 @@ impl<'p, 's> Checker<'p, 's> {
         check: impl FnOnce(&mut Self, CheckMode) -> TypeId,
     ) -> TypeId {
         let mut inference_context = inference_context;
+        let (check_mode, outside) =
+            self.push_inference_context(file, e, inference_context.as_deref_mut(), check_mode);
+        let ty = check(self, check_mode);
+        self.pop_inference_context(file, e, contextual_type, inference_context, outside, ty)
+    }
+
+    /// `pushInferenceContext`: moves `inference_context` into `inference_contexts` and begins a
+    /// check that is not memoised. Returns the mode of that check, and the argument for
+    /// `pop_inference_context`.
+    fn push_inference_context(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        inference_context: Option<&mut Inference>,
+        check_mode: CheckMode,
+    ) -> (CheckMode, OutsideInferenceContext) {
         let context = inference_context
-            .as_deref_mut()
             .map(|inference| std::mem::replace(inference, Inference::for_params(&[], None)));
         let mut check_mode = check_mode | CheckMode::CONTEXTUAL;
         if context.is_some() {
@@ -2472,19 +2526,34 @@ impl<'p, 's> Checker<'p, 's> {
             node: e,
             context,
         });
-        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, check_mode);
-        // A result computed under one pushed contextual type is not valid under another, or under
-        // none.
-        let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
-        );
-        let outer = self.begin_recheck();
-        let ty = check(self, check_mode);
+        let outside = OutsideInferenceContext {
+            mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
+            // A result computed under one pushed contextual type is not valid under another, or
+            // under none.
+            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
+            rechecked_members: std::mem::take(&mut self.rechecked_members),
+            recheck: self.begin_recheck(),
+        };
+        (check_mode, outside)
+    }
+
+    /// `popInferenceContext`: ends the check that `push_inference_context` began, which found `ty`,
+    /// and moves the context back into `inference_context`. Returns `ty`, without its freshness if
+    /// `contextual_type` is a context for literals.
+    fn pop_inference_context(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        contextual_type: TypeId,
+        inference_context: Option<&mut Inference>,
+        outside: OutsideInferenceContext,
+        ty: TypeId,
+    ) -> TypeId {
         self.note_array_literal_types(file, e, ty);
-        self.end_recheck(outer);
-        (self.rechecked_exprs, self.rechecked_members) = found_outside;
-        self.mode_of_recheck = mode_outside;
+        self.end_recheck(outside.recheck);
+        self.rechecked_exprs = outside.rechecked_exprs;
+        self.rechecked_members = outside.rechecked_members;
+        self.mode_of_recheck = outside.mode_of_recheck;
         let instantiated =
             self.instantiate_contextual_type(contextual_type, file, e, ContextFlags::empty());
         let ty = if self.maybe_type_of_kind(ty, Self::is_literal)
@@ -2504,18 +2573,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSingleSignature`: the single call (or construct) signature of `ty`, if there is none of
     /// the other kind.
-    /// Without `allow_members`, only if `ty` has nothing else.
     pub(super) fn single_signature(
         &mut self,
         ty: TypeId,
-        construct: bool,
-        allow_members: bool,
+        kind: SignatureKind,
+        allow_members: AllowMembers,
     ) -> Option<SigId> {
         if !self.is_object_type(ty) {
             return None;
         }
         let members = self.members(ty)?;
         let shape = members.shape();
+        let construct = kind == SignatureKind::Construct;
         let (own, other) = if construct {
             (&shape.construct, &shape.call)
         } else {
@@ -2523,19 +2592,17 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if own.len() != 1
             || !other.is_empty()
-            || (!allow_members && !(shape.props.is_empty() && shape.index.is_empty()))
+            || (allow_members == AllowMembers::No
+                && !(shape.props.is_empty() && shape.index.is_empty()))
         {
             return None;
         }
         Some(self.instantiate_only_sig(ty, construct, own[0], members.mapper))
     }
 
-    pub(super) fn single_call_signature(
-        &mut self,
-        ty: TypeId,
-        allow_members: bool,
-    ) -> Option<SigId> {
-        self.single_signature(ty, false, allow_members)
+    /// `getSingleCallSignature`
+    pub(super) fn single_call_signature(&mut self, ty: TypeId) -> Option<SigId> {
+        self.single_signature(ty, SignatureKind::Call, AllowMembers::No)
     }
 
     /// `getSingleCallOrConstructSignature`, and whether it is a construct signature.
@@ -2543,10 +2610,10 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Option<(SigId, bool)> {
-        match self.single_signature(ty, false, false) {
+        match self.single_signature(ty, SignatureKind::Call, AllowMembers::No) {
             Some(sig) => Some((sig, false)),
             None => self
-                .single_signature(ty, true, false)
+                .single_signature(ty, SignatureKind::Construct, AllowMembers::No)
                 .map(|sig| (sig, true)),
         }
     }

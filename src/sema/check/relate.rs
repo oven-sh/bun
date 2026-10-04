@@ -8,6 +8,7 @@ use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
 };
 use super::related::Place;
+use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
@@ -300,6 +301,27 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
+
+/// What `Checker::recursive_relation_key` returns.
+struct RecursiveRelationKey {
+    key: Key,
+    /// See `Checker::relation_key`.
+    constrained: bool,
+    /// `related` has looked the key up in the cache, where it is not.
+    missed: bool,
+}
+
+/// What `Checker::undefined_stripped_target_if_needed` returns.
+struct StrippedTarget<'p> {
+    /// The constituents of the target, if it is a union.
+    targets: &'p [TypeId],
+    /// Those among them that are stripped.
+    skipped: std::ops::Range<usize>,
+    /// How many are left.
+    count: usize,
+    /// Whether the constituents of the source may be a mapping of those that are left.
+    corresponds: bool,
+}
 
 // Type kind predicates for callers that already have the `TypeData`.
 
@@ -3243,7 +3265,9 @@ impl<'p, 's> Checker<'p, 's> {
                     if result.holds() {
                         return result;
                     }
-                    return self.is_related_to(r, target, source, REC_SOURCE);
+                    // Comparable in the other direction.
+                    let (source, target) = (target, source);
+                    return self.is_related_to(r, source, target, REC_SOURCE);
                 }
             }
         }
@@ -3310,30 +3334,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ternary {
         let mut result = Ternary::TRUE;
         let sources = self.constituents(source);
-        let targets: &[TypeId] = match self.data(target) {
-            TypeData::Union(parts) => parts,
-            _ => &[],
-        };
-        // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would break
-        // the positional correspondence. Its position in a union: the constituents are in the order
-        // of `CompareTypes`, which starts with the flags.
-        let undefined_in = |types: &[TypeId]| {
-            let is_before = |t: &&TypeId| self.flags(**t) < tf::UNDEFINED;
-            let from = types.iter().take_while(is_before).count();
-            from..from
-                + types[from..]
-                    .iter()
-                    .take_while(|t| t.is_undefined())
-                    .count()
-        };
-        let skipped = if undefined_in(sources).is_empty() {
-            undefined_in(targets)
-        } else {
-            0..0
-        };
-        let count = targets.len() - skipped.len();
-        let corresponds =
-            count > 1 && sources.len() >= count && sources.len().is_multiple_of(count);
+        let StrippedTarget {
+            targets,
+            skipped,
+            count,
+            corresponds,
+        } = self.undefined_stripped_target_if_needed(sources, target);
         for (i, &t) in sources.iter().enumerate() {
             // Many unions are mappings of one another: the members at the same index are related.
             if corresponds {
@@ -3356,6 +3362,43 @@ impl<'p, 's> Checker<'p, 's> {
             result &= related;
         }
         result
+    }
+
+    /// `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would break the
+    /// positional correspondence with `sources`. Its position in a union: the constituents are in
+    /// the order of `CompareTypes`, which starts with the flags.
+    fn undefined_stripped_target_if_needed(
+        &self,
+        sources: &[TypeId],
+        target: TypeId,
+    ) -> StrippedTarget<'p> {
+        let targets: &'p [TypeId] = match self.data(target) {
+            TypeData::Union(parts) => parts,
+            _ => &[],
+        };
+        let undefined_in = |types: &[TypeId]| {
+            let is_before = |t: &&TypeId| self.flags(**t) < tf::UNDEFINED;
+            let from = types.iter().take_while(is_before).count();
+            from..from
+                + types[from..]
+                    .iter()
+                    .take_while(|t| t.is_undefined())
+                    .count()
+        };
+        let skipped = if undefined_in(sources).is_empty() {
+            undefined_in(targets)
+        } else {
+            0..0
+        };
+        let count = targets.len() - skipped.len();
+        let corresponds =
+            count > 1 && sources.len() >= count && sources.len().is_multiple_of(count);
+        StrippedTarget {
+            targets,
+            skipped,
+            count,
+            corresponds,
+        }
     }
 
     /// `getMatchingUnionConstituentForType`
@@ -3668,6 +3711,33 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    /// The key of the comparison that `recursive_type_related_to` makes. `sd`, `td`: the `TypeData`
+    /// of `source` and `target`.
+    fn recursive_relation_key(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        sd: &TypeData,
+        target: TypeId,
+        td: &TypeData,
+        state: u8,
+    ) -> RecursiveRelationKey {
+        // `related` has already done the cache lookup.
+        let missed = r
+            .top_key
+            .take()
+            .filter(|_| state == STATE_NONE && source == r.top_source && target == r.top_target);
+        let (key, constrained) = match missed {
+            Some(key) => key,
+            None => self.relation_key_as(source, sd, target, td, r.relation, state),
+        };
+        RecursiveRelationKey {
+            key,
+            constrained,
+            missed: missed.is_some(),
+        }
+    }
+
     /// `recursiveTypeRelatedTo`: the cached result if there is one; `Maybe` if the comparison is in
     /// progress or if both types expand infinitely; otherwise a structural comparison. `sd`, `td`:
     /// the `TypeData` of `source` and `target`.
@@ -3685,16 +3755,12 @@ impl<'p, 's> Checker<'p, 's> {
         if r.overflow {
             return Ternary::FALSE;
         }
-        // `related` has already done the cache lookup.
-        let missed = r
-            .top_key
-            .take()
-            .filter(|_| state == STATE_NONE && source == r.top_source && target == r.top_target);
-        let (key, constrained) = match missed {
-            Some(key) => key,
-            None => self.relation_key_as(source, sd, target, td, r.relation, state),
-        };
-        if missed.is_none()
+        let RecursiveRelationKey {
+            key,
+            constrained,
+            missed,
+        } = self.recursive_relation_key(r, source, sd, target, td, state);
+        if !missed
             && let Some(entry) = self.p.relations.get(&mut self.task, &key)
             // A cached failure is recomputed to produce its error elaboration.
             && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
@@ -4364,6 +4430,120 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
+    /// The case `r.relation == r.c.identityRelation` of `structuredTypeRelatedToWorker`. `None`:
+    /// the comparison goes on as for any other relation. `sd`, `td`: the `TypeData` of `source`
+    /// and `target`.
+    fn structured_type_identical_to(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        sd: &'p TypeData<'p>,
+        target: TypeId,
+        td: &'p TypeData<'p>,
+    ) -> Option<Ternary> {
+        match (sd, td) {
+            (TypeData::Union(_), _) | (TypeData::Intersection(_), _) => {
+                let mut result = self.each_type_related_to_some_type(r, source, target);
+                if result.holds() {
+                    let (source, target) = (target, source);
+                    result &= self.each_type_related_to_some_type(r, source, target);
+                }
+                return Some(result);
+            }
+            (TypeData::Keyof(s), TypeData::Keyof(t)) => {
+                return Some(self.is_related_to(r, *s, *t, REC_BOTH));
+            }
+            (
+                TypeData::IndexedAccess {
+                    obj: so, index: si, ..
+                },
+                TypeData::IndexedAccess {
+                    obj: to, index: ti, ..
+                },
+            ) => {
+                let mut result = self.is_related_to(r, *so, *to, REC_BOTH);
+                if result.holds() {
+                    result &= self.is_related_to(r, *si, *ti, REC_BOTH);
+                    if result.holds() {
+                        return Some(result);
+                    }
+                }
+            }
+            (
+                TypeData::Substitution {
+                    base: sb,
+                    constraint: sc,
+                },
+                TypeData::Substitution {
+                    base: tb,
+                    constraint: tc,
+                },
+            ) => {
+                let mut result = self.is_related_to(r, *sb, *tb, REC_BOTH);
+                if result.holds() {
+                    result &= self.is_related_to(r, *sc, *tc, REC_BOTH);
+                    if result.holds() {
+                        return Some(result);
+                    }
+                }
+            }
+            (TypeData::Cond { .. }, TypeData::Cond { .. }) => {
+                if self.cond_distributes_over(source).is_some()
+                    == self.cond_distributes_over(target).is_some()
+                {
+                    let mut result = Ternary::TRUE;
+                    for which in 0..4 {
+                        let (s, t) = (
+                            self.cond_piece(source, which),
+                            self.cond_piece(target, which),
+                        );
+                        result &= self.is_related_to(r, s, t, REC_BOTH);
+                        if !result.holds() {
+                            break;
+                        }
+                    }
+                    if result.holds() {
+                        return Some(result);
+                    }
+                }
+            }
+            (
+                TypeData::Template {
+                    texts: st,
+                    types: sy,
+                },
+                TypeData::Template {
+                    texts: tt,
+                    types: ty,
+                },
+            ) => {
+                if st == tt {
+                    let mut result = Ternary::TRUE;
+                    for (&s, &t) in sy.iter().zip(ty.iter()) {
+                        result &= self.is_related_to(r, s, t, REC_BOTH);
+                        if !result.holds() {
+                            return Some(result);
+                        }
+                    }
+                    return Some(result);
+                }
+            }
+            (
+                TypeData::StringMapping { kind: sk, ty: s },
+                TypeData::StringMapping { kind: tk, ty: t },
+            ) => {
+                if sk == tk {
+                    return Some(self.is_related_to(r, *s, *t, REC_BOTH));
+                }
+            }
+            _ => {}
+        }
+        if !is_object_kind(sd) {
+            return Some(Ternary::FALSE);
+        }
+        None
+    }
+
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: the `TypeData` of `source` and `target`.
     pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
@@ -4380,104 +4560,8 @@ impl<'p, 's> Checker<'p, 's> {
             shared.save_error_state = r.get_error_state();
         }
         if relation == Relation::Identity {
-            match (sd, td) {
-                (TypeData::Union(_), _) | (TypeData::Intersection(_), _) => {
-                    let mut result = self.each_type_related_to_some_type(r, source, target);
-                    if result.holds() {
-                        result &= self.each_type_related_to_some_type(r, target, source);
-                    }
-                    return result;
-                }
-                (TypeData::Keyof(s), TypeData::Keyof(t)) => {
-                    return self.is_related_to(r, *s, *t, REC_BOTH);
-                }
-                (
-                    TypeData::IndexedAccess {
-                        obj: so, index: si, ..
-                    },
-                    TypeData::IndexedAccess {
-                        obj: to, index: ti, ..
-                    },
-                ) => {
-                    let mut result = self.is_related_to(r, *so, *to, REC_BOTH);
-                    if result.holds() {
-                        result &= self.is_related_to(r, *si, *ti, REC_BOTH);
-                        if result.holds() {
-                            return result;
-                        }
-                    }
-                }
-                (
-                    TypeData::Substitution {
-                        base: sb,
-                        constraint: sc,
-                    },
-                    TypeData::Substitution {
-                        base: tb,
-                        constraint: tc,
-                    },
-                ) => {
-                    let mut result = self.is_related_to(r, *sb, *tb, REC_BOTH);
-                    if result.holds() {
-                        result &= self.is_related_to(r, *sc, *tc, REC_BOTH);
-                        if result.holds() {
-                            return result;
-                        }
-                    }
-                }
-                (TypeData::Cond { .. }, TypeData::Cond { .. }) => {
-                    if self.cond_distributes_over(source).is_some()
-                        == self.cond_distributes_over(target).is_some()
-                    {
-                        let mut result = Ternary::TRUE;
-                        for which in 0..4 {
-                            let (s, t) = (
-                                self.cond_piece(source, which),
-                                self.cond_piece(target, which),
-                            );
-                            result &= self.is_related_to(r, s, t, REC_BOTH);
-                            if !result.holds() {
-                                break;
-                            }
-                        }
-                        if result.holds() {
-                            return result;
-                        }
-                    }
-                }
-                (
-                    TypeData::Template {
-                        texts: st,
-                        types: sy,
-                    },
-                    TypeData::Template {
-                        texts: tt,
-                        types: ty,
-                    },
-                ) => {
-                    if st == tt {
-                        let mut result = Ternary::TRUE;
-                        for (&s, &t) in sy.iter().zip(ty.iter()) {
-                            result &= self.is_related_to(r, s, t, REC_BOTH);
-                            if !result.holds() {
-                                return result;
-                            }
-                        }
-                        return result;
-                    }
-                }
-                (
-                    TypeData::StringMapping { kind: sk, ty: s },
-                    TypeData::StringMapping { kind: tk, ty: t },
-                ) => {
-                    if sk == tk {
-                        return self.is_related_to(r, *s, *t, REC_BOTH);
-                    }
-                }
-                _ => {}
-            }
-            if !is_object_kind(sd) {
-                return Ternary::FALSE;
+            if let Some(result) = self.structured_type_identical_to(r, source, sd, target, td) {
+                return result;
             }
         } else if is_union_or_intersection_kind(sd) || is_union_or_intersection_kind(td) {
             let result = self
@@ -5401,15 +5485,14 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `mappedTypeRelatedTo`: `[P in S]: X` is related to `[Q in T]: Y` if `T` is related to `S`
-    /// and `X`, with `Q` substituted for `P`, is related to `Y`.
-    pub(super) fn mapped_type_related_to<const REPORT: bool>(
+    /// `modifiersRelated` in `mappedTypeRelatedTo`
+    fn mapped_type_modifiers_related(
         &mut self,
-        r: &mut Relater,
+        relation: Relation,
         source: TypeId,
         target: TypeId,
-    ) -> Ternary {
-        let modifiers_related = match r.relation {
+    ) -> bool {
+        match relation {
             Relation::Comparable => true,
             Relation::Identity => {
                 let modifiers = |c: &Self, t: TypeId| {
@@ -5422,8 +5505,18 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {
                 self.combined_mapped_optionality(source) <= self.combined_mapped_optionality(target)
             }
-        };
-        if !modifiers_related {
+        }
+    }
+
+    /// `mappedTypeRelatedTo`: `[P in S]: X` is related to `[Q in T]: Y` if `T` is related to `S`
+    /// and `X`, with `Q` substituted for `P`, is related to `Y`.
+    pub(super) fn mapped_type_related_to<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        target: TypeId,
+    ) -> Ternary {
+        if !self.mapped_type_modifiers_related(r.relation, source, target) {
             return Ternary::FALSE;
         }
         let target_keys = self.mapped_keys(target);
@@ -5659,16 +5752,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     return Ternary::FALSE;
                 }
-                let is_rest = |f: &ElemFlags| f.contains(ElemFlags::REST);
-                let target_start_count = target_flags
-                    .iter()
-                    .position(is_rest)
-                    .unwrap_or(target_arity);
-                let target_end_count = target_flags
-                    .iter()
-                    .rev()
-                    .position(is_rest)
-                    .unwrap_or(target_arity);
+                let target_start_count = non_rest_start_element_count(target_flags, target_arity);
+                let target_end_count = non_rest_end_element_count(target_flags, target_arity);
                 let mut can_exclude_discriminants = !excluded.is_empty();
                 for source_position in 0..source_arity {
                     let source_flag = source_flags[source_position];
@@ -6252,9 +6337,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let related = self.compare_signatures_identical(
                     s,
                     t,
-                    false,
-                    false,
-                    false,
+                    PartialMatch::No,
+                    IgnoreThisTypes::No,
+                    IgnoreReturnTypes::No,
                     &mut is_related_to,
                 );
                 if !related.holds() {
@@ -6278,17 +6363,13 @@ impl<'p, 's> Checker<'p, 's> {
             if let (Some(s), Some(t)) = (
                 self.constructor_accessibility(source_sigs[0]),
                 self.constructor_accessibility(target_sigs[0]),
-            ) {
-                let compatible = t == Flags::PRIVATE
-                    || t == Flags::PROTECTED && s != Flags::PRIVATE
-                    || t != Flags::PROTECTED && s.is_empty();
-                if !compatible {
-                    if REPORT {
-                        let args = [s, t].map(|flags| Arg::Bytes(visibility_to_string(flags)));
-                        self.report_error(r, 2672, &args);
-                    }
-                    return Ternary::FALSE;
+            ) && !are_accessibilities_compatible(s, t)
+            {
+                if REPORT {
+                    let args = [s, t].map(|flags| Arg::Bytes(visibility_to_string(flags)));
+                    self.report_error(r, 2672, &args);
                 }
+                return Ternary::FALSE;
             }
         }
         let mut result = Ternary::TRUE;
@@ -6772,10 +6853,9 @@ impl<'p, 's> Checker<'p, 's> {
                         self.non_nullable(source_type),
                         self.non_nullable(target_type),
                     );
-                    if let (Some(a), Some(b)) = (
-                        self.single_call_signature(a, false),
-                        self.single_call_signature(b, false),
-                    ) && self.sig_predicate(a).is_none()
+                    if let (Some(a), Some(b)) =
+                        (self.single_call_signature(a), self.single_call_signature(b))
+                        && self.sig_predicate(a).is_none()
                         && self.sig_predicate(b).is_none()
                     {
                         callbacks = Some((a, b));
@@ -7530,6 +7610,27 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         }
     }
+}
+
+/// The test of `constructorVisibilitiesAreCompatible`. `source`, `target`: `sourceAccessibility`,
+/// `targetAccessibility`.
+fn are_accessibilities_compatible(source: Flags, target: Flags) -> bool {
+    target == Flags::PRIVATE
+        || target == Flags::PROTECTED && source != Flags::PRIVATE
+        || target != Flags::PROTECTED && source.is_empty()
+}
+
+/// `getStartElementCount(t, ElementFlagsNonRest)`. `flags`: those of the elements of `t`. `arity`:
+/// the result if none of them is a rest element.
+fn non_rest_start_element_count(flags: &[ElemFlags], arity: usize) -> usize {
+    let is_rest = |f: &ElemFlags| f.contains(ElemFlags::REST);
+    flags.iter().position(is_rest).unwrap_or(arity)
+}
+
+/// `getEndElementCount(t, ElementFlagsNonRest)`. See `non_rest_start_element_count`.
+fn non_rest_end_element_count(flags: &[ElemFlags], arity: usize) -> usize {
+    let is_rest = |f: &ElemFlags| f.contains(ElemFlags::REST);
+    flags.iter().rev().position(is_rest).unwrap_or(arity)
 }
 
 /// `forEachProperty`: a property of an intersection represents the properties of the constituents,

@@ -95,19 +95,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// The last parsed type, a single token, turned out to be the parameter name of a type
     /// predicate. Removes its node, which is the most recent one.
     pub(crate) fn take_back_single_token_type(&mut self) {
-        let syntax = self.type_syntax_mut();
-        let file = &mut syntax.b.file;
-        if syntax.last_type.is_some() && syntax.last_type.idx() + 1 == file.types.len() {
-            if let Some(TypeNode {
-                kind: TypeNodeKind::Ref { name, .. },
-                ..
-            }) = file.types.pop()
-                && name.range().end == file.names.len()
-            {
-                file.names.truncate(name.start as usize);
-            }
-        }
-        syntax.last_type = TypeId::NONE;
+        self.type_syntax_mut().take_back_single_token_type();
     }
 
     /// Emits `param is T` or `asserts param is T`, where `T` is the last parsed type.
@@ -236,14 +224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// Pops the list that starts at `from`. `None` if any item is missing.
     fn finish_type_list(&mut self, from: usize) -> Option<Types> {
-        let TypeSyntax { b, type_stack, .. } = self.type_syntax_mut();
-        let list = if type_stack[from..].iter().any(|item| item.is_none()) {
-            None
-        } else {
-            Some(b.add_id_list(&type_stack[from..]))
-        };
-        type_stack.truncate(from);
-        list
+        self.type_syntax_mut().finish_type_list(from)
     }
 
     /// Closes the pending intersection, if any. `has_leading_operator`: an `&` came before its first member, which makes an
@@ -334,52 +315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     fn append_name(&mut self, name: Name) {
-        let reference = self.last_type();
-        if reference.is_none() {
-            return;
-        }
-        let b = &mut self.type_syntax_mut().b;
-        let TypeNode { kind, pos, .. } = b.file[reference];
-        let (text, place) = (b.atom(&name.text), name.loc.start.max(0) as u32);
-        let before = match kind {
-            TypeNodeKind::Import { spec, name, .. } if spec.is_none() => name,
-            TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. }
-                if args.is_empty() =>
-            {
-                name
-            }
-            // `void.x`, `null.x` and `this.x` are not qualified names. Ignore the suffix.
-            TypeNodeKind::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => return,
-            // `string.x` is a qualified name whose first part is spelled like a keyword.
-            TypeNodeKind::Keyword(keyword) => {
-                let first = b.atoms.intern(keyword.text());
-                b.file.entity_name([(first, pos)].into_iter())
-            }
-            _ => return self.clear_last_type(),
-        };
-        let name = b.file.append_to_entity_name(before, text, place);
-        b.file[reference].end = 0;
-        b.file[reference].kind = match kind {
-            TypeNodeKind::Import {
-                spec,
-                args,
-                is_typeof,
-                mode,
-                attributes,
-                ..
-            } => TypeNodeKind::Import {
-                spec,
-                name,
-                args,
-                is_typeof,
-                mode,
-                attributes,
-            },
-            _ => TypeNodeKind::Ref {
-                name,
-                args: Types::EMPTY,
-            },
-        };
+        self.type_syntax_mut().append_name(name);
     }
 
     /// Takes the last parsed type at a point where type arguments may follow. Its node, the most
@@ -398,27 +334,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// Attaches the type arguments that were just parsed, if any, to `reference`.
     pub(crate) fn attach_type_args(&mut self, reference: Option<TypeNode>, has_arguments: bool) {
-        let syntax = self.type_syntax_mut();
-        let Some(mut node) = reference else {
-            if has_arguments {
-                syntax.last_type = TypeId::NONE;
-            }
-            return;
-        };
-        syntax.last_type = TypeId::NONE;
-        if has_arguments {
-            node.end = 0;
-            match (&mut node.kind, syntax.last_type_args.take()) {
-                // The type arguments of `import(T)` are never checked.
-                (TypeNodeKind::Import { spec, .. }, Some(_)) if spec.is_none() => {}
-                (
-                    TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. },
-                    Some(actual),
-                ) => *args = actual,
-                _ => return,
-            }
-        }
-        syntax.last_type = syntax.b.file.add_type_node(node);
+        self.type_syntax_mut()
+            .attach_type_args(reference, has_arguments);
     }
 
     /// Called on each name in `typeof a.b.c`.
@@ -439,33 +356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// Finishes `typeof a.b.c<Args>`. The names are on the stack starting at `names_base`.
     pub(crate) fn emit_typeof_type(&mut self, names_base: usize, has_arguments: bool, pos: u32) {
-        let TypeSyntax {
-            name_stack,
-            last_type_args,
-            ..
-        } = self.type_syntax_mut();
-        // `typeof a.`: the part before the last dot is still resolved (`parseRightSideOfDot`).
-        // `typeof` without a name has a single, missing name (`parseEntityName`). Any other missing
-        // name makes the type unusable.
-        let required = (name_stack.len() - names_base).saturating_sub(1);
-        let is_complete = name_stack[names_base..]
-            .iter()
-            .take(required)
-            .all(|name| !name.text.is_empty());
-        let names: smallvec::SmallVec<[Name; 4]> = name_stack.drain(names_base..).collect();
-        if !is_complete {
-            return self.clear_last_type();
-        }
-        let args = match (has_arguments, last_type_args.take()) {
-            (false, _) => Types::EMPTY,
-            (true, Some(args)) => args,
-            (true, None) => return self.clear_last_type(),
-        };
-        let data = self
-            .type_syntax_mut()
-            .b
-            .add_typeof(&names, args, has_arguments);
-        self.emit_type(data, pos);
+        self.type_syntax_mut()
+            .emit_typeof_type(names_base, has_arguments, pos);
     }
 
     // ───────────────────────────── other types ─────────────────────────────
@@ -483,44 +375,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// the position of `assert` if it is used instead of `with`. `None` if the attributes are not
     /// in that form.
     pub(crate) fn import_type_attributes(&mut self) -> Option<ImportTypeAttributes> {
-        let syntax = self.type_syntax_mut();
-        let (file, atoms) = (&syntax.b.file, syntax.b.atoms);
-        let only_property = |members: Members| {
-            let &[member] = &file.members[members.range()] else {
-                return None;
-            };
-            match (member.kind, member.key) {
-                (MemberKind::Property, bun_sema::hir::PropKey::Name(name)) => {
-                    Some((atoms.bytes(name), member.ty, loc(member.name_pos)))
-                }
-                _ => None,
-            }
-        };
-        let Some(ObjectTypeBody::Members(outer)) = syntax.last_object_type else {
-            return None;
-        };
-        let (keyword, attributes, keyword_loc) = only_property(outer)?;
-        let TypeNodeKind::Object(attributes) = file.types.get(attributes.idx())?.kind else {
-            return None;
-        };
-        if keyword != b"with" && keyword != b"assert" {
-            return None;
-        }
-        let mode = match only_property(attributes) {
-            Some((b"resolution-mode", value, _)) => {
-                match file.types.get(value.idx()).map(|value| value.kind) {
-                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"import" => {
-                        ResolutionMode::Import
-                    }
-                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"require" => {
-                        ResolutionMode::Require
-                    }
-                    _ => ResolutionMode::None,
-                }
-            }
-            _ => ResolutionMode::None,
-        };
-        Some((mode, (keyword == b"assert").then_some(keyword_loc), None))
+        self.type_syntax_mut().import_type_attributes()
     }
 
     /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a
@@ -591,34 +446,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `parseTupleElementType`: if the last parsed type is a postfix `T?`, removes that node and returns `T`.
     pub(crate) fn optional_tuple_element_type(&mut self) -> Option<TypeId> {
-        let syntax = self.type_syntax_mut();
-        let types = &mut syntax.b.file.types;
-        match types.get(syntax.last_type.idx())?.kind {
-            TypeNodeKind::JSDoc {
-                ty,
-                kind: JSDocTypeKind::Nullable,
-                is_postfix: true,
-            } => {
-                types.truncate(syntax.last_type.idx());
-                Some(ty)
-            }
-            _ => None,
-        }
+        self.type_syntax_mut().optional_tuple_element_type()
     }
 
-    /// Wraps the last parsed type in JSDoc's `?` (`is_nullable`) or `!`, placed after it
-    /// (`is_postfix`) or before it. The result starts at `pos`.
-    pub(crate) fn emit_jsdoc_type(&mut self, is_nullable: bool, is_postfix: bool, pos: u32) {
+    /// Wraps the last parsed type in JSDoc's `?` (`Nullable`) or `!` (`NonNullable`), placed after
+    /// it or before it. The result starts at `pos`.
+    pub(crate) fn emit_jsdoc_type(&mut self, kind: JSDocTypeKind, postfix: Postfix, pos: u32) {
         let ty = self.last_type();
         if ty.is_some() {
-            let kind = match is_nullable {
-                true => JSDocTypeKind::Nullable,
-                false => JSDocTypeKind::NonNullable,
-            };
             let kind = TypeNodeKind::JSDoc {
                 ty,
                 kind,
-                is_postfix,
+                is_postfix: postfix == Postfix::Yes,
             };
             self.emit_type(kind, pos);
         }
@@ -858,6 +697,259 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
+    /// Adds a finished member to the object type being built.
+    pub(crate) fn finish_type_member(
+        &mut self,
+        member: &TypeMemberParts,
+        kept: &mut ObjectTypeBuilder,
+    ) {
+        self.type_syntax_mut().finish_type_member(member, kept);
+    }
+
+    /// Attaches the body that follows the accessor added last.
+    pub(crate) fn add_accessor_body(
+        &mut self,
+        kept: &ObjectTypeBuilder,
+        body: &bun_ast::G::FnBody,
+    ) {
+        if let Some(accessor) = kept
+            .members
+            .last()
+            .filter(|accessor| kept.is_complete && accessor.signature.is_some())
+        {
+            let end = self.lexer.full_start();
+            self.type_syntax_mut().b.add_signature_body(
+                accessor.signature,
+                FunctionBody {
+                    loc: body.loc,
+                    end,
+                    stmts: body.stmts,
+                },
+            );
+        }
+    }
+
+    /// Builds one member. `Err` is the body of a mapped type. `None` means unusable.
+    pub(crate) fn build_type_member(
+        &mut self,
+        member: &TypeMemberParts,
+    ) -> Option<Result<Member, MappedType>> {
+        self.type_syntax_mut().build_type_member(member)
+    }
+
+    /// Finishes an object type.
+    pub(crate) fn finish_object_type(&mut self, kept: ObjectTypeBuilder) {
+        let is_in_class = self.allow_private_identifiers;
+        self.type_syntax_mut().finish_object_type(kept, is_in_class);
+    }
+}
+
+impl TypeSyntax<'_> {
+    /// `typeHasArrowFunctionBlockingParseError`, for the last parsed type.
+    pub(crate) fn last_type_blocks_arrow_function(&self) -> bool {
+        let file = &self.b.file;
+        let mut ty = self.last_type;
+        while ty.is_some() {
+            match file[ty].kind {
+                TypeNodeKind::Ref { name, .. }
+                    if file[name.at(0)].text == bun_sema::atom::known::empty =>
+                {
+                    return true;
+                }
+                TypeNodeKind::Fn(signature) => ty = file[signature].ret,
+                _ => break,
+            }
+        }
+        false
+    }
+
+    /// Removes the node of the last parsed type, which is the most recent one, and its name.
+    fn take_back_single_token_type(&mut self) {
+        let file = &mut self.b.file;
+        if self.last_type.is_some() && self.last_type.idx() + 1 == file.types.len() {
+            if let Some(TypeNode {
+                kind: TypeNodeKind::Ref { name, .. },
+                ..
+            }) = file.types.pop()
+                && name.range().end == file.names.len()
+            {
+                file.names.truncate(name.start as usize);
+            }
+        }
+        self.last_type = TypeId::NONE;
+    }
+
+    /// Pops the list that starts at `from` in `type_stack`. `None` if any item is missing.
+    fn finish_type_list(&mut self, from: usize) -> Option<Types> {
+        let TypeSyntax { b, type_stack, .. } = self;
+        let list = if type_stack[from..].iter().any(|item| item.is_none()) {
+            None
+        } else {
+            Some(b.add_id_list(&type_stack[from..]))
+        };
+        type_stack.truncate(from);
+        list
+    }
+
+    /// Extends the last parsed type reference with `name`, the name after a `.`.
+    fn append_name(&mut self, name: Name) {
+        let reference = self.last_type;
+        if reference.is_none() {
+            return;
+        }
+        let b = &mut self.b;
+        let TypeNode { kind, pos, .. } = b.file[reference];
+        let (text, place) = (b.atom(&name.text), name.loc.start.max(0) as u32);
+        let before = match kind {
+            TypeNodeKind::Import { spec, name, .. } if spec.is_none() => name,
+            TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. }
+                if args.is_empty() =>
+            {
+                name
+            }
+            // `void.x`, `null.x` and `this.x` are not qualified names. Ignore the suffix.
+            TypeNodeKind::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => return,
+            // `string.x` is a qualified name whose first part is spelled like a keyword.
+            TypeNodeKind::Keyword(keyword) => {
+                let first = b.atoms.intern(keyword.text());
+                b.file.entity_name([(first, pos)].into_iter())
+            }
+            _ => {
+                self.last_type = TypeId::NONE;
+                return;
+            }
+        };
+        let name = b.file.append_to_entity_name(before, text, place);
+        b.file[reference].end = 0;
+        b.file[reference].kind = match kind {
+            TypeNodeKind::Import {
+                spec,
+                args,
+                is_typeof,
+                mode,
+                attributes,
+                ..
+            } => TypeNodeKind::Import {
+                spec,
+                name,
+                args,
+                is_typeof,
+                mode,
+                attributes,
+            },
+            _ => TypeNodeKind::Ref {
+                name,
+                args: Types::EMPTY,
+            },
+        };
+    }
+
+    /// Adds `reference` again, with the type arguments that were just parsed, if any.
+    fn attach_type_args(&mut self, reference: Option<TypeNode>, has_arguments: bool) {
+        let Some(mut node) = reference else {
+            if has_arguments {
+                self.last_type = TypeId::NONE;
+            }
+            return;
+        };
+        self.last_type = TypeId::NONE;
+        if has_arguments {
+            node.end = 0;
+            match (&mut node.kind, self.last_type_args.take()) {
+                // The type arguments of `import(T)` are never checked.
+                (TypeNodeKind::Import { spec, .. }, Some(_)) if spec.is_none() => {}
+                (
+                    TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. },
+                    Some(actual),
+                ) => *args = actual,
+                _ => return,
+            }
+        }
+        self.last_type = self.b.file.add_type_node(node);
+    }
+
+    /// Emits `typeof a.b.c<Args>` at `pos`. The names are in `name_stack` starting at `names_base`.
+    fn emit_typeof_type(&mut self, names_base: usize, has_arguments: bool, pos: u32) {
+        let name_stack = &mut self.name_stack;
+        // `typeof a.`: the part before the last dot is still resolved (`parseRightSideOfDot`).
+        // `typeof` without a name has a single, missing name (`parseEntityName`). Any other missing
+        // name makes the type unusable.
+        let required = (name_stack.len() - names_base).saturating_sub(1);
+        let is_complete = name_stack[names_base..]
+            .iter()
+            .take(required)
+            .all(|name| !name.text.is_empty());
+        let names: smallvec::SmallVec<[Name; 4]> = name_stack.drain(names_base..).collect();
+        self.last_type = TypeId::NONE;
+        if !is_complete {
+            return;
+        }
+        let args = match (has_arguments, self.last_type_args.take()) {
+            (false, _) => Types::EMPTY,
+            (true, Some(args)) => args,
+            (true, None) => return,
+        };
+        let data = self.b.add_typeof(&names, args, has_arguments);
+        self.last_type = self.b.file.ty(data, pos, 0);
+    }
+
+    /// `GetResolutionModeOverride`, from the nodes of the object type parsed last.
+    fn import_type_attributes(&self) -> Option<ImportTypeAttributes> {
+        let (file, atoms) = (&self.b.file, self.b.atoms);
+        let only_property = |members: Members| {
+            let &[member] = &file.members[members.range()] else {
+                return None;
+            };
+            match (member.kind, member.key) {
+                (MemberKind::Property, bun_sema::hir::PropKey::Name(name)) => {
+                    Some((atoms.bytes(name), member.ty, loc(member.name_pos)))
+                }
+                _ => None,
+            }
+        };
+        let Some(ObjectTypeBody::Members(outer)) = self.last_object_type else {
+            return None;
+        };
+        let (keyword, attributes, keyword_loc) = only_property(outer)?;
+        let TypeNodeKind::Object(attributes) = file.types.get(attributes.idx())?.kind else {
+            return None;
+        };
+        if keyword != b"with" && keyword != b"assert" {
+            return None;
+        }
+        let mode = match only_property(attributes) {
+            Some((b"resolution-mode", value, _)) => {
+                match file.types.get(value.idx()).map(|value| value.kind) {
+                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"import" => {
+                        ResolutionMode::Import
+                    }
+                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"require" => {
+                        ResolutionMode::Require
+                    }
+                    _ => ResolutionMode::None,
+                }
+            }
+            _ => ResolutionMode::None,
+        };
+        Some((mode, (keyword == b"assert").then_some(keyword_loc), None))
+    }
+
+    /// If the last parsed type is a postfix `T?`, removes that node and returns `T`.
+    fn optional_tuple_element_type(&mut self) -> Option<TypeId> {
+        let types = &mut self.b.file.types;
+        match types.get(self.last_type.idx())?.kind {
+            TypeNodeKind::JSDoc {
+                ty,
+                kind: JSDocTypeKind::Nullable,
+                is_postfix: true,
+            } => {
+                types.truncate(self.last_type.idx());
+                Some(ty)
+            }
+            _ => None,
+        }
+    }
+
     /// Emits the signature of a method, accessor, call signature or construct signature.
     fn emit_signature(
         &mut self,
@@ -872,7 +964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if member.ty.is_some() && return_type.is_none() {
             return None;
         }
-        Some(self.type_syntax_mut().b.add_signature(Signature {
+        Some(self.b.add_signature(Signature {
             kind,
             flags,
             type_params,
@@ -884,23 +976,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }))
     }
 
-    /// `finishNode` for the most recently added member, unless it is already finished. `end`:
-    /// `TokenFullStart` of the next token.
-    /// `parseTypeMemberSemicolon` is part of the member.
-    pub(crate) fn end_type_member(&self, kept: &mut ObjectTypeBuilder, end: Loc) {
-        if let Some(member) = kept.members.last_mut()
-            && member.end == Loc::EMPTY
-        {
-            member.end = end;
-        }
-    }
-
-    /// Adds a finished member to the object type being built.
-    pub(crate) fn finish_type_member(
-        &mut self,
-        member: &TypeMemberParts,
-        kept: &mut ObjectTypeBuilder,
-    ) {
+    /// Adds `member` to `kept`, the object type being built.
+    fn finish_type_member(&mut self, member: &TypeMemberParts, kept: &mut ObjectTypeBuilder) {
         // The skipper reads "x \n y: T" as one run of words. A word that is not a modifier is a property of its own, and a line break
         // ends it.
         if let Some(name_index) = member.first_bare_property() {
@@ -923,7 +1000,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 Some(next) => (next.pos, next.full_start),
                 None => (member.bracket_pos, member.bracket_full_start),
             };
-            self.end_type_member(kept, loc(full_start));
+            kept.end_member(loc(full_start));
             let rest = TypeMemberParts {
                 start,
                 full_start,
@@ -958,29 +1035,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// Attaches the body that follows the accessor added last.
-    pub(crate) fn add_accessor_body(
-        &mut self,
-        kept: &ObjectTypeBuilder,
-        body: &bun_ast::G::FnBody,
-    ) {
-        if let Some(accessor) = kept
-            .members
-            .last()
-            .filter(|accessor| kept.is_complete && accessor.signature.is_some())
-        {
-            let end = self.lexer.full_start();
-            self.type_syntax_mut().b.add_signature_body(
-                accessor.signature,
-                FunctionBody {
-                    loc: body.loc,
-                    end,
-                    stmts: body.stmts,
-                },
-            );
-        }
-    }
-
     /// Turns the words before a member's name into modifiers. `None` if one of them is not a modifier (`parseModifiers`): only `static`
     /// may be followed by a line break, and a second `static` is a name.
     fn member_modifiers(
@@ -1007,11 +1061,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 decorator: None,
             });
         }
-        Some((flags, self.type_syntax_mut().b.ts.add_modifiers(&modifiers)))
+        Some((flags, self.b.ts.add_modifiers(&modifiers)))
     }
 
     /// Builds one member. `Err` is the body of a mapped type. `None` means unusable.
-    pub(crate) fn build_type_member(
+    fn build_type_member(
         &mut self,
         member: &TypeMemberParts,
     ) -> Option<Result<Member, MappedType>> {
@@ -1045,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             created.flags |= flags;
             created.modifiers = modifiers;
             created.kind = MemberKind::IndexSignature;
-            created.signature = self.type_syntax_mut().b.add_signature(Signature {
+            created.signature = self.b.add_signature(Signature {
                 kind: SignatureKind::IndexSignature,
                 flags: created.flags,
                 type_params: TypeParams::EMPTY,
@@ -1097,7 +1151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         flags: Flags::empty(),
                         modifiers: Span::EMPTY,
                     };
-                    let param = self.type_syntax_mut().b.add_type_param(param);
+                    let param = self.b.add_type_param(param);
                     return Some(Err(MappedType {
                         param,
                         name_type: name_type?,
@@ -1120,7 +1174,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                     created.flags |= flags;
                     created.modifiers = modifiers;
-                    let ast = &mut self.type_syntax_mut().b;
+                    let ast = &mut self.b;
                     let name_end = Loc {
                         start: name_loc.start + name.len() as i32,
                     };
@@ -1237,12 +1291,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Some(Ok(created))
     }
 
-    /// Finishes an object type.
-    pub(crate) fn finish_object_type(&mut self, kept: ObjectTypeBuilder) {
-        let is_in_class = self.allow_private_identifiers;
-        let syntax = self.type_syntax_mut();
-        syntax.b.classes_around = u32::from(is_in_class);
-        syntax.last_object_type = match kept {
+    /// Stores `kept` in `last_object_type`. `is_in_class`: the object type is inside a class.
+    fn finish_object_type(&mut self, kept: ObjectTypeBuilder, is_in_class: bool) {
+        self.b.classes_around = u32::from(is_in_class);
+        self.last_object_type = match kept {
             ObjectTypeBuilder {
                 is_complete: false, ..
             } => None,
@@ -1251,15 +1303,108 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 members,
                 ..
             } => {
-                mapped.members = syntax.b.add_members(&members);
+                mapped.members = self.b.add_members(&members);
                 Some(ObjectTypeBody::Mapped(mapped))
             }
             ObjectTypeBuilder { members, .. } => {
-                Some(ObjectTypeBody::Members(syntax.b.add_members(&members)))
+                Some(ObjectTypeBody::Members(self.b.add_members(&members)))
             }
         };
     }
 
+    /// Emits the statement `data`, whose keyword is at `keyword_loc`, with the modifiers of the current statement.
+    pub(super) fn emit_statement(&mut self, data: StatementData, keyword_loc: Loc) {
+        let TypeSyntax {
+            b,
+            statement_modifiers,
+            statement_modifiers_base,
+            last_statement,
+            ..
+        } = self;
+        let modifiers =
+            b.ts.add_modifiers(&statement_modifiers[*statement_modifiers_base..]);
+        *last_statement = b.ts.add_statement(Statement {
+            data,
+            modifiers,
+            loc: keyword_loc,
+        });
+    }
+
+    /// Emits an interface whose body is the object type parsed last.
+    fn emit_interface(
+        &mut self,
+        name: Name,
+        type_params: Option<TypeParams>,
+        extends: &[TypeId],
+        other_heritage: &[TypeId],
+        heritage_errors: [Option<(Loc, u32)>; 2],
+        keyword_loc: Loc,
+    ) {
+        let members = self.last_object_type.take();
+        let (Some(type_params), Some(ObjectTypeBody::Members(members)), true) =
+            (type_params, members, extends.iter().all(|ty| ty.is_some()))
+        else {
+            return;
+        };
+        let ast = &mut self.b;
+        let others: smallvec::SmallVec<[TypeId; 4]> = other_heritage
+            .iter()
+            .copied()
+            .filter(|ty| ty.is_some())
+            .collect();
+        for &ty in extends.iter().chain(&others) {
+            ast.heritage_type(ty);
+        }
+        let extends = ast.add_id_list(extends);
+        let other_heritage = ast.add_id_list(&others);
+        let interface = ast.ts.add_interface(Interface {
+            name,
+            type_params,
+            extends,
+            other_heritage,
+            heritage_errors,
+            members,
+        });
+        self.emit_statement(StatementData::Interface(interface), keyword_loc);
+    }
+
+    /// Emits an alias of the last parsed type, which starts at `type_loc`.
+    fn emit_type_alias(
+        &mut self,
+        name: Name,
+        type_params: Option<TypeParams>,
+        type_loc: Loc,
+        keyword_loc: Loc,
+    ) {
+        let ty = self.last_type;
+        let (Some(type_params), true) = (type_params, ty.is_some()) else {
+            return;
+        };
+        // `parseTypeAliasDeclaration`: `intrinsic` directly after the `=`, and not before a dot, is a keyword.
+        let file = &mut self.b.file;
+        if let TypeNode {
+            kind: TypeNodeKind::Ref { name, args },
+            pos,
+            ..
+        } = file[ty]
+            && pos == type_loc.start as u32
+            && args.is_empty()
+            && file.texts(name).eq([bun_sema::atom::known::intrinsic])
+        {
+            file[ty].kind = TypeNodeKind::Keyword(Keyword::Intrinsic);
+        }
+        let alias = self.b.ts.add_type_alias(TypeAlias {
+            name,
+            type_params,
+            ty,
+        });
+        self.emit_statement(StatementData::TypeAlias(alias), keyword_loc);
+    }
+}
+
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     // ───────────────────────────── statements ─────────────────────────────
 
     /// Called before each statement. Pass the result to `end_statement`.
@@ -1377,20 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     pub(super) fn emit_statement(&mut self, data: StatementData, keyword_loc: Loc) {
-        let TypeSyntax {
-            b,
-            statement_modifiers,
-            statement_modifiers_base,
-            last_statement,
-            ..
-        } = self.type_syntax_mut();
-        let modifiers =
-            b.ts.add_modifiers(&statement_modifiers[*statement_modifiers_base..]);
-        *last_statement = b.ts.add_statement(Statement {
-            data,
-            modifiers,
-            loc: keyword_loc,
-        });
+        self.type_syntax_mut().emit_statement(data, keyword_loc);
     }
 
     /// `type_params` and `members` are `None` if unusable, in which case nothing is emitted.
@@ -1403,32 +1535,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         heritage_errors: [Option<(Loc, u32)>; 2],
         keyword_loc: Loc,
     ) {
-        let members = self.type_syntax_mut().last_object_type.take();
-        let (Some(type_params), Some(ObjectTypeBody::Members(members)), true) =
-            (type_params, members, extends.iter().all(|ty| ty.is_some()))
-        else {
-            return;
-        };
-        let ast = &mut self.type_syntax_mut().b;
-        let others: smallvec::SmallVec<[TypeId; 4]> = other_heritage
-            .iter()
-            .copied()
-            .filter(|ty| ty.is_some())
-            .collect();
-        for &ty in extends.iter().chain(&others) {
-            ast.heritage_type(ty);
-        }
-        let extends = ast.add_id_list(extends);
-        let other_heritage = ast.add_id_list(&others);
-        let interface = ast.ts.add_interface(Interface {
+        self.type_syntax_mut().emit_interface(
             name,
             type_params,
             extends,
             other_heritage,
             heritage_errors,
-            members,
-        });
-        self.emit_statement(StatementData::Interface(interface), keyword_loc);
+            keyword_loc,
+        );
     }
 
     /// The aliased type is the last parsed type, which starts at `type_loc`.
@@ -1439,29 +1553,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         type_loc: Loc,
         keyword_loc: Loc,
     ) {
-        let ty = self.last_type();
-        let (Some(type_params), true) = (type_params, ty.is_some()) else {
-            return;
-        };
-        // `parseTypeAliasDeclaration`: `intrinsic` directly after the `=`, and not before a dot, is a keyword.
-        let file = &mut self.type_syntax_mut().b.file;
-        if let TypeNode {
-            kind: TypeNodeKind::Ref { name, args },
-            pos,
-            ..
-        } = file[ty]
-            && pos == type_loc.start as u32
-            && args.is_empty()
-            && file.texts(name).eq([bun_sema::atom::known::intrinsic])
-        {
-            file[ty].kind = TypeNodeKind::Keyword(Keyword::Intrinsic);
-        }
-        let alias = self.type_syntax_mut().b.ts.add_type_alias(TypeAlias {
-            name,
-            type_params,
-            ty,
-        });
-        self.emit_statement(StatementData::TypeAlias(alias), keyword_loc);
+        self.type_syntax_mut()
+            .emit_type_alias(name, type_params, type_loc, keyword_loc);
     }
 
     /// The type parameters that `skip_type_script_type_parameters` just parsed. `None` if unusable.
@@ -1488,6 +1581,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             None => self.clear_last_type(),
         }
     }
+}
+
+/// Whether the `?` or `!` of a JSDoc type comes after the type.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Postfix {
+    No,
+    Yes,
 }
 
 /// Of `import("m", { with: { .. } })`: the resolution mode, the position of `assert` if it is used
@@ -1650,6 +1750,17 @@ impl ObjectTypeBuilder {
     /// No member has been added yet.
     pub(crate) fn is_empty(&self) -> bool {
         self.members.is_empty() && self.mapped.is_none() && self.is_complete
+    }
+
+    /// `finishNode` for the most recently added member, unless it is already finished. `end`:
+    /// `TokenFullStart` of the next token.
+    /// `parseTypeMemberSemicolon` is part of the member.
+    pub(crate) fn end_member(&mut self, end: Loc) {
+        if let Some(member) = self.members.last_mut()
+            && member.end == Loc::EMPTY
+        {
+            member.end = end;
+        }
     }
 }
 

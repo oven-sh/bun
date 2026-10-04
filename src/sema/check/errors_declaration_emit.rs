@@ -90,10 +90,18 @@ enum Table {
     Globals,
 }
 
+/// `ignoreQualification` and `isLocalNameLookup` of `getAccessibleSymbolChainFromSymbolTable`
+#[derive(Copy, Clone)]
+struct TableLookup {
+    ignores_qualification: bool,
+    is_local_name_lookup: bool,
+}
+
 /// `printer.SymbolAccessibility`
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 enum Accessibility {
-    Accessible,
+    /// With `AliasesToMakeVisible`.
+    Accessible(Vec<(FileId, StmtId)>),
     NotAccessible,
     CannotBeNamed,
     NotResolved,
@@ -102,8 +110,6 @@ enum Accessibility {
 /// `printer.SymbolAccessibilityResult`
 pub(super) struct Access {
     accessibility: Accessibility,
-    /// `AliasesToMakeVisible`
-    pub(super) aliases: Vec<(FileId, StmtId)>,
     symbol_name: Vec<u8>,
     module_name: Vec<u8>,
     /// `ErrorNode`: its span.
@@ -113,8 +119,7 @@ pub(super) struct Access {
 impl Access {
     fn accessible(aliases: Vec<(FileId, StmtId)>) -> Access {
         Access {
-            accessibility: Accessibility::Accessible,
-            aliases,
+            accessibility: Accessibility::Accessible(aliases),
             symbol_name: Vec::new(),
             module_name: Vec::new(),
             error_node: None,
@@ -122,7 +127,7 @@ impl Access {
     }
 
     pub(super) fn is_accessible(&self) -> bool {
-        self.accessibility == Accessibility::Accessible
+        matches!(self.accessibility, Accessibility::Accessible(_))
     }
 }
 
@@ -400,6 +405,26 @@ pub(super) struct Element {
     pub(super) text: Vec<u8>,
 }
 
+/// `ListFormat`, as far as `emitListItems` depends on it.
+#[derive(Copy, Clone)]
+pub(super) struct ListFormat {
+    /// `LFMultiLine | LFIndented`, else `LFSingleLine | LFSpaceBetweenSiblings`.
+    pub(super) is_multi_line: bool,
+    /// `LFAllowTrailingComma`, for a list that has one.
+    pub(super) has_trailing_comma: bool,
+}
+
+impl ListFormat {
+    pub(super) const SINGLE_LINE: ListFormat = ListFormat {
+        is_multi_line: false,
+        has_trailing_comma: false,
+    };
+    pub(super) const MULTI_LINE: ListFormat = ListFormat {
+        is_multi_line: true,
+        has_trailing_comma: false,
+    };
+}
+
 /// The subset of `EmitTextWriter` that a list with comments needs. `source`: the source text of the
 /// file that contains the comments.
 pub(super) struct Writer<'a> {
@@ -505,18 +530,19 @@ impl<'a> Writer<'a> {
     }
 
     /// `emitListItems`, between the opening and the closing token of the list. `delimiter`:
-    /// `writeDelimiter`, `,` or ` |` or ` &`.
-    /// `is_multi_line`: `LFMultiLine | LFIndented`, else `LFSingleLine | LFSpaceBetweenSiblings`.
-    /// `has_trailing_comma`: and `LFAllowTrailingComma`. `parent_end`: `End()` of the node that
-    /// contains the list.
+    /// `writeDelimiter`, `,` or ` |` or ` &`. `parent_end`: `End()` of the node that contains the
+    /// list.
     pub(super) fn emit_list_items(
         &mut self,
         elements: &[Element],
         delimiter: &[u8],
-        is_multi_line: bool,
-        has_trailing_comma: bool,
+        format: ListFormat,
         parent_end: usize,
     ) {
+        let ListFormat {
+            is_multi_line,
+            has_trailing_comma,
+        } = format;
         let mut should_emit_intervening_comments = !is_multi_line;
         if is_multi_line {
             self.write_line();
@@ -652,6 +678,41 @@ fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
     text
 }
 
+/// What `ensureModifierFlags` reads of the node whose modifiers it is given.
+#[derive(Copy, Clone)]
+enum ModifiedNode {
+    /// `parentIsFile`
+    InFile {
+        /// `isAlwaysType`: it is an interface.
+        is_always_type: bool,
+    },
+    Nested,
+}
+
+impl ModifiedNode {
+    /// A node that is not an interface.
+    fn new(parent_is_file: bool) -> Self {
+        match parent_is_file {
+            true => ModifiedNode::InFile {
+                is_always_type: false,
+            },
+            false => ModifiedNode::Nested,
+        }
+    }
+}
+
+/// Whether the declaration file text is requested, not only the diagnostics.
+#[derive(Copy, Clone, Default)]
+enum Writes {
+    /// All text is empty.
+    #[default]
+    No,
+    Yes {
+        /// `detachedCommentsInfo`: `nodePos`, `detachedCommentEndPos`.
+        detached_comments: Option<(usize, usize)>,
+    },
+}
+
 /// `DeclarationTransformer`
 struct DeclarationEmit<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
@@ -661,9 +722,7 @@ struct DeclarationEmit<'c, 'p, 's> {
     in_class_expression: bool,
     /// `lateStatementReplacementMap`: the statements that have emitted output, and that output.
     written: FxHashMap<StmtId, Vec<Statement>>,
-    /// The declaration file text is requested, not only the diagnostics. Otherwise all text is
-    /// empty.
-    writes: bool,
+    writes: Writes,
     needs_declare: bool,
     needs_scope_fix_marker: bool,
     result_has_scope_marker: bool,
@@ -678,8 +737,6 @@ struct DeclarationEmit<'c, 'p, 's> {
     cjs_export_assignment_name: Option<Vec<u8>>,
     cjs_export_members: Vec<Statement>,
     witnessed_cjs_exports: Vec<Vec<u8>>,
-    /// `detachedCommentsInfo`: `nodePos`, `detachedCommentEndPos`.
-    detached_comments: Option<(usize, usize)>,
     /// `expandoHosts` for the variables that are emitted as functions, keyed by statement.
     expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
     /// `expandoMembers`, keyed by the statement of the host.
@@ -766,7 +823,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.eager.push(self.stack.len());
         let (text, found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
-            emit.writes = writes;
+            if writes {
+                emit.writes = Writes::Yes {
+                    detached_comments: None,
+                };
+            }
             let text = Some(emit.transform_source_file());
             (
                 text,
@@ -829,7 +890,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             suppresses_new_contexts: false,
             in_class_expression: false,
             written: FxHashMap::default(),
-            writes: false,
+            writes: Writes::No,
             needs_declare: true,
             needs_scope_fix_marker: false,
             result_has_scope_marker: false,
@@ -841,7 +902,6 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             cjs_export_assignment_name: None,
             cjs_export_members: Vec::new(),
             witnessed_cjs_exports: Vec::new(),
-            detached_comments: None,
             expando_hosts: FxHashMap::default(),
             expando_members: FxHashMap::default(),
         }
@@ -849,6 +909,10 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
 
     fn file(&self) -> FileId {
         self.tracker.current_source_file
+    }
+
+    fn writes(&self) -> bool {
+        matches!(self.writes, Writes::Yes { .. })
     }
 }
 
@@ -1458,7 +1522,6 @@ impl<'p, 's> Checker<'p, 's> {
             .unwrap_or(None);
         let mut result = Access {
             accessibility: Accessibility::NotResolved,
-            aliases: Vec::new(),
             symbol_name: self.atom_text(first),
             module_name: Vec::new(),
             error_node: start.map(|start| (start, self.end_of_name_at(at.file, start))),
@@ -1636,10 +1699,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut parameters = Vec::new();
                 for (file, decl) in self.decls_of(symbol) {
                     let hir = self.hir(file);
-                    let type_params = match decl {
-                        Decl::Class(class) => hir[class].type_params,
-                        Decl::Interface(interface) => hir[interface].type_params,
-                        _ => continue,
+                    let Some(type_params) = decl.type_params_of_class_or_interface(hir) else {
+                        continue;
                     };
                     for parameter in type_params.iter() {
                         let id = self.bound(file).type_param_symbol[parameter.idx()];
@@ -1703,8 +1764,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
+        let lookup = TableLookup {
+            ignores_qualification: false,
+            is_local_name_lookup: true,
+        };
         for table in self.tables_in_scope(at) {
-            result = self.chain_from_table(symbol, at, meaning, table, false, true, visited);
+            result = self.chain_from_table(symbol, at, meaning, table, lookup, visited);
             if !result.is_empty() {
                 break;
             }
@@ -1726,23 +1791,14 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         meaning: Meaning,
         table: Table,
-        ignores_qualification: bool,
-        is_local_name_lookup: bool,
+        lookup: TableLookup,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
         if visited.contains(&(symbol, table)) {
             return Vec::new();
         }
         visited.push((symbol, table));
-        let result = self.try_symbol_table(
-            symbol,
-            at,
-            meaning,
-            table,
-            ignores_qualification,
-            is_local_name_lookup,
-            visited,
-        );
+        let result = self.try_symbol_table(symbol, at, meaning, table, lookup, visited);
         visited.retain(|&entry| entry != (symbol, table));
         result
     }
@@ -1755,10 +1811,10 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         meaning: Meaning,
         table: Table,
-        ignores_qualification: bool,
-        is_local_name_lookup: bool,
+        lookup: TableLookup,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
+        let ignores_qualification = lookup.ignores_qualification;
         let res = self.lookup_symbol(table, symbol);
         if let Some(res) = res
             && self.is_accessible(
@@ -1787,7 +1843,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             candidates.push(vec![symbol]);
         }
-        for alias in self.aliases_to_try(table, at, ignores_qualification, is_local_name_lookup) {
+        for alias in self.aliases_to_try(table, at, lookup) {
             let Some(resolved) = self.resolve_alias_or_unknown(alias) else {
                 continue;
             };
@@ -1825,13 +1881,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The aliases of `table` that `trySymbolTable` resolves.
-    fn aliases_to_try(
-        &mut self,
-        table: Table,
-        at: Enclosing,
-        ignores_qualification: bool,
-        is_local_name_lookup: bool,
-    ) -> Vec<Sym> {
+    fn aliases_to_try(&mut self, table: Table, at: Enclosing, lookup: TableLookup) -> Vec<Sym> {
+        let TableLookup {
+            ignores_qualification,
+            is_local_name_lookup,
+        } = lookup;
         let is_in_module = !at.is_none() && self.hir(at.file).has_module_syntax;
         let mut aliases = Vec::new();
         for &(name, alias) in self.aliases_in_table(table).iter() {
@@ -1889,9 +1943,13 @@ impl<'p, 's> Checker<'p, 's> {
         if is_property_or_method_declaration {
             return None;
         }
+        let lookup = TableLookup {
+            ignores_qualification: false,
+            is_local_name_lookup: true,
+        };
         for table in self.tables_in_scope(at) {
             let mut candidates = Vec::new();
-            for alias in self.aliases_to_try(table, at, false, true) {
+            for alias in self.aliases_to_try(table, at, lookup) {
                 if self.property_of_alias(alias) == Some(property)
                     && self.can_qualify_symbol(at, alias, Meaning::None, &mut Vec::new())
                 {
@@ -1943,8 +2001,10 @@ impl<'p, 's> Checker<'p, 's> {
             at,
             meaning,
             Table::ResolvedExports(resolved),
-            true,
-            false,
+            TableLookup {
+                ignores_qualification: true,
+                is_local_name_lookup: false,
+            },
             visited,
         );
         if from_exports.is_empty()
@@ -2360,7 +2420,6 @@ impl<'p, 's> Checker<'p, 's> {
         let had = had_accessible_chain?;
         Some(Access {
             accessibility: Accessibility::NotAccessible,
-            aliases: Vec::new(),
             symbol_name: self.symbol_text(initial),
             module_name: if had != initial {
                 self.symbol_text(had)
@@ -2391,7 +2450,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn inaccessible(&mut self, symbol: Sym, at: Enclosing) -> Access {
         let mut result = Access {
             accessibility: Accessibility::NotAccessible,
-            aliases: Vec::new(),
             symbol_name: self.symbol_text(symbol),
             module_name: Vec::new(),
             error_node: None,
@@ -2591,8 +2649,8 @@ impl SymbolTrackerImpl {
     /// `handleSymbolAccessibilityError`. Whether an error is reported.
     fn handle_symbol_accessibility_error(&mut self, c: &Checker<'_, '_>, access: Access) -> bool {
         match access.accessibility {
-            Accessibility::Accessible => {
-                for (file, statement) in access.aliases {
+            Accessibility::Accessible(aliases) => {
+                for (file, statement) in aliases {
                     if file == self.current_source_file
                         && !self.late_marked_statements.contains(&statement)
                     {
@@ -2845,7 +2903,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     // ───────────────────────────── emitted text ─────────────────────────────
 
     fn text_of(&mut self, what: Written) -> Vec<u8> {
-        if !self.writes {
+        if !self.writes() {
             return Vec::new();
         }
         let (file, enclosing) = (self.file(), self.enclosing);
@@ -2866,18 +2924,21 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     fn set_indent(&mut self, indent: usize) {
         self.indent = indent;
-        self.c.declaration_indent = self.writes.then_some(indent);
+        self.c.declaration_indent = self.writes().then_some(indent);
     }
 
     /// `emitLeadingComments`, under `OnlyPrintJSDocStyle`, for a node that is emitted at the start
     /// of a line. `pos`: `node.Pos()`.
     fn leading_comments(&mut self, pos: u32) -> Vec<u8> {
-        if !self.writes || self.c.files().options.remove_comments {
+        let Writes::Yes { detached_comments } = self.writes else {
+            return Vec::new();
+        };
+        if self.c.files().options.remove_comments {
             return Vec::new();
         }
         let mut pos = pos as usize;
         // "skip detached comments"
-        if let Some((_, end)) = self.detached_comments.filter(|it| it.0 == pos) {
+        if let Some((_, end)) = detached_comments.filter(|it| it.0 == pos) {
             pos = end;
         }
         let text = &self.c.hir(self.file()).text[..];
@@ -2891,7 +2952,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `emitCommentsBeforeNode`, `text`, `emitCommentsAfterNode`, for a node that continues a line.
     /// `range`: its `Pos()`, if it differs from `containerPos`, and its `End()`.
     fn with_comments(&self, range: (Option<u32>, u32), text: &[u8]) -> Vec<u8> {
-        if !self.writes || range.1 == 0 || self.c.files().options.remove_comments {
+        if !self.writes() || range.1 == 0 || self.c.files().options.remove_comments {
             return text.to_vec();
         }
         let mut writer = Writer::new(&self.c.hir(self.file()).text, self.indent);
@@ -2910,7 +2971,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let text = &hir.text[..];
         // `statements.Loc.Pos()`
         let pos = 0;
-        if !self.writes {
+        if !self.writes() {
             return Vec::new();
         }
         let only_pinned = self.c.files().options.remove_comments;
@@ -2938,7 +2999,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if lines_between(end, node.max(end)) < 2 {
             return Vec::new();
         }
-        self.detached_comments = Some((pos, end));
+        self.writes = Writes::Yes {
+            detached_comments: Some((pos, end)),
+        };
         comments_text(text, detached, self.indent)
     }
 
@@ -2974,19 +3037,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     }
 
     /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `written`: `node.Modifiers()`.
-    fn ensure_modifiers(
-        &self,
-        written: Span<ModifierId>,
-        parent_is_file: bool,
-        is_always_type: bool,
-    ) -> Vec<Flags> {
-        self.ensure_modifiers_of_statement(
-            written,
-            Flags::empty(),
-            Parent::None,
-            parent_is_file,
-            is_always_type,
-        )
+    fn ensure_modifiers(&self, written: Span<ModifierId>, node: ModifiedNode) -> Vec<Flags> {
+        self.ensure_modifiers_of_statement(written, Flags::empty(), Parent::None, node)
     }
 
     /// The same for a statement in `container`. `declared`: the flags of its declaration. A
@@ -2997,8 +3049,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         written: Span<ModifierId>,
         declared: Flags,
         container: Parent,
-        parent_is_file: bool,
-        is_always_type: bool,
+        node: ModifiedNode,
     ) -> Vec<Flags> {
         let hir = self.c.hir(self.file());
         let mut in_order: Vec<Flags> = (written.iter())
@@ -3018,10 +3069,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let current = in_order.iter().fold(Flags::empty(), |all, &it| all | it);
         // "No async and override modifiers in declaration files"
         let mut flags = current - (Flags::PUBLIC | Flags::ASYNC | Flags::OVERRIDE);
-        if !parent_is_file {
-            flags -= Flags::AMBIENT;
-        } else if self.needs_declare && !is_always_type {
-            flags |= Flags::AMBIENT;
+        match node {
+            ModifiedNode::Nested => flags -= Flags::AMBIENT,
+            ModifiedNode::InFile { is_always_type } => {
+                if self.needs_declare && !is_always_type {
+                    flags |= Flags::AMBIENT;
+                }
+            }
         }
         if (self.c).is_implicitly_exported_jsdoc_declaration(self.file(), declared, container) {
             flags |= Flags::EXPORT;
@@ -3122,7 +3176,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         };
         // `Pos()` of the first: the end of the `<`. Only trivia is between the two.
         let start = hir[first].start;
-        let before = match self.writes && !hir.is_in_jsdoc(start) {
+        let before = match self.writes() && !hir.is_in_jsdoc(start) {
             true => &hir.text[..(start as usize).min(hir.text.len())],
             false => &[],
         };
@@ -3142,7 +3196,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let comma = self.c.skip_trivia_from(file, end) as usize;
             pos = (pos.is_some() && hir.text.get(comma) == Some(&b',')).then_some(comma + 1);
         }
-        [b"<", &self.list_text(elements, false, false)[..], b">"].concat()
+        let list = self.list_text(elements, ListFormat::SINGLE_LINE);
+        [b"<", &list[..], b">"].concat()
     }
 
     /// The same for type arguments, which have already been visited.
@@ -3597,8 +3652,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if items.is_empty() {
                     text.extend_from_slice(b"{}");
                 } else {
-                    // `NodeList.HasTrailingComma`
-                    let items = self.list_text(items, false, pos.is_some());
+                    let format = ListFormat {
+                        // `NodeList.HasTrailingComma`
+                        has_trailing_comma: pos.is_some(),
+                        ..ListFormat::SINGLE_LINE
+                    };
+                    let items = self.list_text(items, format);
                     text.extend_from_slice(&[b"{ ", &items[..], b" }"].concat());
                 }
                 (export.spec, export.mode)
@@ -3813,7 +3872,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.error_name_node,
             self.needs_declare,
         );
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
         let other = |modifiers: Vec<Flags>, text: Vec<u8>| {
             Some(vec![Statement {
                 kind: StatementKind::Other,
@@ -3829,13 +3888,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.needs_declare = false;
                 let container = bound.stmt_parent[s.idx()];
                 let written = hir[s].modifiers;
-                let modifiers = self.ensure_modifiers_of_statement(
-                    written,
-                    hir[a].flags,
-                    container,
-                    parent_is_file,
-                    false,
-                );
+                let modifiers =
+                    self.ensure_modifiers_of_statement(written, hir[a].flags, container, modified);
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
                 self.visit_type(hir[a].ty, true);
                 let ty = self.text_of(Written::Type(hir[a].ty));
@@ -3852,7 +3906,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             StmtKind::Interface(i) => {
                 self.enter(bound.interface_scope[i.idx()]);
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, true);
+                let modified = match modified {
+                    ModifiedNode::InFile { .. } => ModifiedNode::InFile {
+                        is_always_type: true,
+                    },
+                    ModifiedNode::Nested => ModifiedNode::Nested,
+                };
+                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
                 let type_parameters = self.visit_type_parameters(hir[i].type_params);
                 let mut extends = Vec::new();
                 for node in hir.ids(hir[i].extends) {
@@ -3895,8 +3955,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         written,
                         declared,
                         Parent::None,
-                        parent_is_file,
-                        false,
+                        modified,
                     );
                     let name = self.name(hir[f].name);
                     other(
@@ -3909,7 +3968,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                     self.c.iso_transform_enum(isolated_declarations, e);
                 }
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
                 let text = self.transform_enum_declaration(e);
                 other(modifiers, text)
             }
@@ -3942,8 +4001,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn expando_host(&mut self, s: StmtId, name: Atom, signature: &[u8]) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let modified = ModifiedNode::new(parent_is_file);
         let saved = std::mem::replace(&mut self.needs_declare, true);
-        let mut modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        let mut modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
         self.needs_declare = saved;
         let is_default_export = modifiers.contains(&Flags::DEFAULT);
         if is_default_export {
@@ -4009,7 +4069,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(file);
         let mut members = Vec::with_capacity(hir[e].members.len());
         for m in hir[e].members.iter() {
-            if !self.writes || self.c.should_strip_internal(file, hir[m].loc.pos) {
+            if !self.writes() || self.c.should_strip_internal(file, hir[m].loc.pos) {
                 continue;
             }
             let mut member = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
@@ -4037,7 +4097,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             });
         }
         let name = self.name(hir[e].name);
-        let members = self.list_text(members, true, false);
+        let members = self.list_text(members, ListFormat::MULTI_LINE);
         [
             b"enum ",
             name,
@@ -4054,16 +4114,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let module = &hir[m];
         self.enter(bound.module_scope[m.idx()]);
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
         let container = bound.stmt_parent[s.idx()];
+        let modified = ModifiedNode::new(container == Parent::File);
         let written = hir[s].modifiers;
-        let modifiers = self.ensure_modifiers_of_statement(
-            written,
-            module.flags,
-            container,
-            parent_is_file,
-            false,
-        );
+        let modifiers =
+            self.ensure_modifiers_of_statement(written, module.flags, container, modified);
         self.needs_declare = false;
         let is_nested = matches!(container, Parent::Module(outer)
             if nested_module_declaration(hir, outer) == Some(s));
@@ -4289,7 +4344,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if declarations.is_empty() {
             return (!extra_imports.is_empty()).then_some(extra_imports);
         }
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
         let keyword: &[u8] = match decls.iter().next().map(|d| hir[d].kind) {
             Some(VarKind::Var) | None => b"var ",
             Some(VarKind::Let) => b"let ",
@@ -4298,7 +4353,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         // `End()` of the declaration list, which emits the comments after its last declaration
         // unless the statement ends there too.
         let list_end = decls.iter().next_back().map_or(0, |d| hir[d].loc.end);
-        let declarations = self.list_text_in(declarations, false, false, list_end as usize);
+        let declarations =
+            self.list_text_in(declarations, ListFormat::SINGLE_LINE, list_end as usize);
         let mut list = [keyword, &declarations[..]].concat();
         if list_end != hir[s].loc.end {
             list = self.with_comments((None, list_end), &list);
@@ -4306,7 +4362,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         extra_imports.push(Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
-            modifiers: self.ensure_modifiers(hir[s].modifiers, parent_is_file, false),
+            modifiers: self.ensure_modifiers(hir[s].modifiers, modified),
             text: [&list[..], b";"].concat(),
         });
         Some(extra_imports)
@@ -4348,8 +4404,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.enter(bound.class_scope[c.idx()]);
         self.tracker.error_name_node = hir.name(hir.node(s));
         self.tracker.fallback_stack.push(hir.node(s));
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
-        let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
+        let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
         let type_parameters = self.visit_type_parameters(class.type_params);
         let members = self.build_class_members(c);
         let (base, heritage) = self.visit_class_heritage(c);
@@ -4423,7 +4479,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     continue;
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
-                let modifiers = self.ensure_modifiers(hir.param_modifiers(p), false, false);
+                let modified = ModifiedNode::Nested;
+                let modifiers = self.ensure_modifiers(hir.param_modifiers(p), modified);
                 // `preserveJsDoc`
                 let comments = self.leading_comments(hir[p].loc.pos);
                 let modifiers = [comments, modifiers_text(&modifiers)].concat();
@@ -4892,41 +4949,29 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 text: self.ensure_parameter(p),
             });
         }
-        self.list_text(parameters, false, false)
+        self.list_text(parameters, ListFormat::SINGLE_LINE)
     }
 
     /// `emitListItems`: see `Writer::emit_list_items`.
-    fn list_text(
-        &self,
-        elements: Vec<Element>,
-        is_multi_line: bool,
-        has_trailing_comma: bool,
-    ) -> Vec<u8> {
-        self.list_text_in(elements, is_multi_line, has_trailing_comma, usize::MAX)
+    fn list_text(&self, elements: Vec<Element>, format: ListFormat) -> Vec<u8> {
+        self.list_text_in(elements, format, usize::MAX)
     }
 
     /// The same, in a parent that may end where its last element ends.
     fn list_text_in(
         &self,
         mut elements: Vec<Element>,
-        is_multi_line: bool,
-        has_trailing_comma: bool,
+        format: ListFormat,
         parent_end: usize,
     ) -> Vec<u8> {
-        if !self.writes {
+        if !self.writes() {
             return Vec::new();
         }
         if self.c.files().options.remove_comments {
             elements.iter_mut().for_each(|it| it.range = None);
         }
         let mut writer = Writer::new(&self.c.hir(self.file()).text, self.indent);
-        writer.emit_list_items(
-            &elements,
-            b",",
-            is_multi_line,
-            has_trailing_comma,
-            parent_end,
-        );
+        writer.emit_list_items(&elements, b",", format, parent_end);
         writer.into_text()
     }
 
@@ -4946,7 +4991,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         } else {
             b""
         };
-        let question: &[u8] = if self.writes && self.c.is_optional_parameter(file, p) {
+        let question: &[u8] = if self.writes() && self.c.is_optional_parameter(file, p) {
             b"?"
         } else {
             b""
@@ -5055,7 +5100,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let is_written = !matches!(member.key, PropKey::Private(_));
         let mut written = None;
         if is_written {
-            let modifiers = modifiers_text(&self.ensure_modifiers(member.modifiers, false, false));
+            let modified = ModifiedNode::Nested;
+            let modifiers = modifiers_text(&self.ensure_modifiers(member.modifiers, modified));
             let name = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
             let head = match member.kind {
                 MemberKind::Method if member.flags.contains(Flags::REPARSED) => {
@@ -5116,7 +5162,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                                     .then_some((loc.pos as usize, loc.end as usize)),
                                 text: self.ensure_parameter(parameter),
                             };
-                            value = Some(self.list_text(vec![element], false, false));
+                            value = Some(self.list_text(vec![element], ListFormat::SINGLE_LINE));
                         }
                     }
                     let value = value.unwrap_or_else(|| {
@@ -5181,7 +5227,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let mut writer = Writer::new(&hir.text, self.indent);
         writer.write(modifiers);
-        if self.writes && !self.c.files().options.remove_comments {
+        if self.writes() && !self.c.files().options.remove_comments {
             writer.emit_leading_comments(pos);
         }
         writer.write(name);
@@ -5378,12 +5424,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             {
                 self.tracker
                     .track_symbol(self.c, member, Some(self.enclosing), SymFlags::VALUE);
-                if self.writes {
+                if self.writes() {
                     let value = self.c.symbol_to_expression(member, self.enclosing);
                     return Ensured::Initializer(value);
                 }
             }
-            if !self.writes {
+            if !self.writes() {
                 return Ensured::Nothing;
             }
             return Ensured::Initializer(self.create_literal_const_value(literal));

@@ -68,6 +68,16 @@ struct Unused<'a, 's> {
     parameters: bool,
 }
 
+/// What a name resolves to where it is used.
+#[derive(Copy, Clone)]
+struct Use {
+    /// A symbol of the file.
+    symbol: SymbolId,
+    /// The name is inside a declaration of the symbol (`lastSelfReferenceLocation`), which does not
+    /// count as a reference.
+    is_self_reference: bool,
+}
+
 impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
@@ -404,7 +414,7 @@ impl Checker<'_, '_> {
             let scope = u.scope_of(e);
             // `symbolReferenced`: the factory is marked as referenced even by a tag inside its own
             // declaration.
-            if let Some(found) = u.note_name(
+            if let Some(found) = u.resolve_use(
                 scope,
                 if is_fragment {
                     fragment_factory
@@ -412,9 +422,8 @@ impl Checker<'_, '_> {
                     factory
                 },
                 SymFlags::VALUE,
-                ALL,
             ) {
-                u.referenced[found.idx()] |= ALL;
+                u.referenced[found.symbol.idx()] |= ALL;
             }
             // `getJsxFactoryEntity`: a fragment uses both factories.
             if is_fragment {
@@ -1273,22 +1282,30 @@ impl Unused<'_, '_> {
     /// name, so it marks an import that the variable shadows.
     fn note_namespace(&mut self, scope: ScopeId, name: Atom) {
         let meaning = SymFlags::NAMESPACE;
-        if self.note_name(scope, name, meaning, NAMESPACE).is_none()
-            && (self.files.resolve_name(self.file, scope, name, meaning)).is_none()
-        {
+        if let Some(found) = self.resolve_use(scope, name, meaning) {
+            self.note_use(found, NAMESPACE);
+        } else if (self.files.resolve_name(self.file, scope, name, meaning)).is_none() {
             self.note_name(scope, name, SymFlags::ALIAS, ALIAS);
         }
     }
 
-    /// `Resolve` with `isUse`. Returns the symbol the name resolves to, if it is declared in the
-    /// file.
-    fn note_name(
-        &mut self,
-        from: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-        bit: u8,
-    ) -> Option<SymbolId> {
+    /// `Resolve` with `isUse`. A name that does not resolve to a symbol declared in the file
+    /// references nothing here.
+    fn note_name(&mut self, from: ScopeId, name: Atom, meaning: SymFlags, bit: u8) {
+        if let Some(found) = self.resolve_use(from, name, meaning) {
+            self.note_use(found, bit);
+        }
+    }
+
+    /// `symbol.isReferenced |= meaning`
+    fn note_use(&mut self, found: Use, bit: u8) {
+        if !found.is_self_reference {
+            self.referenced[found.symbol.idx()] |= bit;
+        }
+    }
+
+    /// `Resolve`: what the name resolves to, if that is declared in the file.
+    fn resolve_use(&self, from: ScopeId, name: Atom, meaning: SymFlags) -> Option<Use> {
         let files = self.files;
         // The most recently searched scope.
         let mut found_in = ScopeId::NONE;
@@ -1317,10 +1334,10 @@ impl Unused<'_, '_> {
             }
             scope = self.bound.scopes[scope.idx()].parent;
         }
-        if found != inside {
-            self.referenced[found.idx()] |= bit;
-        }
-        Some(found)
+        Some(Use {
+            symbol: found,
+            is_self_reference: found == inside,
+        })
     }
 
     /// `IsWriteOnlyAccess`

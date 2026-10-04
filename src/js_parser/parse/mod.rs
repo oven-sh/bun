@@ -427,10 +427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let mut count = 0u32;
             let mut trailing_comma: Option<bun_ast::Range> = None;
             loop {
-                match p.classify_list_token(ListKind::HeritageClauseElement)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
+                if !p.skip_to_list_element(ListKind::HeritageClauseElement)? {
+                    break;
                 }
                 let start = p.lexer.range();
                 trailing_comma = None;
@@ -924,10 +922,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if opts.force_arrow_fn {
                 // `parseDelimitedList(PCParameters)`
                 let _ = p.enter_list(ListKind::Parameters);
-                match p.classify_list_token(ListKind::Parameters)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
+                if !p.skip_to_list_element(ListKind::Parameters)? {
+                    break;
                 }
             }
             let item_start = p.lexer.loc();

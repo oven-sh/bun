@@ -14,6 +14,7 @@ use bun_core::fmt::{ItoaBuf, VecWriter, digit_count, itoa};
 use bun_core::lexer::is_identifier;
 use bun_core::strings::{CodepointIterator, Cursor};
 use core::fmt::Write;
+use std::ops::ControlFlow;
 
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
@@ -390,9 +391,11 @@ impl<'p, 's> Checker<'p, 's> {
                         file,
                         declaration,
                         ty,
-                        true,
-                        false,
-                        false,
+                        node_reuse::SerializeTypeOptions {
+                            try_reuse: true,
+                            is_unwidened: false,
+                            is_optional_reverse_mapped: false,
+                        },
                     ),
                     None => printer.type_to_node(ty),
                 }
@@ -820,6 +823,13 @@ enum Identity {
     Type(TypeId),
 }
 
+/// `yieldModuleSymbol` of `lookupSymbolChain`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum YieldModuleSymbol {
+    No,
+    Yes,
+}
+
 /// A parameter symbol of a signature.
 #[derive(Clone)]
 struct Parameter {
@@ -920,6 +930,18 @@ struct SerializedTypeEntry {
     truncating: bool,
     added_length: usize,
     tracked_symbols: Vec<TrackedSymbolArgs>,
+}
+
+/// The locals of `visitAndTransformType` that outlive the call of `transform`.
+struct TypeVisit {
+    ty: TypeId,
+    identity: Option<Identity>,
+    /// The key of the result in `Printer::serialized_types`.
+    key: Option<(TypeId, u32, Enclosing)>,
+    /// What `Printer::symbol_depth` had for `identity`.
+    depth: u32,
+    previous_tracked_symbols: Vec<TrackedSymbolArgs>,
+    start_length: usize,
 }
 
 /// The value `enterNewScope` returns, used to leave the scope.
@@ -1676,6 +1698,22 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         identity: Option<Identity>,
         transform: impl FnOnce(&mut Self, TypeId) -> Node,
     ) -> Node {
+        match self.begin_type_visit(ty, identity) {
+            ControlFlow::Continue(visit) => {
+                let node = transform(self, ty);
+                self.end_type_visit(visit, node)
+            }
+            ControlFlow::Break(node) => node,
+        }
+    }
+
+    /// `visitAndTransformType`, up to the call of `transform`. `Break`: the result, without that
+    /// call.
+    fn begin_type_visit(
+        &mut self,
+        ty: TypeId,
+        identity: Option<Identity>,
+    ) -> ControlFlow<Node, TypeVisit> {
         let key = self
             .enclosing_declaration
             .map(|enclosing_declaration| (ty, self.flags, enclosing_declaration));
@@ -1689,10 +1727,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.truncating |= cached.truncating;
             self.approximate_length += cached.added_length;
             let node = cached.node.deep_clone();
-            return match (cached.indent, self.indent) {
+            return ControlFlow::Break(match (cached.indent, self.indent) {
                 (Some(from), Some(to)) if from != to => node.indented(from, to),
                 _ => node,
-            };
+            });
         }
         let mut depth = 0;
         if let Some(identity) = identity {
@@ -1704,7 +1742,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Some(entry) => {
                     depth = entry.1;
                     if depth > 10 {
-                        return self.elided_information_placeholder();
+                        return ControlFlow::Break(self.elided_information_placeholder());
                     }
                     entry.1 = depth + 1;
                 }
@@ -1712,9 +1750,26 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
         }
         self.visited_types.push(ty);
-        let previous_tracked_symbols = std::mem::take(&mut self.tracked_symbols);
-        let start_length = self.approximate_length;
-        let node = transform(self, ty);
+        ControlFlow::Continue(TypeVisit {
+            ty,
+            identity,
+            key,
+            depth,
+            previous_tracked_symbols: std::mem::take(&mut self.tracked_symbols),
+            start_length: self.approximate_length,
+        })
+    }
+
+    /// `visitAndTransformType`, from where `transform` has returned `node`.
+    fn end_type_visit(&mut self, visit: TypeVisit, node: Node) -> Node {
+        let TypeVisit {
+            ty,
+            identity,
+            key,
+            depth,
+            previous_tracked_symbols,
+            start_length,
+        } = visit;
         let added_length = self.approximate_length.saturating_sub(start_length);
         let tracked_symbols =
             std::mem::replace(&mut self.tracked_symbols, previous_tracked_symbols);
@@ -1967,17 +2022,20 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         name
     }
 
-    /// `lookupSymbolChain` without an enclosing declaration
+    /// `lookupSymbolChain` without an enclosing declaration. `meaning`: `SymFlags::VALUE` or
+    /// `SymFlags::TYPE`.
     fn lookup_symbol_chain(
         &mut self,
         symbol: Sym,
-        is_value: bool,
-        yields_module: bool,
+        meaning: SymFlags,
+        yield_module_symbol: YieldModuleSymbol,
     ) -> (bool, Vec<Sym>) {
         let flags = self.c.files().flags(symbol);
         if flags.contains(SymFlags::TYPE_PARAMETER) || self.flags & USE_FULLY_QUALIFIED_TYPE == 0 {
             return (false, vec![symbol]);
         }
+        let is_value = meaning == SymFlags::VALUE;
+        let yields_module = yield_module_symbol == YieldModuleSymbol::Yes;
         let at = Enclosing::NONE;
         (self.c).lookup_symbol_chain_at(symbol, is_value, yields_module, at, Vec::new())
     }
@@ -1985,13 +2043,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `lookupSymbolChain` from `at`, which may be a synthetic block created by `enterNewScope`.
     /// Its locals only count if one of them has the name of `symbol`, or of the first symbol of the
     /// chain computed without them: `trySymbolTable` and `needsQualification` look up nothing else.
+    /// `meaning`: `SymFlags::VALUE` or `SymFlags::TYPE`.
     fn lookup_symbol_chain_from(
         &mut self,
         symbol: Sym,
-        is_value: bool,
-        yields_module: bool,
+        meaning: SymFlags,
+        yield_module_symbol: YieldModuleSymbol,
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
+        let is_value = meaning == SymFlags::VALUE;
+        let yields_module = yield_module_symbol == YieldModuleSymbol::Yes;
         let found = self
             .c
             .lookup_symbol_chain_at(symbol, is_value, yields_module, at, Vec::new());
@@ -2046,10 +2107,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `symbolToExpression(symbol, SymbolFlagsValue)`
     fn symbol_to_expression(&mut self, symbol: Sym) -> Vec<u8> {
-        self.track_symbol(symbol, SymFlags::VALUE);
+        let (meaning, yield_module_symbol) = (SymFlags::VALUE, YieldModuleSymbol::No);
+        self.track_symbol(symbol, meaning);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
-            Some(at) => self.lookup_symbol_chain_from(symbol, true, false, at),
-            None => self.lookup_symbol_chain(symbol, true, false),
+            Some(at) => self.lookup_symbol_chain_from(symbol, meaning, yield_module_symbol, at),
+            None => self.lookup_symbol_chain(symbol, meaning, yield_module_symbol),
         };
         // `createExpressionFromSymbolChain`
         let mut expression = if starts_with_global_this {
@@ -2098,15 +2160,17 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         is_type_of: bool,
         type_arguments: Vec<Node>,
     ) -> Node {
-        self.track_symbol(
-            symbol,
-            if is_type_of {
-                SymFlags::VALUE
-            } else {
-                SymFlags::TYPE
-            },
-        );
-        let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
+        let meaning = if is_type_of {
+            SymFlags::VALUE
+        } else {
+            SymFlags::TYPE
+        };
+        self.track_symbol(symbol, meaning);
+        let yield_module_symbol = if self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0 {
+            YieldModuleSymbol::Yes
+        } else {
+            YieldModuleSymbol::No
+        };
         let is_type_parameter = self
             .c
             .files()
@@ -2114,9 +2178,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .contains(SymFlags::TYPE_PARAMETER);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
             Some(at) if !is_type_parameter => {
-                self.lookup_symbol_chain_from(symbol, is_type_of, yields_module, at)
+                self.lookup_symbol_chain_from(symbol, meaning, yield_module_symbol, at)
             }
-            _ => self.lookup_symbol_chain(symbol, is_type_of, yields_module),
+            _ => self.lookup_symbol_chain(symbol, meaning, yield_module_symbol),
         };
         self.symbol_chain_to_type_node(
             symbol,
@@ -4313,7 +4377,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         allows_trailing_comma: bool,
         parent_end: usize,
     ) -> Vec<u8> {
-        use super::errors_declaration_emit::{Element, Writer};
+        use super::errors_declaration_emit::{Element, ListFormat, Writer};
         let text = &self.c.hir(file).text[..];
         let token = *delimiter.last().unwrap_or(&b',');
         // End of the delimiter that follows the element ending at `end`.
@@ -4340,7 +4404,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             pos = after_delimiter(end);
         }
         let mut writer = Writer::new(text, indent);
-        writer.emit_list_items(&elements, delimiter, false, has_trailing_comma, parent_end);
+        let format = ListFormat {
+            has_trailing_comma,
+            ..ListFormat::SINGLE_LINE
+        };
+        writer.emit_list_items(&elements, delimiter, format, parent_end);
         writer.into_text()
     }
 

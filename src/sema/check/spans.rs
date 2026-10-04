@@ -1176,12 +1176,6 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// `GetErrorRangeForNode` of `e` including enclosing parentheses: `(error_start_of,
-    /// error_end_of)`.
-    pub(super) fn error_range_of_expr(&self, file: FileId, e: ExprId) -> (u32, u32) {
-        (self.error_start_of(file, e), self.error_end_of(file, e))
-    }
-
     /// `node.End()` of the property `p` of an object literal, or of the JSX attribute `p`.
     pub(super) fn end_of_prop(&self, file: FileId, p: PropId) -> u32 {
         self.spans(file).prop(p) as u32

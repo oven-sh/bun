@@ -9,6 +9,17 @@ type Place = (bool, FileId, u32);
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
+/// `T & P` as `constrained_type_variable` takes it apart.
+#[derive(Copy, Clone)]
+struct ConstrainedTypeVariable {
+    /// `T`
+    variable: TypeId,
+    /// `P`
+    primitive: TypeId,
+    /// The base constraint of `T`.
+    constraint: TypeId,
+}
+
 /// The pattern literal types of a union by the text they start with. A string literal only matches
 /// a template literal type whose first text it starts with: that is the first test of
 /// `inferFromLiteralPartsToTemplateLiteral`. With thousands of literals and of patterns, testing
@@ -89,6 +100,17 @@ const _: () = assert!(
         && TypeId::UNKNOWN.0 == 2
         && TypeId::SYMBOL.0 < 32
 );
+
+/// The other kinds have no alias, no name and no symbol.
+const NAMED: u32 = tf::OBJECT
+    | tf::UNION
+    | tf::INTERSECTION
+    | tf::INDEXED_ACCESS
+    | tf::CONDITIONAL
+    | tf::TYPE_PARAMETER
+    | tf::STRING_MAPPING
+    | tf::ENUM
+    | tf::UNIQUE_ES_SYMBOL;
 
 /// `Some`, a name or a declaration, sorts before `None`.
 fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
@@ -351,7 +373,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let has_pattern = has_pattern && !string;
                 let has_constrained = has_constrained && merge_constrained;
                 if has_pattern || has_constrained {
-                    is_plain = false;
+                    // Whether a pattern matches a literal depends on the two alone.
+                    is_plain = !has_constrained;
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
                     self.sort_types(&mut members);
@@ -520,7 +543,7 @@ impl<'p, 's> Checker<'p, 's> {
         a: TypeId,
         b: TypeId,
         includes_empty_object: bool,
-    ) -> Option<(TypeId, TypeId, TypeId)> {
+    ) -> Option<ConstrainedTypeVariable> {
         let (variable, primitive) = if self.is_type_variable(a) {
             (a, b)
         } else {
@@ -544,7 +567,11 @@ impl<'p, 's> Checker<'p, 's> {
             && parts
                 .iter()
                 .all(|&p| self.is_primitive_or_object_or_empty(p)))
-        .then_some((variable, primitive, constraint))
+        .then_some(ConstrainedTypeVariable {
+            variable,
+            primitive,
+            constraint,
+        })
     }
 
     /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` reduces to `T` once the `P`s cover the
@@ -555,13 +582,13 @@ impl<'p, 's> Checker<'p, 's> {
         for &m in members.iter() {
             if let TypeData::Intersection(parts) = self.data(m)
                 && let [a, b] = parts[..]
-                && let Some((variable, primitive, constraint)) = self.constrained_type_variable(
+                && let Some(found) = self.constrained_type_variable(
                     a,
                     b,
                     self.is_empty_anonymous(a) || self.is_empty_anonymous(b),
                 )
             {
-                constrained.push((m, variable, primitive, constraint));
+                constrained.push((m, found.variable, found.primitive, found.constraint));
             }
         }
         let mut changed = false;
@@ -1185,9 +1212,14 @@ impl<'p, 's> Checker<'p, 's> {
         // `T & P` is reduced using the constraint of `T`.
         if !no_constraint_reduction
             && let [a, b] = set[..]
-            && let Some((variable, primitive, constraint)) =
+            && let Some(found) =
                 self.constrained_type_variable(a, b, includes & tf::INCLUDES_EMPTY_OBJECT != 0)
         {
+            let ConstrainedTypeVariable {
+                variable,
+                primitive,
+                constraint,
+            } = found;
             // `T & string` with `T extends "a" | "b"` is `T`.
             if self.is_strict_subtype(constraint, primitive) {
                 return (variable, false);
@@ -1227,11 +1259,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkCrossProductUnion`
     pub(super) fn check_cross_product_union(&mut self, types: &[TypeId]) -> bool {
-        let is_representable = self.get_cross_product_union_size(types) < 100_000;
-        if !is_representable {
+        self.checked_cross_product_union_size(types).is_some()
+    }
+
+    /// `getCrossProductUnionSize`, if `checkCrossProductUnion` accepts it.
+    fn checked_cross_product_union_size(&mut self, types: &[TypeId]) -> Option<usize> {
+        let size = self.get_cross_product_union_size(types);
+        if size >= 100_000 {
             self.error_at_current_node(2590);
+            return None;
         }
-        is_representable
+        Some(size)
     }
 
     /// `getCrossProductUnionSize`
@@ -1288,10 +1326,9 @@ impl<'p, 's> Checker<'p, 's> {
             return self.intersection_worker(&[left, right], no_constraint_reduction);
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        if !self.check_cross_product_union(&set) {
+        let Some(size) = self.checked_cross_product_union_size(&set) else {
             return (TypeId::ERROR, false);
-        }
-        let size = self.get_cross_product_union_size(&set);
+        };
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
@@ -1695,16 +1732,6 @@ impl<'p, 's> Checker<'p, 's> {
             (self.data(a), self.data(b)),
             (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
         );
-        // The other kinds have no alias, no name and no symbol.
-        const NAMED: u32 = tf::OBJECT
-            | tf::UNION
-            | tf::INTERSECTION
-            | tf::INDEXED_ACCESS
-            | tf::CONDITIONAL
-            | tf::TYPE_PARAMETER
-            | tf::STRING_MAPPING
-            | tf::ENUM
-            | tf::UNIQUE_ES_SYMBOL;
         if flags & NAMED != 0 {
             let by_symbol = self
                 .compare_type_names(a, b)
@@ -2015,27 +2042,35 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn sort_types(&self, types: &mut [TypeId]) {
-        // FOR SPEED: the members of `keyof` of a large type, of a template literal type, and the
-        // keywords of a CSS property. The text of each string literal is looked up once, not for
-        // every comparison.
-        if types.len() >= 16 {
-            let atoms = self.atoms();
-            let text = |ty: TypeId| match *self.data(ty) {
-                TypeData::StringLit { value, fresh } => Some((atoms.bytes(value), fresh)),
-                _ => None,
-            };
-            let mut texts: Vec<(Option<(&[u8], bool)>, TypeId)> =
-                types.iter().map(|&ty| (text(ty), ty)).collect();
-            texts.sort_by(|a, b| match (a.0, b.0) {
-                (Some(x), Some(y)) if x != y => x.cmp(&y),
-                _ => self.compare_types(a.1, b.1),
-            });
-            for (ty, sorted) in types.iter_mut().zip(texts) {
-                *ty = sorted.1;
-            }
-            return;
+        if types.len() < 3 {
+            return types.sort_by(|&a, &b| self.compare_types(a, b));
         }
-        types.sort_by(|&a, &b| self.compare_types(a, b));
+        // FOR SPEED: `CompareTypes` orders by the flags, then by the names. tsgo reads both from
+        // the type. Here the alias of a type is found through its declaration, so the name of each
+        // type is looked up once, not for every comparison. String literals have one value of the
+        // flags and no name: their text decides.
+        let atoms = self.atoms();
+        let mut keys: smallvec::SmallVec<[(u32, Option<&[u8]>, TypeId); 16]> = types
+            .iter()
+            .map(|&ty| {
+                let flags = self.sort_order_flags(ty);
+                let name = match *self.data(ty) {
+                    TypeData::StringLit { value, .. } => Some(atoms.bytes(value)),
+                    _ if flags & NAMED != 0 => self.type_name(ty, self.alias_symbol_of_type(ty)),
+                    _ => None,
+                };
+                (flags, name, ty)
+            })
+            .collect();
+        keys.sort_by(|a, b| {
+            (a.0.cmp(&b.0))
+                .then_with(|| some_first(a.1, b.1))
+                .then_with(|| self.compare_types(a.2, b.2))
+        });
+        for (ty, key) in types.iter_mut().zip(keys) {
+            *ty = key.2;
+        }
+        debug_assert!(types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
     }
 
     /// `containsType` for the members of a union. It tests identity, and a comparison of two types

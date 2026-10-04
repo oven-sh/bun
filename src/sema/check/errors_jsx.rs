@@ -11,7 +11,7 @@
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
 //! `getCandidateForOverloadFailure` of its checker.go.
 
-use super::call::CallLike;
+use super::call::{CallLike, ExpectsReturn};
 use super::explain::NOWHERE;
 use super::infer::Inference;
 use super::jsx::{JsxName, JsxReferenceKind};
@@ -459,8 +459,7 @@ impl Checker<'_, '_> {
             &type_args,
             &args,
             None,
-            true,
-            true,
+            ExpectsReturn::Yes,
             None,
         )
     }

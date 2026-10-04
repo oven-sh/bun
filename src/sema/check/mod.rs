@@ -1506,11 +1506,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
     }
 
-    /// Whether a query was refused for lack of stack. Errors may be missing because of it.
-    pub fn ran_out_of_stack(&self) -> bool {
-        self.ran_out_of_stack.get()
-    }
-
     /// The maximum stack in use at any query.
     pub fn deepest_stack(&self) -> usize {
         self.deepest_stack.get()
@@ -2129,9 +2124,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// See `QueryFrame::is_stored_by_nested_visit`.
-    #[cold]
-    #[inline(never)]
+    #[inline]
     fn note_stored_by_nested_visit(&mut self, q: Query) {
+        if !self.may_be_in_flight(q) {
+            return;
+        }
         let frames = self.frames.iter_mut().zip(&self.stack);
         for (frame, _) in frames.filter(|x| *x.1 == q) {
             frame.is_stored_by_nested_visit = true;

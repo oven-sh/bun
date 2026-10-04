@@ -469,21 +469,6 @@ impl<'s> Interner<'s> {
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
-
-    /// `isLateBoundName`
-    #[inline]
-    pub fn is_symbol_name(&self, atom: Atom) -> bool {
-        atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
-    }
-
-    /// `EscapeInternalSymbolName`: the byte that no text contains is printed as `__`.
-    #[cfg(feature = "baselines")]
-    pub fn text(&self, atom: Atom) -> std::borrow::Cow<'_, str> {
-        if atom.is_none() {
-            return std::borrow::Cow::Borrowed("<none>");
-        }
-        as_text(self.bytes(atom))
-    }
 }
 
 #[cfg(feature = "baselines")]
@@ -555,7 +540,7 @@ impl<'p, 's> Atoms<'p, 's> {
         atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
     }
 
-    /// See `Interner::text`.
+    /// `EscapeInternalSymbolName`: the byte that no text contains is printed as `__`.
     #[cfg(feature = "baselines")]
     pub fn text(&self, atom: Atom) -> std::borrow::Cow<'p, str> {
         if atom.is_none() {

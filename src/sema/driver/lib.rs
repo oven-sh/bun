@@ -39,13 +39,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
-/// Runs `work(i)` for every `i` below `count` on Bun's shared thread pool, on at most `threads`
-/// threads at a time. Indices are claimed in order: each thread takes the next one when it finishes
-/// its previous one.
-pub fn for_each_parallel(threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
-    for_each_parallel_in_runs(&ThreadCaches::default(), threads, count, 1, work);
-}
-
 /// The caches that the worker threads of a check reuse from one file to the next. The threads
 /// belong to the pool and outlive the check, so the caches are owned here: a thread has its set
 /// for the duration of a parallel region, and gets the same set back in the next one. A set that
@@ -92,7 +85,9 @@ impl ThreadCaches {
     }
 }
 
-/// The same, with each thread claiming `run` consecutive indices at a time.
+/// Runs `work(i)` for every `i` below `count` on Bun's shared thread pool, on at most `threads`
+/// threads at a time. Indices are claimed in order, `run` consecutive ones at a time: each thread
+/// takes the next run when it finishes its previous one.
 pub fn for_each_parallel_in_runs(
     caches: &ThreadCaches,
     threads: usize,
@@ -741,10 +736,6 @@ pub fn check_already_read_then<R>(
     disk.parallel(threads, &|_| bun_core::Global::mimalloc_cleanup(true));
     bun_core::Global::mimalloc_cleanup(true);
     result
-}
-
-pub fn check(request: &Request) -> Report {
-    check_then(request, |report| report)
 }
 
 fn check_request(disk: &host::Disk, request: &Request) -> Report {

@@ -109,8 +109,16 @@ impl Checker<'_, '_> {
         file: FileId,
         node: impl ToNode,
     ) -> Option<GrammarError> {
+        self.grammar_error_in_modifiers_of_node(file, self.hir(file).node(node))
+    }
+
+    /// `grammar_error_in_modifiers` for the node `location`.
+    fn grammar_error_in_modifiers_of_node(
+        &self,
+        file: FileId,
+        location: Node,
+    ) -> Option<GrammarError> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let location = hir.node(node);
         let (kind, node) = (hir.kind(location), hir.data(location));
         let modifiers = match node {
             NodeData::Stmt(s) => hir[s].modifiers,

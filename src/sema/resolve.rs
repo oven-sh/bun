@@ -1076,6 +1076,34 @@ impl Found {
     }
 }
 
+/// `HasTrailingDirectorySeparator(candidate)`: the candidate can only be a directory.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum EndsInSlash {
+    No,
+    Yes,
+}
+
+/// `considerPackageJson`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ConsiderPackageJson {
+    No,
+    Yes,
+}
+
+/// `isPattern`: the key of a target in `exports` or `imports` has a `*`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum IsPattern {
+    No,
+    Yes,
+}
+
+/// `isImports`: a target is from the `imports` of a `package.json`, not from its `exports`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum IsImports {
+    No,
+    Yes,
+}
+
 /// `module.ResolvedModule`. The paths live as long as the resolver.
 #[derive(Copy, Clone, Debug)]
 pub struct ResolvedModule<'h> {
@@ -2288,12 +2316,22 @@ impl<'h> Resolver<'h> {
 
     /// `nodeLoadModuleByRelativeName` with `considerPackageJson`.
     fn file_or_directory(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.node_load_module_by_relative_name(path, false, true, look)
+        self.node_load_module_by_relative_name(
+            path,
+            EndsInSlash::No,
+            ConsiderPackageJson::Yes,
+            look,
+        )
     }
 
     /// The same for a candidate that ends in a slash, which `path` lacks.
     fn directory(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.node_load_module_by_relative_name(path, true, true, look)
+        self.node_load_module_by_relative_name(
+            path,
+            EndsInSlash::Yes,
+            ConsiderPackageJson::Yes,
+            look,
+        )
     }
 
     /// `ends_in_slash`: the candidate is `path` with a slash at its end, and can only be a
@@ -2301,10 +2339,12 @@ impl<'h> Resolver<'h> {
     fn node_load_module_by_relative_name(
         &self,
         path: &[u8],
-        ends_in_slash: bool,
-        consider_package_json: bool,
+        ends_in_slash: EndsInSlash,
+        consider_package_json: ConsiderPackageJson,
         look: Look,
     ) -> Option<Vec<u8>> {
+        let ends_in_slash = ends_in_slash == EndsInSlash::Yes;
+        let consider_package_json = consider_package_json == ConsiderPackageJson::Yes;
         let is_traced = look.tracer.is_some();
         let candidate: Cow<[u8]> = if is_traced && ends_in_slash && path != b"/" {
             Cow::Owned([path, b"/"].concat())
@@ -2626,10 +2666,21 @@ impl<'h> Resolver<'h> {
                 };
                 // `HasTrailingDirectorySeparator`: it has no extension, and is not looked up as a file.
                 if let Some(directory) = path.strip_suffix(b"/").filter(|it| !it.is_empty()) {
-                    return self.node_load_module_by_relative_name(directory, true, false, inner);
+                    return self.node_load_module_by_relative_name(
+                        directory,
+                        EndsInSlash::Yes,
+                        ConsiderPackageJson::No,
+                        inner,
+                    );
                 }
-                self.named_file(path, package_file, as_named)
-                    .or_else(|| self.node_load_module_by_relative_name(path, false, false, inner))
+                self.named_file(path, package_file, as_named).or_else(|| {
+                    self.node_load_module_by_relative_name(
+                        path,
+                        EndsInSlash::No,
+                        ConsiderPackageJson::No,
+                        inner,
+                    )
+                })
             };
             // `typesVersions` also apply to the entry, if it is inside the package, and to `index`
             // if there is no entry.
@@ -2821,12 +2872,21 @@ impl<'h> Resolver<'h> {
                 _ => None,
             };
             if let Some(main) = main {
-                return self.export_target(package_dir, key, main, b"", false, key, false, look);
+                return self.export_target(
+                    package_dir,
+                    key,
+                    main,
+                    b"",
+                    IsPattern::No,
+                    key,
+                    IsImports::No,
+                    look,
+                );
             }
         } else if let Json::Object(entries) = exports
             && dotted(entries) == entries.len()
         {
-            match self.lookup_table(package_dir, entries, key, false, look) {
+            match self.lookup_table(package_dir, entries, key, IsImports::No, look) {
                 Found::No => {}
                 found => return found,
             }
@@ -2842,7 +2902,7 @@ impl<'h> Resolver<'h> {
         package_dir: &[u8],
         table: &[(Vec<u8>, Json)],
         name: &[u8],
-        is_imports: bool,
+        is_imports: IsImports,
         look: Look,
     ) -> Found {
         if !name.ends_with(b"/")
@@ -2854,7 +2914,7 @@ impl<'h> Resolver<'h> {
                 name,
                 target,
                 b"",
-                false,
+                IsPattern::No,
                 name,
                 is_imports,
                 look,
@@ -2869,9 +2929,9 @@ impl<'h> Resolver<'h> {
         // The first matching key is used, whatever its target resolves to.
         for (key, target) in keys {
             let (subpath, is_pattern) = if let Some(matched) = match_pattern(key, name) {
-                (matched, true)
+                (matched, IsPattern::Yes)
             } else if let Some(rest) = name.strip_prefix(key.as_slice()) {
-                (rest, false)
+                (rest, IsPattern::No)
             } else {
                 continue;
             };
@@ -2897,12 +2957,15 @@ impl<'h> Resolver<'h> {
         module_name: &[u8],
         target: &Json,
         subpath: &[u8],
-        is_pattern: bool,
+        is_pattern: IsPattern,
         key: &[u8],
-        is_imports: bool,
+        is_imports: IsImports,
         look: Look,
     ) -> Found {
-        let field: &[u8] = if is_imports { b"imports" } else { b"exports" };
+        let field: &[u8] = match is_imports {
+            IsImports::Yes => b"imports",
+            IsImports::No => b"exports",
+        };
         let inner = |target: &Json| {
             self.export_target(
                 package_dir,
@@ -2916,23 +2979,24 @@ impl<'h> Resolver<'h> {
             )
         };
         match target {
-            Json::String(path) => {
+            Json::String(target_string) => {
+                let is_pattern = is_pattern == IsPattern::Yes;
                 // A subpath can only be appended to a directory.
-                if !is_pattern && !subpath.is_empty() && !path.ends_with(b"/") {
+                if !is_pattern && !subpath.is_empty() && !target_string.ends_with(b"/") {
                     look.trace(6275, &[package_dir, module_name]);
                     return Found::No;
                 }
                 let filled = if is_pattern {
-                    strings::replace_owned(path, b"*", subpath)
+                    strings::replace_owned(target_string, b"*", subpath)
                 } else {
-                    [&path[..], subpath].concat()
+                    [&target_string[..], subpath].concat()
                 };
-                if !path.starts_with(b"./") {
+                if !target_string.starts_with(b"./") {
                     // In `imports` the target may be a module name, which is resolved from the
                     // directory of the `package.json`.
-                    if is_imports
-                        && !path.starts_with(b"../")
-                        && !path.starts_with(b"/")
+                    if is_imports == IsImports::Yes
+                        && !target_string.starts_with(b"../")
+                        && !target_string.starts_with(b"/")
                         && look.depth < 8
                     {
                         let look = Look {
@@ -2952,7 +3016,7 @@ impl<'h> Resolver<'h> {
                 }
                 // The target must stay inside the package and outside the packages nested in it.
                 let leads_away = |part: &[u8]| matches!(part, b".." | b"." | b"node_modules");
-                if strings::split(path, b"/").skip(1).any(leads_away)
+                if strings::split(target_string, b"/").skip(1).any(leads_away)
                     || strings::split(subpath, b"/").any(leads_away)
                 {
                     look.trace(6275, &[package_dir, module_name]);
@@ -2962,7 +3026,7 @@ impl<'h> Resolver<'h> {
                 let named = join(package_dir, &filled);
                 let input = self.input_file_for(&named, subpath, package_dir, is_imports, look);
                 let found = match input {
-                    Found::No => Found::of(self.named_file(&named, path, look)),
+                    Found::No => Found::of(self.named_file(&named, target_string, look)),
                     found => found,
                 };
                 if !matches!(found, Found::No) {
@@ -3023,7 +3087,7 @@ impl<'h> Resolver<'h> {
         path: &[u8],
         entry: &[u8],
         package_dir: &[u8],
-        is_imports: bool,
+        is_imports: IsImports,
         look: Look,
     ) -> Found {
         let options = self.options;
@@ -3042,7 +3106,7 @@ impl<'h> Resolver<'h> {
         } else {
             let entry = if entry.is_empty() { b"." } else { entry };
             self.ambiguous_roots.lock().push((
-                is_imports,
+                is_imports == IsImports::Yes,
                 self.keep(entry),
                 self.keep(&inside(package_dir, b"package.json")),
             ));
@@ -3137,7 +3201,7 @@ impl<'h> Resolver<'h> {
             look.trace(6273, &[dir]);
             return Found::No;
         };
-        let found = self.lookup_table(dir, imports, spec, true, look);
+        let found = self.lookup_table(dir, imports, spec, IsImports::Yes, look);
         if let Found::No = found {
             look.trace(6271, &[spec, dir]);
         }
@@ -3237,12 +3301,23 @@ fn validate_package_json_field<'j, T>(
     let field = json.get(name);
     let valid = field.and_then(read);
     if valid.is_none() {
-        if let Some(field) = field {
-            look.trace(6105, &[name, expected, json_type(field)]);
-        }
-        look.trace(6100, &[name]);
+        trace_invalid_package_json_field(name, expected, field, look);
     }
     valid
+}
+
+/// What `validatePackageJSONField` logs about the field `name` if it is missing, or if its value
+/// `field` is not of the type `expected`.
+fn trace_invalid_package_json_field(
+    name: &[u8],
+    expected: &[u8],
+    field: Option<&Json>,
+    look: Look,
+) {
+    if let Some(field) = field {
+        look.trace(6105, &[name, expected, json_type(field)]);
+    }
+    look.trace(6100, &[name]);
 }
 
 /// `getPackageJSONPathField`: the path that the field `name` of the `package.json` in `dir` names.

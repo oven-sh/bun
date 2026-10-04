@@ -335,8 +335,8 @@ impl Checker<'_, '_> {
         has_one_argument: bool,
     ) -> Vec<Reported> {
         let hir = self.hir(file);
-        let (from, to) = self.error_range_of_expr(file, target);
-        let here = |code: u32| Reported::bare((file, from, to), code);
+        let at = self.span_of_parenthesized_expr(file, target);
+        let here = |code: u32| Reported::bare(at, code);
         let mut related = Vec::new();
         // `invocationErrorDetails`
         if let Some(awaited) = self.awaited_or_none(apparent) {
@@ -684,7 +684,7 @@ impl Checker<'_, '_> {
         // A cloned signature has the declaration of its original.
         let mut sig = sig;
         let mut steps = 0;
-        let (class, of, func) = loop {
+        let (declaring, of, func) = loop {
             match *self.types().sig(self.types().sig_origin(sig)) {
                 SigData::Construct {
                     class, file, func, ..
@@ -711,16 +711,16 @@ impl Checker<'_, '_> {
             .into_iter()
             .map(|c| self.class_sym(file, c))
             .collect();
-        if enclosing.contains(&class) {
+        if enclosing.contains(&declaring) {
             return None;
         }
         if modifiers.contains(Flags::PROTECTED)
             && let Some(&containing) = enclosing.first()
-            && self.has_protected_accessible_base(class, containing, 0)
+            && self.has_protected_accessible_base(declaring, containing, 0)
         {
             return None;
         }
-        Some((modifiers, class))
+        Some((modifiers, declaring))
     }
 
     /// `typeHasProtectedAccessibleBase`: whether `class` derives from `target` through first base
@@ -1140,8 +1140,8 @@ impl Checker<'_, '_> {
                     Some(&mut diagnostics),
                 );
                 self.reported.extend(diagnostics);
-                let (from, to) = self.error_range_of_expr(file, node);
-                self.maybe_add_missing_await_info((file, from, to), actual, expected, reported);
+                let place = self.span_of_parenthesized_expr(file, node);
+                self.maybe_add_missing_await_info(place, actual, expected, reported);
                 // `checkTypeRelatedToEx`: the target of `import * as ns` would have been
                 // assignable.
                 if let Some((module, import)) = self.originating_import(actual) {

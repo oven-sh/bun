@@ -86,7 +86,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         if p.is_tolerant() {
                             // `parseJsxAttributeName`
                             let name = JSXTag::parse_namespaced_name(
-                                p,
+                                p.arena,
+                                &mut p.lexer,
                                 prop_name_literal,
                                 &mut key_range,
                             )?;

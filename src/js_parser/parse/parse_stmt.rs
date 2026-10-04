@@ -2804,7 +2804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         ts_stmt: js_lexer::TypescriptStmtKeyword,
     ) {
         if ts_stmt != js_lexer::TypescriptStmtKeyword::TsStmtGlobal
-            && !p.source.contents()[loc.start as usize..].starts_with(name)
+            && !p.source.contents()[loc.to_usize()..].starts_with(name)
         {
             // It precedes all errors reported for the rest of the statement.
             let last = p.lexer.prev_error_loc;

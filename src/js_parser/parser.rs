@@ -866,8 +866,8 @@ impl<'a> JSXTag<'a> {
         let loc = p.lexer().loc();
 
         // `parseJsxTagName`
-        let (first, mut tag_range) = Self::parse_identifier_name(p, b"")?;
-        let mut name = Self::parse_namespaced_name(p, first, &mut tag_range)?;
+        let (first, mut tag_range) = Self::parse_identifier_name(p.lexer(), b"")?;
+        let mut name = Self::parse_namespaced_name(p.bump(), p.lexer(), first, &mut tag_range)?;
 
         // `isJsxIntrinsicTagName`. A namespaced name cannot be followed by a member access.
         if bun_core::strings::contains_char(name, b':')
@@ -897,8 +897,8 @@ impl<'a> JSXTag<'a> {
 
         while p.lexer().token == T::TDot {
             p.lexer().next_inside_jsx_element()?;
-            let (member, member_range) = Self::parse_member_name(p)?;
-            name = Self::join_names(p, name, b'.', member);
+            let (member, member_range) = Self::parse_member_name(p.lexer())?;
+            name = Self::join_names(p.bump(), name, b'.', member);
             tag_range.len = member_range.end().start - tag_range.loc.start;
             tag = p.new_expr(
                 E::Dot {
@@ -920,14 +920,10 @@ impl<'a> JSXTag<'a> {
 
     /// `parseIdentifierNameErrorOnUnicodeEscapeSequence` in a JSX tag, tolerant mode only. TypeScript's scanner ends the name
     /// before the first of `stops`. A missing name is empty, is reported (1003), and consumes nothing.
-    fn parse_identifier_name<P>(
-        p: &mut P,
+    fn parse_identifier_name(
+        lexer: &mut js_lexer::Lexer<'a>,
         stops: &[u8],
-    ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)>
-    where
-        P: crate::p::ParserLike<'a>,
-    {
-        let lexer = p.lexer();
+    ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)> {
         if lexer.token != T::TIdentifier {
             if lexer.is_log_disabled {
                 return Err(crate::Error::Backtrack);
@@ -965,15 +961,12 @@ impl<'a> JSXTag<'a> {
     /// Returns "first:second", or `first` if no colon follows.
     #[cold]
     #[inline(never)]
-    pub(crate) fn parse_namespaced_name<P>(
-        p: &mut P,
+    pub(crate) fn parse_namespaced_name(
+        bump: &'a bun_alloc::Arena,
+        lexer: &mut js_lexer::Lexer<'a>,
         first: &'a [u8],
         range: &mut bun_ast::Range,
-    ) -> crate::CrateResult<&'a [u8]>
-    where
-        P: crate::p::ParserLike<'a>,
-    {
-        let lexer = p.lexer();
+    ) -> crate::CrateResult<&'a [u8]> {
         let namespace = if let Some(namespace) = first.strip_suffix(b":") {
             // The lexer scanned the colon as part of the name.
             namespace
@@ -985,17 +978,15 @@ impl<'a> JSXTag<'a> {
         } else {
             return Ok(first);
         };
-        let (second, second_range) = Self::parse_identifier_name(p, b":")?;
+        let (second, second_range) = Self::parse_identifier_name(lexer, b":")?;
         range.len = second_range.end().start - range.loc.start;
-        Ok(Self::join_names(p, namespace, b':', second))
+        Ok(Self::join_names(bump, namespace, b':', second))
     }
 
     /// `parseRightSideOfDot` in a JSX tag, tolerant mode only. The name is an ordinary identifier, without "-" or ":".
-    fn parse_member_name<P>(p: &mut P) -> crate::CrateResult<(&'a [u8], bun_ast::Range)>
-    where
-        P: crate::p::ParserLike<'a>,
-    {
-        let lexer = p.lexer();
+    fn parse_member_name(
+        lexer: &mut js_lexer::Lexer<'a>,
+    ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)> {
         if lexer.token == T::TSyntaxError && lexer.raw() == b"#" {
             // Rescan it as an ordinary token.
             lexer.current = lexer.start;
@@ -1015,16 +1006,18 @@ impl<'a> JSXTag<'a> {
             lexer.ts_error(missing, 1003);
             return Ok((b"".as_slice(), missing));
         }
-        Self::parse_identifier_name(p, b"-:")
+        Self::parse_identifier_name(lexer, b"-:")
     }
 
-    fn join_names<P>(p: &P, left: &[u8], separator: u8, right: &[u8]) -> &'a [u8]
-    where
-        P: crate::p::ParserLike<'a>,
-    {
-        let joined: &'a mut [u8] = p
-            .bump()
-            .alloc_slice_fill_default::<u8>(left.len() + 1 + right.len());
+    /// `left`, `separator` and `right` as one name, allocated in `bump`.
+    fn join_names(
+        bump: &'a bun_alloc::Arena,
+        left: &[u8],
+        separator: u8,
+        right: &[u8],
+    ) -> &'a [u8] {
+        let joined: &'a mut [u8] =
+            bump.alloc_slice_fill_default::<u8>(left.len() + 1 + right.len());
         joined[..left.len()].copy_from_slice(left);
         joined[left.len()] = separator;
         joined[left.len() + 1..].copy_from_slice(right);

@@ -531,15 +531,6 @@ pub enum IndexComponent {
     Member(FileId, crate::hir::MemberId),
 }
 
-impl IndexComponent {
-    #[inline]
-    pub fn file(self) -> FileId {
-        match self {
-            IndexComponent::Property(file, _) | IndexComponent::Member(file, _) => file,
-        }
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct IndexInfo {
     pub key: TypeId,
@@ -1667,12 +1658,6 @@ impl<'p, 's> Types<'p, 's> {
         // task-local record is returned like one to a published record.
         let own = unsafe { &*std::ptr::from_ref(own) };
         Types { published, own }
-    }
-
-    /// The arena of the thread that runs the task: for what is passed to `intern`.
-    #[inline]
-    pub fn arena(&self) -> &'s Arena {
-        self.own.arena
     }
 
     /// A copy of `items` to store in a type, a signature or a value of a table.

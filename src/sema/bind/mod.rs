@@ -149,6 +149,38 @@ pub enum Decl {
     TypeLiteral(TypeNodeId),
 }
 
+impl Decl {
+    /// `node.Members()` of a class or an interface. `None`: it is neither.
+    #[inline]
+    pub fn members_of_class_or_interface(self, hir: &File) -> Option<Span<MemberId>> {
+        match self {
+            Decl::Class(c) => Some(hir[c].members),
+            Decl::Interface(i) => Some(hir[i].members),
+            _ => None,
+        }
+    }
+
+    /// `node.TypeParameters()` of a class or an interface. `None`: it is neither.
+    #[inline]
+    pub fn type_params_of_class_or_interface(self, hir: &File) -> Option<Span<TypeParamId>> {
+        match self {
+            Decl::Class(c) => Some(hir[c].type_params),
+            Decl::Interface(i) => Some(hir[i].type_params),
+            _ => None,
+        }
+    }
+
+    /// The position of the name of a class or an interface. `None`: it is neither.
+    #[inline]
+    pub fn name_pos_of_class_or_interface(self, hir: &File) -> Option<u32> {
+        match self {
+            Decl::Class(c) => Some(hir[c].name_pos),
+            Decl::Interface(i) => Some(hir[i].name_pos),
+            _ => None,
+        }
+    }
+}
+
 /// `JSDeclarationKind`, without `JSDeclarationKindProperty`: what an assignment or a call declares in a JavaScript file.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum JsDeclarationKind {
@@ -624,10 +656,35 @@ pub enum PatParent {
     Elem(PatId, PatElemId),
 }
 
+impl PatParent {
+    /// `node.Initializer()` of the variable declaration, the parameter or the binding element.
+    #[inline]
+    pub fn initializer(self, hir: &File) -> ExprId {
+        match self {
+            PatParent::Var(d) => hir[d].init,
+            PatParent::Param(p) => hir[p].default,
+            PatParent::Prop(_, prop) => hir[prop].default,
+            PatParent::Elem(_, elem) => hir[elem].default,
+            PatParent::None => ExprId::NONE,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ClassOwner {
     Expr(ExprId),
     Stmt(StmtId),
+}
+
+impl ClassOwner {
+    /// The class expression or declaration, as the parent of what is directly inside the class.
+    #[inline]
+    pub fn to_parent(self) -> Parent {
+        match self {
+            ClassOwner::Expr(e) => Parent::Expr(e),
+            ClassOwner::Stmt(s) => Parent::Stmt(s),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1025,9 +1082,7 @@ impl<S: Storage> BoundIn<S> {
                     e = owner;
                 }
                 Parent::Stmt(s) if s.is_some() => {
-                    return matches!(self.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
-                        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
-                    .then_some(AssignmentTarget::ForInOrOf);
+                    return target_of_for_in_or_of(hir, &self.stmt_parent, s);
                 }
                 _ => return None,
             }
@@ -1045,15 +1100,7 @@ impl<S: Storage> BoundIn<S> {
             },
             _ => return None,
         };
-        let init = hir[d].init;
-        if !hir.is_js
-            || init.is_none()
-            || hir[d].ty.is_some()
-            || hir[d].flags.contains(Flags::EXPORT)
-        {
-            return None;
-        }
-        Some((required_specifier(hir, init)?, part))
+        Some((module_required_by(hir, d)?, part))
     }
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
@@ -1115,14 +1162,34 @@ impl<S: Storage> BoundIn<S> {
         }
         seen
     }
+}
 
-    /// The word index and the bit for `name` in a `nested_names` of `words` words.
-    #[inline]
-    pub(super) fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
-        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
-        let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
-        ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
+/// The end of `GetAssignmentTarget`: `s`, an expression statement, is what the head of a `for`-`in`
+/// or a `for`-`of` assigns to.
+fn target_of_for_in_or_of(
+    hir: &File,
+    stmt_parent: &[Parent],
+    s: StmtId,
+) -> Option<AssignmentTarget> {
+    matches!(stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
+    .then_some(AssignmentTarget::ForInOrOf)
+}
+
+/// `IsVariableDeclarationInitializedToRequire`: the module that `d` is initialized to.
+fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
+    let init = hir[d].init;
+    if !hir.is_js || init.is_none() || hir[d].ty.is_some() || hir[d].flags.contains(Flags::EXPORT) {
+        return None;
     }
+    required_specifier(hir, init)
+}
+
+/// The word index and the bit for `name` in a `nested_names` of `words` words.
+fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
+    // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+    let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+    ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
 }
 
 impl Bound<'_> {
@@ -1429,7 +1496,7 @@ impl Bound<'_> {
     #[inline]
     pub fn scope_to_resolve_from(&self, mut scope: ScopeId, name: Atom) -> ScopeId {
         if !self.nested_names.is_empty() {
-            let (word, bit) = Self::bit_of_nested_name(self.nested_names.len(), name);
+            let (word, bit) = bit_of_nested_name(self.nested_names.len(), name);
             if self.nested_names[word] & bit != 0 {
                 return scope;
             }

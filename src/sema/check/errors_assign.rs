@@ -46,6 +46,21 @@ fn unwrap_unary_tuples(
     (check, extends)
 }
 
+/// `inReturnStatement` of `checkReturnExpression`: its `node` is a `return` statement and not the
+/// expression body of a function.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum InReturnStatement {
+    No,
+    Yes,
+}
+
+/// `inConditionalExpression` of `checkReturnExpression`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum InConditionalExpression {
+    No,
+    Yes,
+}
+
 impl Checker<'_, '_> {
     pub(super) fn check_assignments(&mut self, file: FileId) {
         let hir = self.hir(file);
@@ -473,14 +488,14 @@ impl Checker<'_, '_> {
     ) {
         let hir = self.hir(file);
         let actual = self.type_of_expr(file, expr);
-        let target = self.type_from_node(file, ty);
+        let asserted = self.type_from_node(file, ty);
         let actual = self.base_of_literal(actual);
         let widened = self.widened(actual);
-        if self.is_comparable(target, widened) {
+        if self.is_comparable(asserted, widened) {
             return;
         }
         let actual = self.regular_type_of_object_literal(actual);
-        if self.is_comparable(actual, target) {
+        if self.is_comparable(actual, asserted) {
             return;
         }
         // For a JSDoc type assertion the error node is the type node.
@@ -492,7 +507,7 @@ impl Checker<'_, '_> {
                 self.end_inside_parentheses(file, e),
             )
         };
-        self.check_type_comparable_to(actual, target, Some((file, at, end)), Some(2352));
+        self.check_type_comparable_to(actual, asserted, Some((file, at, end)), Some(2352));
     }
 
     /// `checkObjectLiteral`, `contextualTypeHasPattern`: reports 2353 for a property of an object literal that the destructuring pattern
@@ -1115,7 +1130,15 @@ impl Checker<'_, '_> {
                 // `never`.
                 if e.is_some() || self.p.files.options.strict_null_checks || declared.is_never() {
                     let expected = self.unwrap_return_type(file, container, declared);
-                    self.check_return_expression(file, container, expected, node, true, e, false);
+                    self.check_return_expression(
+                        file,
+                        container,
+                        expected,
+                        node,
+                        InReturnStatement::Yes,
+                        e,
+                        InConditionalExpression::No,
+                    );
                 }
             }
         }
@@ -1131,7 +1154,15 @@ impl Checker<'_, '_> {
                 self.start_of(file, body),
                 self.end_of_expr(file, body),
             );
-            self.check_return_expression(file, container, expected, node, false, body, false);
+            self.check_return_expression(
+                file,
+                container,
+                expected,
+                node,
+                InReturnStatement::No,
+                body,
+                InConditionalExpression::No,
+            );
         }
     }
 
@@ -1192,9 +1223,9 @@ impl Checker<'_, '_> {
         container: FnId,
         expected: TypeId,
         node: Place,
-        in_return_statement: bool,
+        in_return_statement: InReturnStatement,
         e: ExprId,
-        in_conditional_expression: bool,
+        in_conditional_expression: InConditionalExpression,
     ) {
         let hir = self.hir(file);
         if e.is_none() {
@@ -1210,7 +1241,7 @@ impl Checker<'_, '_> {
                     node,
                     in_return_statement,
                     arm,
-                    true,
+                    InConditionalExpression::Yes,
                 );
             }
             return;
@@ -1226,7 +1257,9 @@ impl Checker<'_, '_> {
         while let ExprKind::Satisfies { expr, .. } = hir[e].kind {
             e = expr;
         }
-        let error_node = if in_return_statement && !in_conditional_expression {
+        let error_node = if in_return_statement == InReturnStatement::Yes
+            && in_conditional_expression == InConditionalExpression::No
+        {
             node
         } else if let Some((open, end)) = self.range_of_jsdoc_type_assertion(file, e) {
             (file, open, end)
@@ -1836,7 +1869,7 @@ impl Checker<'_, '_> {
         if hir[func].params.iter().any(|p| hir[p].ty.is_some()) {
             return false;
         }
-        let Some(sig) = self.single_call_signature(source, false) else {
+        let Some(sig) = self.single_call_signature(source) else {
             return false;
         };
         let expected = self.signatures(target, false);

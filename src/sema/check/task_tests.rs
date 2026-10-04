@@ -466,8 +466,8 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
             state = (state.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
             (state >> 33) as u32 % below
         };
-        let bases = Bases::new((0..FILES).map(|_| NODES as usize));
-        let mut table = ByNode::<Node, TypeId, Buffered>::new(&bases);
+        let bases = Bases::new_in((0..FILES).map(|_| NODES as usize), &Global);
+        let mut table = ByNode::<Node, TypeId, Buffered>::new_in(&bases, Global);
         table.set_slot(numbered(0));
         let mut task = begin(&session, 0);
         let mut model: FxHashMap<Node, TypeId> = FxHashMap::default();
@@ -1130,8 +1130,8 @@ fn nothing_that_is_bound_is_published() {
 fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
     let session = Session::new();
     // The second file is not counted.
-    let bases = Bases::new([10, 0].into_iter());
-    let mut table = ByNode::<Node, TypeId, Buffered>::new(&bases);
+    let bases = Bases::new_in([10, 0].into_iter(), &Global);
+    let mut table = ByNode::<Node, TypeId, Buffered>::new_in(&bases, Global);
     table.set_slot(numbered(0));
     let mut task = begin(&session, 0);
     task.begin_file(B, false);
@@ -1189,8 +1189,8 @@ fn published_values_of_a_bit_share_a_cell() {
 #[cfg_attr(miri, ignore)]
 fn file_local_values_of_a_bit_or_two_share_a_word() {
     let session = Session::new();
-    let mut set = ByNode::<Node, (), FileLocal>::new(&Bases::none_in(&Global));
-    let mut flags = ByNode::<Node, bool, FileLocal>::new(&Bases::none_in(&Global));
+    let mut set = ByNode::<Node, (), FileLocal>::new_in(&Bases::none_in(&Global), Global);
+    let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
     set.set_slot(numbered(0));
     flags.set_slot(numbered(1));
     let mut task = Task::new_in(session.arena());
@@ -1375,7 +1375,7 @@ fn threads_fill_and_read_a_sharded_map() {
             }
         }
     });
-    assert_eq!(map.len(), 300);
+    assert_eq!(map.entries(), 300);
 }
 
 #[test]

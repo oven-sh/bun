@@ -264,14 +264,7 @@ fn run(
         );
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
-    let style = style_for(
-        cwd,
-        Some(true),
-        bun_core::Fd::stderr(),
-        true,
-        Output::enable_ansi_colors_stderr(),
-        false,
-    );
+    let style = style_for(cwd, Some(true), Destination::stderr(), false);
     std::thread::scope(|scope| {
         let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
         let progress = Some(&progress);
@@ -331,31 +324,50 @@ fn run_quietly(
     bun_sema_driver::check_already_read_then(&request, already_read, then)
 }
 
+/// Where a report is printed.
+#[derive(Copy, Clone)]
+struct Destination {
+    fd: bun_core::Fd,
+    is_tty: bool,
+    colors: bool,
+}
+
+impl Destination {
+    fn stdout() -> Destination {
+        Destination {
+            fd: bun_core::Fd::stdout(),
+            is_tty: Output::is_stdout_tty(),
+            colors: Output::enable_ansi_colors_stdout(),
+        }
+    }
+
+    fn stderr() -> Destination {
+        Destination {
+            fd: bun_core::Fd::stderr(),
+            is_tty: Output::is_stderr_tty(),
+            colors: Output::enable_ansi_colors_stderr(),
+        }
+    }
+}
+
 /// A terminal user gets a source excerpt around each error, and so does an agent, in tags and
 /// without colors, which saves it from opening the files. A pipe or continuous integration gets one
 /// line per error.
-fn style_for(
-    cwd: &[u8],
-    pretty: Option<bool>,
-    to: bun_core::Fd,
-    is_tty: bool,
-    colors: bool,
-    show_all: bool,
-) -> Style<'_> {
+fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) -> Style<'_> {
     let layout = match pretty {
         Some(true) => Layout::Pretty,
         Some(false) => Layout::Plain,
         None if Output::is_ai_agent() => Layout::Agent,
-        None if is_tty => Layout::Pretty,
+        None if to.is_tty => Layout::Pretty,
         None => Layout::Plain,
     };
     Style {
         layout,
-        color: layout == Layout::Pretty && colors,
+        color: layout == Layout::Pretty && to.colors,
         cwd,
         github_annotations: Output::is_github_action(),
-        width: if is_tty {
-            bun_core::output::File::from(to)
+        width: if to.is_tty {
+            bun_core::output::File::from(to.fd)
                 .winsize()
                 .map_or(0, |size| usize::from(size.col))
         } else {
@@ -411,9 +423,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
         &style_for(
             &shown_from,
             options.pretty,
-            bun_core::Fd::stdout(),
-            Output::is_stdout_tty(),
-            Output::enable_ansi_colors_stdout(),
+            Destination::stdout(),
             options.all,
         ),
     );
@@ -427,9 +437,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             ..style_for(
                 &shown_from,
                 options.pretty,
-                bun_core::Fd::stderr(),
-                Output::is_stderr_tty(),
-                true,
+                Destination::stderr(),
                 options.all,
             )
         },
@@ -639,14 +647,7 @@ fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> b
         return true;
     }
     let shown_from = bun_sema_driver::host::from_native(&cwd);
-    let style = style_for(
-        &shown_from,
-        None,
-        bun_core::Fd::stderr(),
-        Output::is_stderr_tty(),
-        Output::enable_ansi_colors_stderr(),
-        false,
-    );
+    let style = style_for(&shown_from, None, Destination::stderr(), false);
     let mut out = Vec::new();
     format::write_diagnostics(&mut out, &report, &style);
     if !report.is_ok() {

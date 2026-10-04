@@ -4,13 +4,25 @@
 //! (`pseudotypenodebuilder.go`, `nodecopy.go`). The same pseudochecker is used to check
 //! `isolatedDeclarations`.
 
-use super::super::errors_declaration_emit::{Element, Writer, comments_text};
+use super::super::errors_declaration_emit::{Element, ListFormat, Writer, comments_text};
 use super::super::errors_isolated_declarations::{
-    Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
+    Emit, EquivalenceOptions, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
 use super::*;
 
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
+
+/// The options of `Printer::serialize_type_for_declaration`.
+#[derive(Copy, Clone)]
+pub(super) struct SerializeTypeOptions {
+    /// `tryReuse`
+    pub(super) try_reuse: bool,
+    /// If the type is that of an array literal, it still has `ObjectFlagsArrayLiteral`, a flag that
+    /// types do not store.
+    pub(super) is_unwidened: bool,
+    /// The symbol is an optional property of a reverse mapped type.
+    pub(super) is_optional_reverse_mapped: bool,
+}
 
 impl<'p> Printer<'_, 'p, '_> {
     /// `b.ctx.enclosingDeclaration != nil`: whether the type of a declaration is derived from its
@@ -27,9 +39,11 @@ impl<'p> Printer<'_, 'p, '_> {
                     file,
                     self.c.hir(file).node(declaration),
                     parameter.ty,
-                    true,
-                    false,
-                    false,
+                    SerializeTypeOptions {
+                        try_reuse: true,
+                        is_unwidened: false,
+                        is_optional_reverse_mapped: false,
+                    },
                 ),
             _ => self.type_to_node(parameter.ty),
         }
@@ -90,9 +104,11 @@ impl<'p> Printer<'_, 'p, '_> {
                 file,
                 declaration,
                 ty,
-                true,
-                is_unwidened,
-                is_optional_reverse_mapped,
+                SerializeTypeOptions {
+                    try_reuse: true,
+                    is_unwidened,
+                    is_optional_reverse_mapped,
+                },
             );
         }
         self.type_to_node(ty)
@@ -128,7 +144,16 @@ impl<'p> Printer<'_, 'p, '_> {
         if self.reuses_nodes()
             && let Some((file, declaration)) = declaration
         {
-            return self.serialize_type_for_declaration(file, declaration, ty, true, false, false);
+            return self.serialize_type_for_declaration(
+                file,
+                declaration,
+                ty,
+                SerializeTypeOptions {
+                    try_reuse: true,
+                    is_unwidened: false,
+                    is_optional_reverse_mapped: false,
+                },
+            );
         }
         self.type_to_node(ty)
     }
@@ -243,18 +268,18 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `serializeTypeForDeclaration` for the declaration `node` of `file`, whose type is `ty` here.
-    /// `is_unwidened`: if `ty` is the type of an array literal, it still has
-    /// `ObjectFlagsArrayLiteral`, a flag that types do not store.
-    /// `is_optional_reverse_mapped`: the symbol is an optional property of a reverse mapped type.
     pub(super) fn serialize_type_for_declaration(
         &mut self,
         file: FileId,
         node: hir::Node,
         ty: TypeId,
-        try_reuse: bool,
-        is_unwidened: bool,
-        is_optional_reverse_mapped: bool,
+        options: SerializeTypeOptions,
     ) -> Node {
+        let SerializeTypeOptions {
+            try_reuse,
+            is_unwidened,
+            is_optional_reverse_mapped,
+        } = options;
         let hir = self.c.hir(file);
         // `requiresAddingImplicitUndefined`
         let requires_undefined = match hir.data(node) {
@@ -397,9 +422,11 @@ impl<'p> Printer<'_, 'p, '_> {
         report_errors: bool,
     ) -> bool {
         let mut tx = Emit::new(file);
-        let is_equivalent =
-            self.c
-                .iso_is_equivalent(&mut tx, pt, ty, is_optional_annotated, report_errors);
+        let options = EquivalenceOptions {
+            is_optional_annotated,
+            reports: report_errors,
+        };
+        let is_equivalent = self.c.iso_is_equivalent(&mut tx, pt, ty, options);
         for node in tx.inference_fallbacks {
             self.report_inference_fallback(file, node);
         }
@@ -431,7 +458,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 self.type_to_node_without_inference_fallback(ty)
             }
             Pseudo::Direct(existing)
-                if !self.can_reuse_existing_js_type_node(file, *existing, ty) =>
+                if !self.c.can_reuse_existing_js_type_node(file, *existing, ty) =>
             {
                 if !self.suppress_report_inference_fallback {
                     self.report_inference_fallback(file, self.c.hir(file).node(*existing));
@@ -598,7 +625,16 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let ty = self.c.widen_literal(ty);
         let ty = self.c.instantiate(ty, self.mapper);
-        self.serialize_type_for_declaration(file, declaration, ty, try_reuse, false, false)
+        self.serialize_type_for_declaration(
+            file,
+            declaration,
+            ty,
+            SerializeTypeOptions {
+                try_reuse,
+                is_unwidened: false,
+                is_optional_reverse_mapped: false,
+            },
+        )
     }
 
     /// `pseudoTypeToNode` for a `PseudoTypeInferred` of the expression `of` that is not a
@@ -1340,7 +1376,7 @@ impl<'p> Printer<'_, 'p, '_> {
                         }
                         let mut writer = Writer::new(text, level);
                         writer.space_between_siblings = true;
-                        writer.emit_list_items(&elements, b",", true, false, usize::MAX);
+                        writer.emit_list_items(&elements, b",", ListFormat::MULTI_LINE, usize::MAX);
                         Node::simple(cat!(b"[", writer.into_text(), b"    ".repeat(level), b"]"))
                     }
                     None => {
@@ -1969,7 +2005,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 in_extends: None,
             });
         }
-        if !self.can_reuse_existing_js_type_node(file, node, declared) {
+        if !self.c.can_reuse_existing_js_type_node(file, node, declared) {
             return None;
         }
         let meaning = if names.len() == 1 {
@@ -2135,7 +2171,9 @@ impl<'p> Printer<'_, 'p, '_> {
         let resolved = files.canonical(files.resolve_alias(symbol).unwrap_or(symbol));
         Some(self.symbol_to_type_node(resolved, is_type_of, type_arguments))
     }
+}
 
+impl Checker<'_, '_> {
     /// `canReuseExistingJSTypeNode`: false for a node that represents a different type in a JSDoc
     /// comment, and for a reference to the target of `ty` with too few type arguments.
     fn can_reuse_existing_js_type_node(
@@ -2144,23 +2182,22 @@ impl<'p> Printer<'_, 'p, '_> {
         existing: TypeNodeId,
         ty: TypeId,
     ) -> bool {
-        let (hir, files) = (self.c.hir(file), self.c.files());
+        let (hir, files) = (self.hir(file), self.files());
         let TypeNodeKind::Ref { name, args } = hir[existing].kind else {
             return true;
         };
         if self
-            .c
             .get_intended_type_from_jsdoc_type_reference(file, existing)
             .is_some()
         {
             return false;
         }
-        let target = match self.c.data(ty) {
+        let target = match self.data(ty) {
             TypeData::Ref { target, .. } => *target,
             _ => return true,
         };
         let names: Vec<Atom> = hir.texts(name).collect();
-        let scope = self.c.bound(file).type_scope[existing.idx()];
+        let scope = self.bound(file).type_scope[existing.idx()];
         let Some(found) = files.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
             return true;
         };
@@ -2168,7 +2205,7 @@ impl<'p> Printer<'_, 'p, '_> {
         if named.map(|named| files.canonical(named)) != Some(target) {
             return true;
         }
-        let type_parameters = self.c.all_type_params_of_symbol(target);
-        args.len() >= self.c.min_type_argument_count(&type_parameters)
+        let type_parameters = self.all_type_params_of_symbol(target);
+        args.len() >= self.min_type_argument_count(&type_parameters)
     }
 }

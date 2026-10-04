@@ -117,6 +117,14 @@ impl FlowMemo {
     }
 }
 
+/// `checkDerived` of `getNarrowedType`: the test is `instanceof` or `#x in`, which goes by the declared
+/// `extends` relations. If not, it is a type guard, which goes by the subtype relations.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum CheckDerived {
+    No,
+    Yes,
+}
+
 /// Whether narrowing from outside a function is still valid inside it.
 #[derive(Copy, Clone)]
 enum Crossing {
@@ -2958,7 +2966,7 @@ impl<'p, 's> Checker<'p, 's> {
                 asserts: false,
             }) = self.sig_predicate(sig)
         {
-            return self.narrowed_to(ty, guarded, sense, true);
+            return self.narrowed_to(ty, guarded, sense, CheckDerived::Yes);
         }
         let function = self.global_ref(known::Function, &[]);
         if !self.is_type_derived_from(constructor, function) {
@@ -2974,7 +2982,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return ty;
         }
-        self.narrowed_to(ty, instance, sense, true)
+        self.narrowed_to(ty, instance, sense, CheckDerived::Yes)
     }
 
     /// `getInstanceType`
@@ -3053,12 +3061,12 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         candidate: TypeId,
         sense: bool,
-        check_derived: bool,
+        check_derived: CheckDerived,
     ) -> TypeId {
         if !self.is_union(ty) {
             return self.narrowed_to_uncached(ty, candidate, sense, check_derived);
         }
-        let key = (ty, candidate, sense, check_derived);
+        let key = (ty, candidate, sense, check_derived == CheckDerived::Yes);
         if let Some(&known) = self.flow_memo.narrowed_types.get(&key) {
             return known;
         }
@@ -3076,11 +3084,12 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         candidate: TypeId,
         sense: bool,
-        check_derived: bool,
+        check_derived: CheckDerived,
     ) -> TypeId {
         if ty == TypeId::UNRESOLVED {
             return ty;
         }
+        let check_derived = check_derived == CheckDerived::Yes;
         if !sense {
             if ty == candidate {
                 return TypeId::NEVER;
@@ -3099,7 +3108,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 ty
             };
-            let if_so = self.narrowed_to(ty, candidate, true, false);
+            let if_so = self.narrowed_to(ty, candidate, true, CheckDerived::No);
             let rest = self.filter(ty, |c, m| !(m == if_so || c.parts(if_so).contains(&m)));
             return if rest == everything {
                 TypeId::UNKNOWN
@@ -3111,10 +3120,14 @@ impl<'p, 's> Checker<'p, 's> {
             return candidate;
         }
         let narrowed = self.map_type(candidate, |c, n| {
+            // A union with a key property is reduced to the constituent that has the key of `n`.
+            let union = ty;
+            let matching = c
+                .matching_union_constituent_for_type(union, n)
+                .unwrap_or(ty);
             // Of two related types, the more specific one. If each is related to the other: the
             // candidate for a type guard; the original type for `instanceof`, since a prototype
             // carries no type arguments.
-            let matching = c.matching_union_constituent_for_type(ty, n).unwrap_or(ty);
             let directly_related = c.map_type(matching, |c, t| {
                 if check_derived {
                     if c.is_type_derived_from(t, n) {
@@ -3201,7 +3214,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 self.declared_type(sym)
             };
-            return self.narrowed_to(ty, target, sense, true);
+            return self.narrowed_to(ty, target, sense, CheckDerived::Yes);
         }
         // `"a" in x` narrows `x.a` by presence if its type includes the missing type
         // (`containsMissingType`).
@@ -3422,7 +3435,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return ty;
                 }
                 if self.matches(reference, subject) {
-                    return self.narrowed_to(ty, target, sense, false);
+                    return self.narrowed_to(ty, target, sense, CheckDerived::No);
                 }
                 // A short-circuited chain yields `undefined`. This one completed if its result is
                 // of a type that excludes `undefined`, or is not of a type that consists only of
@@ -3440,7 +3453,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if let Some(name) = self.discriminant_access(reference, subject, ty) {
                     return self.narrow_by_discriminant(ty, name, |c, t| {
-                        c.narrowed_to(t, target, sense, false)
+                        c.narrowed_to(t, target, sense, CheckDerived::No)
                     });
                 }
                 ty

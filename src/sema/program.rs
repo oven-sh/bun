@@ -388,6 +388,16 @@ impl<'s> SymbolMap<'s> {
             }
         }
     }
+
+    /// `extendExportSymbols` without a lookup table: adds the entries of `source` whose names are
+    /// not in the table.
+    fn extend_with_missing(&mut self, source: &SymbolMap<'_>) {
+        for &(name, symbol) in source.iter() {
+            if !self.contains_key(name) {
+                self.insert(name, symbol);
+            }
+        }
+    }
 }
 
 impl std::ops::Deref for SymbolMap<'_> {
@@ -660,13 +670,20 @@ struct Loaded<'s, 'r> {
     traces: Vec<DiagAndArgs>,
 }
 
+/// A file that `Files::load` has found.
+#[derive(Copy, Clone)]
+struct FoundFile<'s> {
+    path: &'s [u8],
+    is_lib: bool,
+    /// `parseTaskData.packageId`, as an index into `Found::kept`.
+    package: Option<u32>,
+}
+
 /// What `Files::load` knows about the files it has found, besides the files themselves.
 #[derive(Default)]
 struct Found<'s> {
-    /// By `FileId`: the path, and whether it is a library.
-    paths: Vec<(&'s [u8], bool)>,
-    /// By `FileId`: `parseTaskData.packageId`, as an index into `kept`.
-    packages: Vec<Option<u32>>,
+    /// By `FileId`.
+    files: Vec<FoundFile<'s>>,
     /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
     kept: Vec<Option<FileId>>,
     /// Whether `collectFiles` has begun.
@@ -1124,11 +1141,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 }
             }
         }
-        for &(name, nested) in nested_symbols.iter() {
-            if !symbols.contains_key(name) {
-                symbols.insert(name, nested);
-            }
-        }
+        symbols.extend_with_missing(&nested_symbols);
         if let Some(star) = export_star
             && matches!(
                 self.hir(star.0)[star.1].kind,
@@ -1331,7 +1344,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             Some(target.map_or(SymFlags::all(), |target| self.flags(target)))
         };
         let name = (name, self.atoms.bytes(name));
-        self.suggested_symbol_for_nonexistent_symbol(
+        // For the aliases that the search resolves. The suggestion is for the error, which the
+        // checker reports.
+        let _ = self.suggested_symbol_for_nonexistent_symbol(
             file,
             scope,
             name,
@@ -2719,8 +2734,11 @@ impl<'s> Files<'s> {
             modules.push(None);
             depths.push(depth);
             by_path.insert(path, id);
-            found.paths.push((path, is_lib));
-            found.packages.push(package);
+            found.files.push(FoundFile {
+                path,
+                is_lib,
+                package,
+            });
             if is_read {
                 frontier.push((id, path, is_lib));
             }
@@ -2968,8 +2986,12 @@ impl<'s> Files<'s> {
                 if seen[file.idx()] {
                     continue;
                 }
-                let (path, is_lib) = all_found.paths[file.idx()];
-                if let Some(package) = all_found.packages[file.idx()] {
+                let FoundFile {
+                    path,
+                    is_lib,
+                    package,
+                } = all_found.files[file.idx()];
+                if let Some(package) = package {
                     let kept = *all_found.kept[package as usize].get_or_insert(file);
                     if kept != file {
                         seen[file.idx()] = true;
@@ -4231,11 +4253,11 @@ impl<'s> Files<'s> {
         for (file, name, sym) in augmentations {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
                 // An augmentation of a module that is `export = ns` is merged into `ns`.
-                Some(target) => {
-                    let target = self.external_module_symbol_to_augment(target);
+                Some(main_module) => {
+                    let main_module = self.external_module_symbol_to_augment(main_module);
                     // `mergeModuleAugmentation`: a module whose `export =` target is not a
                     // namespace cannot be augmented.
-                    if !self.flags(target).intersects(SymFlags::NAMESPACE) {
+                    if !self.flags(main_module).intersects(SymFlags::NAMESPACE) {
                         continue;
                     }
                     // `mergeModuleAugmentation`: an augmentation of `a.svg`, which only the pattern
@@ -4243,8 +4265,8 @@ impl<'s> Files<'s> {
                     // pattern are merged into the augmentation, which is registered under its own
                     // name. A pattern that several scripts declare is not the symbol of any of them
                     // (`mainModule == module.Symbol`), and is augmented like any module.
-                    if self.ambient_patterns.iter().any(|p| p.2 == target) {
-                        let merged = self.merge_symbol(sym, target, true);
+                    if self.ambient_patterns.iter().any(|p| p.2 == main_module) {
+                        let merged = self.merge_symbol(sym, main_module, true);
                         self.pattern_augmentations.insert(name, merged);
                         continue;
                     }
@@ -4252,15 +4274,14 @@ impl<'s> Files<'s> {
                     // merged into the symbol at its declaration.
                     // `getResolvedMembersOrExportsOfSymbol` calls `getExportsOfModuleWorker`, and
                     // stores nothing in `moduleSymbolLinks`.
-                    let resolved_exports = if self.export_stars_of(target).is_empty() {
+                    let resolved_exports = if self.export_stars_of(main_module).is_empty() {
                         SymbolMap::new_in(self.arena)
                     } else {
-                        let links =
-                            resolve!(&*self, resolver => resolver.exports_of_module_worker(target));
+                        let links = resolve!(&*self, resolver => resolver.exports_of_module_worker(main_module));
                         links.resolved_exports
                     };
                     for (name, addition) in self.exports_in_table(sym) {
-                        if self.export(target, name).is_none()
+                        if self.export(main_module, name).is_none()
                             && let Some(&found) = resolved_exports.get(name)
                             && let Some(resolved) = self.resolve_alias_if_needed(found)
                         {
@@ -4282,7 +4303,7 @@ impl<'s> Files<'s> {
                             self.merge_symbol(found, addition, false);
                         }
                     }
-                    self.merge_symbol(target, sym, false);
+                    self.merge_symbol(main_module, sym, false);
                 }
                 // `mergeModuleAugmentation`: an augmentation of a module that does not exist is
                 // ignored.
@@ -5510,7 +5531,16 @@ impl<'s> Files<'s> {
         module: Sym,
         resolve_export_by_name: &mut dyn FnMut(Atom) -> Option<bool>,
     ) -> Option<Sym> {
-        let usage = usage.mode(self);
+        self.synthetic_default_in_mode(usage.mode(self), module, resolve_export_by_name)
+    }
+
+    /// `synthetic_default_with`, given the mode of its `usage`.
+    fn synthetic_default_in_mode(
+        &self,
+        usage: ResolutionMode,
+        module: Sym,
+        resolve_export_by_name: &mut dyn FnMut(Atom) -> Option<bool>,
+    ) -> Option<Sym> {
         let is_file = self
             .symbol(module)
             .decls

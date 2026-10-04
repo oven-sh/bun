@@ -217,6 +217,12 @@ impl Notes {
         }
     }
 
+    /// `node.End()` of the node whose `loc` is `loc`, if it was recorded.
+    pub(crate) fn end(&self, loc: Loc) -> Option<Loc> {
+        let end = self.node(loc)?.end;
+        (!end.is_empty()).then_some(end)
+    }
+
     /// Whether the node whose `loc` is `loc` has any note besides its range.
     #[inline]
     pub(crate) fn has_notes(&self, loc: Loc) -> bool {
@@ -744,8 +750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// `node.End()` of the node whose `loc` is `at`, if it was recorded.
     #[inline]
     pub(crate) fn noted_end(&self, at: Loc) -> Option<Loc> {
-        let end = self.type_syntax.as_ref()?.notes.node(at)?.end;
-        (!end.is_empty()).then_some(end)
+        self.type_syntax.as_ref()?.notes.end(at)
     }
 
     /// Records `node.Pos()` of the node whose `loc` is `at`.

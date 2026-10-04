@@ -1,5 +1,6 @@
 //! The types of expressions.
 
+use super::call::{AllowMembers, SignatureKind};
 use super::errors::{both_are_bigint_like, can_be_equal, can_be_ordered, may_be_added};
 use super::errors_operators::{
     check_instance_of_expression, is_literal_expression_of_object, language_version,
@@ -123,9 +124,10 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         check_mode: CheckMode,
     ) -> TypeId {
-        let call_signature = self.single_signature(ty, false, true);
+        let call_signature = self.single_signature(ty, SignatureKind::Call, AllowMembers::Yes);
         let construct = call_signature.is_none();
-        let Some(signature) = call_signature.or_else(|| self.single_signature(ty, true, true))
+        let Some(signature) = call_signature
+            .or_else(|| self.single_signature(ty, SignatureKind::Construct, AllowMembers::Yes))
         else {
             return ty;
         };
@@ -139,7 +141,13 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         };
         let non_null = self.non_nullable(contextual_type);
-        let Some(contextual_signature) = self.single_signature(non_null, construct, false) else {
+        let kind = if construct {
+            SignatureKind::Construct
+        } else {
+            SignatureKind::Call
+        };
+        let Some(contextual_signature) = self.single_signature(non_null, kind, AllowMembers::No)
+        else {
             return ty;
         };
         if !self.sig_type_params(contextual_signature).is_empty() {
@@ -404,9 +412,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.task.file == Some(file) || !self.is_noted_for_check_file(file, e))
         {
             self.cache_type_of_expr(file, e, ty, stored);
-            if self.may_be_in_flight(Query::Expr(file, e)) {
-                self.note_stored_by_nested_visit(Query::Expr(file, e));
-            }
+            self.note_stored_by_nested_visit(Query::Expr(file, e));
         }
         if stored.is_some() && is_memoised {
             self.rechecked_exprs.insert((file, e), ty);
@@ -2227,10 +2233,8 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.p.files.options.no_implicit_this {
                 return TypeId::ANY;
             }
-            // `tryGetThisTypeAt(container)`
-            let outside = hir.get_this_container(container, false, false);
             let is_shadowed = self
-                .try_get_this_type_at_ex(file, container, outside)
+                .try_get_this_type_at(file, container)
                 .is_some_and(|t| !is_global_this(self, t));
             let (from, to) = self.get_error_range_for_node(file, container);
             let shadowed = is_shadowed.then(|| self.new_diagnostic((file, from, to), 2738, &[]));
@@ -2252,6 +2256,12 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             t
         }
+    }
+
+    /// `tryGetThisTypeAt`
+    fn try_get_this_type_at(&mut self, file: FileId, node: Node) -> Option<TypeId> {
+        let container = self.hir(file).get_this_container(node, false, false);
+        self.try_get_this_type_at_ex(file, node, container)
     }
 
     /// `tryGetThisTypeAtEx`, before control flow narrowing.
@@ -3264,12 +3274,7 @@ impl<'p, 's> Checker<'p, 's> {
                 contributions.push((operand, found));
             }
         }
-        let mut united: SmallVec<[TypeId; 2]> = SmallVec::new();
-        for ty in contributions.iter().flat_map(|it| it.1.iter().copied()) {
-            if !united.contains(&ty) {
-                united.push(ty);
-            }
-        }
+        let mut united = distinct_contributions(&contributions);
         if united.is_empty() {
             return united;
         }
@@ -5176,4 +5181,17 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn jsx_element_type(&mut self, file: FileId) -> TypeId {
         self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR)
     }
+}
+
+/// The types that the operands in `contributions` contribute, each once, in order.
+fn distinct_contributions(
+    contributions: &[(ExprId, SmallVec<[TypeId; 2]>)],
+) -> SmallVec<[TypeId; 2]> {
+    let mut united: SmallVec<[TypeId; 2]> = SmallVec::new();
+    for ty in contributions.iter().flat_map(|it| it.1.iter().copied()) {
+        if !united.contains(&ty) {
+            united.push(ty);
+        }
+    }
+    united
 }

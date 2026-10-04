@@ -6,7 +6,7 @@ use crate::parse::lists::{ListKind, ListStep};
 use crate::parser::{
     FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
 };
-use crate::sema::keep::{BracketKind, ObjectTypeBuilder, TypeMemberParts};
+use crate::sema::keep::{BracketKind, ObjectTypeBuilder, Postfix, TypeMemberParts};
 use crate::sema::ts_syntax::{
     Flags, Keyword, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey,
     ResolutionMode, SignatureKind, TupleElement, TupleMemberType, TypeId, TypeParam,
@@ -17,7 +17,7 @@ use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::StoreStr;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_sema::hir::TypeNodeKind;
+use bun_sema::hir::{JSDocTypeKind, TypeNodeKind};
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
@@ -353,10 +353,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // `parseDelimitedList(PCParameters)`
         let saved_contexts = self.enter_list(ListKind::Parameters);
         while self.lexer.token != T::TCloseParen {
-            match self.classify_list_token(ListKind::Parameters)? {
-                ListStep::Element => {}
-                ListStep::Skipped => continue,
-                ListStep::Over => break,
+            if !self.skip_to_list_element(ListKind::Parameters)? {
+                break;
             }
             let parameter_start = self.lexer.loc();
             let mut parameter = Param::at(parameter_start);
@@ -492,10 +490,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let saved_contexts = self.enter_list(ListKind::Parameters);
         while self.lexer.token != T::TCloseBracket {
-            match self.classify_list_token(ListKind::Parameters)? {
-                ListStep::Element => {}
-                ListStep::Skipped => continue,
-                ListStep::Over => break,
+            if !self.skip_to_list_element(ListKind::Parameters)? {
+                break;
             }
             trailing_comma = None;
             let parameter_start = self.lexer.loc();
@@ -1124,7 +1120,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let operand_opts = self.type_operand_opts(opts);
         self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
         if KEEP {
-            self.emit_jsdoc_type(token != T::TExclamation, false, pos);
+            let kind = if token == T::TExclamation {
+                JSDocTypeKind::NonNullable
+            } else {
+                JSDocTypeKind::Nullable
+            };
+            self.emit_jsdoc_type(kind, Postfix::No, pos);
         }
         Ok(())
     }
@@ -2435,7 +2436,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                     self.lexer.next()?;
                     if KEEP {
-                        self.emit_jsdoc_type(false, true, pos);
+                        self.emit_jsdoc_type(JSDocTypeKind::NonNullable, Postfix::Yes, pos);
                     }
                 }
                 T::TQuestion => {
@@ -2451,7 +2452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                     self.lexer.next()?;
                     if KEEP {
-                        self.emit_jsdoc_type(true, true, pos);
+                        self.emit_jsdoc_type(JSDocTypeKind::Nullable, Postfix::Yes, pos);
                     }
                 }
                 T::TDot => {
@@ -2700,7 +2701,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let saved_contexts = self.enter_list(ListKind::TypeMembers);
         while self.lexer.token != T::TCloseBrace {
             if keeps {
-                self.end_type_member(&mut kept, self.lexer.full_start());
+                kept.end_member(self.lexer.full_start());
             }
             // `parseMappedType` parses "[K in T]: X" itself, before the member list.
             let is_mapped_type = core::mem::take(&mut starts_mapped_type);
@@ -2973,7 +2974,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         self.lexer.list_contexts = saved_contexts;
         if keeps {
-            self.end_type_member(&mut kept, self.lexer.full_start());
+            kept.end_member(self.lexer.full_start());
         }
         self.lexer.expect(T::TCloseBrace)?;
         if keeps {
@@ -3851,12 +3852,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if !self.is_list_element(ListKind::HeritageClauseElement, false) {
                         break;
                     }
-                } else {
-                    match self.classify_list_token(ListKind::HeritageClauseElement)? {
-                        ListStep::Element => {}
-                        ListStep::Skipped => continue,
-                        ListStep::Over => break,
-                    }
+                } else if !self.skip_to_list_element(ListKind::HeritageClauseElement)? {
+                    break;
                 }
                 let element_start = self.lexer.loc();
                 self.skip_interface_heritage_element()?;
@@ -4302,24 +4299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if self.lexer.loc() == type_start {
             return true;
         }
-        if !self.should_save_types() {
-            return false;
-        }
-        let syntax = self.type_syntax_mut();
-        let mut ty = syntax.last_type;
-        while ty.is_some() {
-            let file = &syntax.b.file;
-            match file[ty].kind {
-                TypeNodeKind::Ref { name, .. }
-                    if file[name.at(0)].text == bun_sema::atom::known::empty =>
-                {
-                    return true;
-                }
-                TypeNodeKind::Fn(signature) => ty = file[signature].ret,
-                _ => break,
-            }
-        }
-        false
+        self.should_save_types() && self.type_syntax_mut().last_type_blocks_arrow_function()
     }
 
     /// Whether the ":" after a parenthesized expression that sits between the

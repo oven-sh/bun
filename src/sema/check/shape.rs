@@ -215,6 +215,63 @@ pub(super) enum Access {
     Written,
 }
 
+/// Which of the members of a declaration: only a class has a static side (`declareClassMember`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ClassSide {
+    Instance,
+    Static,
+}
+
+/// How far `getResolvedMembersOrExportsOfSymbol` has got with the members of a declaration.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum MemberBinding {
+    /// `earlySymbols`: only the members the binder can name, without checking any expression.
+    Early,
+    /// Also the members with late-bound names.
+    Late,
+}
+
+/// Whether the shape of a class or an interface has the members of its base types
+/// (`resolveObjectTypeMembers`), or only those it declares (`resolveDeclaredMembers`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum BaseMembers {
+    Omitted,
+    Inherited,
+}
+
+/// `partialMatch` of `compareSignaturesIdentical`: a target with no fewer required parameters than
+/// the source matches too.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum PartialMatch {
+    No,
+    Yes,
+}
+
+/// `ignoreThisTypes` of `compareSignaturesIdentical`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum IgnoreThisTypes {
+    No,
+    Yes,
+}
+
+/// `ignoreReturnTypes` of `compareSignaturesIdentical`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum IgnoreReturnTypes {
+    No,
+    Yes,
+}
+
+/// What `get_spread_symbol` is told besides the property.
+#[derive(Copy, Clone)]
+pub(super) struct SpreadSymbolOptions {
+    /// `has_type_variables` of the type that has the property.
+    pub(super) owner_is_generic: bool,
+    /// `readonly` of `getSpreadSymbol`.
+    pub(super) readonly: bool,
+    /// The caller calls `getTypeOfSymbol` for the result.
+    pub(super) resolves: bool,
+}
+
 /// Whether it is an object type that a property access reads directly: any but a mapped type.
 #[inline]
 fn is_plain_object(data: &TypeData) -> bool {
@@ -702,7 +759,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.unresolved_members_hits += 1;
         self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
         self.note_members_in_place();
-        let shape = self.build_declared_shape(target, MapperId::IDENTITY, false, false);
+        let shape = self.build_declared_shape(
+            target,
+            MapperId::IDENTITY,
+            MemberBinding::Late,
+            BaseMembers::Omitted,
+        );
         Some(Members {
             resolved: self.provisional_shape(shape).resolved,
             mapper,
@@ -789,9 +851,13 @@ impl<'p, 's> Checker<'p, 's> {
                         if are_provisional && key == ty {
                             c.mark_tainted_from(c.frames.len() - 1);
                         }
-                        c.build_declared_shape(target, under, false, true)
+                        let binding = MemberBinding::Late;
+                        c.build_declared_shape(target, under, binding, BaseMembers::Inherited)
                     },
-                    |c| c.build_declared_shape(target, under, true, true),
+                    |c| {
+                        let binding = MemberBinding::Early;
+                        c.build_declared_shape(target, under, binding, BaseMembers::Inherited)
+                    },
                 );
                 // `mapper` is built from them.
                 if are_provisional {
@@ -817,7 +883,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 let resolved = self.shape_memo_or(
                     key,
-                    |c| c.build_origin_shape(origin, false),
+                    |c| c.build_origin_shape(origin, MemberBinding::Late),
                     |c| c.origin_shape_in_the_meantime(origin),
                 );
                 Some((
@@ -1025,15 +1091,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Adds the members declared in `members` (the static ones or the instance ones) to `b`.
-    /// `early`: only those the binder can name, without checking any expression.
     fn add_members(
         &mut self,
         b: &mut Builder<'s>,
         file: FileId,
         members: Span<MemberId>,
-        want_static: bool,
-        early: bool,
+        side: ClassSide,
+        binding: MemberBinding,
     ) {
+        let want_static = side == ClassSide::Static;
+        let early = binding == MemberBinding::Early;
         let hir = self.hir(file);
         // Only a class has a static side (`declareClassMember`): elsewhere the modifier is an error
         // and has no effect.
@@ -1768,27 +1835,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The instance shape of a class or an interface, in terms of its own type parameters. `under`:
     /// the mapper applied to them in the base types.
-    /// `early`: only the members the binder can name.
-    /// `inherits`: with the members of the base types.
     fn build_declared_shape(
         &mut self,
         sym: Sym,
         under: MapperId,
-        early: bool,
-        inherits: bool,
+        binding: MemberBinding,
+        base_members: BaseMembers,
     ) -> Shape<'s> {
         let mut b = Builder::new_in(self.arena);
         for (file, decl) in self.files().decls(sym) {
-            let hir = self.hir(file);
-            let members = match decl {
-                Decl::Class(c) => hir[c].members,
-                Decl::Interface(i) => hir[i].members,
-                _ => continue,
+            let Some(members) = decl.members_of_class_or_interface(self.hir(file)) else {
+                continue;
             };
             if !self.is_declaration_of_symbol(sym, file, decl) {
                 continue;
             }
-            self.add_members(&mut b, file, members, false, early);
+            self.add_members(&mut b, file, members, ClassSide::Instance, binding);
             if let Decl::Class(c) = decl {
                 self.add_this_properties(&mut b, file, c, false);
             }
@@ -1796,6 +1858,7 @@ impl<'p, 's> Checker<'p, 's> {
         let this = self.intern(TypeData::ThisParam(sym));
         let bases = self.base_types(sym);
         let own = b.shape.props.len();
+        let inherits = base_members == BaseMembers::Inherited;
         for base in bases.iter().copied().filter(|_| inherits) {
             let base = self.instantiate(base, under);
             self.inherit(&mut b, base, Some((sym, this)));
@@ -2237,12 +2300,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn first_declaration_checked_before(&self, sym: Sym, before: u32) -> Option<(u32, u32)> {
         let declarations = self.files().decls(sym).into_iter();
         let places = declarations.filter_map(|(file, declaration)| {
-            let hir = self.hir(file);
-            let start = match declaration {
-                Decl::Class(c) => hir[c].name_pos,
-                Decl::Interface(i) => hir[i].name_pos,
-                _ => return None,
-            };
+            let start = declaration.name_pos_of_class_or_interface(self.hir(file))?;
             let rank = self.files().rank_of_file(file);
             (rank < before && self.reports_semantic_errors(file)).then_some((rank, start))
         });
@@ -2256,13 +2314,8 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         declaration: Decl,
     ) -> Option<Reported> {
-        let hir = self.hir(file);
         // `GetErrorRangeForNode`
-        let start = match declaration {
-            Decl::Class(c) => hir[c].name_pos,
-            Decl::Interface(i) => hir[i].name_pos,
-            _ => return None,
-        };
+        let start = declaration.name_pos_of_class_or_interface(self.hir(file))?;
         let at = (file, start, self.end_of_token_at(file, start));
         let ty = self.declared_type(sym);
         Some(self.new_diagnostic(at, 2310, &[Arg::Type(ty)]))
@@ -2574,14 +2627,15 @@ impl<'p, 's> Checker<'p, 's> {
     fn origin_shape_in_the_meantime(&mut self, origin: Origin) -> Shape<'s> {
         match origin {
             Origin::ClassStatic(sym) if self.late_binding_exports.contains(&sym) => {
-                self.build_origin_shape(origin, true)
+                self.build_origin_shape(origin, MemberBinding::Early)
             }
             _ => Shape::new_in(self.arena),
         }
     }
 
-    /// `early`: for the static side of a class, only the members that the binder can name.
-    fn build_origin_shape(&mut self, origin: Origin, early: bool) -> Shape<'s> {
+    /// `binding`: of the static side of a class.
+    fn build_origin_shape(&mut self, origin: Origin, binding: MemberBinding) -> Shape<'s> {
+        let early = binding == MemberBinding::Early;
         let mut b = Builder::new_in(self.arena);
         // Argument for `get_named_members`. Only the static side of a class has a container.
         let mut contained = [0..usize::MAX, 0..0];
@@ -2589,7 +2643,8 @@ impl<'p, 's> Checker<'p, 's> {
         match origin {
             Origin::TypeLiteral(file, node) => {
                 if let TypeNodeKind::Object(members) = self.hir(file)[node].kind {
-                    self.add_members(&mut b, file, members, false, false);
+                    let side = ClassSide::Instance;
+                    self.add_members(&mut b, file, members, side, MemberBinding::Late);
                 }
             }
             Origin::ObjectLiteral(file, expr, .., is_fresh) => {
@@ -2642,7 +2697,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !early {
                         self.late_binding_exports.push(sym);
                     }
-                    self.add_members(&mut b, file, members, true, early);
+                    self.add_members(&mut b, file, members, ClassSide::Static, binding);
                     if !early {
                         self.late_binding_exports.pop();
                     }
@@ -3190,9 +3245,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn signatures_identical(&mut self, a: SigId, b: SigId) -> bool {
-        let compare_types = &mut Self::compare_types_identical;
-        self.compare_signatures_identical(a, b, false, false, false, compare_types)
-            .holds()
+        self.compare_signatures_identical(
+            a,
+            b,
+            PartialMatch::No,
+            IgnoreThisTypes::No,
+            IgnoreReturnTypes::No,
+            &mut Self::compare_types_identical,
+        )
+        .holds()
     }
 
     /// `isMixinConstructorType` for a type whose construct signatures are `sigs`: one signature,
@@ -3542,16 +3603,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// unresolved, since it may be the one that is being resolved:
     /// `class C { x = f({ ...new C() }) }`. `get_widened_type` and `regular_type_of_object_literal`
     /// resolve it, where tsgo calls `getTypeOfSymbol` for every property.
-    /// `owner_is_generic`: `has_type_variables` of the type that has `prop`.
-    /// `resolves`: the caller calls `getTypeOfSymbol` for the result.
     pub(super) fn get_spread_symbol(
         &mut self,
         prop: &Prop,
         mapper: MapperId,
-        owner_is_generic: bool,
-        readonly: bool,
-        resolves: bool,
+        options: SpreadSymbolOptions,
     ) -> (PropSource<'s>, MapperId, PropFlags) {
+        let SpreadSymbolOptions {
+            owner_is_generic,
+            readonly,
+            resolves,
+        } = options;
         let copy = |ty, has_value_declaration| {
             let source = Self::copy_of(ty, &[prop], has_value_declaration, self.arena);
             (source, MapperId::IDENTITY, PropFlags::empty())
@@ -3739,8 +3801,12 @@ impl<'p, 's> Checker<'p, 's> {
             if !anew && self.is_function_symbol_property(prop) {
                 flags |= PropFlags::METHOD;
             }
-            let (source, mapper, read_with) =
-                self.get_spread_symbol(prop, l.mapper, left_is_generic, readonly, false);
+            let options = SpreadSymbolOptions {
+                owner_is_generic: left_is_generic,
+                readonly,
+                resolves: false,
+            };
+            let (source, mapper, read_with) = self.get_spread_symbol(prop, l.mapper, options);
             b.add(Prop {
                 name: prop.name,
                 flags: flags | read_with,
@@ -3819,9 +3885,13 @@ impl<'p, 's> Checker<'p, 's> {
                 // `rightType := c.getTypeOfSymbol(rightProp)`, for a property that the left has too.
                 let replaces = (l.resolved.prop(prop.name))
                     .is_some_and(|earlier| self.is_spreadable_property(earlier));
+                let options = SpreadSymbolOptions {
+                    owner_is_generic: right_is_generic,
+                    readonly,
+                    resolves: replaces,
+                };
                 let read_with;
-                (source, mapper, read_with) =
-                    self.get_spread_symbol(prop, r.mapper, right_is_generic, readonly, replaces);
+                (source, mapper, read_with) = self.get_spread_symbol(prop, r.mapper, options);
                 flags = prop.flags & kept
                     | self.name_flag_of_copy(right, prop, anew)
                     | function_flag
@@ -4252,12 +4322,12 @@ impl<'p, 's> Checker<'p, 's> {
             return value;
         }
         if let Some(getter) = self.type_of_property_of_type(ty, known::get)
-            && let Some(sig) = self.single_call_signature(getter, false)
+            && let Some(sig) = self.single_call_signature(getter)
         {
             return self.sig_return(sig);
         }
         if let Some(setter) = self.type_of_property_of_type(ty, known::set)
-            && let Some(sig) = self.single_call_signature(setter, false)
+            && let Some(sig) = self.single_call_signature(setter)
         {
             return self.type_of_first_parameter(sig);
         }
@@ -4789,10 +4859,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for (f, decl) in self.files().decls(self.files().sym(file, symbol)) {
             let hir = self.hir(f);
-            let members = match decl {
-                Decl::Class(c) => hir[c].members,
-                Decl::Interface(i) => hir[i].members,
-                _ => continue,
+            let Some(members) = decl.members_of_class_or_interface(hir) else {
+                continue;
             };
             let first = members.iter().find(|&other| {
                 let other = &hir[other];
@@ -4908,9 +4976,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
         // An unconstrained type parameter has the base constraint `unknown`. The original type is passed as the `this` argument
         // (`getTypeWithThisArgument`, `getApparentTypeOfIntersectionType`): in inherited members `this` is `ty` itself.
+        let original_type = ty;
         let ty = if self.is_deferred(ty) {
             let constraint = self.base_constraint(ty);
-            self.type_with_this_argument(constraint, ty)
+            self.type_with_this_argument(constraint, original_type)
         } else {
             ty
         };
@@ -5519,9 +5588,10 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return;
         };
+        let this_argument = ty;
         let is_another_type = parts.iter().any(|&part| {
             matches!(self.data(part), TypeData::Tuple { .. })
-                || self.type_with_this_argument(part, ty) != part
+                || self.type_with_this_argument(part, this_argument) != part
                 || self.apparent_type(part) != part
         });
         if !is_another_type {
@@ -5667,7 +5737,8 @@ impl<'p, 's> Checker<'p, 's> {
             let members = if self.is_deferred(written) {
                 self.members_with_this(part, written)
             } else if is_apparent {
-                self.members_with_this(part, ty)
+                let this_argument = ty;
+                self.members_with_this(part, this_argument)
             } else {
                 self.members(part)
             };
@@ -5860,7 +5931,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `getApparentType`: in a member found through the constraint of a type parameter, `this`
         // is the type parameter.
         let members = if apparent != ty && self.is_deferred(ty) {
-            self.members_with_this(apparent, ty)?
+            let this_argument = ty;
+            self.members_with_this(apparent, this_argument)?
         } else {
             self.members(apparent)?
         };
@@ -6319,10 +6391,13 @@ impl<'p, 's> Checker<'p, 's> {
         if lists.iter().all(|l| *l == lists[0]) {
             let mut result: Vec<SigId> = Vec::with_capacity(lists[0].len());
             for &sig in &lists[0] {
-                if self
-                    .find_matching_signature(&result, sig, false, true)
-                    .is_none()
-                {
+                let earlier = self.find_matching_signature(
+                    &result,
+                    sig,
+                    PartialMatch::No,
+                    IgnoreReturnTypes::Yes,
+                );
+                if earlier.is_none() {
                     result.push(sig);
                 }
             }
@@ -6338,10 +6413,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for &sig in list {
                 // Only signatures whose parameters do not match a result yet.
-                if self
-                    .find_matching_signature(&result, sig, false, true)
-                    .is_some()
-                {
+                let earlier = self.find_matching_signature(
+                    &result,
+                    sig,
+                    PartialMatch::No,
+                    IgnoreReturnTypes::Yes,
+                );
+                if earlier.is_some() {
                     continue;
                 }
                 let Some(matching) = self.find_matching_signatures(lists, sig, i) else {
@@ -6426,7 +6504,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return None;
             }
             for list in &lists[1..] {
-                self.find_matching_signature(list, sig, false, false)?;
+                self.find_matching_signature(list, sig, PartialMatch::No, IgnoreReturnTypes::No)?;
             }
             return Some(vec![sig]);
         }
@@ -6435,10 +6513,18 @@ impl<'p, 's> Checker<'p, 's> {
             let matching = if i == list_index {
                 sig
             } else {
-                match self.find_matching_signature(list, sig, false, true) {
+                let ignore_return_types = IgnoreReturnTypes::Yes;
+                let exact =
+                    self.find_matching_signature(list, sig, PartialMatch::No, ignore_return_types);
+                match exact {
                     Some(exact) => exact,
                     // Failing that, one with fewer parameters matches.
-                    None => self.find_matching_signature(list, sig, true, true)?,
+                    None => self.find_matching_signature(
+                        list,
+                        sig,
+                        PartialMatch::Yes,
+                        ignore_return_types,
+                    )?,
                 }
             };
             if !result.contains(&matching) {
@@ -6453,20 +6539,19 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         list: &[SigId],
         sig: SigId,
-        partial_match: bool,
-        ignore_return_types: bool,
+        partial_match: PartialMatch,
+        ignore_return_types: IgnoreReturnTypes,
     ) -> Option<SigId> {
-        let mut compare_types: fn(&mut Self, TypeId, TypeId) -> Ternary = if partial_match {
-            Self::compare_types_subtype_of
-        } else {
-            Self::compare_types_identical
+        let mut compare_types: fn(&mut Self, TypeId, TypeId) -> Ternary = match partial_match {
+            PartialMatch::Yes => Self::compare_types_subtype_of,
+            PartialMatch::No => Self::compare_types_identical,
         };
         list.iter().copied().find(|&s| {
             self.compare_signatures_identical(
                 s,
                 sig,
                 partial_match,
-                false,
+                IgnoreThisTypes::No,
                 ignore_return_types,
                 &mut compare_types,
             )
@@ -6489,9 +6574,9 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: SigId,
         target: SigId,
-        partial_match: bool,
-        ignore_this_types: bool,
-        ignore_return_types: bool,
+        partial_match: PartialMatch,
+        ignore_this_types: IgnoreThisTypes,
+        ignore_return_types: IgnoreReturnTypes,
         compare_types: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> Ternary,
     ) -> Ternary {
         if source == target {
@@ -6504,7 +6589,7 @@ impl<'p, 's> Checker<'p, 's> {
         let same_shape = self.parameter_count(&sp) == self.parameter_count(&tp)
             && source_least == target_least
             && self.has_effective_rest_parameter(&sp) == self.has_effective_rest_parameter(&tp);
-        if !same_shape && !(partial_match && source_least <= target_least) {
+        if !same_shape && !(partial_match == PartialMatch::Yes && source_least <= target_least) {
             return Ternary::FALSE;
         }
         let (source_type_params, target_type_params) =
@@ -6568,7 +6653,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut result = Ternary::TRUE;
-        if !ignore_this_types
+        if ignore_this_types == IgnoreThisTypes::No
             && let (Some(s), Some(t)) = (self.sig_this_type(source), self.sig_this_type(target))
         {
             result &= compare_types(self, s, t);
@@ -6582,7 +6667,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             result &= compare_types(self, t, s);
         }
-        if ignore_return_types || !result.holds() {
+        if ignore_return_types == IgnoreReturnTypes::Yes || !result.holds() {
             return result;
         }
         match (self.sig_predicate(source), self.sig_predicate(target)) {

@@ -226,32 +226,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         modifiers_base: usize,
     ) {
         let end = self.lexer.full_start();
-        let syntax = self.type_syntax_mut();
-        let base = modifiers_base.min(syntax.statement_modifiers.len());
-        if let Some(mut kept) = syntax.last_index_signature.take() {
-            let modifiers = syntax
-                .b
-                .ts
-                .add_modifiers(&syntax.statement_modifiers[base..]);
-            let flags = syntax.statement_modifiers[base..]
-                .iter()
-                .fold(ts::Flags::empty(), |flags, modifier| flags | modifier.flag);
-            let first_modifier = syntax.statement_modifiers.get(base).map(|first| first.loc);
-            syntax.b.file[kept.signature].flags |= flags;
-            kept.flags |= flags;
-            kept.modifiers = modifiers;
-            if let Some(first) = first_modifier {
-                kept.loc = first;
-            }
-            (kept.start, kept.full_start, kept.end) = (start, full_start, end);
-            let created = syntax.b.member(&kept);
-            syntax.class_index_signatures.push(created);
-            let payload = syntax.class_index_signatures.len() as u32 - 1;
-            syntax
-                .notes
-                .add(class_keyword, Mark::IndexSignature, payload);
-        }
-        syntax.statement_modifiers.truncate(base);
+        self.type_syntax_mut().take_class_index_signature(
+            class_keyword,
+            start,
+            full_start,
+            end,
+            modifiers_base,
+        );
     }
 
     /// `parseExpressionWithTypeArguments` after `implements`, where the names parsed as the type
@@ -267,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if kept.is_none() {
             return Ok(false);
         }
-        let TypeNodeKind::Ref { mut name, args } = self.type_syntax_mut().b.file[kept].kind else {
+        let TypeNodeKind::Ref { name, args } = self.type_syntax_mut().b.file[kept].kind else {
             return Ok(false);
         };
         if self.lexer.token != T::TQuestionDot || !args.is_empty() {
@@ -300,16 +281,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return Ok(false);
         }
         let end = self.lexer.full_start();
-        let syntax = self.type_syntax_mut();
-        for next in names {
-            let text = syntax.b.atom(&next.text);
-            name = syntax
-                .b
-                .file
-                .append_to_entity_name(name, text, next.loc.start as u32);
-        }
-        syntax.b.file[kept].kind = TypeNodeKind::Ref { name, args };
-        syntax.b.file[kept].end = end.start as u32;
+        self.type_syntax_mut()
+            .qualify_reference(kept, name, args, &names, end);
         Ok(true)
     }
 
@@ -361,6 +334,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             body,
             is_export,
         )
+    }
+}
+
+impl super::TypeSyntax<'_> {
+    /// Adds the index signature parsed last, if any, to the class at `class_keyword`, with the modifiers pushed since `modifiers_base`.
+    fn take_class_index_signature(
+        &mut self,
+        class_keyword: &mut Loc,
+        start: Loc,
+        full_start: Loc,
+        end: Loc,
+        modifiers_base: usize,
+    ) {
+        let base = modifiers_base.min(self.statement_modifiers.len());
+        if let Some(mut kept) = self.last_index_signature.take() {
+            let modifiers = self.b.ts.add_modifiers(&self.statement_modifiers[base..]);
+            let flags = self.statement_modifiers[base..]
+                .iter()
+                .fold(ts::Flags::empty(), |flags, modifier| flags | modifier.flag);
+            let first_modifier = self.statement_modifiers.get(base).map(|first| first.loc);
+            self.b.file[kept.signature].flags |= flags;
+            kept.flags |= flags;
+            kept.modifiers = modifiers;
+            if let Some(first) = first_modifier {
+                kept.loc = first;
+            }
+            (kept.start, kept.full_start, kept.end) = (start, full_start, end);
+            let created = self.b.member(&kept);
+            self.class_index_signatures.push(created);
+            let payload = self.class_index_signatures.len() as u32 - 1;
+            self.notes.add(class_keyword, Mark::IndexSignature, payload);
+        }
+        self.statement_modifiers.truncate(base);
+    }
+
+    /// Appends `names` to `name`, the entity name of the type reference `reference`, which then ends at `end`.
+    fn qualify_reference(
+        &mut self,
+        reference: ts::TypeId,
+        mut name: ts::Names,
+        args: ts::Types,
+        names: &[ts::Name],
+        end: Loc,
+    ) {
+        for next in names {
+            let text = self.b.atom(&next.text);
+            name = self
+                .b
+                .file
+                .append_to_entity_name(name, text, next.loc.start as u32);
+        }
+        self.b.file[reference].kind = TypeNodeKind::Ref { name, args };
+        self.b.file[reference].end = end.start as u32;
     }
 }
 
@@ -622,25 +648,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         value: &bun_ast::Expr,
         literal_end: Option<Loc>,
     ) -> ts::ResolutionMode {
-        use bun_ast::ExprData;
         // `IsStringLiteralLike(value)`: the string is the whole expression.
         if !is_string_key || literal_end != Some(self.lexer.full_start()) {
             return ts::ResolutionMode::None;
         }
-        match (&key.data, &value.data) {
-            (ExprData::EString(key), ExprData::EString(value))
-                if key.eql_comptime(b"resolution-mode") =>
-            {
-                if value.eql_comptime(b"import") {
-                    ts::ResolutionMode::Import
-                } else if value.eql_comptime(b"require") {
-                    ts::ResolutionMode::Require
-                } else {
-                    ts::ResolutionMode::None
-                }
-            }
-            _ => ts::ResolutionMode::None,
-        }
+        resolution_mode_of_strings(key, value)
     }
 
     /// The resolution mode specified by the import attributes after the module specifier.
@@ -742,33 +754,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         external: Option<ts::ModuleReference>,
         loc: Loc,
     ) -> Stmt {
-        let syntax = self.type_syntax_mut();
-        let reference = match external {
-            Some(external) => external,
-            None => ts::ModuleReference::EntityName(
-                syntax.b.add_names(&syntax.name_stack[names_base..]),
-            ),
-        };
-        syntax.name_stack.truncate(names_base);
-        let missing = ts::Name {
-            text: bun_ast::StoreStr::EMPTY,
-            loc,
-        };
-        let (name, is_type_only, is_in_ambient_module) = match syntax.module_syntax.last() {
-            Some(kept) => (
-                kept.default_name.unwrap_or(missing),
-                kept.is_type_only,
-                kept.is_in_ambient_module,
-            ),
-            None => (missing, false, false),
-        };
-        let import = syntax.b.ts.add_import_equals(ts::ImportEquals {
-            name,
-            is_type_only,
-            reference,
-            is_in_ambient_module,
-        });
-        self.emit_statement(ts::StatementData::ImportEquals(import), loc);
+        self.type_syntax_mut()
+            .emit_import_equals(names_base, external, loc);
         self.type_script_statement(loc)
     }
 
@@ -825,5 +812,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         self.emit_statement(ts::StatementData::ExportAsNamespace(name), loc);
         self.type_script_statement(loc)
+    }
+}
+
+impl super::TypeSyntax<'_> {
+    /// Emits `import name = reference`, whose `import` is at `loc`, from the declaration being parsed.
+    fn emit_import_equals(
+        &mut self,
+        names_base: usize,
+        external: Option<ts::ModuleReference>,
+        loc: Loc,
+    ) {
+        let reference = match external {
+            Some(external) => external,
+            None => {
+                ts::ModuleReference::EntityName(self.b.add_names(&self.name_stack[names_base..]))
+            }
+        };
+        self.name_stack.truncate(names_base);
+        let missing = ts::Name {
+            text: bun_ast::StoreStr::EMPTY,
+            loc,
+        };
+        let (name, is_type_only, is_in_ambient_module) = match self.module_syntax.last() {
+            Some(kept) => (
+                kept.default_name.unwrap_or(missing),
+                kept.is_type_only,
+                kept.is_in_ambient_module,
+            ),
+            None => (missing, false, false),
+        };
+        let import = self.b.ts.add_import_equals(ts::ImportEquals {
+            name,
+            is_type_only,
+            reference,
+            is_in_ambient_module,
+        });
+        self.emit_statement(ts::StatementData::ImportEquals(import), loc);
+    }
+}
+
+/// `getResolutionModeOverride` for the attribute `key: value`. `None` unless both are strings.
+fn resolution_mode_of_strings(key: &bun_ast::Expr, value: &bun_ast::Expr) -> ts::ResolutionMode {
+    use bun_ast::ExprData;
+    match (&key.data, &value.data) {
+        (ExprData::EString(key), ExprData::EString(value))
+            if key.eql_comptime(b"resolution-mode") =>
+        {
+            if value.eql_comptime(b"import") {
+                ts::ResolutionMode::Import
+            } else if value.eql_comptime(b"require") {
+                ts::ResolutionMode::Require
+            } else {
+                ts::ResolutionMode::None
+            }
+        }
+        _ => ts::ResolutionMode::None,
     }
 }

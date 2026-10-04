@@ -1111,10 +1111,7 @@ impl Checker<'_, '_> {
     /// are not stored.
     pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let of_class = |c: ClassId| match bound.class_owner[c.idx()] {
-            ClassOwner::Expr(x) => Parent::Expr(x),
-            ClassOwner::Stmt(s) => Parent::Stmt(s),
-        };
+        let of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
         let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => of_class(c),
             MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
@@ -1174,10 +1171,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match (hir[f].kind, bound.fns[f.idx()].owner) {
             (FnKind::StaticBlock, FnOwner::Member(m)) => match bound.member_owner[m.idx()] {
-                MemberOwner::Class(c) => Some(match bound.class_owner[c.idx()] {
-                    ClassOwner::Expr(x) => Parent::Expr(x),
-                    ClassOwner::Stmt(s) => Parent::Stmt(s),
-                }),
+                MemberOwner::Class(c) => Some(bound.class_owner[c.idx()].to_parent()),
                 _ => None,
             },
             (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(e))
@@ -2030,14 +2024,16 @@ fn similar_in_scope_and_where(
     let files = c.files();
     let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
     let name = (name, c.atoms().bytes(name));
-    files.suggested_symbol_for_nonexistent_symbol(
+    let suggested = files.suggested_symbol_for_nonexistent_symbol(
         file,
         scope,
         name,
         meaning,
         try_resolve_alias,
         Some(&c.suggestions_among_globals),
-    )
+    );
+    // `Resolve` returns nil where the name may not be used.
+    suggested.ok().flatten()
 }
 
 /// By `meaning` and by the text of the name: what `getSuggestionForSymbolNameLookup` finds in
@@ -2053,6 +2049,7 @@ impl Files<'_> {
     /// `unknownSymbol`. `None`: nil.
     /// `text`: the text of `name`, which may be a task-local atom.
     /// `among_globals`: only with a `try_resolve_alias` that is a function of its argument.
+    /// `Err`: see `resolve_with`.
     pub(crate) fn suggested_symbol_for_nonexistent_symbol(
         &self,
         file: FileId,
@@ -2061,7 +2058,7 @@ impl Files<'_> {
         meaning: SymFlags,
         try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
         among_globals: Option<&SuggestionsAmongGlobals>,
-    ) -> Option<(SpellingSuggestion, bool)> {
+    ) -> Result<Option<(SpellingSuggestion, bool)>, (u32, MemberId)> {
         let (files, hir, bound) = (self, self.hir(file), self.bound(file));
         let (mut word, mut is_among_locals) = (None, false);
         // tsgo does not put the name of a function or class expression in any symbol table:
@@ -2161,14 +2158,16 @@ impl Files<'_> {
         };
         let found = files.resolve_with(file, scope, name, meaning, false, lookup);
         if let Some(word) = word {
-            return Some((SpellingSuggestion::Word(word), false));
+            return Ok(Some((SpellingSuggestion::Word(word), false)));
         }
-        let sym = found.ok()??;
+        let Some(sym) = found? else {
+            return Ok(None);
+        };
         let declared = files.symbol(sym);
         let leads_to_export = is_among_locals
             && declared.export_symbol.is_some()
             && !declared.flags.intersects(SymFlags::VALUE);
-        Some((SpellingSuggestion::Symbol(sym), leads_to_export))
+        Ok(Some((SpellingSuggestion::Symbol(sym), leads_to_export)))
     }
 
     /// `getCandidateName` of `getSpellingSuggestionForName`. `unknownSymbol` is created with
@@ -2503,8 +2502,8 @@ impl Checker<'_, '_> {
         };
         let not: &[u8] = if is_equality { b"" } else { b"!" };
         let suggestion = cat!(not, b"Number.isNaN(", name, b")");
-        let (from, to) = self.error_range_of_expr(file, location);
-        let did_you_mean = self.new_diagnostic((file, from, to), 1369, &[Arg::Bytes(&suggestion)]);
+        let at = self.span_of_parenthesized_expr(file, location);
+        let did_you_mean = self.new_diagnostic(at, 1369, &[Arg::Bytes(&suggestion)]);
         let always = if is_equality { "false" } else { "true" };
         let diagnostic = self.error_at(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
         if !(is_left_nan && is_right_nan) {

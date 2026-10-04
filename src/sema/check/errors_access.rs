@@ -157,6 +157,15 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
+/// `isSuper` and `writing` of `checkPropertyAccessibilityAtLocation`
+#[derive(Copy, Clone)]
+pub(super) struct PropertyAccess {
+    /// The property is accessed through `super`.
+    pub(super) is_super: bool,
+    /// The access assigns to the property.
+    pub(super) writing: bool,
+}
+
 impl Checker<'_, '_> {
     /// `a[k]`, property lookups by binding patterns and indexed access types, and misplaced private
     /// names. Errors in `a.b` are reported where its type is computed (`type_of_property_access`).
@@ -601,8 +610,10 @@ impl Checker<'_, '_> {
                                 file,
                                 self.hir(file).node(e),
                                 Parent::Expr(e),
-                                is_super,
-                                false,
+                                PropertyAccess {
+                                    is_super,
+                                    writing: false,
+                                },
                                 object,
                                 prop.name,
                                 None,
@@ -694,11 +705,7 @@ impl Checker<'_, '_> {
             let declarations = files.decls(files.canonical(files.sym(file, symbol)));
             declarations.into_iter().find_map(|(file, declaration)| {
                 let hir = self.hir(file);
-                let type_params = match declaration {
-                    Decl::Class(c) => hir[c].type_params,
-                    Decl::Interface(i) => hir[i].type_params,
-                    _ => return None,
-                };
+                let type_params = declaration.type_params_of_class_or_interface(hir)?;
                 let found = type_params.iter().find(|&it| hir[it].name == name)?;
                 Some((file, hir[found].pos))
             })
@@ -763,7 +770,7 @@ impl Checker<'_, '_> {
             return false;
         };
         let ty = self.type_of_prop(prop, mapper);
-        let Some(sig) = self.single_call_signature(ty, false) else {
+        let Some(sig) = self.single_call_signature(ty) else {
             return false;
         };
         let params = self.sig_params(sig);
@@ -809,13 +816,7 @@ impl Checker<'_, '_> {
         if self.get_property_of_type(parent_type, name_text).is_none() {
             return;
         }
-        let initializer = match bound.pat_parent[pattern.idx()] {
-            PatParent::Var(d) => hir[d].init,
-            PatParent::Param(param) => hir[param].default,
-            PatParent::Prop(_, prop) => hir[prop].default,
-            PatParent::Elem(_, elem) => hir[elem].default,
-            PatParent::None => ExprId::NONE,
-        };
+        let initializer = bound.pat_parent[pattern.idx()].initializer(hir);
         let is_super = initializer.is_some() && matches!(hir[initializer].kind, ExprKind::Super);
         // `GetRootDeclaration`: the location the access is checked from.
         let at = match bound.pat_parent[root_pattern(bound, pattern).idx()] {
@@ -828,8 +829,10 @@ impl Checker<'_, '_> {
             file,
             hir.parent(hir.node(element)),
             at,
-            is_super,
-            false,
+            PropertyAccess {
+                is_super,
+                writing: false,
+            },
             parent_type,
             name_text,
             Some(&error_node),
@@ -1262,8 +1265,7 @@ impl Checker<'_, '_> {
             file,
             self.hir(file).node(e),
             at,
-            is_super,
-            writing,
+            PropertyAccess { is_super, writing },
             containing,
             name,
             Some(&error_node),
@@ -1271,20 +1273,19 @@ impl Checker<'_, '_> {
     }
 
     /// `checkPropertyAccessibilityAtLocation` for the property `name` of `containing`, accessed at
-    /// `location`, inside the node `at` represents (`Parent::Expr(e)`: by `e` itself), which
-    /// assigns to it if `writing`. `error_node`: evaluated for its position only if there is an
-    /// error.
+    /// `location`, inside the node `at` represents (`Parent::Expr(e)`: by `e` itself).
+    /// `error_node`: evaluated for its position only if there is an error.
     pub(super) fn check_property_accessibility_at_location(
         &mut self,
         file: FileId,
         location: Node,
         at: Parent,
-        is_super: bool,
-        writing: bool,
+        access: PropertyAccess,
         containing: TypeId,
         name: Atom,
         error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
     ) -> bool {
+        let PropertyAccess { is_super, writing } = access;
         // `forEachProperty`: a property of a union or of an intersection is composed of the
         // properties of the members.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();

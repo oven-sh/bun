@@ -92,8 +92,12 @@ impl Checker<'_, '_> {
     /// `checkGrammarModifiers`, only whether it reports. `check_grammar_modifiers` and
     /// `report_decorators` do the reporting.
     pub(super) fn has_grammar_error_in_modifiers(&self, file: FileId, node: impl ToNode) -> bool {
+        self.has_grammar_error_in_modifiers_of_node(file, self.hir(file).node(node))
+    }
+
+    /// `has_grammar_error_in_modifiers` for what is a `Node` already.
+    fn has_grammar_error_in_modifiers_of_node(&self, file: FileId, node: Node) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let node = hir.node(node);
         if has_parse_diagnostics(hir) {
             return false;
         }

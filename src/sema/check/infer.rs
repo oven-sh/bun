@@ -606,10 +606,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// The members of a union in the order TypeScript iterates over them, as `parts_in_order`
     /// returns them.
     pub(super) fn sorted_parts(&self, ty: TypeId) -> Parts {
-        let mut parts = Parts::from_slice(self.parts(ty));
-        if parts.len() > 1 {
-            parts.sort_by(|&a, &b| self.compare_types(a, b));
-        }
+        let parts = Parts::from_slice(self.parts(ty));
+        debug_assert!(parts.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
         parts
     }
 
@@ -1612,7 +1610,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !scratch.candidates.iter().any(has_candidates) {
             return false;
         }
-        if let Some((s, t)) = self.return_type_pair(generic, contextual) {
+        if let Some(ReturnTypePair { s, t }) = self.return_type_pair(generic, contextual) {
             self.infer(&mut scratch, s, t, 0);
         }
         // `hasOverlappingInferences`
@@ -1668,7 +1666,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             n.bivariant = saved_bivariant;
         }
-        if let Some((s, t)) = self.return_type_pair(source, target) {
+        if let Some(ReturnTypePair { s, t }) = self.return_type_pair(source, target) {
             self.infer_types(n, s, t);
         }
     }
@@ -1743,21 +1741,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `applyToReturnTypes`: the pair it visits, if any. The type predicate or return type of the
     /// source is resolved only if needed.
-    fn return_type_pair(&mut self, source: SigId, target: SigId) -> Option<(TypeId, TypeId)> {
+    fn return_type_pair(&mut self, source: SigId, target: SigId) -> Option<ReturnTypePair> {
         if let Some(t) = self.sig_predicate(target)
             && let Some(s) = self.sig_predicate(source)
             // `typePredicateKindsMatch`
             && (t.asserts, t.param) == (s.asserts, s.param)
-            && let (Some(st), Some(tt)) = (s.ty, t.ty)
+            && let (Some(s), Some(t)) = (s.ty, t.ty)
         {
-            return Some((st, tt));
+            return Some(ReturnTypePair { s, t });
         }
         // A `NoInfer<T>` in the declaration is preserved.
-        let expected = self.sig_return(target);
-        if !self.has_type_variables(expected) {
+        let t = self.sig_return(target);
+        if !self.has_type_variables(t) {
             return None;
         }
-        Some((self.sig_return(source), expected))
+        let s = self.sig_return(source);
+        Some(ReturnTypePair { s, t })
     }
 
     /// `inferFromIndexTypes`
@@ -2745,15 +2744,15 @@ impl<'p, 's> Checker<'p, 's> {
         c.inferred.set(Some(provisional));
         let so_far = self.non_fixing_mapper_comparing(n, constraint, compare);
         let constraint = self.instantiate(constraint, so_far);
-        if let Some(ty) = inferred {
-            let constraint_with_this = self.type_with_this_argument(constraint, ty);
-            if !compare(self, ty, constraint_with_this)
-                && !self.satisfies_constraint_in_outer_context(n, ty, constraint, compare)
+        if let Some(inference) = inferred {
+            let constraint_with_this = self.type_with_this_argument(constraint, inference);
+            if !compare(self, inference, constraint_with_this)
+                && !self.satisfies_constraint_in_outer_context(n, inference, constraint, compare)
             {
                 // An inference from the contextual return type alone is speculative anyway: the
                 // part of it that satisfies the constraint is used.
                 let filtered = if c.priority == PRIORITY_RETURN {
-                    self.filter(ty, |k, m| compare(k, m, constraint_with_this))
+                    self.filter(inference, |k, m| compare(k, m, constraint_with_this))
                 } else {
                     TypeId::NEVER
                 };
@@ -3012,6 +3011,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         false
     }
+}
+
+/// The arguments of the callback of `applyToReturnTypes`.
+struct ReturnTypePair {
+    s: TypeId,
+    t: TypeId,
 }
 
 /// What `inferToMultipleTypes` infers to.

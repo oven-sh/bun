@@ -218,6 +218,25 @@ pub fn verify_project_references<'a>(
     out
 }
 
+/// `ModuleResolutionKind`: the values that `GetModuleResolutionKind` returns.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ModuleResolutionKind {
+    Node16,
+    NodeNext,
+    Bundler,
+}
+
+impl ModuleResolutionKind {
+    /// `ModuleResolutionKind.String`
+    fn name(self) -> &'static [u8] {
+        match self {
+            ModuleResolutionKind::Node16 => b"Node16",
+            ModuleResolutionKind::NodeNext => b"NodeNext",
+            ModuleResolutionKind::Bundler => b"Bundler",
+        }
+    }
+}
+
 /// `options` was built from `compiler`, the raw `compilerOptions`, in the configuration file at
 /// `config_path`, which is empty if there is none.
 pub fn verify_compiler_options(
@@ -520,15 +539,15 @@ pub fn verify_compiler_options(
     }
     // `GetModuleResolutionKind`: `classic` and `node10` are treated as unspecified.
     let module = options.module;
-    let resolution: &[u8] = match resolution_reported.as_slice() {
-        b"node16" => b"Node16",
-        b"nodenext" => b"NodeNext",
-        b"bundler" => b"Bundler",
-        _ if module == ModuleKind::NodeNext => b"NodeNext",
-        _ if module.is_node() => b"Node16",
-        _ => b"Bundler",
+    let resolution = match resolution_reported.as_slice() {
+        b"node16" => ModuleResolutionKind::Node16,
+        b"nodenext" => ModuleResolutionKind::NodeNext,
+        b"bundler" => ModuleResolutionKind::Bundler,
+        _ if module == ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
+        _ if module.is_node() => ModuleResolutionKind::Node16,
+        _ => ModuleResolutionKind::Bundler,
     };
-    if resolution == b"Bundler"
+    if resolution == ModuleResolutionKind::Bundler
         && !(module >= ModuleKind::Es2015 && module <= ModuleKind::EsNext)
         && module != ModuleKind::Preserve
         && module != ModuleKind::CommonJs
@@ -539,7 +558,7 @@ pub fn verify_compiler_options(
             Place::Value(b"moduleResolution"),
         ));
     }
-    let resolves_like_node = matches!(resolution, b"Node16" | b"NodeNext");
+    let resolves_like_node = resolution != ModuleResolutionKind::Bundler;
     if module.is_node() && !resolves_like_node {
         // `ModuleKindToModuleResolutionKind`
         let expected: &[u8] = if module == ModuleKind::NodeNext {
@@ -555,7 +574,7 @@ pub fn verify_compiler_options(
     } else if resolves_like_node && !module.is_node() {
         out.push(Problem::new(
             5110,
-            &[resolution, resolution],
+            &[resolution.name(), resolution.name()],
             Place::Value(b"module"),
         ));
     }

@@ -100,8 +100,14 @@ impl Session {
     ///
     /// The search is linear in the number of values: for a few per check, not one per file.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {
+        let kept = self.keep_boxed(Box::new(value));
+        kept.downcast_ref().expect("it was boxed as a `T`")
+    }
+
+    /// Appends `value` to the list of what is kept.
+    fn keep_boxed(&self, value: Box<dyn Any + Send + Sync>) -> &(dyn Any + Send + Sync) {
         let mut node = Box::new(Kept {
-            value: Box::new(value),
+            value,
             next: OnceLock::new(),
         });
         let mut link = &self.kept;
@@ -109,12 +115,12 @@ impl Session {
             node = refused;
             link = &link.get().expect("`set` found a value").next;
         }
-        let kept = link.get().expect("set above");
-        kept.value.downcast_ref().expect("it was boxed as a `T`")
+        &*link.get().expect("set above").value
     }
 
     /// The number of threads that have an arena.
-    pub fn thread_count(&self) -> usize {
+    #[cfg(all(test, not(miri)))]
+    fn thread_count(&self) -> usize {
         std::iter::successors(self.first.get(), |node| node.next.get()).count()
     }
 }

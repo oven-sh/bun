@@ -5,7 +5,7 @@
 //! `checkDecorator` and the decorator checks of `checkGrammarModifiers`, of TypeScript 7.0.2's
 //! checker.go and grammarchecks.go.
 
-use super::call::CallLike;
+use super::call::{CallLike, ExpectsReturn};
 use super::*;
 use crate::bind::MemberOwner;
 
@@ -573,8 +573,7 @@ impl<'p, 's> Checker<'p, 's> {
             &[],
             &args,
             this_arg,
-            true,
-            true,
+            ExpectsReturn::Yes,
             Some(head),
         );
         // A decorator has no entry in `calls`.

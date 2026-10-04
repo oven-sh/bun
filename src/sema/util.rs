@@ -382,10 +382,6 @@ impl<A: Allocator + Clone> GrowingPlaces<A> {
         *len += 1;
         index
     }
-
-    fn len(&self) -> usize {
-        *self.len.lock()
-    }
 }
 
 #[inline]
@@ -503,21 +499,6 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
 }
 
 impl<K: std::hash::Hash + Eq, V: Clone, A: Allocator + Clone> ShardedMap<K, V, A> {
-    #[inline]
-    pub fn get(&self, key: &K) -> Option<V> {
-        let spread = spread_hash(key);
-        let shard = &self.shards[shard_of(spread)];
-        let mut found = None;
-        shard.places.find(spread, |i| {
-            let entry = shard.entries.get(i);
-            if entry.0 == *key {
-                found = Some(&entry.1);
-            }
-            found.is_some()
-        });
-        found.cloned()
-    }
-
     /// Does not overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
@@ -536,9 +517,5 @@ impl<K: std::hash::Hash + Eq, V: Clone, A: Allocator + Clone> ShardedMap<K, V, A
             || shard.entries.push(entry.borrow_mut().take().unwrap()),
         );
         shard.entries.get(index).1.clone()
-    }
-
-    pub fn len(&self) -> usize {
-        self.shards.iter().map(|s| s.places.len()).sum()
     }
 }

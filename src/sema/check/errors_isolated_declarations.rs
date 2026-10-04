@@ -121,6 +121,19 @@ impl Emit {
     }
 }
 
+/// `AllAccessorDeclarations`
+struct Accessors {
+    getter: Option<FnId>,
+    setter: Option<FnId>,
+}
+
+/// `isOptionalAnnotated` and `reportErrors` of `pseudoTypeEquivalentToType`
+#[derive(Copy, Clone)]
+pub(super) struct EquivalenceOptions {
+    pub(super) is_optional_annotated: bool,
+    pub(super) reports: bool,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `state.isolatedDeclarations`, for the transformer of `file`.
     pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
@@ -394,7 +407,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn iso_accessor_error(&mut self, file: FileId, node: Node) -> IsoDiagnostic {
         let hir = self.hir(file);
         let func = hir.function_of(node);
-        let (getter, setter) = self.iso_accessors(file, func);
+        let Accessors { getter, setter } = self.iso_accessors(file, func);
         let target = match hir[func].params.iter().next() {
             Some(param) if hir[func].kind == FnKind::Setter => hir.node(param),
             _ => node,
@@ -711,13 +724,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `GetAllAccessorDeclarationsForDeclaration`: the getter and the setter that share a symbol
     /// with the accessor `func`.
-    fn iso_accessors(&mut self, file: FileId, func: FnId) -> (Option<FnId>, Option<FnId>) {
+    fn iso_accessors(&mut self, file: FileId, func: FnId) -> Accessors {
         if self.hir(file)[func].kind == FnKind::Getter {
-            let setter = self.sibling_accessor(file, func, FnKind::Setter);
-            (Some(func), setter)
+            Accessors {
+                getter: Some(func),
+                setter: self.sibling_accessor(file, func, FnKind::Setter),
+            }
         } else {
-            let getter = self.sibling_accessor(file, func, FnKind::Getter);
-            (getter, Some(func))
+            Accessors {
+                getter: self.sibling_accessor(file, func, FnKind::Getter),
+                setter: Some(func),
+            }
         }
     }
 
@@ -995,7 +1012,7 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
     ) -> Option<PseudoElementKind> {
         let hir = self.hir(file);
-        let (getter, setter) = self.iso_accessors(file, func);
+        let Accessors { getter, setter } = self.iso_accessors(file, func);
         let is_getter = hir[func].kind == FnKind::Getter;
         if let (Some(getter), Some(setter)) = (getter, setter)
             && hir[getter].ret.is_some()
@@ -1026,7 +1043,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `typeFromAccessor`
     pub(super) fn iso_pseudo_of_accessor(&mut self, file: FileId, func: FnId) -> Pseudo {
         let hir = self.hir(file);
-        let (getter, setter) = self.iso_accessors(file, func);
+        let Accessors { getter, setter } = self.iso_accessors(file, func);
         // `getTypeAnnotationFromAccessor`
         let annotation = |accessor: Option<FnId>| -> TypeNodeId {
             match accessor {
@@ -1500,7 +1517,7 @@ impl<'p, 's> Checker<'p, 's> {
             PropSource::Literal(file, p) => {
                 match self.hir(*file).function_of(self.hir(*file).node(*p)).some() {
                     Some(func) if self.hir(*file)[*p].kind != PropKind::Method => {
-                        let (getter, setter) = self.iso_accessors(*file, func);
+                        let Accessors { getter, setter } = self.iso_accessors(*file, func);
                         usize::from(getter.is_some()) + usize::from(setter.is_some())
                     }
                     _ => 1,
@@ -1607,9 +1624,16 @@ impl<'p, 's> Checker<'p, 's> {
         tx: &mut Emit,
         pt: &Pseudo,
         ty: TypeId,
-        is_optional_annotated: bool,
-        reports: bool,
+        options: EquivalenceOptions,
     ) -> bool {
+        let EquivalenceOptions {
+            is_optional_annotated,
+            reports,
+        } = options;
+        let for_parts = EquivalenceOptions {
+            is_optional_annotated: false,
+            reports,
+        };
         let file = tx.file;
         if self.is_error_type(ty) {
             return true;
@@ -1676,7 +1700,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return false;
                 }
                 for (element, &ty) in elements.iter().zip(elems.iter()) {
-                    if !self.iso_is_equivalent(tx, element, ty, false, reports) {
+                    if !self.iso_is_equivalent(tx, element, ty, for_parts) {
                         return false;
                     }
                 }
@@ -1687,7 +1711,7 @@ impl<'p, 's> Checker<'p, 's> {
                 params,
                 returns,
             } => {
-                let Some(sig) = self.single_call_signature(stripped, false) else {
+                let Some(sig) = self.single_call_signature(stripped) else {
                     return false;
                 };
                 let node = self.hir(file).node(*func);
@@ -1710,7 +1734,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     None => {
                         let returned = self.sig_return(sig);
-                        self.iso_is_equivalent(tx, returns, returned, false, reports)
+                        self.iso_is_equivalent(tx, returns, returned, for_parts)
                     }
                 }
             }
@@ -1746,6 +1770,10 @@ impl<'p, 's> Checker<'p, 's> {
         if elements.len() != declared {
             return false;
         }
+        let silent = EquivalenceOptions {
+            is_optional_annotated: false,
+            reports: false,
+        };
         for element in elements {
             let node = hir.node(element.prop);
             let name = self.member_name(file, hir[element.prop].key);
@@ -1774,7 +1802,11 @@ impl<'p, 's> Checker<'p, 's> {
             let prop_type = self.remove_missing_type(prop_type, is_optional);
             let is_same = match &element.kind {
                 PseudoElementKind::Property(pt) => {
-                    if self.iso_is_equivalent(tx, pt, prop_type, is_optional, false) {
+                    let options = EquivalenceOptions {
+                        is_optional_annotated: is_optional,
+                        ..silent
+                    };
+                    if self.iso_is_equivalent(tx, pt, prop_type, options) {
                         continue;
                     }
                     if reports {
@@ -1793,7 +1825,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PseudoElementKind::Method {
                     params, returns, ..
                 } => {
-                    let Some(sig) = self.single_call_signature(prop_type, false) else {
+                    let Some(sig) = self.single_call_signature(prop_type) else {
                         continue;
                     };
                     if !self.iso_are_params_equivalent(tx, params, sig, reports, node) {
@@ -1805,16 +1837,16 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         None => {
                             let returned = self.sig_return(sig);
-                            self.iso_is_equivalent(tx, returns, returned, false, false)
+                            self.iso_is_equivalent(tx, returns, returned, silent)
                         }
                     }
                 }
                 PseudoElementKind::Getter { ty, .. } => {
-                    self.iso_is_equivalent(tx, ty, prop_type, false, false)
+                    self.iso_is_equivalent(tx, ty, prop_type, silent)
                 }
                 PseudoElementKind::Setter { param, .. } => {
                     let written = self.write_type_of_prop(target, mapper);
-                    self.iso_is_equivalent(tx, &param.ty, written, false, false)
+                    self.iso_is_equivalent(tx, &param.ty, written, silent)
                 }
             };
             if !is_same {
@@ -1854,8 +1886,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => target.optional,
             };
+            let options = EquivalenceOptions {
+                is_optional_annotated: param.is_optional,
+                reports: false,
+            };
             if param.is_optional != is_optional
-                || !self.iso_is_equivalent(tx, &param.ty, target.ty, param.is_optional, false)
+                || !self.iso_is_equivalent(tx, &param.ty, target.ty, options)
             {
                 if reports {
                     tx.inference_fallbacks

@@ -351,7 +351,7 @@ fn token_of(token: T) -> Token {
 fn name_at_token(p: &P<'_, true, false, true>) -> Name {
     Name {
         start: p.lexer.start as u32,
-        end: p.lexer.end as u32,
+        end: u32::try_from(p.lexer.end).expect("int cast"),
         text: StoreStr::new(p.lexer.raw()),
     }
 }

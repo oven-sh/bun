@@ -104,6 +104,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.classify_list_token_slow(kind)
     }
 
+    /// `classify_list_token`, past the tokens it skips. Returns false where the list ends.
+    #[inline]
+    pub(crate) fn skip_to_list_element(&mut self, kind: ListKind) -> Result<bool, Error> {
+        loop {
+            match self.classify_list_token(kind)? {
+                ListStep::Element => return Ok(true),
+                ListStep::Skipped => {}
+                ListStep::Over => return Ok(false),
+            }
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn classify_list_token_slow(&mut self, kind: ListKind) -> Result<ListStep, Error> {

@@ -7,6 +7,7 @@
 //! patterns, `checkYieldExpression`, and `checkSignatureDeclaration` for the return type annotation
 //! of a generator, of TypeScript 7.0.2's checker.go.
 
+use super::errors_access::PropertyAccess;
 use super::errors_operators::{start_of_dots_before, start_of_equals_before, why_no_reference};
 use super::mapped::AccessNode;
 use super::symbols::IterationUse;
@@ -396,8 +397,10 @@ impl Checker<'_, '_> {
                 file,
                 hir.node(p),
                 at,
-                false,
-                true,
+                PropertyAccess {
+                    is_super: false,
+                    writing: true,
+                },
                 object_literal_type,
                 text,
                 Some(&|_| name),

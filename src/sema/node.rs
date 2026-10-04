@@ -1029,17 +1029,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     fn part_of(&mut self, part: Part, row: Node) -> bool {
         let file = self.file;
-        let statement = match file.data(row) {
-            NodeData::Stmt(s) => Some(file[s].kind),
-            _ => None,
-        };
-        let jsx = match file.data(row) {
-            NodeData::Expr(e) => match file[e].kind {
-                ExprKind::Jsx(j) => Some(&file[j]),
-                _ => None,
-            },
-            _ => None,
-        };
+        let (statement, jsx) = (file.statement_at(row), file.jsx_at(row));
         match part {
             Part::Label
             | Part::BindingsName
@@ -1180,6 +1170,25 @@ impl<'s> File<'s> {
     #[inline]
     pub fn node(&self, id: impl ToNode) -> Node {
         id.to_node(self)
+    }
+
+    /// The statement that `row` is.
+    fn statement_at(&self, row: Node) -> Option<StmtKind> {
+        match self.data(row) {
+            NodeData::Stmt(s) => Some(self[s].kind),
+            _ => None,
+        }
+    }
+
+    /// The JSX element or fragment that `row` is.
+    fn jsx_at(&self, row: Node) -> Option<&Jsx> {
+        match self.data(row) {
+            NodeData::Expr(e) => match self[e].kind {
+                ExprKind::Jsx(j) => Some(&self[j]),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     #[inline]

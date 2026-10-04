@@ -73,12 +73,6 @@ impl<'a, T> ArenaBox<'a, T> {
     pub fn new_in(value: T, arena: &'a MimallocArena) -> Self {
         Self::from_box(Box::new_in(value, arena))
     }
-
-    /// Moves the value out and frees the block.
-    #[inline]
-    pub fn into_inner(self) -> T {
-        *self.0
-    }
 }
 
 impl<'a, T> ArenaBox<'a, [T]> {

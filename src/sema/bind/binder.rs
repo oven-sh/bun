@@ -1560,7 +1560,7 @@ impl<'f, 's> Binder<'f, 's> {
         if count > 0 {
             let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
             for &(name, _) in nested().flat_map(|s| self.b.table(s.locals)) {
-                let (word, bit) = BoundBuilder::bit_of_nested_name(filter.len(), name);
+                let (word, bit) = bit_of_nested_name(filter.len(), name);
                 filter[word] |= bit;
             }
             self.b.nested_names = filter;

@@ -32,10 +32,18 @@ const CHUNKS: usize = 33;
 /// index is found by counting leading zeros: see `locate`.
 struct Chunks<E, const FIRST: u32, A: Allocator + Clone> {
     /// Null, or the address at which the chunk would start if it also held the elements of the
-    /// chunks before it and `1 << FIRST` more. Indexed by the first result of `locate`.
+    /// chunks before it and `1 << FIRST` more. Indexed by `Located::chunk`.
     bases: [AtomicPtr<E>; CHUNKS],
     alloc: A,
     owns: Owns<E>,
+}
+
+/// Where `Chunks` has an element.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+struct Located {
+    chunk: usize,
+    /// From the base of the chunk.
+    offset: usize,
 }
 
 impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
@@ -50,9 +58,12 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
     /// The chunk of the element `index`, and the offset of the element from the base of the chunk.
     /// An index within `1 << FIRST` of `u32::MAX` wraps around, to a chunk that `install` refuses.
     #[inline]
-    fn locate(index: u32) -> (usize, usize) {
+    fn locate(index: u32) -> Located {
         let n = index.wrapping_add(1 << FIRST);
-        (n.leading_zeros() as usize, n as usize)
+        Located {
+            chunk: n.leading_zeros() as usize,
+            offset: n as usize,
+        }
     }
 
     /// The number of elements of a chunk, which is also the offset of its first element from its
@@ -65,7 +76,7 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
     /// The address of the element `index`. Meaningless if its chunk is not allocated.
     #[inline]
     fn slot(&self, index: u32) -> *mut E {
-        let (chunk, offset) = Self::locate(index);
+        let Located { chunk, offset } = Self::locate(index);
         self.bases[chunk]
             .load(Ordering::Relaxed)
             .wrapping_add(offset)
@@ -74,7 +85,7 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
     /// The address of the element `index`, whose chunk comes from `make` if it is not allocated.
     #[inline]
     fn slot_or_install(&self, index: u32, make: fn(usize, A) -> Box<[E], A>) -> *mut E {
-        let (chunk, offset) = Self::locate(index);
+        let Located { chunk, offset } = Self::locate(index);
         let mut base = self.bases[chunk].load(Ordering::Acquire);
         if base.is_null() {
             base = self.install(chunk, make);
@@ -224,11 +235,6 @@ impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
         self.len.get()
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Returns the index of the element.
     #[inline]
     pub fn push(&self, value: T) -> u32 {
@@ -352,7 +358,7 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     /// `cell`, and something has ordered the earlier calls before this one.
     #[inline]
     pub fn existing(&self, index: u32) -> Option<&C> {
-        let (chunk, offset) = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index);
+        let Located { chunk, offset } = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index);
         let base = self.chunks.bases[chunk].load(Ordering::Relaxed);
         if base.is_null() {
             return None;
@@ -541,14 +547,16 @@ mod tests {
         let mut next = 0;
         for chunk in (0..=29).rev() {
             for at in 0..Small::len_of(chunk).min(64) {
-                let (found, offset) = Small::locate(next + at as u32);
-                assert_eq!((found, offset), (chunk, Small::len_of(chunk) + at));
+                let offset = Small::len_of(chunk) + at;
+                assert_eq!(Small::locate(next + at as u32), Located { chunk, offset });
             }
             next = next.wrapping_add(Small::len_of(chunk) as u32);
         }
         // The indices that wrap around have chunks of their own, which are never allocated.
-        assert_eq!(Small::locate(u32::MAX), (30, 3));
-        assert_eq!(Small::locate(u32::MAX - 3), (32, 0));
+        let (chunk, offset) = (30, 3);
+        assert_eq!(Small::locate(u32::MAX), Located { chunk, offset });
+        let (chunk, offset) = (32, 0);
+        assert_eq!(Small::locate(u32::MAX - 3), Located { chunk, offset });
     }
 
     #[test]
@@ -588,7 +596,7 @@ mod tests {
                 expected += 1;
             });
             assert_eq!(expected, MANY);
-            assert!(vec.is_empty());
+            assert_eq!(vec.len(), 0);
             assert_eq!(alive.load(Ordering::Relaxed), 0);
         }
     }
@@ -604,7 +612,7 @@ mod tests {
             vec.drain(|index, _| assert!(index < 3));
         }));
         assert!(unwound.is_err());
-        assert!(vec.is_empty());
+        assert_eq!(vec.len(), 0);
         drop(vec);
         assert_eq!(alive.load(Ordering::Relaxed), 6);
     }
@@ -637,7 +645,7 @@ mod tests {
         assert_eq!(blocks.load(Ordering::Relaxed), 2);
         let (first, fourth) = (
             chunks.slot(0),
-            chunks.bases[Chunks::<u8, 2, Global>::locate(28).0].load(Ordering::Relaxed),
+            chunks.bases[Chunks::<u8, 2, Global>::locate(28).chunk].load(Ordering::Relaxed),
         );
         assert!(!first.is_null() && fourth.is_null());
         chunks.slot_or_install(28, Box::new_uninit_slice_in);

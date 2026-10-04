@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
-use crate::parse::lists::{ListKind, ListStep};
+use crate::parse::lists::ListKind;
 use crate::parser::{
     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseBindingOptions, ParseStatementOptions, TypeParameterFlag,
@@ -284,10 +284,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         let saved_contexts = p.enter_list(ListKind::Parameters);
         while has_parens && p.lexer.token != T::TCloseParen {
-            match p.classify_list_token(ListKind::Parameters)? {
-                ListStep::Element => {}
-                ListStep::Skipped => continue,
-                ListStep::Over => break,
+            if !p.skip_to_list_element(ListKind::Parameters)? {
+                break;
             }
             let parameter_start = p.lexer.loc();
             let parameter_full_start = p.lexer.full_start();

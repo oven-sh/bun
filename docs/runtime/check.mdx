@@ -249,7 +249,7 @@ These differences are intended:
 - `bun check` only checks. It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, whatever `noEmit`, `declaration`, or `incremental` say. Use [`bun build`](/bundler) to produce JavaScript, and `tsc` to produce declaration files.
 - There is no `--watch` mode.
 - `bun check` does not load language service plugins from the `plugins` compiler option.
-- Of the options that only print information, `listFiles` and `listFilesOnly` work. The others, such as `explainFiles` and `traceResolution`, have no effect.
+- Of the options that only print information, `listFiles`, `listFilesOnly` and `traceResolution` work. The others, such as `explainFiles`, have no effect.
 
 ## CLI usage
 

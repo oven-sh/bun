@@ -49,7 +49,7 @@ const copied = [
 ];
 // Of a directory of baselines, the kinds that are compared. `names.txt` has the names of all of them, which say which
 // configurations a test has, and that a test without an `.errors.txt` has no errors.
-const kinds = [".errors.txt", ".types", ".symbols", ".js"];
+const kinds = [".errors.txt", ".types", ".symbols", ".js", ".trace.json"];
 const baselines = [
   "testdata/baselines/reference/submodule/compiler",
   "testdata/baselines/reference/submodule/conformance",

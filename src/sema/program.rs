@@ -4,14 +4,16 @@
 
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
+use crate::check::spans::{skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
-    Host, JsxEmit, ModuleDetection, ModuleKind, Options, Phase, Resolver, ScriptTarget, Spent,
-    ancestors, contains_path, file_extension_is_one_of, format_by_extension,
-    has_ts_implementation_extension, is_javascript, is_relative, join, lib_name,
-    remove_file_extension, supported_extensions, to_file_name_lower_case,
+    DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
+    Options, Phase, Resolver, ScriptTarget, Spent, Tracer, ancestors, contains_path,
+    file_extension_is_one_of, format_by_extension, has_ts_implementation_extension, inside,
+    is_javascript, is_relative, join, lib_name, remove_file_extension, supported_extensions,
+    to_file_name_lower_case,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -513,6 +515,8 @@ pub struct Files<'s> {
     /// `redirectTargetsMap`: the paths of the duplicates of a package file, for which that file is
     /// in the program, in order.
     pub redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]>,
+    /// What `traceResolution` logs, in order.
+    pub resolution_trace: &'s [DiagAndArgs],
 }
 
 /// `Files::global_type`
@@ -652,6 +656,8 @@ struct Loaded<'s, 'r> {
     imports: Vec<(Atom, ResolutionMode, &'r [u8], bool, bool)>,
     /// (path, is a lib, `increaseDepth`)
     references: Vec<(&'r [u8], bool, bool)>,
+    /// `typeResolutionsTrace`, then `resolutionsTrace`
+    traces: Vec<DiagAndArgs>,
 }
 
 /// `typeOnlyDeclaration`
@@ -1694,29 +1700,123 @@ fn lib_file_stem<'a>(host: &dyn Host, options: &Options, lib: &'a [u8]) -> &'a [
     }
 }
 
+/// `ForEachDynamicImportOrRequireCall`: it looks at each `import` and `require` in the text, and
+/// takes the node around it (`GetNodeAtPosition`, which does not descend into tokens). So a call
+/// is found once more for each in its specifier or in a comment in it or before it.
+fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
+    let text = &hir.text[..];
+    let uses = hir.specifier_uses.iter().filter(|u| u.kind.is_dynamic());
+    let mut uses: Vec<&SpecifierUse> = uses.collect();
+    uses.sort_by_key(|u| u.pos);
+    // `findImportOrRequire`: where each is, and where it ends.
+    let mut words: Vec<(usize, usize)> = Vec::new();
+    let mut index = 0;
+    while let Some(at) = strings::index_of_any(&text[index..], b"ir").map(|at| index + at) {
+        let word: &[u8] = if text[at] == b'i' {
+            b"import"
+        } else {
+            b"require"
+        };
+        index = if text[at..].starts_with(word) {
+            words.push((at, at + word.len()));
+            at + word.len()
+        } else {
+            at + 1
+        };
+    }
+    // From `node.Pos()` to the first child that is not a token. A call has none before the token
+    // after its specifier. In an import type the specifier is in a `LiteralType`.
+    let mut ranges: Vec<(usize, usize, &SpecifierUse)> = Vec::new();
+    for &(at, end) in &words {
+        let open = skip_trivia(text, end);
+        if text.get(open) != Some(&b'(') {
+            continue;
+        }
+        let specifier = skip_trivia(text, open + 1);
+        let Ok(u) = uses.binary_search_by_key(&(specifier as u32), |u| u.pos) else {
+            continue;
+        };
+        let mut end = open + 1;
+        if uses[u].kind.is_call() {
+            end = specifier + 1;
+            while end < text.len() && text[end] != text[specifier] {
+                end += if text[end] == b'\\' { 2 } else { 1 };
+            }
+            end = skip_trivia(text, end + 1);
+        }
+        ranges.push((skip_trivia_back(text, at), end, uses[u]));
+    }
+    let mut found = Vec::new();
+    let mut ranges = ranges.iter().peekable();
+    for &(at, _) in &words {
+        while ranges.next_if(|range| range.1 <= at).is_some() {}
+        if let Some(&&(start, _, u)) = ranges.peek()
+            && start <= at
+        {
+            found.push(u);
+        }
+    }
+    found
+}
+
+/// `file.ModuleAugmentations`, without `declare global` (`collectModuleReferences`).
+fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<Atom> {
+    let ambient_module = |s: StmtId, is_in_ambient_module: bool| {
+        let StmtKind::Module(m) = hir[s].kind else {
+            return None;
+        };
+        let is_ambient = is_in_ambient_module
+            || hir[m].flags.contains(Flags::AMBIENT)
+            || hir.kind == FileKind::Declaration;
+        match hir[m].name {
+            ModuleName::String(name) if is_ambient => Some((m, name)),
+            _ => None,
+        }
+    };
+    let mut names = Vec::new();
+    for s in hir.ids(hir.body) {
+        let Some((m, name)) = ambient_module(s, false) else {
+            continue;
+        };
+        if hir.has_module_syntax {
+            names.push(name);
+            continue;
+        }
+        let nested = hir.ids(hir[m].body);
+        let nested = nested.filter_map(|s| Some(ambient_module(s, true)?.1));
+        names.extend(nested.filter(|&name| !is_relative(atoms.bytes(name))));
+    }
+    names
+}
+
+/// `getLibraryNameFromLibFileName` and `getInferredLibraryNameResolveFrom`
+fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    // `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
+    // `@typescript/lib-es2015/symbol-wellknown`.
+    let mut name = b"@typescript/lib-".to_vec();
+    for (i, part) in strings::split(lib, b".").enumerate() {
+        match i {
+            0 => {}
+            1 => name.push(b'/'),
+            _ => name.push(b'-'),
+        }
+        name.extend_from_slice(part);
+    }
+    let from = [
+        &options.base_dir[..],
+        b"/__lib_node_modules_lookup_lib.",
+        lib,
+        b".d.ts__.ts",
+    ]
+    .concat();
+    (name, from)
+}
+
 /// `pathForLibFile`: the path `lib.<lib>.d.ts` is read from, and whether that is TypeScript's own
 /// file.
 fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> (Vec<u8>, bool) {
     if options.lib_replacement {
-        // `getLibraryNameFromLibFileName`: `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
-        // `@typescript/lib-es2015/symbol-wellknown`.
-        let mut name = b"@typescript/lib-".to_vec();
-        for (i, part) in strings::split(lib, b".").enumerate() {
-            match i {
-                0 => {}
-                1 => name.push(b'/'),
-                _ => name.push(b'-'),
-            }
-            name.extend_from_slice(part);
-        }
-        // `getInferredLibraryNameResolveFrom`
-        let from = [
-            &options.base_dir[..],
-            b"/__lib_node_modules_lookup_lib.",
-            lib,
-            b".d.ts__.ts",
-        ]
-        .concat();
+        let (name, from) = library_name_and_resolve_from(options, lib);
         // `resolveLibrary`: always resolved the way `require` resolves.
         if let Some(found) = resolver.resolve_module_name(&name, &from, ResolutionMode::Require)
             && !is_javascript(found.file_name)
@@ -2614,6 +2714,7 @@ impl<'s> Files<'s> {
                 &mut frontier,
             ));
         }
+        let libs_end = starts.len();
         let mut program_errors = Vec::new();
         for root in roots {
             // `addRootFileTask`
@@ -2642,17 +2743,21 @@ impl<'s> Files<'s> {
                 }
             }
         }
+        let roots_end = starts.len();
         let directives = if has_root_files {
             automatic_type_directives(host, &resolver, &options)
         } else {
             Vec::new()
         };
+        let automatic_tracer = options.trace_resolution.then(Tracer::default);
+        // `addAutomaticTypeDirectiveTasks`
+        let containing_file = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
         for name in &directives {
             match resolver.resolve_type_reference(
                 name,
-                &options.base_dir,
+                &containing_file,
                 ResolutionMode::None,
-                true,
+                automatic_tracer.as_ref(),
             ) {
                 Some((path, is_external)) => {
                     let depth = u32::from(is_external);
@@ -2688,6 +2793,8 @@ impl<'s> Files<'s> {
         let mut ahead: FxHashMap<&[u8], Box<Loaded>> = FxHashMap::default();
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
+        // `Loaded::traces`, indexed by `FileId`.
+        let mut traces: Vec<Vec<DiagAndArgs>> = Vec::new();
         while !frontier.is_empty() {
             let batch = std::mem::take(&mut frontier);
             if is_first {
@@ -2765,8 +2872,50 @@ impl<'s> Files<'s> {
                     steps.push((*id, target, increases_depth));
                 }
                 loaded.module.edges = slice_in(&edges, arena);
+                if options.trace_resolution {
+                    traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
+                    traces[id.idx()] = std::mem::take(&mut loaded.traces);
+                }
                 modules[id.idx()] = Some(loaded.module);
             }
+        }
+        // `pathForLibFileResolutions`, in the order of its keys.
+        let mut lib_traces = Vec::new();
+        if options.trace_resolution && options.lib_replacement && has_root_files {
+            let mut libs: Vec<Vec<u8>> = (options.libs.iter())
+                .map(|lib| lib_file_stem(host, &options, lib).to_vec())
+                .collect();
+            for module in modules.iter().flatten().filter(|_| !options.no_lib) {
+                for &(kind, value, ..) in &module.hir.references {
+                    if kind != ReferenceKind::Lib {
+                        continue;
+                    }
+                    let name = lib_name(atoms.bytes(value));
+                    let name = lib_file_stem(host, &options, &name);
+                    if host.is_file(&lib_file(&options, name)) {
+                        libs.push(name.to_vec());
+                    }
+                }
+            }
+            let mut lookups: Vec<_> = (libs.iter())
+                .map(|lib| library_name_and_resolve_from(&options, lib))
+                .map(|(name, from)| match host.is_case_sensitive() {
+                    true => (from.clone(), name, from),
+                    false => (to_file_name_lower_case(&from), name, from),
+                })
+                .collect();
+            lookups.sort();
+            lookups.dedup();
+            let tracer = Tracer::default();
+            for (_, name, from) in &lookups {
+                resolver.resolve_module_name_traced(
+                    name,
+                    from,
+                    ResolutionMode::Require,
+                    Some(&tracer),
+                );
+            }
+            lib_traces = tracer.into_traces();
         }
         // `lowestDepth`: the minimum over all paths to a file. ("If we're seeing this task at a
         // lower depth than before, reprocess its subtasks": `filesParser.start` of 7.0.2 starts
@@ -3020,9 +3169,54 @@ impl<'s> Files<'s> {
             package_jsons,
             linked_directories,
             redirect_targets,
+            resolution_trace: &[],
         };
         let merging = Spent::on(host, Phase::Merge);
         files.order = slice_in(&files.declaration_order(&starts), arena);
+        if let Some(automatic) = automatic_tracer {
+            // `rootTasks`: the root files, the libraries, the automatic type directives.
+            let mut seen = vec![false; files.modules.len()];
+            let mut all = Vec::new();
+            let before = starts[libs_end..roots_end]
+                .iter()
+                .chain(&starts[..libs_end]);
+            files.collect_traces(before, &mut seen, &mut traces, &mut all);
+            all.extend(automatic.into_traces());
+            files.collect_traces(starts[roots_end..].iter(), &mut seen, &mut traces, &mut all);
+            all.extend(lib_traces);
+            // `packageJsonInfoCache`. `loadSourceFileMetaData` looks for the scope of a file before
+            // anything in the file is resolved.
+            let key = |path: &[u8]| match host.is_case_sensitive() {
+                true => path.to_vec(),
+                false => to_file_name_lower_case(path),
+            };
+            let mut cached: FxHashSet<Vec<u8>> = FxHashSet::default();
+            let mut with_scope: FxHashSet<Vec<u8>> = FxHashSet::default();
+            for trace in &mut all {
+                match trace.code {
+                    6086 | 6116 => {
+                        let from = &trace.args[1][..];
+                        if !files.by_path.contains_key(from) {
+                            continue;
+                        }
+                        for dir in ancestors(dirname::<Posix>(from)) {
+                            if !with_scope.insert(dir.to_vec()) {
+                                break;
+                            }
+                            let path = inside(dir, b"package.json");
+                            cached.insert(key(&path));
+                            if host.is_file(&path) {
+                                break;
+                            }
+                        }
+                    }
+                    6239 if cached.insert(key(&trace.args[0])) => trace.code = 6099,
+                    6240 if cached.insert(key(&trace.args[0])) => trace.code = 6096,
+                    _ => {}
+                }
+            }
+            files.resolution_trace = session.keep(all);
+        }
         let ranks = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
         for (rank, &file) in files.order.iter().enumerate() {
             ranks[file.idx()] = rank as u32;
@@ -3322,10 +3516,11 @@ impl<'s> Files<'s> {
         let mut arbitrary_extension_files = Vec::new();
         let mut extensionless_imports = Vec::new();
         // `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with helpers imports `tslib`.
-        if options.import_helpers
+        let imports_helpers = options.import_helpers
             && (hir.is_js
                 || hir.kind != FileKind::Declaration
-                    && (options.isolated_modules || hir.has_module_syntax))
+                    && (options.isolated_modules || hir.has_module_syntax));
+        if imports_helpers
             && let Some(resolved) = resolver.resolve_module_name(b"tslib", from, default_mode)
         {
             note_package(&mut resolved_packages, &resolved);
@@ -3345,8 +3540,40 @@ impl<'s> Files<'s> {
         let runtime = jsx_runtime_of(options, &hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
-        if (path.ends_with(b".tsx") || path.ends_with(b".jsx"))
-            && let Some((spec, runtime)) = runtime
+        let runtime = runtime.filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"));
+        // Each entry of `moduleNames` is resolved, also one that repeats another.
+        let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
+        if of_program.trace_resolution {
+            let trace = |name: &[u8], mode: ResolutionMode| {
+                if !name.is_empty() {
+                    resolver.resolve_module_name_traced(name, from, mode, Some(&tracer));
+                }
+            };
+            if imports_helpers {
+                trace(b"tslib", default_mode);
+            }
+            if let Some((_, runtime)) = &runtime {
+                trace(runtime, default_mode);
+            }
+            // `collectModuleReferences`
+            let is_import = |u: &&SpecifierUse| {
+                bound.specifiers.contains(&u.spec)
+                    || bound.ambient_specifiers.contains(&u.spec)
+                        && !is_relative(atoms.bytes(u.spec))
+            };
+            let statements = hir.specifier_uses.iter().filter(|u| !u.kind.is_dynamic());
+            let mut statements: Vec<&SpecifierUse> = statements.collect();
+            statements.sort_by_key(|u| u.pos);
+            let uses = statements.into_iter().chain(dynamic_imports(&hir));
+            for u in uses.filter(is_import) {
+                let mode = mode_for_usage_location(options, default_mode, u);
+                trace(atoms.bytes(u.spec), mode);
+            }
+            for name in module_augmentations(&hir, atoms) {
+                trace(atoms.bytes(name), default_mode);
+            }
+        }
+        if let Some((spec, runtime)) = runtime
             && let Some(resolved) = resolver.resolve_module_name(&runtime, from, default_mode)
         {
             note_package(&mut resolved_packages, &resolved);
@@ -3559,9 +3786,9 @@ impl<'s> Files<'s> {
                     };
                     match resolver.resolve_type_reference(
                         value,
-                        dirname::<Posix>(from),
+                        from,
                         mode,
-                        false,
+                        of_program.trace_resolution.then_some(&types_tracer),
                     ) {
                         Some((found, is_external)) => {
                             types.push((resolver.keep(&found), false, is_external));
@@ -3625,10 +3852,13 @@ impl<'s> Files<'s> {
             && module.bound.umd_globals.is_empty()
             // `make_module_clones`: it adds a symbol to the file of what it imports.
             && !(module.hir.imports.iter()).any(|import| import.namespace.is_some());
+        let mut traces = types_tracer.into_traces();
+        traces.extend(tracer.into_traces());
         Loaded {
             module,
             imports,
             references,
+            traces,
         }
     }
 
@@ -3688,6 +3918,41 @@ impl<'s> Files<'s> {
             }
         }
         crate::resolve::LIBS.len() + 2
+    }
+
+    /// `collectFiles` logs what the resolutions in a file logged before it descends into the sub tasks
+    /// of the file.
+    fn collect_traces<'a>(
+        &self,
+        starts: impl Iterator<Item = &'a FileId>,
+        seen: &mut [bool],
+        traces: &mut [Vec<DiagAndArgs>],
+        all: &mut Vec<DiagAndArgs>,
+    ) {
+        let mut enter = |file: FileId, stack: &mut Vec<(FileId, usize)>| {
+            if !std::mem::replace(&mut seen[file.idx()], true) {
+                if let Some(traces) = traces.get_mut(file.idx()) {
+                    all.append(traces);
+                }
+                stack.push((file, 0));
+            }
+        };
+        for &start in starts {
+            // (file, how many of its edges have been followed)
+            let mut stack: Vec<(FileId, usize)> = Vec::new();
+            enter(start, &mut stack);
+            while let Some(top) = stack.last_mut() {
+                match self.modules[top.0.idx()].edges.get(top.1) {
+                    Some(&edge) => {
+                        top.1 += 1;
+                        enter(edge, &mut stack);
+                    }
+                    None => {
+                        stack.pop();
+                    }
+                }
+            }
+        }
     }
 
     /// `getProcessedFiles`: the libraries first, sorted (`sortLibs`); then from each starting point depth first, a file after

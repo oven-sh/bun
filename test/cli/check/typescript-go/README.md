@@ -21,8 +21,9 @@ checkout:
 | `<test>.types`      | the type of every expression and name                                                      |
 | `<test>.symbols`    | the symbol of every name, with its declarations                                            |
 | `<test>.js`         | the files that are emitted. The declaration files in it are compared, the JavaScript isn't |
+| `<test>.trace.json` | what `traceResolution` logs                                                                |
 
-typescript-go also has `.js.map`, `.sourcemap.txt` and `.trace.json` baselines. They aren't in the bundle.
+typescript-go also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 
 ```sh
 bun bd test test/cli/check/conformance.test.ts

@@ -45,6 +45,7 @@ const run = () =>
         `--every=${every}`,
         "--types-and-symbols",
         "--declarations",
+        "--traces",
         ...(process.env.ONLY ? [`--only=${process.env.ONLY}`] : []),
         ...suites,
       ],
@@ -60,6 +61,7 @@ test.skipIf(!hasRunner).each([
   ["Types", "the type of every expression", ".types"],
   ["Symbols", "the symbol of every name", ".symbols"],
   ["Declarations", "the declaration files", ".js, except for the JavaScript in it"],
+  ["Traces", "the log of module resolution", ".trace.json"],
 ])(
   "%s: TypeScript's tests have %s that typescript-go has (%s)",
   async kind => {

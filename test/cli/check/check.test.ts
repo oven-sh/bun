@@ -666,6 +666,46 @@ describe.concurrent("bun check", () => {
       expect(only.exitCode).toBe(0);
     });
 
+    test("--traceResolution", async () => {
+      using dir = project({
+        "a.ts": `import { b } from "./b";\nimport { c } from "pkg";\nexport const a: string = b + c;\n`,
+        "b.ts": `export const b = 1;\n`,
+        "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "types": "./index.d.ts" }`,
+        "node_modules/pkg/index.d.ts": `export declare const c: number;\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--traceResolution"]);
+      const lines = stdout.replaceAll(realpathSync(String(dir)).replaceAll("\\", "/"), "<dir>").split("\n");
+      // What is above the project depends on the machine.
+      const inProject = lines.filter(line => !/^(File|Found 'package\.json' at|Directory) '(?!<dir>)/.test(line));
+      expect(inProject.map(line => line.replaceAll("<dir>", ""))).toEqual([
+        "======== Resolving module './b' from '/a.ts'. ========",
+        "Explicitly specified module resolution kind: 'Bundler'.",
+        "Resolving in CJS mode with conditions 'import', 'types'.",
+        "Loading module as file / folder, candidate module location '/b', target file types: TypeScript, JavaScript, Declaration, JSON.",
+        "File '/b.ts' exists - use it as a name resolution result.",
+        "======== Module name './b' was successfully resolved to '/b.ts'. ========",
+        "======== Resolving module 'pkg' from '/a.ts'. ========",
+        "Explicitly specified module resolution kind: 'Bundler'.",
+        "Resolving in CJS mode with conditions 'import', 'types'.",
+        "File '/package.json' does not exist according to earlier cached lookups.",
+        "Loading module 'pkg' from 'node_modules' folder, target file types: TypeScript, JavaScript, Declaration, JSON.",
+        "Searching all ancestor node_modules directories for preferred extensions: TypeScript, Declaration.",
+        "Found 'package.json' at '/node_modules/pkg/package.json'.",
+        "File '/node_modules/pkg.ts' does not exist.",
+        "File '/node_modules/pkg.tsx' does not exist.",
+        "File '/node_modules/pkg.d.ts' does not exist.",
+        "'package.json' does not have a 'typesVersions' field.",
+        "'package.json' does not have a 'typings' field.",
+        "'package.json' has 'types' field './index.d.ts' that references '/node_modules/pkg/index.d.ts'.",
+        "File '/node_modules/pkg/index.d.ts' exists - use it as a name resolution result.",
+        "'package.json' does not have a 'peerDependencies' field.",
+        "Resolving real path for '/node_modules/pkg/index.d.ts', result '/node_modules/pkg/index.d.ts'.",
+        "======== Module name 'pkg' was successfully resolved to '/node_modules/pkg/index.d.ts' with Package ID 'pkg/index.d.ts@1.0.0'. ========",
+        "a.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("extends, with comments and trailing commas", async () => {
       using dir = project({
         "base.json": `{\n  // the options everybody has\n  "compilerOptions": ${JSON.stringify(JSON.parse(tsconfig).compilerOptions)},\n}`,

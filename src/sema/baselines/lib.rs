@@ -907,16 +907,19 @@ pub enum Kind {
     Symbols,
     /// The `.js` baseline without the JavaScript in it.
     Declarations,
+    /// What `traceResolution` logs.
+    Traces,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Types, Kind::Symbols, Kind::Declarations];
+    pub const ALL: [Kind; 4] = [Kind::Types, Kind::Symbols, Kind::Declarations, Kind::Traces];
 
     fn extension(self) -> &'static str {
         match self {
             Kind::Types => "types",
             Kind::Symbols => "symbols",
             Kind::Declarations => "js",
+            Kind::Traces => "trace.json",
         }
     }
 }
@@ -1051,6 +1054,78 @@ fn after_the_javascript<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u
     });
     let last = about_javascript.map_or(js_code.len(), |at| end + at);
     Some(&js_code[first.unwrap_or(end)..last])
+}
+
+/// `TracerForBaselining`: typescript-go resolves in several threads, so which lookup finds a
+/// `package.json` in the cache differs from run to run. The first line about a file says that it
+/// was looked up, and each later one that it was cached.
+fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
+    use bstr::ByteSlice;
+    let mut package_json_cache: BTreeSet<Vec<u8>> = BTreeSet::new();
+    // Whether this is the first line about `file`.
+    let mut is_new = |file: &[u8]| {
+        package_json_cache.insert(match is_case_sensitive {
+            true => file.to_vec(),
+            false => to_file_name_lower_case(file),
+        })
+    };
+    let file_of = |line: &[u8]| line.strip_prefix(b"File '").unwrap_or(line).to_vec();
+    let mut trace = Vec::new();
+    for line in lines {
+        // `/c:/a` is `c:/a` to TypeScript.
+        let mut line = line.clone();
+        bun_sema_driver::host::show_drives(&mut line);
+        let is_missing = |file: &[u8]| [b"File '", file, b"' does not exist."].concat();
+        let is_found = |file: &[u8]| [b"Found 'package.json' at '", file, b"'."].concat();
+        let sanitized = if line.contains_str("'7.0.2'") {
+            line.replacen("'7.0.2'", "'FakeTSVersion'", 1)
+        } else if let Some(start) =
+            line.strip_suffix(b"' does not exist according to earlier cached lookups.")
+        {
+            let file = file_of(start);
+            if is_new(&file) {
+                is_missing(&file)
+            } else {
+                line.clone()
+            }
+        } else if let Some(start) =
+            line.strip_suffix(b"' exists according to earlier cached lookups.")
+        {
+            let file = file_of(start);
+            if is_new(&file) {
+                is_found(&file)
+            } else {
+                line.clone()
+            }
+        } else if let Some(start) = line.strip_suffix(b"' does not exist.") {
+            let file = file_of(start);
+            match is_new(&file) {
+                true => line.clone(),
+                false => [
+                    b"File '",
+                    &file[..],
+                    b"' does not exist according to earlier cached lookups.",
+                ]
+                .concat(),
+            }
+        } else if let Some(end) = line.strip_prefix(b"Found 'package.json' at '") {
+            let file = end.strip_suffix(b"'.").unwrap_or(end);
+            match is_new(file) {
+                true => line.clone(),
+                false => [
+                    b"File '",
+                    file,
+                    b"' exists according to earlier cached lookups.",
+                ]
+                .concat(),
+            }
+        } else {
+            line.clone()
+        };
+        trace.extend_from_slice(&sanitized);
+        trace.push(b'\n');
+    }
+    trace
 }
 
 /// Where `ours` and `expected` differ first.
@@ -1191,6 +1266,8 @@ pub struct Setup<'a> {
     pub types_and_symbols: bool,
     /// Whether the `.js` baselines are compared, without the JavaScript in them.
     pub declarations: bool,
+    /// Whether the `.trace.json` baselines are compared.
+    pub traces: bool,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
@@ -1287,6 +1364,8 @@ struct Ran {
     repeats_without_checking: bool,
     /// `compilerTest.hasNonDtsFiles`
     has_non_dts_files: bool,
+    /// `result.Trace`, with `traceResolution`.
+    trace: Option<Vec<u8>>,
 }
 
 fn run_one(
@@ -1640,19 +1719,29 @@ fn run_one(
     };
     // `compileFilesWithHost`: `preProgram` is only checked. `postProgram` emits first, and the types
     // and the symbols are read from it.
+    let mut trace = None;
     let report = match also {
         // `result.DTS` is what `postProgram` emits.
         Also::Declarations => {
             let mut project = project;
             project.options.emits_first = true;
+            project.options.trace_resolution = false;
             check(project, Some(&write_dts))
         }
         Also::Nothing | Also::TypesAndSymbols => {
-            let pre = check(project, None);
+            // `preCompilerOptions.TraceResolution = core.TSFalse`
+            let mut pre = project;
+            pre.options.trace_resolution = false;
+            let pre = check(pre, None);
             let mut project = parsed_command_line();
             project.options.emits_first = true;
+            let traces_resolution = project.options.trace_resolution;
             let write_types = (also == Also::TypesAndSymbols).then_some(&write_types as AfterFile);
-            errors_of_both_programs(pre, check(project, write_types))
+            let post = check(project, write_types);
+            if traces_resolution {
+                trace = Some(sanitize_trace(&post.resolution_trace, is_case_sensitive));
+            }
+            errors_of_both_programs(pre, post)
         }
     };
     let sections = sections.into_inner().unwrap();
@@ -1760,6 +1849,7 @@ fn run_one(
         declaration_files,
         repeats_without_checking: emits_declarations && !no_check && !no_emit,
         has_non_dts_files: (roots.iter().chain(&others)).any(|it| !it.name.ends_with(".d.ts")),
+        trace,
     })
 }
 
@@ -1930,6 +2020,14 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     }
                                 }
                             }
+                        }
+                        // `verifyModuleResolution`
+                        if setup.traces
+                            && let Ok(Some(ran)) = &ran
+                            && let Some(ours) = &ran.trace
+                        {
+                            let expected = baseline(Kind::Traces).unwrap_or_default();
+                            others.push(compare(Kind::Traces, ours, &expected));
                         }
                         // `len(result.Diagnostics) > 0`
                         let has_errors =
@@ -2131,7 +2229,7 @@ impl Drop for Watched {
 }
 
 /// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n] [--threads=n] [--report=file]
-/// [--out=dir] [--types-and-symbols] [--declarations]
+/// [--out=dir] [--types-and-symbols] [--declarations] [--traces]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
 /// With `--bundle`, the directories and the file with the names are paths in it.
@@ -2175,6 +2273,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         out: out.as_deref(),
         types_and_symbols: args.iter().any(|it| it == "--types-and-symbols"),
         declarations: args.iter().any(|it| it == "--declarations"),
+        traces: args.iter().any(|it| it == "--traces"),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
     };

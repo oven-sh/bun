@@ -517,6 +517,8 @@ pub struct Report {
     pub config_path: Vec<u8>,
     /// `listFiles`, `listFilesOnly`: the files of the program, in program order.
     pub listed_files: Vec<Vec<u8>>,
+    /// `traceResolution`: the lines, in order.
+    pub resolution_trace: Vec<Vec<u8>>,
     pub files_loaded: usize,
     pub files_checked: usize,
     /// The steps that ran, in order. See `Plan`.
@@ -552,6 +554,7 @@ impl Report {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
         self.listed_files.extend(other.listed_files);
+        self.resolution_trace.extend(other.resolution_trace);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
@@ -716,6 +719,10 @@ pub fn check_already_read_then<R>(
             let related = reported.related.iter_mut();
             related.for_each(|related| host::show_drives(&mut related.text));
         }
+        report
+            .resolution_trace
+            .iter_mut()
+            .for_each(host::show_drives);
     }
     let result = then(report);
     drop(lent);
@@ -1445,6 +1452,8 @@ fn check_named_files(
         let path = |&file: &FileId| program.files.module(file).path.to_vec();
         report.listed_files = program.files.order.iter().map(path).collect();
     }
+    let trace = program.files.resolution_trace.iter();
+    report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
     about_options.extend(
         program
             .files

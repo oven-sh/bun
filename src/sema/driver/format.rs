@@ -402,6 +402,10 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
 
 /// Writes the diagnostics, in order.
 pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
+    for line in &report.resolution_trace {
+        out.extend_from_slice(line);
+        out.push(b'\n');
+    }
     if should_group(report, style) {
         write_grouped(out, report, style);
     } else {

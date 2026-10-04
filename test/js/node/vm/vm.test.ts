@@ -1335,7 +1335,7 @@ describe("Script compiles its source once and links that in every context it run
       lineOffset: 100,
     });
     for (const context of [createContext({}), createContext({})]) {
-      expect(script.runInContext(context)).toBe("at shared.js:103:10");
+      expect(script.runInContext(context)).toBe("at shared.js:103:1");
     }
   });
 });

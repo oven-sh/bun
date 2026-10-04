@@ -552,9 +552,7 @@ function prepareCallSites(_err, callSites) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
-    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
-    // exposes the column under both names.
-    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
       scriptId: `${callSite.getScriptId()}`,

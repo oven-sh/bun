@@ -1,6 +1,6 @@
 //! `bun check`: type checks a TypeScript project. `bun run --check` and `bun test --check` go through [`check_before`].
 //! `bun build --check` and `Bun.build({ check: true })` run the check inside the bundle, when the bundler has read every
-//! file ([`check_for_build_command`], [`check_for_bun_build`]).
+//! file ([`check_for_build`]).
 
 use bstr::BStr;
 
@@ -454,7 +454,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
 /// on stderr, which leaves stdout to the program. Returns whether there are no errors.
 pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     match what_to_check(&working_directory(), entry_points) {
-        Some((paths, options)) => check_and_report(&paths, &options, AlreadyRead::default()),
+        Some((paths, options)) => check_and_report(&paths, &options),
         None => true,
     }
 }
@@ -466,26 +466,10 @@ fn already_read(sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRea
         .collect()
 }
 
-/// `BundleOptions::type_check` for `bun build --check`. Like `check_before`, except that the files
-/// of the bundle are not read again. Nothing has been written yet, so errors end the process.
-pub(crate) fn check_for_build_command(
-    cwd: &[u8],
-    entry_points: &[Box<[u8]>],
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
-    _log: &mut bun_ast::Log,
-) -> bool {
-    let entry_points: Vec<&[u8]> = entry_points.iter().map(|path| &**path).collect();
-    if let Some((paths, options)) = what_to_check(cwd, &entry_points)
-        && !check_and_report(&paths, &options, already_read(sources))
-    {
-        Global::exit(1);
-    }
-    true
-}
-
-/// `BundleOptions::type_check` for `Bun.build({ check: true })`. The errors are added to `log`,
-/// which the build reports like its own. It runs on the thread of the bundler and prints nothing.
-pub(crate) fn check_for_bun_build(
+/// `BundleOptions::type_check` for `bun build --check` and `Bun.build({ check: true })`. The files
+/// of the bundle, `sources`, are not read again. The errors are added to `log`, which the build
+/// reports like its own. It runs on the thread of the bundler and prints nothing.
+pub(crate) fn check_for_build(
     cwd: &[u8],
     entry_points: &[Box<[u8]>],
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
@@ -622,14 +606,10 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(&[], &[], AlreadyRead::default())
+    check_and_report(&[], &[])
 }
 
-fn check_and_report(
-    paths: &[Vec<u8>],
-    compiler_options: &[CompilerOption],
-    already_read: AlreadyRead,
-) -> bool {
+fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
     let cwd = working_directory();
     let report = run(
         &cwd,
@@ -637,7 +617,7 @@ fn check_and_report(
         paths,
         compiler_options,
         0,
-        already_read,
+        AlreadyRead::default(),
         |report| report,
     );
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {

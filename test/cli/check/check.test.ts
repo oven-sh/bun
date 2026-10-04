@@ -13122,8 +13122,10 @@ describe.concurrent("--check", () => {
     expect(good.exitCode).toBe(0);
     expect(await Bun.file(join(String(dir), "out-good", "good.js")).exists()).toBe(true);
     expect(bad.stderr).toMatchInlineSnapshot(`
-      "bad.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
-      Found 1 error in 1 file, checked 1 file [time]"
+      "1 | export const bad: number = "1";
+                       ^
+      error: TS2322: Type 'string' is not assignable to type 'number'.
+          at <dir>/bad.ts:1:14"
     `);
     expect(await Bun.file(join(String(dir), "out-bad", "bad.js")).exists()).toBe(false);
     expect(bad.exitCode).toBe(1);
@@ -13147,8 +13149,10 @@ describe.concurrent("--check", () => {
     expect(good.exitCode).toBe(0);
     expect(await Bun.file(join(String(dir), "out-good", "index.html")).exists()).toBe(true);
     expect(bad.stderr).toMatchInlineSnapshot(`
-      "bad/src/imported.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
-      Found 1 error in 1 file, checked 2 files [time]"
+      "1 | export const imported: number = "1";
+                       ^
+      error: TS2322: Type 'string' is not assignable to type 'number'.
+          at <dir>/bad/src/imported.ts:1:14"
     `);
     expect(await Bun.file(join(String(dir), "out-bad", "index.html")).exists()).toBe(false);
     expect(bad.exitCode).toBe(1);
@@ -13284,8 +13288,10 @@ describe.concurrent("--check", () => {
     expect(good.stdout).toContain("good = 1");
     expect(good.exitCode).toBe(0);
     expect(bad.stderr).toMatchInlineSnapshot(`
-      "bad.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
-      Found 1 error in 1 file, checked 1 file [time]"
+      "1 | export const bad: number = "1";
+                       ^
+      error: TS2322: Type 'string' is not assignable to type 'number'.
+          at <dir>/bad.ts:1:14"
     `);
     expect(bad.stdout).toBe("");
     expect(bad.exitCode).toBe(1);

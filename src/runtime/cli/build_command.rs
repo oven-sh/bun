@@ -152,19 +152,21 @@ impl BuildCommand {
             .unwrap_or_default();
 
         if ctx.bundler_options.check && ctx.bundler_options.transform_only {
-            // Nothing is bundled, so nothing but the entry points is read.
-            let entry_points: Vec<&[u8]> = this_transpiler
-                .options
-                .entry_points
-                .iter()
-                .map(|entry_point| &**entry_point)
-                .collect();
-            if !crate::cli::check_command::check_before(&entry_points) {
-                Global::exit(1);
+            // Nothing is bundled, so nothing has been read.
+            if !crate::cli::check_command::check_for_build(
+                bun_resolver::fs::FileSystem::instance().top_level_dir,
+                &this_transpiler.options.entry_points,
+                &mut core::iter::empty(),
+                log_ref,
+            ) {
+                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ))?;
+                Output::flush();
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         } else if ctx.bundler_options.check {
-            this_transpiler.options.type_check =
-                Some(crate::cli::check_command::check_for_build_command);
+            this_transpiler.options.type_check = Some(crate::cli::check_command::check_for_build);
         }
 
         this_transpiler.options.source_map =

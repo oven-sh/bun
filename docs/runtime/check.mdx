@@ -110,7 +110,7 @@ bun test --check
 ```
 
 ```txt
-src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
+src/index.ts(3,21): error TS2322: Type 'string' is not assignable to type 'number'.
 Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
@@ -124,7 +124,19 @@ A JavaScript entry point is read for what it imports, whether or not `allowJs` i
 
 For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import.
 
-`bun build --check` runs the check once the bundler has read every file, and before it writes anything. The type checker gets the files of the bundle from the bundler, so they are read from disk once.
+`bun build --check` runs the check once the bundler has read every file, and before it writes anything. The type checker gets the files of the bundle from the bundler, so they are read from disk once. A type error is printed like any other build error:
+
+```txt
+3 | console.log(greet({ age: "36" }));
+                        ^
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /app/src/index.ts:3:21
+
+1 | export function greet(user: { name?: string; age: number }) {
+                                                 ^
+note: TS6500: The expected type comes from property 'age' which is declared here on type '{ name?: string | undefined; age: number; }'
+   at /app/src/greet.ts:1:46
+```
 
 ### `Bun.build`
 

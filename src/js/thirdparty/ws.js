@@ -13,8 +13,6 @@ const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
-const encoder = new TextEncoder();
-
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http;
 function lazyHttp() {
@@ -424,11 +422,7 @@ class BunWebSocket extends EventEmitter {
             if (isBinary) {
               this.emit("message", this.#fragments ? [data] : data, isBinary);
             } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+              this.emit("message", Buffer.from(data), isBinary);
             }
           },
           once,
@@ -1043,14 +1037,7 @@ class BunWebSocketMocked extends EventEmitter {
 
     let isBinary = false;
     if (typeof message === "string") {
-      if (this.#binaryType === "arraybuffer") {
-        message = encoder.encode(message).buffer;
-      } else if (this.#binaryType === "blob") {
-        message = new Blob([message], { type: "text/plain" });
-      } else {
-        // nodebuffer
-        message = Buffer.from(message);
-      }
+      message = Buffer.from(message);
     } else {
       // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;

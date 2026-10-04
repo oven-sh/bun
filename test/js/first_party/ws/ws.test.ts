@@ -292,6 +292,47 @@ describe("WebSocket", () => {
   });
 });
 
+describe("text message payloads", () => {
+  it.each(["nodebuffer", "arraybuffer", "blob", "fragments"])(
+    "%s does not change text messages from Buffers",
+    async binaryType => {
+      const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      await once(wss, "listening");
+      const texts = ["", "hello-©-🦞"];
+      type Received = { buffer: boolean; text: string; isBinary: boolean };
+      const received: { client: Received[]; server: Received[] } = { client: [], server: [] };
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const record = (side: "client" | "server", data: unknown, isBinary: boolean) => {
+        received[side].push({ buffer: Buffer.isBuffer(data), text: String(data), isBinary });
+        if (received.client.length === texts.length && received.server.length === texts.length) resolve();
+      };
+      wss.on("connection", peer => {
+        // Server-side fragments are not supported by the shim yet.
+        peer.binaryType = (binaryType === "fragments" ? "nodebuffer" : binaryType) as WebSocket["binaryType"];
+        peer.on("error", reject);
+        peer.on("message", (data, isBinary) => record("server", data, isBinary));
+        for (const text of texts) peer.send(text);
+      });
+      const client = new WebSocket(`ws://127.0.0.1:${(wss.address() as AddressInfo).port}`);
+      client.binaryType = binaryType as WebSocket["binaryType"];
+      client.on("error", reject);
+      client.on("message", (data, isBinary) => record("client", data, isBinary));
+      client.on("open", () => {
+        for (const text of texts) client.send(text);
+      });
+      try {
+        await promise;
+        const expected = texts.map(text => ({ buffer: true, text, isBinary: false }));
+        expect(received).toEqual({ client: expected, server: expected });
+      } finally {
+        client.terminate();
+        for (const peer of wss.clients) peer.terminate();
+        await new Promise<void>(resolve => wss.close(() => resolve()));
+      }
+    },
+  );
+});
+
 describe("WebSocketServer", () => {
   it("sets websocket prototype properties correctly", async () => {
     const wss = new WebSocketServer({ port: 0 });

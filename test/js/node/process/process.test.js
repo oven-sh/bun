@@ -34,6 +34,130 @@ async function runInlineFixture(script, expectedStdout = null, expectedCode = 0)
   return { stdout, exitCode };
 }
 
+describe("process property descriptors", () => {
+  it.each([
+    ["platform", false],
+    ["arch", false],
+    ["version", false],
+    ["versions", false],
+    ["env", true],
+    ["execPath", true],
+    ["argv", true],
+    ["execArgv", true],
+    ["pid", false],
+    ["ppid", true],
+    ["title", true],
+    ["release", false],
+  ])("process.%s exposes a Node-compatible data descriptor", async (name, writable) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const name = ${JSON.stringify(name)};
+        const descriptor = Object.getOwnPropertyDescriptor(process, name);
+        assert.deepEqual(Object.keys(descriptor).sort(), ["configurable", "enumerable", "value", "writable"]);
+        assert.equal(descriptor.writable, ${writable});
+        assert.equal(descriptor.enumerable, true);
+        assert.equal(descriptor.configurable, true);
+        assert.equal(descriptor.value, process[name]);
+        const replacement = { fixture: true };
+        Object.defineProperty(process, name, { ...descriptor, value: replacement });
+        assert.equal(process[name], replacement);
+        Object.defineProperty(process, name, descriptor);
+        assert.deepEqual(Object.getOwnPropertyDescriptor(process, name), descriptor);
+        if (!descriptor.writable) {
+          assert.throws(() => { "use strict"; process[name] = replacement; }, TypeError);
+          Function("replacement", "process[" + JSON.stringify(name) + "] = replacement")(replacement);
+          assert.equal(process[name], descriptor.value);
+        }
+        delete process[name];
+        assert.equal(Object.hasOwn(process, name), false);
+        Object.defineProperty(process, name, descriptor);
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  it("keeps process.exitCode as a non-configurable accessor", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "exitCode");
+    expect(descriptor).toEqual({
+      get: expect.any(Function),
+      set: expect.any(Function),
+      enumerable: true,
+      configurable: false,
+    });
+  });
+
+  it("keeps native setters behind data descriptors until redefined", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        for (const name of ["argv", "execArgv", "ppid"]) {
+          const value = name === "ppid" ? 123 : ["fixture"];
+          process[name] = value;
+          assert.equal(process[name], value);
+          assert.equal(Object.getOwnPropertyDescriptor(process, name).value, value);
+        }
+        process.title = "fixture";
+        assert.equal(process.title, "fixture");
+        assert.equal(Object.getOwnPropertyDescriptor(process, "title").value, "fixture");
+        Object.defineProperty(process, "title", { value: "redefined" });
+        assert.equal(process.title, "redefined");
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});
+
+it.concurrent("process.argv redefinition reaches native consumers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const assert = require("node:assert/strict");
+      const { parseArgs } = require("node:util");
+      const options = { before: { type: "boolean" }, after: { type: "boolean" } };
+      process.argv = ["bun", "script.js", "--before"];
+      assert.equal(parseArgs({ options }).values.before, true);
+      Object.defineProperty(process, "argv", { value: ["bun", "script.js", "--after"] });
+      assert.equal(parseArgs({ options }).values.after, true);
+      const marker = new Error("argv getter");
+      Object.defineProperty(process, "argv", { configurable: true, get() { throw marker; } });
+      assert.throws(() => parseArgs({ options }), e => e === marker);
+      for (let i = 0; i < 2; i++) assert.throws(() => Bun.argv, e => e === marker);
+      const value = ["bun", "script.js", "--before"];
+      Object.defineProperty(process, "argv", { value });
+      assert.equal(Bun.argv, value);
+      assert.equal(parseArgs({ options }).values.before, true);
+      console.log("ok");
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, realpathSync } from "fs";
+import { existsSync, readdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -2002,7 +2002,7 @@ describe("--compile-aot optimizations", () => {
     function makeAdderCalled(k: number) { return (x: number) => x + k; }
     function callsClosure(i: number) { return makeAdderCalled(i)(1); }
     function makeAdderKept(k: number) { return (x: number) => x + k; }
-    function keepsClosure(i: number) { return keep(makeAdderKept(i))(1); }
+    function keepsClosure(i: number) { kept.push(makeAdderKept(i)); return (kept[kept.length - 1] as (x: number) => number)(1); }
     out.push(callsClosure(1), keepsClosure(1));
 
     function sumOfPair(p: { x: number; y: number }) { return p.x + p.y; }
@@ -2479,4 +2479,183 @@ describe("--compile-aot with a type table", () => {
       }
     });
   }
+
+  describe("values that do not have their declared type", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-holes");
+    const programs = readdirSync(join(fixture, "src"))
+      .map(name => name.replace(/\.ts$/, ""))
+      .sort();
+    const refusedBySoundTypes = [
+      "define-property",
+      "json-parse",
+      "method-bivariance",
+      "non-null-assertion",
+      "optional-through-wider-type",
+      "row-read-by-handler",
+    ];
+    const configurations: [label: string, options: string, flags: string[], env: Record<string, string>][] = [
+      ["as it is", "", [], {}],
+      ["validated", "validateAOTInferredTypes=1,validateAOTTypesOfPhis=1", [], {}],
+      ["with sound types", "useSoundTypes=1", ["--sound-types=infer"], { BUN_JSC_useSoundTypes: "1" }],
+      [
+        "with sound types, validated",
+        "useSoundTypes=1,validateAOTInferredTypes=1,validateAOTTypesOfPhis=1",
+        ["--sound-types=infer"],
+        { BUN_JSC_useSoundTypes: "1" },
+      ],
+    ];
+    async function run(cmd: string[], env: Record<string, string>) {
+      await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd: fixture, stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode, signalCode: proc.signalCode };
+    }
+    const runEach = (cmd: string[], env: Record<string, string>) =>
+      Promise.all(["0", "1", "2", "7"].map(argument => run([...cmd, argument], env)));
+
+    test.each(programs)("%s", async program => {
+      using dir = tempDir("compile-aot-typed-holes", {});
+      const expected = await runEach([bunExe(), `src/${program}.ts`], {});
+      expect(expected.map(result => result.exitCode)).toEqual([0, 0, 0, 0]);
+      for (const [label, options, flags, env] of configurations) {
+        if (flags.length && refusedBySoundTypes.includes(program)) continue;
+        const out = join(String(dir), "out");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--compile-aot", ...flags, `src/${program}.ts`, "--outfile", out],
+          env: {
+            ...bunEnv,
+            BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
+            BUN_SOUND_TYPES_ORACLE_ROOT: fixture,
+            BUN_AOT_OPTIONS: [
+              "useTypeTags=1",
+              "useAOTTypedFields=1",
+              `aotTypeTablePath=${join(fixture, "types.bin")}`,
+              options,
+            ]
+              .filter(Boolean)
+              .join(","),
+          },
+          cwd: fixture,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect([label, await build.stderr.text(), await build.exited]).toEqual([
+          label,
+          expect.not.stringContaining("error"),
+          0,
+        ]);
+        expect({ label, results: await runEach([out], env) }).toEqual({ label, results: expected });
+      }
+    });
+  });
+
+  describe("a check of a declared type that names its layout", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-edges");
+    const checked = [
+      "checksFirst",
+      "checksFirstWithoutHandler",
+      "checksInHandler",
+      "checksThenReassigns",
+      "checksInLoop",
+      "checksOnly",
+    ];
+    const known = ["checksAfterRead", "checksAfterReadWithoutHandler"];
+    const functions = [
+      "checksFirst",
+      "checksFirstWithoutHandler",
+      "checksAfterRead",
+      "checksAfterReadWithoutHandler",
+      "checksInHandler",
+      "checksThenReassigns",
+      "checksInLoop",
+      "checksOnly",
+      "neverChecks",
+    ];
+    const refused: [label: string, why: string][] = [
+      ["an object of another type", "it does not have enough inline capacity"],
+      ["an object that lacks a property", "it lacks a required property"],
+      ["an object that is not extensible", "it is not extensible"],
+    ];
+    async function run(cmd: string[], env: Record<string, string>) {
+      await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd: fixture, stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.split("\n"), exitCode, signalCode: proc.signalCode };
+    }
+
+    test.each([
+      ["with sound types", ""],
+      ["with sound types, validated", "validateAOTInferredTypes=1,validateAOTTypesOfPhis=1"],
+      ["with sound types, without inlining", "useAOTInlining=0"],
+    ])("%s", async (_, options) => {
+      using dir = tempDir("compile-aot-typed-edges", {});
+      const out = join(String(dir), "out");
+      const path = join(String(dir), "remarks.txt");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
+        env: {
+          ...bunEnv,
+          BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
+          BUN_SOUND_TYPES_ORACLE_ROOT: fixture,
+          BUN_AOT_OPTIONS: [
+            "useTypeTags=1",
+            "useAOTTypedFields=1",
+            `aotTypeTablePath=${join(fixture, "types.bin")}`,
+            "useSoundTypes=1",
+            `aotRemarksPath=${path}`,
+            options,
+          ]
+            .filter(Boolean)
+            .join(","),
+        },
+        cwd: fixture,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+
+      const remarks = new Map<string, string[]>();
+      for (const line of (await Bun.file(path).text()).split("\n")) {
+        const [name, remark] = line.split("\t");
+        if (remark) remarks.set(name, [...(remarks.get(name) ?? []), remark]);
+      }
+      const have = (pattern: string) =>
+        functions.filter(name =>
+          remarks.get(name)?.some(remark => remark === pattern || remark.startsWith(pattern + ":")),
+        );
+      expect(have("compiled")).toEqual(functions);
+      expect({ "edge-check": have("edge-check"), "edge-known": have("edge-known") }).toEqual({
+        "edge-check": functions.filter(name => checked.includes(name)),
+        "edge-known": known,
+      });
+
+      const expected = await run([bunExe(), "src/main.ts"], {});
+      expect(expected.lines.length).toBe(functions.length + 1);
+      expect(await run([out], { BUN_JSC_useSoundTypes: "1" })).toEqual(expected);
+
+      const results = new Map(expected.lines.map(line => line.split(": ") as [string, string]));
+      const broken = await run([out], { BUN_JSC_useSoundTypes: "1", BREAK_TYPES: "1" });
+      expect(broken.lines.slice(functions.length)).toEqual([
+        ...refused.flatMap(([label, why]) =>
+          functions.flatMap(name =>
+            [0, 1].map(
+              at =>
+                `${label}, ${name}, ${at}: ` +
+                (name === "checksOnly"
+                  ? "caught object"
+                  : name === "checksInHandler" && !at
+                    ? "none"
+                    : `TypeError: Type check failed: the object does not have the layout of its declared type, and cannot be converted to it: ${why}`),
+            ),
+          ),
+        ),
+        ...functions.flatMap(name =>
+          [0, 1].map(
+            at =>
+              `an object with the properties in another order, ${name}, ${at}: ${results.get(name)!.split(", ")[2 * at]}`,
+          ),
+        ),
+        "",
+      ]);
+      expect([broken.exitCode, broken.signalCode]).toEqual([0, null]);
+    });
+  });
 });

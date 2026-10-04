@@ -9,7 +9,7 @@ use crate::parser::{
 use crate::sema::keep::{BracketKind, ObjectTypeBuilder, TypeMemberParts};
 use crate::sema::ts_syntax::{
     Flags, Keyword, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey,
-    ResolutionMode, SignatureKind, TupleElement, TypeId, TypeParam,
+    ResolutionMode, SignatureKind, TupleElement, TupleMemberType, TypeId, TypeParam,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
@@ -1064,10 +1064,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         self.lexer.expect(T::TColon)?;
 
+        let attributes_loc = self.lexer.loc();
         let (object, mode) = self.parse_import_attribute_list(keeps)?;
-        let attributes = object.map(|object| crate::sema::ts_syntax::ImportAttributes {
+        // `parseEmptyNodeList`: without a "{" there are attributes, and their list is empty.
+        let attributes = keeps.then(|| crate::sema::ts_syntax::ImportAttributes {
             keyword_loc,
-            object,
+            object: object
+                .unwrap_or_else(|| self.new_expr(bun_ast::E::Object::default(), attributes_loc)),
         });
 
         if self.lexer.token == T::TComma {
@@ -1187,6 +1190,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn skip_tuple_element<const KEEP: bool>(&mut self) -> Result<TupleElement, Error> {
         let mut element = TupleElement {
             ty: TypeId::NONE,
+            written: TypeId::NONE,
+            member_type: TupleMemberType::Plain,
             label: None,
             is_optional: false,
             is_rest: false,
@@ -1219,6 +1224,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if has_dots {
                 // "label: ...T" is reported by the checker (5087).
                 if is_named {
+                    element.member_type = TupleMemberType::Rest;
+                    element.written = self.last_type();
                     self.emit_rest_type(pos);
                 } else {
                     element.is_rest = true;
@@ -1226,6 +1233,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             } else if let Some(ty) = self.optional_tuple_element_type() {
                 // "label: T?" is reported by the checker (5086).
                 if is_named {
+                    element.member_type = TupleMemberType::Optional;
+                    element.written = ty;
                     self.emit_optional_type(ty, pos);
                 } else {
                     element.is_optional = true;
@@ -2159,6 +2168,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         if KEEP {
                             elements.push(TupleElement {
                                 ty: self.last_type(),
+                                written: TypeId::NONE,
+                                member_type: TupleMemberType::Plain,
                                 label: word.filter(|_| has_label),
                                 is_optional: optional,
                                 is_rest: rest,

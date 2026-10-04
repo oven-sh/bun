@@ -150,6 +150,18 @@ impl Checker<'_, '_> {
             });
             work.extend(children.drain(..).rev());
         }
+        // A stray decorator is a statement before the one it is written in
+        // (`note_stray_decorators`). In TypeScript's tree it is where it is written.
+        for &(start, end) in hir.stray_decorators.iter() {
+            let is_in_it = |it: &VisitedNode| start <= it.start && it.end <= end;
+            let Some(first) = nodes.iter().position(is_in_it) else {
+                continue;
+            };
+            let count = nodes[first..].iter().take_while(|it| is_in_it(it)).count();
+            let rest = nodes[first + count..].iter();
+            let before_it = rest.take_while(|it| it.start < start).count();
+            nodes[first..first + count + before_it].rotate_left(count);
+        }
         nodes
     }
 

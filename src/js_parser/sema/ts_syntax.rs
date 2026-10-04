@@ -65,7 +65,7 @@ pub(crate) type Span<T> = bun_sema::hir::Span<Id<T>>;
 
 pub(crate) use bun_sema::hir::{
     Flags, FnId as SignatureId, FnKind as SignatureKind, Keyword, MappedModifier, MemberKind,
-    PatId as PatternId, ResolutionMode, TypeNodeId as TypeId, TypeParamId,
+    PatId as PatternId, ResolutionMode, TupleMemberType, TypeNodeId as TypeId, TypeParamId,
 };
 /// HIR nodes, which are built as soon as their syntax has been parsed (`clone_types.rs`).
 pub(crate) type Types = bun_sema::hir::IdList<TypeId>;
@@ -94,6 +94,9 @@ pub(crate) struct ImportAttributes {
 #[derive(Copy, Clone)]
 pub(crate) struct TupleElement {
     pub(crate) ty: TypeId,
+    /// `TupleElem::written`, if `member_type` is not `Plain`.
+    pub(crate) written: TypeId,
+    pub(crate) member_type: TupleMemberType,
     pub(crate) label: Option<StoreStr>,
     pub(crate) is_optional: bool,
     pub(crate) is_rest: bool,

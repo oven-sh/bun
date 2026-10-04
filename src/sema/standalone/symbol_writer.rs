@@ -1410,53 +1410,11 @@ fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
     matches!(hir.text.get(pos as usize), Some(b'#' | b'0'..=b'9'))
 }
 
-/// `createExpressionFromSymbolChain`, after the first symbol: `.name`, or `[name]` for a name that
-/// is not an identifier. The brackets of a computed name are not doubled.
+/// `print::push_access`
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
-    let bare = name.strip_prefix('#').unwrap_or(name);
-    // `canUsePropertyAccess`
-    if bun_core::lexer::is_identifier(bare.as_bytes()) {
-        text.push('.');
-        text.push_str(name);
-        return;
-    }
-    let inner = match name.strip_prefix('[') {
-        Some(rest) => &rest[..rest.len().saturating_sub(1)],
-        None => name,
-    };
-    text.push('[');
-    match inner.chars().next() {
-        // A string literal of the text between the first and the last character, whatever it is.
-        Some(quote @ ('"' | '\'')) if !is_enum_member => {
-            let literal = quoted(unquote_string(inner).as_bytes(), quote as u8, true);
-            text.push_str(&crate::messages::text(&literal));
-        }
-        _ => text.push_str(inner),
-    }
-    text.push(']');
-}
-
-/// `stringutil.UnquoteString`
-fn unquote_string(text: &str) -> String {
-    let mut chars = text.chars();
-    let inner = match (chars.next(), chars.next_back()) {
-        (Some(first), Some(last)) if first == last => chars.as_str(),
-        _ => text,
-    };
-    let mut unquoted = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            // `\\.` does not match a line break.
-            '\\' => match chars.next() {
-                Some('\n') => unquoted.push_str("\\\n"),
-                Some(next) => unquoted.push(next),
-                None => unquoted.push(ch),
-            },
-            _ => unquoted.push(ch),
-        }
-    }
-    unquoted
+    let mut access = Vec::new();
+    super::print::push_access(&mut access, name.as_bytes(), is_enum_member);
+    text.push_str(&crate::messages::text(&access));
 }
 
 /// The number of UTF-16 code units of the character whose UTF-8 encoding contains `byte`, counted

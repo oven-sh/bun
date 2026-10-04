@@ -365,6 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 args,
                 is_typeof,
                 mode,
+                attributes,
                 ..
             } => TypeNodeKind::Import {
                 spec,
@@ -372,6 +373,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 args,
                 is_typeof,
                 mode,
+                attributes,
             },
             _ => TypeNodeKind::Ref {
                 name,

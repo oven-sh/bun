@@ -192,6 +192,8 @@ enum StatementKind {
     ExportAssignment,
     /// `IsAmbientModule`
     AmbientModule,
+    /// `KindJSTypeAliasDeclaration`, which is not `CanHaveModifiers`.
+    JsTypeAlias,
     Other,
 }
 
@@ -361,15 +363,34 @@ pub(super) fn comments_text(text: &[u8], comments: Vec<(usize, usize)>, indent: 
 
 /// `shouldWriteComment`, under `OnlyPrintJSDocStyle`: `isJSDocLikeText`, `IsPinnedComment`.
 fn should_write_comment(comment: &[u8]) -> bool {
-    comment.starts_with(b"/*")
-        && (comment.len() >= 5 && comment[2] == b'*' && comment[3] != b'/'
-            || comment.len() > 5 && comment[2] == b'!')
+    comment.starts_with(b"/*") && comment.len() >= 5 && comment[2] == b'*' && comment[3] != b'/'
+        || is_pinned_comment(comment)
+}
+
+/// `IsPinnedComment`
+fn is_pinned_comment(comment: &[u8]) -> bool {
+    comment.starts_with(b"/*") && comment.len() > 5 && comment[2] == b'!'
 }
 
 /// `CommentRange.HasTrailingNewLine` for a comment that ends at `end`.
 fn has_trailing_new_line(text: &[u8], end: usize) -> bool {
     let after = text[end..].iter().find(|&&b| b != b' ' && b != b'\t');
     matches!(after, Some(b'\n' | b'\r'))
+}
+
+/// `Body` of the namespace `m`, if it is a `ModuleDeclaration`: the `B` of `namespace A.B`.
+fn nested_module_declaration(hir: &File, m: ModuleId) -> Option<StmtId> {
+    // `global { }` and a namespace of `wrapInJSDocNamespace` start with their names too, but they
+    // are in a block.
+    hir.nested_namespace(m).filter(|&inner| {
+        matches!(hir[inner].kind, StmtKind::Module(it)
+            if hir[it].name != ModuleName::Global && !hir[it].flags.contains(Flags::REPARSED))
+    })
+}
+
+/// `PositionsAreOnSameLine`
+fn positions_are_on_same_line(text: &[u8], pos1: usize, pos2: usize) -> bool {
+    (pos1.min(pos2)..pos1.max(pos2)).all(|at| super::spans::line_break_len(text, at) == 0)
 }
 
 /// An element of a list. `range`: `Pos()` and `End()` of the node it is emitted for, which locate
@@ -386,6 +407,8 @@ pub(super) struct Writer<'a> {
     text: Vec<u8>,
     indent: usize,
     is_at_start_of_line: bool,
+    /// `LFSpaceBetweenSiblings` of a list on several lines.
+    pub(super) space_between_siblings: bool,
 }
 
 impl<'a> Writer<'a> {
@@ -396,6 +419,7 @@ impl<'a> Writer<'a> {
             text: Vec::new(),
             indent,
             is_at_start_of_line: false,
+            space_between_siblings: false,
         }
     }
 
@@ -449,7 +473,8 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `emitTrailingComments`
+    /// `emitTrailingComments`, and `emitTrailingCommentsOfPosition` with `prefixSpace`. The scan for
+    /// trailing comments stops at the line break, so a `/* */` has no `HasTrailingNewLine`.
     fn emit_trailing_comments(&mut self, end: usize) {
         for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
             if !should_write_comment(&self.source[comment.0..comment.1]) {
@@ -459,9 +484,6 @@ impl<'a> Writer<'a> {
                 self.write(b" ");
             }
             self.emit_comment(comment);
-            if has_trailing_new_line(self.source, comment.1) {
-                self.write_line();
-            }
         }
     }
 
@@ -474,7 +496,7 @@ impl<'a> Writer<'a> {
                 if is_single_line {
                     self.write_line();
                 }
-            } else if has_trailing_new_line(self.source, comment.1) {
+            } else if is_single_line && has_trailing_new_line(self.source, comment.1) {
                 self.write_line();
             } else {
                 self.write(b" ");
@@ -509,7 +531,11 @@ impl<'a> Writer<'a> {
                 self.write(delimiter);
                 if is_multi_line {
                     if should_emit_intervening_comments && let Some((pos, _)) = child.range {
-                        self.emit_trailing_comments_of_position(pos, true);
+                        if self.space_between_siblings {
+                            self.emit_trailing_comments(pos);
+                        } else {
+                            self.emit_trailing_comments_of_position(pos, true);
+                        }
                     }
                     self.write_line();
                     should_emit_intervening_comments = false;
@@ -540,6 +566,24 @@ impl<'a> Writer<'a> {
         if is_multi_line {
             self.indent -= 1;
             self.write_line();
+        }
+    }
+
+    /// `emitListItems` for `LFParameters` that are synthesized, as is their parent. `range` is the
+    /// `CommentRange` of an element: `End()` of each is that of the parent, -1.
+    pub(super) fn emit_synthesized_parameters(&mut self, elements: &[Element]) {
+        for (i, child) in elements.iter().enumerate() {
+            if i != 0 {
+                self.write(b", ");
+            }
+            if let Some((pos, _)) = child.range {
+                self.emit_trailing_comments_of_position(pos, false);
+                self.emit_leading_comments(pos);
+            }
+            self.write(&child.text);
+            if let Some((_, end)) = child.range {
+                self.emit_trailing_comments(end);
+            }
         }
     }
 }
@@ -654,6 +698,36 @@ impl Checker<'_, '_> {
             .into_iter()
             .any(|(start, end)| strings::contains(&text[start..end], b"@internal"))
     }
+
+    /// `shouldStripInternal` for the parameter `p` of `file`. `previous_sibling`: the parameter
+    /// before it.
+    fn should_strip_internal_parameter(
+        &self,
+        file: FileId,
+        p: ParamId,
+        previous_sibling: Option<ParamId>,
+    ) -> bool {
+        if !self.files().options.strips_internal_declarations {
+            return false;
+        }
+        let hir = self.hir(file);
+        let text = &hir.text[..];
+        let pos = hir[p].loc.pos as usize;
+        // `SkipTriviaEx`, with `StopAtComments`
+        let mut trailing_pos = previous_sibling.map_or(pos, |it| hir[it].loc.end as usize + 1);
+        let is_white_space = |b: &u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C);
+        while text.get(trailing_pos).is_some_and(is_white_space) {
+            trailing_pos += 1;
+        }
+        let mut comments = super::spans::get_trailing_comment_ranges(text, trailing_pos);
+        // "to handle `... parameters, /** @internal */ public param: string`"
+        if previous_sibling.is_some() {
+            comments.extend(super::spans::get_leading_comment_ranges(text, pos));
+        }
+        comments
+            .last()
+            .is_some_and(|&(start, end)| strings::contains(&text[start..end], b"@internal"))
+    }
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -683,6 +757,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
+        // The `declarationLinks` of a new `EmitResolver`: what an earlier run of the transformer
+        // painted (`addVisibleAlias`) is not visible when this one starts.
+        self.emit_resolver_links.visibility.clear();
         // All these queries run after everything is checked: a cycle through here is not reported
         // as an error.
         let saved = self.relation_too_complex;
@@ -1377,8 +1454,8 @@ impl<'p, 's> Checker<'p, 's> {
         should_compute_alias_to_make_visible: bool,
     ) -> Access {
         let found = self
-            .files()
-            .resolve_name(at.file, at.scope, first, meaning.flags());
+            .resolve(at.file, at.scope, first, meaning.flags(), false)
+            .unwrap_or(None);
         let mut result = Access {
             accessibility: Accessibility::NotResolved,
             aliases: Vec::new(),
@@ -1399,6 +1476,38 @@ impl<'p, 's> Checker<'p, 's> {
                 result
             }
         }
+    }
+
+    /// `IsImportRequiredByAugmentation`
+    fn is_import_required_by_augmentation(&self, file: FileId, i: ImportId) -> bool {
+        let (import, files) = (&self.hir(file)[i], self.files());
+        if !files.module(file).is_module() {
+            return false;
+        }
+        let mode = files.mode_of_import(file, import.mode);
+        let Some(module) = files.module_of_specifier_as(file, import.spec, mode) else {
+            return false;
+        };
+        // `GetExternalModuleFileFromDeclaration`
+        let target = files
+            .decls_of(module)
+            .iter()
+            .find(|(_, decl)| matches!(decl, Decl::File))
+            .map(|&(of, _)| of);
+        let Some(target) = target.filter(|&target| target != file) else {
+            return false;
+        };
+        // `file.Symbol` is the symbol the binder created. The exports an `export *` adds come from
+        // the table of a merged module, which holds the merged symbols themselves.
+        let bound = self.bound(file);
+        bound
+            .table(bound.symbols[bound.file_symbol.idx()].exports)
+            .iter()
+            .any(|&(_, id)| {
+                let merged = files.sym(file, id);
+                merged != (Sym { file, id })
+                    && files.decls_of(merged).iter().any(|&(of, _)| of == target)
+            })
     }
 }
 
@@ -2672,7 +2781,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let end = written.map(|s| hir[s].loc.end).max().unwrap_or(0);
         let mut after = self.leading_comments(end);
         if after.ends_with(b" ") {
-            after.pop();
             after.push(b'\n');
         }
         [
@@ -2705,12 +2813,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     continue;
                 }
                 let mut name = self.name(value).to_vec();
-                // The declaration file of a program file has the same relative path to this
-                // declaration file as the source file has to this file.
-                if expected == ReferenceKind::Path
-                    && let Some(output) = crate::resolve::output_declaration_file_name(&name, None)
-                {
-                    name = output;
+                if expected == ReferenceKind::Path {
+                    let files = self.c.files();
+                    let Some(file) = files.source_file_from_reference(self.file(), &name) else {
+                        continue;
+                    };
+                    let decl_file_name = match files.hir(file).kind {
+                        FileKind::Declaration => files.module(file).path.to_vec(),
+                        _ => files.declaration_file_path(file),
+                    };
+                    let output_file_path = files.declaration_file_path(self.file());
+                    let output_file_path = dirname::<Posix>(&output_file_path);
+                    // `GetRelativePathToDirectoryOrUrl`
+                    name = relative_normalized::<Posix, true>(output_file_path, &decl_file_name)
+                        .to_vec();
                 }
                 let mode: &[u8] = match mode {
                     ResolutionMode::None => b"",
@@ -2772,6 +2888,21 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         )
     }
 
+    /// `emitCommentsBeforeNode`, `text`, `emitCommentsAfterNode`, for a node that continues a line.
+    /// `range`: its `Pos()`, if it differs from `containerPos`, and its `End()`.
+    fn with_comments(&self, range: (Option<u32>, u32), text: &[u8]) -> Vec<u8> {
+        if !self.writes || range.1 == 0 || self.c.files().options.remove_comments {
+            return text.to_vec();
+        }
+        let mut writer = Writer::new(&self.c.hir(self.file()).text, self.indent);
+        if let Some(pos) = range.0 {
+            writer.emit_leading_comments(pos as usize);
+        }
+        writer.write(text);
+        writer.emit_trailing_comments(range.1 as usize);
+        writer.into_text()
+    }
+
     /// `emitDetachedComments` for the file: the comments at its start that a blank line separates
     /// from what follows.
     fn detached_comments_text(&mut self) -> Vec<u8> {
@@ -2779,13 +2910,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let text = &hir.text[..];
         // `statements.Loc.Pos()`
         let pos = 0;
-        if !self.writes || self.c.files().options.remove_comments {
+        if !self.writes {
             return Vec::new();
         }
+        let only_pinned = self.c.files().options.remove_comments;
         let lines_between =
             |from: usize, to: usize| bun_core::strings::count_char(&text[from..to], b'\n');
         let mut detached: Vec<(usize, usize)> = Vec::new();
         for comment in super::spans::get_leading_comment_ranges(text, pos) {
+            // "removeComments is true, only reserve pinned comment at the top of file"
+            if only_pinned && !is_pinned_comment(&text[comment.0..comment.1]) {
+                continue;
+            }
             // "There was a blank line between the last comment and this comment."
             if detached
                 .last()
@@ -2894,7 +3030,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             flags |= Flags::EXPORT;
             flags -= Flags::AMBIENT;
         }
-        if flags == current {
+        // `canReuseModifierNodes`
+        let is_reparsed = |m: ModifierId| matches!(hir[m].kind, ModifierKind::Keyword(modifier) if modifier.contains(Flags::REPARSED));
+        if flags == current && !written.iter().any(is_reparsed) {
             return in_order;
         }
         let created = MODIFIERS.iter().filter(|it| flags.contains(it.0));
@@ -3065,6 +3203,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if of != file {
                 continue;
             }
+            let loc = files.loc_of_declaration(file, declaration);
+            if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
+                continue;
+            }
             // The function that is emitted for a variable.
             let mut variable: Option<(VarDeclId, FnId)> = None;
             match declaration {
@@ -3147,7 +3289,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let saved = self.tracker.get_symbol_accessibility_diagnostic;
                     self.tracker.get_symbol_accessibility_diagnostic =
                         Context::ForNode(hir.node(d));
+                    let outer = self.indent;
+                    self.set_indent(self.indent_of_statements(bound.stmt_parent[statement.idx()]));
                     let signature = self.transform_signature(function);
+                    self.set_indent(outer);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
                     let host = self.expando_host(statement, name, &signature);
                     self.expando_hosts.insert(statement, host.clone());
@@ -3188,14 +3333,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
                     // It is emitted in the namespace of its host.
-                    let mut depth = 1;
-                    let mut around = root.map(|root| bound.stmt_parent[root.idx()]);
-                    while let Some(Parent::Module(module)) = around {
-                        depth += 1;
-                        around = hir[module].stmt.some().map(|s| bound.stmt_parent[s.idx()]);
-                    }
+                    let around = root.map_or(Parent::None, |root| bound.stmt_parent[root.idx()]);
                     let outer = self.indent;
-                    self.set_indent(depth);
+                    self.set_indent(self.indent_of_statements(around) + 1);
                     let ty = self.create_type_of_declaration(
                         Some(hir.node(e)),
                         ty,
@@ -3328,11 +3468,15 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
         match statement.kind {
-            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
+            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } | StmtKind::Empty
+                if !matches!(statement.kind, StmtKind::Empty)
+                    || hir.exports_from_expressions.iter().any(|it| it.0 == s) =>
+            {
                 self.result_has_external_module_indicator |= parent_is_file;
                 self.result_has_scope_marker = true;
                 let mut written = self.export_declaration(s);
                 written.comments = self.leading_comments(statement.loc.pos);
+                written.text = self.with_comments((None, statement.loc.end), &written.text);
                 Visited::Statements(vec![written])
             }
             // `VisitEachChild`
@@ -3359,12 +3503,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             | StmtKind::Module(_)
             | StmtKind::Var(_)
             | StmtKind::ImportEquals(_) => {
-                // `transformImportDeclaration`
-                if let StmtKind::Import(i) = statement.kind
-                    && let Some(isolated_declarations) = &mut self.tracker.isolated_declarations
-                {
-                    self.c.iso_transform_import(isolated_declarations, s, i);
-                }
                 if !self.written.contains_key(&s)
                     && let Some(written) = self.transform_top_level_declaration(s)
                 {
@@ -3374,6 +3512,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             _ => Visited::Statements(Vec::new()),
         }
+    }
+
+    /// The indentation level of the statements of `container`.
+    fn indent_of_statements(&self, mut container: Parent) -> usize {
+        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
+        let mut indent = 0;
+        while let Parent::Module(module) = container {
+            indent += nested_module_declaration(hir, module).is_none() as usize;
+            container = match hir[module].stmt.some() {
+                Some(s) => bound.stmt_parent[s.idx()],
+                None => Parent::None,
+            };
+        }
+        indent
     }
 
     /// `transformAndReplaceLatePaintedStatements`. `parent_is_file`: `IsSourceFile(statement.Parent)`.
@@ -3386,7 +3538,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let next = self.tracker.late_marked_statements.remove(0);
             let parent = self.c.bound(self.file()).stmt_parent[next.idx()];
             let saved = std::mem::replace(&mut self.needs_declare, parent == Parent::File);
+            // It is emitted among the statements of its own container.
+            let outer = self.indent;
+            self.set_indent(self.indent_of_statements(parent));
             let written = self.transform_top_level_declaration(next);
+            self.set_indent(outer);
             self.needs_declare = saved;
             match written {
                 Some(written) => self.written.insert(next, written),
@@ -3414,7 +3570,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn export_declaration(&mut self, s: StmtId) -> Statement {
         let hir = self.c.hir(self.file());
         let mut text = b"export ".to_vec();
-        let (spec, mode) = match hir[s].kind {
+        let from_expression = hir.exports_from_expressions.iter().find(|it| it.0 == s);
+        let (spec, mode) = match from_expression.map_or(hir[s].kind, |it| it.1) {
             StmtKind::ExportNamed(export) => {
                 let export = &hir[export];
                 if export.type_only {
@@ -3476,7 +3633,15 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `rewriteModuleSpecifier`
             self.result_has_external_module_indicator = true;
             text.extend_from_slice(b" from ");
-            text.extend_from_slice(&self.module_specifier_text(s, spec));
+            match from_expression {
+                // `rewriteModuleSpecifier` leaves what is not a string literal as it is.
+                Some(&(_, _, e)) if e.is_some() => {
+                    let (start, end) = (hir[e].pos, self.c.end_of_expr(self.file(), e));
+                    text.extend_from_slice(&hir.text[start as usize..end as usize]);
+                }
+                Some(_) => {}
+                None => text.extend_from_slice(&self.module_specifier_text(s, spec)),
+            }
             text.extend_from_slice(&self.resolution_mode_override_text(s, mode));
         }
         text.push(b';');
@@ -3504,6 +3669,22 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()
     }
 
+    /// `UpdateImportDeclaration`, `UpdateImportEqualsDeclaration`: `text` after `decl.Modifiers()`
+    /// of the statement `s`.
+    fn update_import(&self, kind: StatementKind, s: StmtId, text: Vec<u8>) -> Statement {
+        let hir = self.c.hir(self.file());
+        let modifiers = (hir[s].modifiers.iter()).filter_map(|m| match hir[m].kind {
+            ModifierKind::Keyword(modifier) => Some(modifier),
+            ModifierKind::Decorator(_) => None,
+        });
+        Statement {
+            kind,
+            comments: Vec::new(),
+            modifiers: modifiers.collect(),
+            text,
+        }
+    }
+
     /// `transformImportDeclaration`
     fn transform_import_declaration(&mut self, i: ImportId, s: StmtId) -> Option<Statement> {
         let file = self.file();
@@ -3523,7 +3704,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         // `import "mod"`: "possibly needed for side effects? (global interface patches, module augmentations, etc)"
         if import.clause_start == import.clause_end {
             let text = [b"import ", &tail(self)[..]].concat();
-            return Some(Statement::new(StatementKind::Import, text));
+            return Some(self.update_import(StatementKind::Import, s, text));
         }
         let mut bindings: Vec<Vec<u8>> = Vec::new();
         if import.default.is_some() && self.c.is_declaration_visible(file, Decl::ImportDefault(i)) {
@@ -3548,7 +3729,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
         }
         if bindings.is_empty() {
-            return None;
+            // "Augmentation of export depends on import", for `NamedImports`.
+            if import.namespace.is_some()
+                || import.named.is_empty() && import.default.is_some()
+                || !self.c.is_import_required_by_augmentation(file, i)
+            {
+                return None;
+            }
+            if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                self.c.iso_transform_import(isolated_declarations, s);
+            }
+            let text = [b"import ", &tail(self)[..]].concat();
+            return Some(self.update_import(StatementKind::Import, s, text));
         }
         let type_only: &[u8] = if import.type_only { b"type " } else { b"" };
         let bindings = bindings.join(&b", "[..]);
@@ -3560,7 +3752,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             &tail(self)[..],
         ]
         .concat();
-        Some(Statement::new(StatementKind::Import, text))
+        Some(self.update_import(StatementKind::Import, s, text))
     }
 
     /// Makes `scope` the scope that names are resolved from.
@@ -3588,6 +3780,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     _ => return None,
                 };
                 written.comments = self.leading_comments(hir[s].loc.pos);
+                written.text = self.with_comments((None, hir[s].loc.end), &written.text);
                 return Some(vec![written]);
             }
             StmtKind::Fn(f) => Some(Decl::Fn(f)),
@@ -3647,10 +3840,15 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.visit_type(hir[a].ty, true);
                 let ty = self.text_of(Written::Type(hir[a].ty));
                 let name = self.name(hir[a].name);
-                other(
+                Some(vec![Statement {
+                    kind: match hir[a].flags.contains(Flags::REPARSED) {
+                        true => StatementKind::JsTypeAlias,
+                        false => StatementKind::Other,
+                    },
+                    comments: Vec::new(),
                     modifiers,
-                    [b"type ", name, &type_parameters[..], b" = ", &ty[..], b";"].concat(),
-                )
+                    text: [b"type ", name, &type_parameters[..], b" = ", &ty[..], b";"].concat(),
+                }])
             }
             StmtKind::Interface(i) => {
                 self.enter(bound.interface_scope[i.idx()]);
@@ -3734,6 +3932,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         };
         if let Some(statement) = preserves_comments {
             statement.comments = comments;
+            statement.text = self.with_comments((None, hir[s].loc.end), &statement.text);
         }
         Some(self.create_full_expando_block(s, written))
     }
@@ -3866,6 +4065,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             false,
         );
         self.needs_declare = false;
+        let is_nested = matches!(container, Parent::Module(outer)
+            if nested_module_declaration(hir, outer) == Some(s));
         let (kind, head) = match module.name {
             // `IsAmbientModule`: `IsGlobalScopeAugmentation` too.
             ModuleName::Global => (StatementKind::AmbientModule, b"global".to_vec()),
@@ -3878,11 +4079,30 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     [b"module ", &name[..]].concat(),
                 )
             }
+            // `emitNestedModuleName`: it follows the name of its parent.
+            ModuleName::Ident(name) if is_nested => {
+                (StatementKind::Other, self.name(name).to_vec())
+            }
             ModuleName::Ident(name) => (
                 StatementKind::Other,
                 [b"namespace ", self.name(name)].concat(),
             ),
         };
+        // "eagerly transform nested namespaces (the nesting doesn't need any elision or painting done)"
+        if let Some(inner) = nested_module_declaration(hir, m) {
+            self.visit_statement(inner);
+            let body = self.written.remove(&inner).unwrap_or_default();
+            let text = match body.first() {
+                Some(body) => [&head[..], b".", &body.text[..]].concat(),
+                None => [&head[..], b";"].concat(),
+            };
+            return Statement {
+                kind,
+                comments: Vec::new(),
+                modifiers,
+                text,
+            };
+        }
         let saved = (self.needs_scope_fix_marker, self.result_has_scope_marker);
         (self.needs_scope_fix_marker, self.result_has_scope_marker) = (false, false);
         self.set_indent(self.indent + 1);
@@ -3904,8 +4124,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             } else {
                 // `stripExportModifiers`
                 for statement in &mut statements {
-                    if statement.kind != StatementKind::ImportEquals
-                        && !statement.modifiers.contains(&Flags::DEFAULT)
+                    if !matches!(
+                        statement.kind,
+                        StatementKind::ImportEquals | StatementKind::JsTypeAlias
+                    ) && !statement.modifiers.contains(&Flags::DEFAULT)
                     {
                         statement.modifiers.retain(|&it| it != Flags::EXPORT);
                     }
@@ -3915,10 +4137,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let body = self.statements_text(&statements);
         self.set_indent(self.indent - 1);
         (self.needs_scope_fix_marker, self.result_has_scope_marker) = saved;
-        let text = if module.has_body {
-            [&head[..], b" {\n", &body[..], &self.indentation()[..], b"}"].concat()
-        } else {
+        // `rangeEndIsOnSameLineAsRangeStart` for the block, which starts after the name and ends
+        // the declaration.
+        let is_on_one_line = || {
+            let after_name = self.c.end_of_name_at(self.file(), module.name_pos);
+            let open = self.c.skip_trivia_from(self.file(), after_name) as usize;
+            positions_are_on_same_line(&hir.text[..], hir[s].loc.end as usize, open)
+        };
+        let text = if !module.has_body {
             [&head[..], b";"].concat()
+        } else if statements.is_empty() && is_on_one_line() {
+            // `isEmptyBlock`: `LFSingleLineBlockStatements`
+            [&head[..], b" { }"].concat()
+        } else {
+            [&head[..], b" {\n", &body[..], &self.indentation()[..], b"}"].concat()
         };
         Statement {
             kind,
@@ -3964,17 +4196,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             b""
         };
         let name = self.name(hir[i].name);
-        // `decl.Modifiers()`
-        let modifiers = (hir[s].modifiers.iter()).filter_map(|m| match hir[m].kind {
-            ModifierKind::Keyword(modifier) => Some(modifier),
-            ModifierKind::Decorator(_) => None,
-        });
-        Some(Statement {
-            kind: StatementKind::ImportEquals,
-            comments: Vec::new(),
-            modifiers: modifiers.collect(),
-            text: [b"import ", type_only, name, b" = ", &target[..], b";"].concat(),
-        })
+        let text = [b"import ", type_only, name, b" = ", &target[..], b";"].concat();
+        Some(self.update_import(StatementKind::ImportEquals, s, text))
     }
 
     /// `getBindingNameVisible`
@@ -4006,7 +4229,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         {
             return None;
         }
-        let mut declarations: Vec<Vec<u8>> = Vec::new();
+        let mut declarations: Vec<Element> = Vec::new();
         let mut extra_imports: Vec<Statement> = Vec::new();
         let scope = match bound.stmt_parent[s.idx()] {
             Parent::File => ScopeId(0),
@@ -4047,9 +4270,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if let PatKind::Ident(name) = hir[pat].kind {
                 self.suppresses_new_contexts = true;
                 let ensured = self.ensure_type(hir.node(d), false);
-                declarations.push([self.name(name), &ensured.text()[..]].concat());
+                let loc = hir[d].loc;
+                declarations.push(Element {
+                    range: (loc.end != 0).then_some((loc.pos as usize, loc.end as usize)),
+                    text: [self.name(name), &ensured.text()[..]].concat(),
+                });
             } else {
-                declarations.append(&mut self.recreate_binding_pattern(pat, true));
+                let names = self.recreate_binding_pattern(pat, true);
+                declarations.extend(names.into_iter().map(|text| Element { range: None, text }));
             }
             (
                 self.enclosing,
@@ -4067,11 +4295,19 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             Some(VarKind::Let) => b"let ",
             Some(VarKind::Const | VarKind::Using | VarKind::AwaitUsing) => b"const ",
         };
+        // `End()` of the declaration list, which emits the comments after its last declaration
+        // unless the statement ends there too.
+        let list_end = decls.iter().next_back().map_or(0, |d| hir[d].loc.end);
+        let declarations = self.list_text_in(declarations, false, false, list_end as usize);
+        let mut list = [keyword, &declarations[..]].concat();
+        if list_end != hir[s].loc.end {
+            list = self.with_comments((None, list_end), &list);
+        }
         extra_imports.push(Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
             modifiers: self.ensure_modifiers(hir[s].modifiers, parent_is_file, false),
-            text: [keyword, &declarations.join(&b", "[..])[..], b";"].concat(),
+            text: [&list[..], b";"].concat(),
         });
         Some(extra_imports)
     }
@@ -4094,7 +4330,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 PatKind::Missing => {}
                 PatKind::Ident(name) => {
                     let ensured = self.ensure_type(hir.parent(hir.node(element)), false);
-                    names.push([self.name(name), &ensured.text()[..]].concat());
+                    // The declaration is synthesized. Its name is the node of the file.
+                    let pos = self.c.end_of_token_before(self.file(), hir[element].pos);
+                    let name = self.with_comments((Some(pos), hir[element].end), self.name(name));
+                    names.push([&name[..], &ensured.text()[..]].concat());
                 }
                 _ => names.append(&mut self.recreate_binding_pattern(element, only_visible)),
             }
@@ -4175,8 +4414,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         });
         if let Some(constructor) = constructor {
             let saved = self.tracker.get_symbol_accessibility_diagnostic;
+            let mut previous_sibling = None;
             for p in hir[hir[constructor].func].params.iter() {
-                if !hir[p].flags.contains(Flags::PARAMETER_PROPERTY) {
+                let previous_sibling = previous_sibling.replace(p);
+                if !hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
+                    || (self.c).should_strip_internal_parameter(self.file(), p, previous_sibling)
+                {
                     continue;
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
@@ -4193,9 +4436,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                             b""
                         };
                         let name = self.name(name);
-                        parameter_properties.push(
-                            [&modifiers[..], name, question, &ensured.text()[..], b";"].concat(),
-                        );
+                        let property =
+                            [&modifiers[..], name, question, &ensured.text()[..], b";"].concat();
+                        parameter_properties
+                            .push(self.with_comments((None, hir[p].loc.end), &property));
                     }
                     _ => {
                         for name in self.recreate_binding_pattern(hir[p].pat, false) {
@@ -4254,6 +4498,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if !is_static && !components.iter().all(is_own) {
                     continue;
                 }
+                let modifiers: &[u8] = match (is_static, info.readonly) {
+                    (true, true) => b"static readonly ",
+                    (true, false) => b"static ",
+                    (false, true) => b"readonly ",
+                    (false, false) => b"",
+                };
                 let mut names = Vec::with_capacity(components.len());
                 for &component in components {
                     if let (of, PropKey::Computed(name)) = self.c.name_of_index_component(component)
@@ -4293,8 +4543,17 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                             Some(&mut self.tracker),
                         );
                         let name = self.text_of(Written::EntityName(name));
-                        let modifiers: &[u8] = if is_static { b"static " } else { b"" };
-                        written.push([modifiers, b"[", &name[..], b"]: ", &ty[..], b";"].concat());
+                        // `c.QuestionToken()`
+                        let question: &[u8] = match component {
+                            IndexComponent::Member(of, m)
+                                if self.c.hir(of)[m].flags.contains(Flags::OPTIONAL) =>
+                            {
+                                b"?"
+                            }
+                            _ => b"",
+                        };
+                        let name = [modifiers, b"[", &name[..], b"]", question].concat();
+                        written.push([&name[..], b": ", &ty[..], b";"].concat());
                     }
                     continue;
                 }
@@ -4312,12 +4571,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     None,
                 );
-                let modifiers: &[u8] = match (is_static, info.readonly) {
-                    (true, true) => b"static readonly ",
-                    (true, false) => b"static ",
-                    (false, true) => b"readonly ",
-                    (false, false) => b"",
-                };
                 written.push([modifiers, b"[x: ", &key[..], b"]: ", &value[..], b";"].concat());
             }
         }
@@ -4534,15 +4787,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     /// `IsImplementationOfOverload`. `getSignaturesOfSymbol` has one signature for each function
     /// declaration, except the implementation.
-    fn is_implementation_of_overload(&self, f: FnId) -> bool {
-        let files = self.c.files();
-        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        let symbol = match bound.fns[f.idx()].owner {
-            FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
-            // A member with a computed name gets its symbol from late binding.
-            FnOwner::Member(m) if !matches!(hir[m].key, PropKey::Computed(_)) => {
-                bound.member_symbol[m.idx()]
+    fn is_implementation_of_overload(&mut self, f: FnId) -> bool {
+        let (file, files) = (self.file(), self.c.files());
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        if matches!(hir[f].body, FnBody::None) {
+            return false;
+        }
+        let declarations = match bound.fns[f.idx()].owner {
+            FnOwner::Stmt(_) if bound.fn_symbol[f.idx()].is_some() => {
+                files.decls_of(files.sym(file, bound.fn_symbol[f.idx()]))
             }
+            // `getSymbolOfDeclaration`: a computed name resolves to the late-bound symbol.
+            FnOwner::Member(m) => self.c.declarations_of_member(file, Decl::Member(m)),
             _ => return false,
         };
         let is_function_like = |&&(file, decl): &&(FileId, Decl)| match decl {
@@ -4550,10 +4806,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             Decl::Member(m) => self.c.hir(file)[m].func.is_some(),
             _ => false,
         };
-        if symbol.is_none() || matches!(hir[f].body, FnBody::None) {
-            return false;
-        }
-        let declarations = files.decls_of(files.sym(self.file(), symbol));
         declarations.iter().filter(is_function_like).count() > 1
     }
 
@@ -4565,11 +4817,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     /// `ensureTypeParams`, `updateParamList`, `ensureType`: `<T>(a: T): T`
     fn transform_signature(&mut self, f: FnId) -> Vec<u8> {
-        let type_parameters = if self.is_private_function(f) {
-            Vec::new()
-        } else {
-            self.visit_type_parameters(self.c.hir(self.file())[f].type_params)
-        };
+        let type_parameters = self.ensure_type_params(f);
         let parameters = self.update_param_list(f);
         let returned = self.ensure_type(self.c.hir(self.file()).node(f), false);
         [
@@ -4582,6 +4830,45 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         .concat()
     }
 
+    /// `ensureTypeParams`: `<A, B>`, or nothing.
+    fn ensure_type_params(&mut self, f: FnId) -> Vec<u8> {
+        if self.is_private_function(f) {
+            return Vec::new();
+        }
+        let file = self.file();
+        let hir = self.c.hir(file);
+        // `typeParametersToTypeParameterDeclarations` has those of a symbol with
+        // `SymbolFlagsFunction`.
+        if !hir[f].type_params.is_empty()
+            || hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_none()
+            || !matches!(hir[f].kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
+        {
+            return self.visit_type_parameters(hir[f].type_params);
+        }
+        let node = hir.node(f);
+        let saved = (
+            self.tracker.error_name_node,
+            self.tracker.get_symbol_accessibility_diagnostic,
+        );
+        self.tracker.error_name_node = hir.name(node);
+        if !self.suppresses_new_contexts && can_produce_diagnostics(hir.kind(node)) {
+            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(node);
+        }
+        // `CreateTypeParametersOfSignatureDeclaration`
+        let type_parameters = self.c.serialize_type_parameters_for_signature(
+            file,
+            f,
+            self.enclosing,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+            &mut self.tracker,
+        );
+        self.tracker.error_name_node = saved.0;
+        if !self.suppresses_new_contexts {
+            self.tracker.get_symbol_accessibility_diagnostic = saved.1;
+        }
+        type_parameters
+    }
+
     /// `updateParamList`: the parameters, with `, ` between them.
     fn update_param_list(&mut self, f: FnId) -> Vec<u8> {
         if self.is_private_function(f) {
@@ -4589,13 +4876,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let hir = self.c.hir(self.file());
         let function = hir[f];
-        let this = function.this_ty(hir);
-        self.visit_type(this, false);
         let mut parameters = Vec::with_capacity(function.params.len() + 1);
-        if this.is_some() {
+        if function.this_ty(hir).is_some() {
+            // `ensureParameter`
+            let ty = match self.ensure_type(hir.node(function.this_param), true) {
+                Ensured::Type(ty) => ty,
+                Ensured::Nothing | Ensured::Initializer(_) => Vec::new(),
+            };
             parameters.push(Element {
                 range: None,
-                text: [b"this: ", &self.text_of(Written::Type(this))[..]].concat(),
+                text: [b"this: ", &ty[..]].concat(),
             });
         }
         for p in function.params.iter() {
@@ -4611,9 +4901,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `emitListItems`: see `Writer::emit_list_items`.
     fn list_text(
         &self,
+        elements: Vec<Element>,
+        is_multi_line: bool,
+        has_trailing_comma: bool,
+    ) -> Vec<u8> {
+        self.list_text_in(elements, is_multi_line, has_trailing_comma, usize::MAX)
+    }
+
+    /// The same, in a parent that may end where its last element ends.
+    fn list_text_in(
+        &self,
         mut elements: Vec<Element>,
         is_multi_line: bool,
         has_trailing_comma: bool,
+        parent_end: usize,
     ) -> Vec<u8> {
         if !self.writes {
             return Vec::new();
@@ -4627,7 +4928,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             b",",
             is_multi_line,
             has_trailing_comma,
-            usize::MAX,
+            parent_end,
         );
         writer.into_text()
     }
@@ -4759,7 +5060,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if is_written {
             let modifiers = modifiers_text(&self.ensure_modifiers(member.modifiers, false, false));
             let name = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
-            let head = [&modifiers[..], &name[..]].concat();
+            let head = match member.kind {
+                MemberKind::Method if member.flags.contains(Flags::REPARSED) => {
+                    self.head_of_reparsed_method(m, &modifiers, &name)
+                }
+                _ => [&modifiers[..], &name[..]].concat(),
+            };
             let question: &[u8] = if member.flags.contains(Flags::OPTIONAL) {
                 b"?"
             } else {
@@ -4853,8 +5159,36 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.error_name_node,
             self.suppresses_new_contexts,
         ) = saved;
-        let written = written?;
+        let written = self.with_comments((None, member.loc.end), &written?);
         Some([self.leading_comments(member.loc.pos), written].concat())
+    }
+
+    /// The modifiers and the name of the method `m`, which `reparseJSDocSignature` makes from an
+    /// `@overload` tag. The name is a clone of the name of the host and has its `Pos()`. `Pos()` of
+    /// `m` is in the tag, so `emitLeadingComments` writes the comments before the name.
+    fn head_of_reparsed_method(&mut self, m: MemberId, modifiers: &[u8], name: &[u8]) -> Vec<u8> {
+        let hir = self.c.hir(self.file());
+        // The host follows the methods that are made from its tags.
+        let mut host = m;
+        while hir[host].flags.contains(Flags::REPARSED) {
+            host = MemberId(host.0 + 1);
+        }
+        let host = hir[host];
+        let pos = if host.start == host.name_pos {
+            host.loc.pos as usize
+        } else {
+            pos_before(&hir.text, host.name_pos as usize)
+        };
+        if modifiers.is_empty() {
+            return [&self.leading_comments(pos as u32)[..], name].concat();
+        }
+        let mut writer = Writer::new(&hir.text, self.indent);
+        writer.write(modifiers);
+        if self.writes && !self.c.files().options.remove_comments {
+            writer.emit_leading_comments(pos);
+        }
+        writer.write(name);
+        writer.into_text()
     }
 
     // ───────────────────────────── annotated types ─────────────────────────────
@@ -5036,6 +5370,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             {
                 self.tracker
                     .track_symbol(self.c, member, Some(self.enclosing), SymFlags::VALUE);
+                if self.writes {
+                    let value = self.c.symbol_to_expression(member, self.enclosing);
+                    return Ensured::Initializer(value);
+                }
             }
             if !self.writes {
                 return Ensured::Nothing;

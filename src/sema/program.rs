@@ -427,6 +427,10 @@ pub struct Files<'s> {
     pub undefined_symbol: Sym,
     /// `unknownSymbol`: the target of an alias that cannot be resolved. It is in no table.
     pub unknown_symbol: Sym,
+    /// `CommonSourceDirectory` without the `/` at its end, if an output path depends on it.
+    pub common_source_directory: Option<&'s [u8]>,
+    /// `UseCaseSensitiveFileNames`
+    pub is_case_sensitive: bool,
     /// `prototypeSymbol` of `bindClassLikeDeclaration`: the property `symbol.Exports["prototype"]`
     /// of a class, which has no declaration.
     /// Shared by all classes.
@@ -1863,14 +1867,19 @@ fn is_same_name(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
 }
 
 /// `computeCommonSourceDirectoryOfFilenames`. `None`: the files have nothing in common, not even the drive.
-fn common_directory_of(files: &[&[u8]], is_case_sensitive: bool) -> Option<Vec<u8>> {
+fn common_directory_of(
+    files: &[&[u8]],
+    current_directory: &[u8],
+    is_case_sensitive: bool,
+) -> Option<Vec<u8>> {
     fn directory(file: &[u8]) -> Vec<&[u8]> {
         let mut parts = components_of_path(file);
         parts.pop();
         parts
     }
+    // "Can happen when all input files are .d.ts files"
     let Some((first, rest)) = files.split_first() else {
-        return Some(b"/".to_vec());
+        return Some(current_directory.to_vec());
     };
     let mut common = directory(first);
     for file in rest {
@@ -2233,8 +2242,54 @@ fn explain_source_files(
 /// The parts of `verifyCompilerOptions` that depend on which files are emitted and where. 6307 for
 /// a source file that a composite project does not list, 6059 (`checkSourceFilesBelongToPath`) for
 /// one that is not under `rootDir`, 5009 and 5011 for the common source directory, and
+/// `GetSourceFilePathInNewDir`: the path under `dir` that mirrors the path of `path` relative to
+/// the common source directory. A file outside that directory keeps its path.
+fn source_file_path_in_new_dir(
+    dir: &[u8],
+    path: &[u8],
+    common: Option<&[u8]>,
+    is_case_sensitive: bool,
+) -> Vec<u8> {
+    match common {
+        _ if dir.is_empty() => path.to_vec(),
+        Some(common) if contains_path(common, path, is_case_sensitive) => join(
+            dir,
+            path.get(common.len()..)
+                .unwrap_or(b"")
+                .trim_start_with(|c| c == '/'),
+        ),
+        _ => path.to_vec(),
+    }
+}
+
+/// `GetDeclarationEmitOutputFilePath`
+fn declaration_emit_output_file_path(
+    options: &Options,
+    path: &[u8],
+    common: Option<&[u8]>,
+    is_case_sensitive: bool,
+) -> Vec<u8> {
+    let dir = match options.declaration_dir.as_slice() {
+        b"" => options.out_dir.as_slice(),
+        _ if !options.emits_declarations => options.out_dir.as_slice(),
+        declaration_dir => declaration_dir,
+    };
+    let is_one_of = |extensions: [&[u8]; 2]| file_extension_is_one_of(path, &extensions);
+    // `GetDeclarationEmitExtensionForPath`
+    let extension: &[u8] = if is_one_of([b".mjs", b".mts"]) {
+        b".d.mts"
+    } else if is_one_of([b".cjs", b".cts"]) {
+        b".d.cts"
+    } else {
+        b".d.ts"
+    };
+    let moved = source_file_path_in_new_dir(dir, path, common, is_case_sensitive);
+    [remove_file_extension(&moved), extension].concat()
+}
+
 /// `verifyEmitFilePath`: 5055 for an output file that is an input file, 5056 for one that two input
-/// files are emitted to. Errors reported at a position in a file go to `include_errors`.
+/// files are emitted to. Errors reported at a position in a file go to `include_errors`. With them,
+/// `CommonSourceDirectory`, if anything depends on it.
 #[allow(clippy::too_many_arguments)]
 fn output_path_errors(
     host: &dyn Host,
@@ -2245,7 +2300,7 @@ fn output_path_errors(
     roots: &[Vec<u8>],
     starts: &[FileId],
     include_errors: &mut Vec<(FileId, u32, u32, Problem)>,
-) -> Vec<Problem> {
+) -> (Vec<Problem>, Option<Vec<u8>>) {
     let mut errors = Vec::new();
     let is_case_sensitive = host.is_case_sensitive();
     let declaration_dir = if options.emits_declarations {
@@ -2283,7 +2338,7 @@ fn output_path_errors(
             b""
         };
         if specified.is_empty() {
-            common = common_directory_of(&paths, is_case_sensitive);
+            common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
             explained.extend(explain(6059, specified, &|module, _| {
                 !contains_path(specified, module.path, is_case_sensitive)
@@ -2301,7 +2356,7 @@ fn output_path_errors(
         }
     }
     if options.no_emit {
-        return errors;
+        return (errors, common);
     }
     // Before TypeScript 6 it was the common directory of the sources, with or without a
     // configuration file.
@@ -2309,8 +2364,8 @@ fn output_path_errors(
         && options.root_dir.is_empty()
         && !options.config_path.is_empty()
         && (!options.out_dir.is_empty() || !declaration_dir.is_empty())
-        && !paths.is_empty()
-        && let Some(computed) = common_directory_of(&paths, is_case_sensitive)
+        && let Some(computed) =
+            common_directory_of(&paths, &options.current_directory, is_case_sensitive)
         && !is_same_name(
             &computed,
             dirname::<Posix>(&options.config_path),
@@ -2334,7 +2389,7 @@ fn output_path_errors(
         );
     }
     if options.suppress_output_path_check {
-        return errors;
+        return (errors, common);
     }
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut verify = |output: Vec<u8>| {
@@ -2357,18 +2412,6 @@ fn output_path_errors(
             seen.insert(key);
         }
     };
-    // `GetSourceFilePathInNewDir`: the path under `dir` that mirrors its path relative to the
-    // common source directory. A file outside that directory keeps its path.
-    let moved_to = |dir: &[u8], path: &[u8]| match &common {
-        _ if dir.is_empty() => path.to_vec(),
-        Some(common) if contains_path(common, path, is_case_sensitive) => join(
-            dir,
-            path.get(common.len()..)
-                .unwrap_or(b"")
-                .trim_start_with(|c| c == '/'),
-        ),
-        _ => path.to_vec(),
-    };
     for module in sources {
         let path = module.path;
         let is_json = module.hir.kind == FileKind::Json;
@@ -2386,7 +2429,12 @@ fn output_path_errors(
             } else {
                 b".js"
             };
-            let moved = moved_to(&options.out_dir, path);
+            let moved = source_file_path_in_new_dir(
+                &options.out_dir,
+                path,
+                common.as_deref(),
+                is_case_sensitive,
+            );
             let output = [remove_file_extension(&moved), extension].concat();
             // A JSON file whose output path equals its input path is not emitted.
             if !is_json || output != path {
@@ -2397,23 +2445,13 @@ fn output_path_errors(
                 }
             }
         }
-        // `GetDeclarationEmitOutputFilePath`
-        let declarations_in = if declaration_dir.is_empty() {
-            options.out_dir.as_slice()
-        } else {
-            declaration_dir
-        };
         if options.emits_declarations && !is_json {
-            // `GetDeclarationEmitExtensionForPath`
-            let extension: &[u8] = if is_one_of([b".mjs", b".mts"]) {
-                b".d.mts"
-            } else if is_one_of([b".cjs", b".cts"]) {
-                b".d.cts"
-            } else {
-                b".d.ts"
-            };
-            let moved = moved_to(declarations_in, path);
-            let output = [remove_file_extension(&moved), extension].concat();
+            let output = declaration_emit_output_file_path(
+                options,
+                path,
+                common.as_deref(),
+                is_case_sensitive,
+            );
             let map = [&output[..], b".map"].concat();
             verify(output);
             if options.writes_declaration_maps {
@@ -2421,7 +2459,7 @@ fn output_path_errors(
             }
         }
     }
-    errors
+    (errors, common)
 }
 
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is scoped to the class that declares it. From here on
@@ -2898,7 +2936,7 @@ impl<'s> Files<'s> {
             }
         }
         let mut include_errors = Vec::new();
-        program_errors.extend(output_path_errors(
+        let (output_path_errors, common_source_directory) = output_path_errors(
             host,
             &options,
             &atoms,
@@ -2907,7 +2945,8 @@ impl<'s> Files<'s> {
             roots,
             &starts,
             &mut include_errors,
-        ));
+        );
+        program_errors.extend(output_path_errors);
         let has_type_only_stars = modules.iter().any(|m| {
             m.bound.export_stars.iter().any(|&(_, star)| {
                 matches!(
@@ -2941,6 +2980,9 @@ impl<'s> Files<'s> {
                 file: FileId(0),
                 id: SymbolId::NONE,
             },
+            common_source_directory: common_source_directory
+                .map(|it| &*arena.alloc_slice_copy(&it)),
+            is_case_sensitive: host.is_case_sensitive(),
             prototype_symbol: Sym {
                 file: FileId(0),
                 id: SymbolId::NONE,
@@ -4459,6 +4501,33 @@ impl<'s> Files<'s> {
     #[inline]
     pub fn module(&self, file: FileId) -> &Module<'s> {
         &self.modules[file.idx()]
+    }
+
+    /// `GetSourceFileFromReference` for a `/// <reference path>` in `origin`.
+    pub fn source_file_from_reference(&self, origin: FileId, written: &[u8]) -> Option<FileId> {
+        let name = referenced_path(written, self.module(origin).path);
+        if has_extension(&name) {
+            if unsupported_extension_error(&self.options, &name).is_some() {
+                return None;
+            }
+            return self.by_path.get(&name[..]).copied();
+        }
+        let mut extensions = supported_extensions(&self.options)[0].iter();
+        extensions.find_map(|it| {
+            self.by_path
+                .get(&[&name[..], &it[..]].concat()[..])
+                .copied()
+        })
+    }
+
+    /// `GetOutputPathsFor(file).DeclarationFilePath()`
+    pub fn declaration_file_path(&self, file: FileId) -> Vec<u8> {
+        declaration_emit_output_file_path(
+            &self.options,
+            self.module(file).path,
+            self.common_source_directory,
+            self.is_case_sensitive,
+        )
     }
 
     #[inline]

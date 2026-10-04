@@ -88,6 +88,9 @@ pub(super) struct Reported {
     pub(super) directive: u32,
     /// Once settled: `is_bare` before `end` was filled in.
     pub(super) was_bare: bool,
+    /// `Emit` reported it, before the check (`Options::emits_first`). It stays where
+    /// `checkSourceFile` never comes.
+    pub(super) by_emit: bool,
 }
 
 pub(super) const NO_DIRECTIVE: u32 = u32::MAX;
@@ -111,6 +114,7 @@ impl Reported {
             is_suggestion: false,
             directive: NO_DIRECTIVE,
             was_bare: false,
+            by_emit: false,
         }
     }
 
@@ -448,12 +452,13 @@ impl Checker<'_, '_> {
     }
 
     /// `owner`: the query whose entry the diagnostic belongs to. `None`: it belongs to the task.
-    fn log_diagnostic(&mut self, owner: Option<Query>, diagnostic: Reported) {
+    fn log_diagnostic(&mut self, owner: Option<Query>, mut diagnostic: Reported) {
         // A query about a file after its `checkSourceFile` reports nothing there: its diagnostics have been collected. A baseline
         // writer can still be the first to evaluate an entry of another file, and then this task owns what that reports.
         if self.is_type_checked && self.task.file == Some(diagnostic.file) {
             return;
         }
+        diagnostic.by_emit |= self.is_emitting;
         let mut owner = owner;
         if self.task.checker_count != 0 {
             if diagnostic.file != NOWHERE.0 && !self.collects_later(diagnostic.file) {

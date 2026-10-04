@@ -1331,6 +1331,7 @@ fn check_named_files(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
+    project.options.current_directory = host::from_native(request.cwd);
     let of_configuration = |error: &ConfigError| {
         let mut reported = global(error.code, &error.args);
         for (level, code, args) in &error.chain {

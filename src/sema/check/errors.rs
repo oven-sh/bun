@@ -59,7 +59,7 @@ impl Program<'_> {
             // task evaluated them.
             let is_checked = |d: &Reported| {
                 let mut never_checked = checked.never_checked.iter();
-                !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
+                d.by_emit || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
             // `getDiagnosticsWithPrecedingDirectives`
@@ -199,8 +199,17 @@ impl Checker<'_, '_> {
             self.add_diagnostic(Reported::from_hir(file, diagnostic));
         }
         self.emit_resolver_links = Default::default();
-        if self.p.files.options.emits_first {
+        if self.emits_first() {
+            let from = self.reported.len();
+            self.is_emitting = true;
+            self.mark_linked_references_recursively(file);
+            self.mark_jsx_aliases_referenced(file);
+            self.mark_property_aliases_referenced(file);
             self.inline_const_enums(file);
+            self.is_emitting = false;
+            for d in self.reported.iter_mut().skip(from) {
+                d.by_emit = true;
+            }
         }
         self.check_source_file(file);
         self.check_declare_modifiers(file);
@@ -240,6 +249,10 @@ impl Checker<'_, '_> {
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: diagnostics in the
         // nodes they never check are removed, whichever check reported them.
         self.remove_diagnostics_in_unchecked_ranges(file);
+        // `MarkLinkedReferencesRecursively` visits those nodes too.
+        if self.p.files.options.emits_first && self.elides_imports(file) {
+            self.mark_identifier_aliases_referenced(file, true);
+        }
         self.check_circular_mapped_properties();
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
@@ -1229,6 +1242,18 @@ impl Checker<'_, '_> {
     /// `getResolvedSymbol`, where `resolveName` finds nothing: `name`, the identifier `e`, resolves
     /// to no value.
     fn report_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
+        self.report_unresolved_identifier_if(file, e, name, true);
+    }
+
+    /// `is_checked`: whether it is reported for an identifier that `checkSourceFile` resolves, or
+    /// for one that it does not.
+    fn report_unresolved_identifier_if(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        name: Atom,
+        is_checked: bool,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let scope_among = |idents: &[(ExprId, ScopeId)]| {
             let i = idents.binary_search_by_key(&e, |ident| ident.0).ok()?;
@@ -1241,33 +1266,37 @@ impl Checker<'_, '_> {
         };
         // `await x` where it is not allowed: the parser treated the keyword as an identifier, and
         // has reported the error.
-        if bound.is_unchecked(e.idx()) || hir.has_diagnostic(hir[e].pos, 1308) {
+        if hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
-        match bound.expr_parent[e.idx()] {
-            // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
-            // meaning. In a namespace they are invalid, and `A` is not checked.
-            Parent::Stmt(s)
-                if matches!(
-                    hir[s].kind,
-                    StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
-                    || self
-                        .files()
-                        .resolve_name(file, scope, name, SymFlags::TYPE | SymFlags::NAMESPACE)
-                        .is_some()) =>
-            {
-                return;
-            }
-            // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer of `{ a = 1 }` is checked.
-            Parent::Expr(assign)
-                if matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-                    && matches!(bound.expr_parent[assign.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand
+        let is_resolved_by_check = !bound.is_unchecked(e.idx())
+            && match bound.expr_parent[e.idx()] {
+                // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
+                // meaning. In a namespace they are invalid, and `A` is not checked.
+                Parent::Stmt(s)
+                    if matches!(
+                        hir[s].kind,
+                        StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
+                    ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
+                        || self
+                            .files()
+                            .resolve_name(file, scope, name, SymFlags::TYPE | SymFlags::NAMESPACE)
+                            .is_some()) =>
+                {
+                    false
+                }
+                // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer of `{ a = 1 }` is checked.
+                Parent::Expr(assign)
+                    if matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
+                        && matches!(bound.expr_parent[assign.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand
                         && !self.is_definite_assignment_target(file, bound.prop_owner[p.idx()])) =>
-            {
-                return;
-            }
-            _ => {}
+                {
+                    false
+                }
+                _ => true,
+            };
+        if is_resolved_by_check != is_checked {
+            return;
         }
         let location = hir.node(e);
         match self
@@ -1288,6 +1317,135 @@ impl Checker<'_, '_> {
                 self.on_failed_to_resolve_symbol(
                     file, location, None, scope, name, meaning, message,
                 );
+            }
+        }
+    }
+
+    /// Whether `ImportElisionTransformer` runs on `file`: `emitJSFile`, `sourceFileMayBeEmitted`,
+    /// `importElisionEnabled`, `canCollectSymbolAliasAccessibilityData`.
+    fn elides_imports(&self, file: FileId) -> bool {
+        let (files, hir) = (self.files(), self.hir(file));
+        let (options, module) = (&files.options, files.module(file));
+        !(options.no_emit
+            || options.emit_declaration_only
+            || options.verbatim_module_syntax
+            || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            || hir.is_js
+            || module.is_lib
+            || module.is_from_external_library)
+    }
+
+    /// `markIdentifierAliasReferenced`, `markPropertyAliasReferenced`: `getResolvedSymbol` for the
+    /// identifiers that are emitted as expressions. `is_checked`: as for
+    /// `report_unresolved_identifier_if`. If set, only for those in a range of `never_checked`,
+    /// once what the passes have reported there is removed.
+    fn mark_identifier_aliases_referenced(&mut self, file: FileId, is_checked: bool) {
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+        let never_checked = self.never_checked.borrow().clone();
+        // `MarkLinkedReferencesRecursively` does not descend into these.
+        let is_import = |n: Node| {
+            matches!(hir.data(n), NodeData::Stmt(s) if match hir[s].kind {
+                StmtKind::Import(_) => true,
+                StmtKind::ImportEquals(i) => !hir[i].flags.contains(Flags::EXPORT),
+                _ => false,
+            })
+        };
+        let is_namespace =
+            |n: Node| matches!(hir.kind(n), Kind::ModuleBlock | Kind::ModuleDeclaration);
+        let idents = bound.free_idents.iter().chain(bound.alias_idents.iter());
+        let idents: Vec<(ExprId, ScopeId)> = idents.copied().collect();
+        for (e, scope) in idents {
+            let ExprKind::Ident(name) = hir[e].kind else {
+                continue;
+            };
+            let pos = hir[e].pos;
+            if is_checked && !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&pos)) {
+                continue;
+            }
+            let location = hir.node(e);
+            let parent = hir.parent(location);
+            // `IsValueAliasDeclaration`, which `ImportElisionTransformer` calls for `export = A` and
+            // `export default A` in a file or a namespace.
+            let is_exported = hir.kind(parent) == Kind::ExportAssignment
+                && hir.find_ancestor(hir.parent(parent), |n| !is_namespace(n)) == Node::FILE;
+            if matches!(bound.expr_parent[e.idx()], Parent::None)
+                || hir.is_ambient(location)
+                || !(hir.is_expression_node(location)
+                    || hir.kind(parent) == Kind::ShorthandPropertyAssignment
+                    || is_exported)
+            {
+                continue;
+            }
+            // `getTargetOfAliasLikeExpression` checks an `A` that has no meaning at all.
+            let other = SymFlags::TYPE | SymFlags::NAMESPACE;
+            if is_exported && files.resolve_name(file, scope, name, other).is_some() {
+                continue;
+            }
+            // As in `type_of_identifier`.
+            let is_unresolved = match self.resolve_identifier(file, e, name, true) {
+                Err(_) => true,
+                Ok(None) => !(name == known::arguments && bound.is_arguments_object(e)),
+                Ok(Some(sym)) => {
+                    let own = files.flags(sym);
+                    own.contains(SymFlags::ALIAS)
+                        && !own.intersects(SymFlags::VALUE)
+                        && !files.means(sym, SymFlags::VALUE)
+                }
+            };
+            if is_unresolved && hir.find_ancestor(parent, is_import).is_none() {
+                self.report_unresolved_identifier_if(file, e, name, is_checked);
+            }
+        }
+    }
+
+    /// `MarkLinkedReferencesRecursively`, which `ImportElisionTransformer` runs before a file is
+    /// emitted. `markIdentifierAliasReferenced` and `markPropertyAliasReferenced` call
+    /// `getResolvedSymbol` on every identifier that is emitted as an expression. The check resolves
+    /// nearly all of them too. What is reported for the others shows only in tsgo's test harness,
+    /// which counts the errors with and without `Emit` (TS-1).
+    fn mark_linked_references_recursively(&mut self, file: FileId) {
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+        if !self.elides_imports(file) {
+            return;
+        }
+        // The `q` of `export import r = q`, which the check resolves as a namespace.
+        let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+        for (i, import) in hir.import_equals.iter().enumerate() {
+            let ImportEqualsTarget::Entity(names) = import.target else {
+                continue;
+            };
+            // `NodeFlagsAmbient`
+            let is_ambient = import.flags.contains(Flags::AMBIENT)
+                || matches!(bound.stmt_parent[import.stmt.idx()], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
+            if !import.flags.contains(Flags::EXPORT) || names.len() != 1 || is_ambient {
+                continue;
+            }
+            let (scope, first) = (bound.import_equals_scope[i], names.at(0));
+            let (location, name) = (hir.node(first), hir[first].text);
+            if files.resolve_name(file, scope, name, meaning).is_none() {
+                let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
+                self.on_failed_to_resolve_symbol(
+                    file, location, None, scope, name, meaning, message,
+                );
+            }
+        }
+        self.mark_identifier_aliases_referenced(file, false);
+        // The `this` of `typeof this.a` is an identifier, which `checkTypeQuery` does not resolve.
+        // It resolves to a `this` parameter, which `bindParameter` declares like any other.
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Typeof { expr, .. } = node.kind else {
+                continue;
+            };
+            if expr.is_none() {
+                continue;
+            }
+            let first = first_identifier(hir, expr);
+            if matches!(hir[first].kind, ExprKind::This)
+                && !hir.is_ambient(hir.node(first))
+                && (files.resolve_name(file, bound.type_scope[i], known::this, meaning)).is_none()
+            {
+                let at = self.place_of_token(file, hir[first].pos);
+                self.add_diagnostic(Reported::new(at, 2304, held(vec![b"this".to_vec()])));
             }
         }
     }

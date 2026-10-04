@@ -212,47 +212,114 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── diagnostics reported during emit ─────────────────────────────
 
-    /// `MarkLinkedReferencesRecursively`, which `ImportElisionTransformer` runs before a file is
-    /// emitted: whether it reports anything the check does not. `markIdentifierAliasReferenced`
-    /// calls `getResolvedSymbol` on every identifier that is emitted as an expression. The check
-    /// has already resolved nearly all of them, except the `q` of `export import r = q`, which it
-    /// resolves as a namespace: where `q` is not a value, that is 2708, 2693 or 2304. tsgo's test
-    /// harness counts them (TS-1). Nothing else shows them.
-    #[cfg(feature = "baselines")]
-    pub fn mark_linked_references_recursively(&self, file: FileId) -> bool {
-        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+    /// Whether `Emit` comes before the check (`Options::emits_first`). Under `noEmitOnError` it
+    /// begins with the check itself (`HandleNoEmitOnError`).
+    pub(super) fn emits_first(&self) -> bool {
+        let options = &self.p.files.options;
+        options.emits_first && !options.no_emit_on_error
+    }
+
+    /// `emitJSFile`, `sourceFileMayBeEmitted`: whether `file` is TypeScript that is emitted as
+    /// JavaScript. Whether JavaScript is emitted depends on `outDir`.
+    pub(super) fn emits_js_file(&self, file: FileId) -> bool {
+        let (files, hir) = (self.files(), self.hir(file));
         let (options, module) = (&files.options, files.module(file));
-        // `emitJSFile`, `sourceFileMayBeEmitted`, `importElisionEnabled`, `canCollectSymbolAliasAccessibilityData`
-        if options.no_emit
-            || options.emit_declaration_only
-            || options.verbatim_module_syntax
-            || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-            || hir.is_js
-            || module.is_lib
-            || module.is_from_external_library
+        !options.no_emit
+            && !options.emit_declaration_only
+            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !hir.is_js
+            && !module.is_lib
+            && !module.is_from_external_library
+    }
+
+    /// `markJsxAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every tag of the
+    /// file, a node before its children: `getJsxNamespaceContainerForImplicitImport` reports a
+    /// module that is missing at the first one.
+    pub(super) fn mark_jsx_aliases_referenced(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `importElisionEnabled`
+        if hir.jsx.is_empty()
+            || !self.emits_js_file(file)
+            || self.p.files.options.verbatim_module_syntax
         {
-            return false;
+            return;
         }
-        hir.import_equals.iter().enumerate().any(|(i, import)| {
-            let ImportEqualsTarget::Entity(names) = import.target else {
-                return false;
-            };
-            // `NodeFlagsAmbient`
-            let is_ambient = import.flags.contains(Flags::AMBIENT)
-                || matches!(bound.stmt_parent[import.stmt.idx()], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
-            let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-            import.flags.contains(Flags::EXPORT)
-                && names.len() == 1
-                && !is_ambient
-                && files
-                    .resolve_name(
-                        file,
-                        bound.import_equals_scope[i],
-                        hir[names.at(0)].text,
-                        meaning,
-                    )
-                    .is_none()
-        })
+        let index = self.exprs_by_kind(file);
+        let tags = index.of(ExprTag::Jsx).iter().copied();
+        let first = tags
+            .filter(|e| !bound.is_unchecked(e.idx()))
+            .min_by_key(|&e| hir[e].pos);
+        self.first_jsx = (file, first, None);
+    }
+
+    /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b`
+    /// of the file: `checkExpressionCached(a)`, before `ConstEnumInliningTransformer` checks any
+    /// access.
+    pub(super) fn mark_property_aliases_referenced(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `importElisionEnabled`. Under `GetIsolatedModules` it returns before it asks for a type.
+        if !self.emits_js_file(file) || self.p.files.options.isolated_modules {
+            return;
+        }
+        let index = self.exprs_by_kind(file);
+        let mut lefts: Vec<ExprId> = (index.of(ExprTag::Dot).iter())
+            .filter_map(|&e| match hir[e].kind {
+                ExprKind::Dot { obj, .. }
+                    if matches!(hir[obj].kind, ExprKind::Ident(_))
+                        && !is_parenthesized(hir, obj)
+                        && !bound.is_unchecked(e.idx())
+                        && !bound.is_in_type_query(e)
+                        && !hir.is_ambient(hir.node(e)) =>
+                {
+                    Some(obj)
+                }
+                _ => None,
+            })
+            .collect();
+        lefts.sort_unstable_by_key(|&left| hir[left].pos);
+        for left in lefts {
+            let parameter = self.unassigned_parameter_read_by(file, left);
+            self.type_of_expr(file, left);
+            // `getTypeOfVariableOrParameterOrProperty` has pushed the resolution of the parameter,
+            // and `getContextuallyTypedParameterType` resolves the call around the function, where
+            // `assignParameterType` gives the parameter its type. Then it reads the signature that
+            // the call has resolved to, outside the inference. `widenTypeForVariableLikeDeclaration`
+            // reports a parameter that gets no type from there, and the result is not stored.
+            if let Some((func, pat)) = parameter
+                && self.contextual_signature(file, func).is_none()
+            {
+                self.report_implicit_any_of_name(file, pat, TypeId::ANY);
+            }
+        }
+    }
+
+    /// The function and the name of the parameter that the identifier `e` reads, if
+    /// `links.resolvedType` of the parameter is nil and only `assignParameterType` assigns it
+    /// (`isParameterOfContextSensitiveSignature`).
+    fn unassigned_parameter_read_by(&mut self, file: FileId, e: ExprId) -> Option<(FnId, PatId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = bound.expr_symbol[e.idx()];
+        if symbol.is_none() {
+            return None;
+        }
+        let Some(&Decl::Param(pat)) = bound.symbols[symbol.idx()].decls.first() else {
+            return None;
+        };
+        let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
+            return None;
+        };
+        let func = bound.param_fn[p.idx()];
+        if func.is_none() {
+            return None;
+        }
+        let owner = self.takes_context(file, func)?;
+        let is_untyped =
+            hir[p].ty.is_none() && hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST);
+        (is_untyped
+            && self.is_context_sensitive_function_or_method(file, func, owner)
+            && !self.is_immediately_invoked(file, func)
+            && (self.p.pat_types.get(&mut self.task, &(file, pat))).is_none())
+        .then_some((func, pat))
     }
 
     /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue`
@@ -263,6 +330,7 @@ impl Checker<'_, '_> {
     /// different point. JavaScript files are omitted: whether one is emitted depends on `outDir`.
     /// tsgo emits all the files and then checks them. Here it is done file by file.
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
+        self.cached_by_emit.clear();
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let (options, module) = (&files.options, files.module(file));
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
@@ -286,6 +354,20 @@ impl Checker<'_, '_> {
         // Of two that start at the same position, the outer was created last.
         accesses.sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
+            let is_computed_name = matches!(
+                bound.expr_parent[e.idx()],
+                Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_)
+            );
+            if is_computed_name
+                && !is_parenthesized(hir, e)
+                && !is_erased(hir, hir.node(e))
+                && self.cached_type_of_expr(file, e).is_none()
+            {
+                self.cached_by_emit.push(e);
+            }
             self.type_of_expr(file, e);
         }
     }
@@ -1298,6 +1380,22 @@ impl Checker<'_, '_> {
         }
         true
     }
+}
+
+/// Whether `TypeEraserTransformer` drops something around `node`: what is ambient, a type, an
+/// overload, an abstract member. An accessor without a body that is not abstract gets a body.
+fn is_erased(hir: &hir::File, node: Node) -> bool {
+    let is_dropped = |around: Node| {
+        let is_abstract = hir.flags(around).contains(Flags::ABSTRACT);
+        match hir.fns.get(hir.function_of(around).idx()) {
+            Some(function) => {
+                matches!(function.body, FnBody::None)
+                    && (is_abstract || !matches!(function.kind, FnKind::Getter | FnKind::Setter))
+            }
+            None => is_abstract && matches!(hir.data(around), NodeData::Member(_)),
+        }
+    };
+    hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()
 }
 
 /// `(position, index)` for each of `positions`, sorted.

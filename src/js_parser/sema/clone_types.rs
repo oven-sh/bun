@@ -11,10 +11,10 @@ use bun_ast::Expr;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     Alias, Chain, Diagnostic, DiagnosticKind, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func,
-    IdList, Interface, Keyword, Mapped, Member, MemberId, MemberKind, Param, ParamId, PatElem,
-    PatElemId, PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind,
-    SpecifierUse, StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam,
-    TypeParamId,
+    IdList, ImportAttributesToken, Interface, Keyword, Mapped, Member, MemberId, MemberKind, Param,
+    ParamId, PatElem, PatElemId, PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span,
+    SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange, TupleElem, TupleMemberType,
+    TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
 };
 
 use super::builder::Builder;
@@ -71,6 +71,8 @@ impl Builder<'_> {
             .map(|element| {
                 let ts::TupleElement {
                     mut ty,
+                    written,
+                    member_type,
                     label,
                     is_optional,
                     mut is_rest,
@@ -78,6 +80,11 @@ impl Builder<'_> {
                     end,
                 } = *element;
                 let name = label.map_or(Atom::NONE, |label| self.identifier(&label, pos(loc)));
+                let written = match member_type {
+                    TupleMemberType::Plain => ty,
+                    _ => written,
+                };
+                let has_dots = is_rest;
                 if is_rest && is_optional && label.is_some() {
                     // `checkNamedTupleMember`: A tuple member cannot be both optional and rest.
                     self.file
@@ -88,9 +95,12 @@ impl Builder<'_> {
                 }
                 TupleElem {
                     ty,
+                    written,
+                    member_type,
                     name,
                     optional: is_optional,
                     rest: is_rest,
+                    has_dots,
                     start: pos(loc),
                     end: pos(end),
                 }
@@ -172,6 +182,11 @@ impl Builder<'_> {
         if let Some(attributes) = attributes {
             self.pending.push(PendingPart::ImportAttributes(attributes));
         }
+        let attributes = match (attributes, assert_keyword_loc) {
+            (None, _) => ImportAttributesToken::None,
+            (Some(_), None) => ImportAttributesToken::With,
+            (Some(_), Some(_)) => ImportAttributesToken::Assert,
+        };
         // `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type.
         // `checkImportType` still checks `T`, which is stored in `args` of a node without a
         // specifier. The type arguments are never checked.
@@ -184,6 +199,7 @@ impl Builder<'_> {
                 args: self.file.list(&[argument]),
                 is_typeof,
                 mode: ResolutionMode::None,
+                attributes,
             };
         }
         let spec = self.atoms.intern(specifier.0);
@@ -203,6 +219,7 @@ impl Builder<'_> {
             args: IdList::EMPTY,
             is_typeof,
             mode,
+            attributes,
         }
     }
 
@@ -848,6 +865,7 @@ impl Builder<'_> {
         }
         for element in copies!(tuple_elems) {
             id!(element.ty, types);
+            id!(element.written, types);
         }
         for expr in copies!(exprs) {
             if let ExprKind::Dot { obj, .. } = &mut expr.kind {

@@ -631,7 +631,7 @@ impl Checker<'_, '_> {
 
     /// `IsEffectiveExternalModule`. `GetEmitModuleDetectionKind`: from `node16` on every file is a
     /// module. A `moduleDetection` option that overrides this is not stored.
-    fn is_effective_external_module(&self, file: FileId) -> bool {
+    pub(super) fn is_effective_external_module(&self, file: FileId) -> bool {
         self.files().module(file).is_module() || self.p.files.options.module.is_node()
     }
 
@@ -738,6 +738,7 @@ impl Checker<'_, '_> {
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
+                    || d.by_emit
                     || d.code == 1141
                     || is_binder_diagnostic(d.code)
                     || hir.diagnostics.iter().any(|parsed| {

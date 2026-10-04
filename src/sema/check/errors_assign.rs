@@ -21,9 +21,12 @@ fn unwrap_unary_tuples(
 ) -> (TupleElem, TupleElem) {
     let plain = |ty: TypeNodeId| TupleElem {
         ty,
+        written: ty,
+        member_type: TupleMemberType::Plain,
         name: Atom::NONE,
         optional: false,
         rest: false,
+        has_dots: false,
         start: hir[ty].pos,
         end: hir[ty].end,
     };

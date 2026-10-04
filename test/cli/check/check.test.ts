@@ -13568,7 +13568,9 @@ describe.concurrent("--check", () => {
     cases.forEach((text, index) => add(`c${index}`, text));
 
     // Valid programs from TypeScript's tests, each damaged in one place. The damage is the same in every run.
-    const bundle = readFileSync(join(import.meta.dir, "typescript-go", "bundle.txt"));
+    const bundle = Buffer.from(
+      Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
+    );
     const entries: [path: string, start: number, length: number][] = [];
     for (let at = 0; at < bundle.length; ) {
       const end = bundle.indexOf(10, at);

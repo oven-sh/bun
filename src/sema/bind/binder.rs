@@ -3531,7 +3531,11 @@ impl<'f, 's> Binder<'f, 's> {
                     // `isResolvedByTypeAlias` does not look through.
                     self.by_alias =
                         by_alias && (elem.name.is_some() || !elem.optional && !elem.rest);
-                    self.ty(elem.ty);
+                    // Of `ty` and `written`, the one that contains the other.
+                    self.ty(match elem.member_type {
+                        TupleMemberType::Optional => elem.ty,
+                        _ => elem.written,
+                    });
                 }
             }
             TypeNodeKind::Fn(func) => {

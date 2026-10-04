@@ -91,6 +91,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         import_call_type_args: _,
         import_attributes,
         specifier_expressions,
+        exports_from_expressions: _,
         has_parse_diagnostics,
         parens,
         jsx_expressions,
@@ -1499,12 +1500,13 @@ impl Dump<'_, '_> {
                 args,
                 is_typeof,
                 mode,
+                attributes,
             } => {
                 put!(
                     self,
                     depth,
                     label,
-                    "{head} spec={} name={} is_typeof={is_typeof} mode={mode:?}",
+                    "{head} spec={} name={} is_typeof={is_typeof} mode={mode:?} attributes={attributes:?}",
                     self.q(spec),
                     self.entity_name(name)
                 );
@@ -1556,9 +1558,12 @@ impl Dump<'_, '_> {
     fn tuple_elem(&mut self, depth: usize, label: &str, id: TupleElemId) {
         let TupleElem {
             ty,
+            written,
+            member_type,
             name,
             optional,
             rest,
+            has_dots,
             start,
             end,
         } = node!(self, depth, label, tuple_elems, id);
@@ -1566,10 +1571,13 @@ impl Dump<'_, '_> {
             self,
             depth,
             label,
-            "TupleElem name={} optional={optional} rest={rest} start={start} end={end}",
+            "TupleElem name={} optional={optional} rest={rest} has_dots={has_dots} member_type={member_type:?} start={start} end={end}",
             self.q(name)
         );
         self.ty(depth + 1, "ty", ty);
+        if written != ty {
+            self.ty(depth + 1, "written", written);
+        }
     }
 }
 

@@ -990,7 +990,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             }
             TypeNodeKind::Heritage(e) => self.one(e),
             TypeNodeKind::Import { name, args, .. } => {
-                self.import_attributes(file[t].pos, file[t].end)
+                self.one(file.attributes_of_import_type(t).unwrap_or(ExprId::NONE))
                     || self.one(name)
                     || self.list(args)
             }
@@ -1500,7 +1500,7 @@ impl<'s> File<'s> {
     }
 
     /// The `B` of `namespace A.B`, which is the body of `A` without a block.
-    fn nested_namespace(&self, m: ModuleId) -> Option<StmtId> {
+    pub fn nested_namespace(&self, m: ModuleId) -> Option<StmtId> {
         let mut body = self.ids(self[m].body);
         match (body.next(), body.next()) {
             (Some(only), None) if is_nested_namespace(self, only) => Some(only),
@@ -2792,6 +2792,8 @@ impl File<'_> {
                 self.expression(parent) == node
                     && !self.is_part_of_type_expression_with_type_arguments(parent)
             }
+            // `Class::other_extends`, which have no `ExpressionWithTypeArguments` around them.
+            HeritageClause => matches!(self.data(node), NodeData::Expr(_)),
             ShorthandPropertyAssignment => self.name(parent) != node,
             _ => self.is_expression_node(parent),
         }

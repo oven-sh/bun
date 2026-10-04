@@ -1,4 +1,4 @@
-// Collects TypeScript's compiler and conformance tests, and what typescript-go reports for them, in `bundle.txt`.
+// Collects TypeScript's compiler and conformance tests, and what typescript-go expects of them, in `bundle.zst`.
 //
 //   bun test/cli/check/typescript-go/sync.ts <tag, branch or commit of microsoft/typescript-go>
 //   bun test/cli/check/typescript-go/sync.ts <path to a checkout of it, with its submodule>
@@ -11,18 +11,18 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 const here = import.meta.dir;
-const bundle = join(here, "bundle.txt");
+const bundle = join(here, "bundle.zst");
 const [source, ...rest] = process.argv.slice(2);
 if (!source) {
   console.error("usage: bun sync.ts <tag, branch, commit or path> | --extract <part of a path> [directory]");
   process.exit(1);
 }
 
-// One file after the other: `=== <path> <length in bytes>\n`, the bytes, `\n`. Twenty thousand small files would be
-// slow to clone and to check out. It is not compressed, so that git stores only what changes from one sync to the next.
+// One file after the other: `=== <path> <length in bytes>\n`, the bytes, `\n`. Sixty thousand small files would be slow
+// to clone and to check out. The baselines of a test repeat its source, so 136 MB compress to 8 MB.
 if (source === "--extract") {
   const [part, into = mkdtempSync(join(tmpdir(), "typescript-go-"))] = rest;
-  const bytes = readFileSync(bundle);
+  const bytes = Buffer.from(Bun.zstdDecompressSync(readFileSync(bundle)));
   for (let at = 0; at < bytes.length; ) {
     const end = bytes.indexOf(10, at);
     const header = bytes.toString("utf8", at + 4, end);
@@ -47,8 +47,9 @@ const copied = [
   "testdata/tests/cases/conformance",
   "internal/bundled/libs",
 ];
-// Of a directory of baselines, the `.errors.txt` files. `names.txt` has the names of all of them, which say which
+// Of a directory of baselines, the kinds that are compared. `names.txt` has the names of all of them, which say which
 // configurations a test has, and that a test without an `.errors.txt` has no errors.
+const kinds = [".errors.txt", ".types", ".symbols", ".js"];
 const baselines = [
   "testdata/baselines/reference/submodule/compiler",
   "testdata/baselines/reference/submodule/conformance",
@@ -67,7 +68,7 @@ if (!existsSync(join(source, "testdata"))) {
     "/LICENSE",
     "/NOTICE.txt",
     ...copied.filter(path => !path.startsWith("_submodules")).map(path => `/${path}/`),
-    ...baselines.map(path => `/${path}/*.errors.txt`),
+    ...baselines.flatMap(path => kinds.map(kind => `/${path}/*${kind}`)),
   ];
   await $`git sparse-checkout set --no-cone ${wanted}`.cwd(checkout);
   await $`git checkout -q FETCH_HEAD`.cwd(checkout);
@@ -87,11 +88,15 @@ for (const path of copied) console.log(`${add(path)}`.padStart(6), path);
 for (const path of baselines) {
   // From the commit: the checkout may be sparse.
   const listed = await $`git ls-tree --name-only HEAD ${path + "/"}`.cwd(checkout).text();
-  const names = listed.split("\n").filter(Boolean).map(name => basename(name)).sort();
+  const names = listed
+    .split("\n")
+    .filter(Boolean)
+    .map(name => basename(name))
+    .sort();
   files.set(`${path}/names.txt`, Buffer.from(names.join("\n") + "\n"));
-  const errors = names.filter(name => name.endsWith(".errors.txt"));
-  for (const name of errors) files.set(`${path}/${name}`, readFileSync(join(checkout, path, name)));
-  console.log(`${errors.length}`.padStart(6), path);
+  const compared = names.filter(name => kinds.some(kind => name.endsWith(kind)));
+  for (const name of compared) files.set(`${path}/${name}`, readFileSync(join(checkout, path, name)));
+  console.log(`${compared.length}`.padStart(6), path);
 }
 
 const parts: Uint8Array[] = [];
@@ -99,7 +104,7 @@ for (const path of [...files.keys()].sort()) {
   const bytes = files.get(path)!;
   parts.push(Buffer.from(`=== /${path} ${bytes.length}\n`), bytes, Buffer.from("\n"));
 }
-writeFileSync(bundle, Buffer.concat(parts));
+writeFileSync(bundle, Bun.zstdCompressSync(Buffer.concat(parts), { level: 19 }));
 for (const name of ["LICENSE", "NOTICE.txt"]) writeFileSync(join(here, name), readFileSync(join(checkout, name)));
 
 const commit = async (dir: string) => (await $`git rev-parse HEAD`.cwd(dir).text()).trim();

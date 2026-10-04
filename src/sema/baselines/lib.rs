@@ -14,7 +14,6 @@ use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `srcFolder`
 const SRC: &str = "/.src";
@@ -70,12 +69,20 @@ const SKIPPED: &[&str] = &[
     "requireOfJsonFileWithModuleNodeResolutionEmitNone.ts",
 ];
 
+/// `skippedEmitTests`
+const SKIPPED_EMIT: &[&str] = &[
+    "filesEmittingIntoSameOutput.ts",
+    "jsFileCompilationWithJsEmitPathSameAsInput.ts",
+    "grammarErrors.ts",
+    "jsFileCompilationEmitBlockedCorrectly.ts",
+    "jsDeclarationsReexportAliasesEsModuleInterop.ts",
+    "jsFileCompilationWithoutJsExtensions.ts",
+    "typeOnlyMerge2.ts",
+    "typeOnlyMerge3.ts",
+];
+
 /// `harnessCommandLineOptions`, in lower case, and the other directives that are not compiler
 /// options.
-/// Written among the type lines: `Emit` adds an error to those of the check
-/// (`Checker::mark_linked_references_recursively`).
-const EMIT_ADDS_ERRORS: &str = "#emit adds errors\n";
-
 const HARNESS_OPTIONS: &[&str] = &[
     "usecasesensitivefilenames",
     "baselinefile",
@@ -539,26 +546,32 @@ fn the_one_value(option: &str, value: &str) -> String {
 
 /// `removeTestPathPrefixes`
 fn without_prefixes(text: &str, lib_dir: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    // Only ASCII is removed.
+    String::from_utf8(without_prefixes_in_bytes(text.as_bytes(), lib_dir)).unwrap()
+}
+
+fn without_prefixes_in_bytes(text: &[u8], lib_dir: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
     let lib = format!("{lib_dir}/");
     let mut rest = text;
-    'next: while !rest.is_empty() {
-        for prefix in ["/.ts/", "/.lib/", "/.src/", lib.as_str()] {
-            if let Some(after) = rest.strip_prefix(prefix) {
-                rest = after;
-                continue 'next;
+    'next: while let [first, after_first @ ..] = rest {
+        if *first == b'/' {
+            for prefix in ["/.ts/", "/.lib/", "/.src/", lib.as_str()] {
+                if let Some(after) = rest.strip_prefix(prefix.as_bytes()) {
+                    rest = after;
+                    continue 'next;
+                }
+            }
+            // `/c:/a` is `c:/a` to TypeScript.
+            if let [drive, b':', b'/', ..] = after_first
+                && drive.is_ascii_alphabetic()
+            {
+                rest = after_first;
+                continue;
             }
         }
-        // `/c:/a` is `c:/a` to TypeScript.
-        if let [b'/', drive, b':', b'/', ..] = rest.as_bytes()
-            && drive.is_ascii_alphabetic()
-        {
-            rest = &rest[1..];
-            continue;
-        }
-        let c = rest.chars().next().unwrap();
-        out.push(c);
-        rest = &rest[c.len_utf8()..];
+        out.push(*first);
+        rest = after_first;
     }
     out
 }
@@ -676,7 +689,7 @@ fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
             "{}{}{RESET}{GREY} TS{}: {RESET}{}",
             category_color(d.category),
             category_name(d.category),
-            d.code,
+            d.code as i32,
             text(&d.text)
         ));
         // `File_appears_to_be_binary`
@@ -767,7 +780,7 @@ fn render(
         line.push_str(&format!(
             "{} TS{}: {}\n",
             category_name(d.category),
-            d.code,
+            d.code as i32,
             text(&d.text)
         ));
         out.extend_from_slice(clean(&line).as_bytes());
@@ -783,7 +796,12 @@ fn render(
         for line in clean(&text(&d.text)).split('\n').filter(|l| !l.is_empty()) {
             new_line(out);
             out.extend_from_slice(
-                format!("!!! {} TS{}: {line}", category_name(d.category), d.code).as_bytes(),
+                format!(
+                    "!!! {} TS{}: {line}",
+                    category_name(d.category),
+                    d.code as i32
+                )
+                .as_bytes(),
             );
         }
         for related in &d.related {
@@ -799,7 +817,7 @@ fn render(
             out.extend_from_slice(
                 format!(
                     "!!! related TS{}{location}: {}",
-                    related.code,
+                    related.code as i32,
                     text(&related.text)
                 )
                 .as_bytes(),
@@ -882,11 +900,181 @@ pub enum Level {
     All,
 }
 
+/// The baselines of a test other than `.errors.txt`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Types,
+    Symbols,
+    /// The `.js` baseline without the JavaScript in it.
+    Declarations,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Types, Kind::Symbols, Kind::Declarations];
+
+    fn extension(self) -> &'static str {
+        match self {
+            Kind::Types => "types",
+            Kind::Symbols => "symbols",
+            Kind::Declarations => "js",
+        }
+    }
+}
+
 pub struct Outcome {
     /// `compiler/foo(target=es2015)`
     pub name: String,
     pub level: Level,
     pub note: String,
+    /// The kinds that were compared, each with the first difference. `None`: the same, byte for
+    /// byte.
+    pub others: Vec<(Kind, Option<String>)>,
+}
+
+/// What `typeWriterWalker` finds in a unit of a test. Of each `typeWriterResult`: the line, the
+/// source text, and the type or the symbol.
+struct Walked {
+    /// `TestFile.UnitName`
+    name: String,
+    types: Vec<(usize, Vec<u8>, String)>,
+    symbols: Vec<(usize, Vec<u8>, String)>,
+}
+
+/// `codeLinesRegexp.Split`: `[\r\u2028\u2029]|\r?\n`. The first alternative that matches is taken,
+/// so `\r\n` is two separators.
+fn code_lines_of(content: &[u8]) -> Vec<&[u8]> {
+    let (mut lines, mut start, mut at) = (Vec::new(), 0, 0);
+    while at < content.len() {
+        let length = match content[at..] {
+            [b'\r' | b'\n', ..] => 1,
+            [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
+            _ => 0,
+        };
+        if length > 0 {
+            lines.push(&content[start..at]);
+            start = at + length;
+        }
+        at += length.max(1);
+    }
+    lines.push(&content[start..]);
+    lines
+}
+
+/// `generateBaseline`, `iterateBaseline`. `walked`: `allFiles`, each with its `TestFile.Content`.
+/// Empty: `baseline.NoContent`.
+fn type_or_symbol_baseline(
+    header: &str,
+    walked: &[(Walked, Vec<u8>)],
+    is_symbol_baseline: bool,
+    lib_dir: &str,
+) -> Vec<u8> {
+    let mut result = Vec::new();
+    for (walked, content) in walked {
+        let mut type_lines = [b"=== ", walked.name.as_bytes(), b" ===\r\n"].concat();
+        let code_lines = code_lines_of(content);
+        // `bracketLineRegex`: `^\s*[{|}]\s*$`
+        let is_bracket_line = |line: &[u8]| {
+            matches!(line.trim_ascii(), [b'{' | b'|' | b'}']) && !line.contains(&0x0B)
+        };
+        // `strings.TrimSpace(line) == ""`
+        let is_blank =
+            |line: &[u8]| str::from_utf8(line).is_ok_and(|it| it.chars().all(char::is_whitespace));
+        let follows_directly = |next: usize| {
+            (code_lines.get(next)).is_some_and(|it| is_bracket_line(it) || is_blank(it))
+        };
+        let results = match is_symbol_baseline {
+            true => &walked.symbols,
+            false => &walked.types,
+        };
+        let mut next_to_write = 0;
+        for (line, source_text, type_or_symbol) in results {
+            if next_to_write != line + 1 {
+                if next_to_write > 0 && !follows_directly(next_to_write) {
+                    type_lines.extend_from_slice(b"\r\n");
+                }
+                let lines = code_lines.get(next_to_write..=*line).unwrap_or_default();
+                type_lines.extend_from_slice(&lines.join(&b"\r\n"[..]));
+                type_lines.extend_from_slice(b"\r\n");
+            }
+            next_to_write = line + 1;
+            let written = [
+                b">",
+                &source_text[..],
+                b" : ",
+                type_or_symbol.as_bytes(),
+                b"\r\n",
+            ];
+            type_lines.extend_from_slice(&written.concat());
+        }
+        if next_to_write < code_lines.len() {
+            if !follows_directly(next_to_write) {
+                type_lines.extend_from_slice(b"\r\n");
+            }
+            type_lines.extend_from_slice(&code_lines[next_to_write..].join(&b"\r\n"[..]));
+        }
+        type_lines.extend_from_slice(b"\r\n");
+        result.extend_from_slice(&without_prefixes_in_bytes(&type_lines, lib_dir));
+    }
+    if result.is_empty() {
+        return result;
+    }
+    [b"//// [", header.as_bytes(), b"] ////\r\n\r\n", &result].concat()
+}
+
+/// `DoJSEmitBaseline` writes `tsCode`, the JavaScript files, the declaration files and what it has
+/// to say about the output. This is `baseline` from the first declaration file, without what it
+/// says about JavaScript files. `None`: `baseline` does not begin with `ts_code`.
+fn after_the_javascript<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]> {
+    use bstr::ByteSlice;
+    let js_code = baseline.strip_prefix(ts_code)?.strip_prefix(b"\r\n\r\n")?;
+    let about_them = [
+        &b"\r\n\r\n//// [DtsFileErrors]\r\n"[..],
+        b"\r\n\r\n!!!! File ",
+    ];
+    let end = (about_them.iter().filter_map(|it| js_code.find(it))).min();
+    let end = end.unwrap_or(js_code.len());
+    // `jsCode.WriteString("\r\n\r\n")` precedes the first one.
+    let first = js_code[..end].find_iter(b"\r\n\r\n//// [").find(|&at| {
+        let name = &js_code[at + 10..end];
+        let name = name
+            .find_byteset(b"]\r\n")
+            .map(|end| (&name[..end], &name[end..]));
+        name.is_some_and(|(name, rest)| {
+            rest.starts_with(b"]\r\n") && bun_sema::resolve::is_declaration_file_name(name)
+        })
+    });
+    // `compareResultFileSets` of the declaration files comes before that of the JavaScript files.
+    let about_javascript = js_code[end..].find_iter(b"\r\n\r\n!!!! File ").find(|&at| {
+        let name = &js_code[end + at + 14..];
+        let name = &name[..name.find_byte(b' ').unwrap_or(name.len())];
+        !bun_sema::resolve::is_declaration_file_name(name)
+    });
+    let last = about_javascript.map_or(js_code.len(), |at| end + at);
+    Some(&js_code[first.unwrap_or(end)..last])
+}
+
+/// Where `ours` and `expected` differ first.
+fn first_difference(ours: &[u8], expected: &[u8]) -> Option<String> {
+    if ours == expected {
+        return None;
+    }
+    let (mut ours, mut expected) = (ours.split(|&b| b == b'\n'), expected.split(|&b| b == b'\n'));
+    let mut line = 1;
+    loop {
+        let (a, b) = (ours.next(), expected.next());
+        if a != b || a.is_none() {
+            let shown = |it: Option<&[u8]>| match it {
+                Some(it) => format!("{:?}", bstr::BStr::new(&it[..it.len().min(160)])),
+                None => "the end".to_owned(),
+            };
+            return Some(format!(
+                "line {line}: expected {}, got {}",
+                shown(b),
+                shown(a)
+            ));
+        }
+        line += 1;
+    }
 }
 
 /// The lines before the first empty line: one error each, with its elaboration below it.
@@ -909,113 +1097,47 @@ fn heads(top: &str) -> Vec<String> {
     heads
 }
 
-/// `compileFilesWithHost` compiles twice, and reports TS-1 where emit has added errors: "such an
-/// error may not be reflected on the command line or in the editor". With that removed, the
-/// remainder is the pre-emit diagnostics.
-fn without_errors_added_by_emit(text: &str) -> String {
-    if !text.contains("error TS-1: ") {
-        return text.to_owned();
+/// The end of `compileFilesWithHost`: the errors of `postProgram`, which has emitted before it is
+/// checked. If `preProgram`, which is only checked, has more or fewer, the shorter list and TS-1.
+fn errors_of_both_programs(pre: Report, mut post: Report) -> Report {
+    let (before, after) = (pre.diagnostics.len(), post.diagnostics.len());
+    if before == after {
+        return post;
     }
-    // All pre-emit diagnostics are listed: none is common to both lists.
-    if let Some((before, after)) = counts_around_emit(text)
-        && before > after
-        && listed_under_the_mismatch(text).len() >= before
-    {
-        return String::new();
-    }
-    let mut lines: Vec<Cow<'_, str>> = Vec::new();
-    // With `pretty`, its entry in the top section extends to the next line that is not indented.
-    let (mut is_pretty, mut is_in_it_on_top, mut is_in_it) = (false, false, false);
-    for line in text.split('\n') {
-        if line.starts_with("error TS-1: ") {
-            continue;
-        }
-        if line.starts_with("\u{1b}[91merror\u{1b}[0m\u{1b}[90m TS-1: ") {
-            (is_pretty, is_in_it_on_top) = (true, true);
-            continue;
-        }
-        if is_in_it_on_top && (line.is_empty() || line.starts_with(' ')) {
-            continue;
-        }
-        is_in_it_on_top = false;
-        if line.starts_with("!!! error TS-1: ") {
-            is_in_it = true;
-            continue;
-        }
-        if is_in_it && line.starts_with("!!! related ") {
-            continue;
-        }
-        is_in_it = false;
-        // `WriteErrorSummaryText` counts it.
-        let counted = line
-            .strip_prefix("Found ")
-            .filter(|_| is_pretty)
-            .and_then(|rest| rest.split_once(" errors"))
-            .and_then(|(count, rest)| Some((count.parse::<usize>().ok()?, rest)));
-        lines.push(match counted {
-            Some((2, rest)) => Cow::Owned(
-                match rest.strip_prefix(" in the same file, starting at: ") {
-                    Some(place) => format!("Found 1 error in {place}"),
-                    None => "Found 1 error.".to_owned(),
-                },
-            ),
-            Some((count, rest)) if count > 2 => {
-                Cow::Owned(format!("Found {} errors{rest}", count - 1))
-            }
-            _ => Cow::Borrowed(line),
-        });
-    }
-    let left = lines.join("\n");
-    if heads(top_of(&left)).is_empty() {
-        String::new()
-    } else {
-        left
-    }
-}
-
-/// The numbers in `Pre-emit (8) and post-emit (6) diagnostic counts do not match!`
-fn counts_around_emit(text: &str) -> Option<(usize, usize)> {
-    let (_, rest) = text.split_once("Pre-emit (")?;
-    let (before, rest) = rest.split_once(") and post-emit (")?;
-    let (after, _) = rest.split_once(')')?;
-    Some((before.parse().ok()?, after.parse().ok()?))
-}
-
-/// The entries listed under TS-1, each as the text after `!!! related TS`.
-fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
-    text.lines()
-        .skip_while(|line| !line.starts_with("!!! error TS-1: "))
-        .skip(1)
-        .map_while(|line| line.strip_prefix("!!! related TS"))
-        .filter(|listed| !listed.starts_with("-1:"))
-        .collect()
-}
-
-/// `compileFilesWithHost` uses the shorter of its two lists. Where emit has removed errors, that is
-/// the post-emit list, and the additional pre-emit errors are listed under TS-1.
-fn errors_removed_by_emit(text: &str) -> Vec<&str> {
-    match counts_around_emit(text) {
-        Some((before, after)) if before > after => listed_under_the_mismatch(text),
-        _ => Vec::new(),
-    }
-}
-
-/// `d` formatted as it would be listed there.
-fn as_listed(d: &Diagnostic, lib_dir: &str) -> String {
-    let path = text(&d.path);
-    let location = if path.is_empty() {
-        String::new()
-    } else if is_default_library(&path) {
-        format!(" {path}:--:--")
-    } else {
-        format!(" {path}:{}:{}", d.line, d.column)
+    // `NewCompilerDiagnostic(NewAdHocMessage(..))`
+    let ad_hoc = |text: String| Diagnostic {
+        path: Vec::new(),
+        start: 0,
+        end: 0,
+        line: 0,
+        column: 0,
+        end_line: 0,
+        end_column: 0,
+        code: -1i32 as u32,
+        category: Category::Error,
+        text: text.into_bytes(),
+        source: Vec::new(),
+        source_line: 0,
+        related: Vec::new(),
     };
-    format!(
-        "{}{}: {}",
-        d.code,
-        without_prefixes(&location, lib_dir),
-        text(&d.text).lines().next().unwrap_or("")
-    )
+    let (longer, mut shorter) = match before > after {
+        true => (pre.diagnostics, post.diagnostics),
+        false => (post.diagnostics, pre.diagnostics),
+    };
+    let mut diag = ad_hoc(format!(
+        "Pre-emit ({before}) and post-emit ({after}) diagnostic counts do not match! This can indicate that a semantic _error_ was added by the emit resolver - such an error may not be reflected on the command line or in the editor, but may be captured in a baseline here!"
+    ));
+    diag.related
+        .push(ad_hoc("The excess diagnostics are:".to_owned()));
+    // `CompareDiagnostics`
+    let key = |d: &Diagnostic| (d.path.clone(), d.start, d.end, d.code, d.text.clone());
+    let matched: Vec<_> = shorter.iter().map(key).collect();
+    diag.related
+        .extend(longer.into_iter().filter(|d| !matched.contains(&key(d))));
+    // It has no file and the least code.
+    shorter.insert(0, diag);
+    post.diagnostics = shorter;
+    post
 }
 
 fn without_related(text: &str) -> String {
@@ -1047,7 +1169,7 @@ pub struct Suite<'a> {
     pub name: &'a str,
     /// Location of the tests.
     pub cases: &'a str,
-    /// Location of the `.errors.txt` baselines.
+    /// Location of the baselines.
     pub baselines: &'a str,
     /// The names of all baselines of the suite, of every kind.
     pub names: &'a [String],
@@ -1062,16 +1184,13 @@ pub struct Setup<'a> {
     /// TypeScript's `tests/lib`.
     pub test_lib: &'a str,
     pub only: Option<&'a str>,
-    /// Where to write the output, if anywhere.
+    /// Where to write what differs from its baseline, if anywhere, and next to it what was
+    /// expected.
     pub out: Option<&'a str>,
-    /// Where to write the type at every expression and name of every test, if anywhere: to compare with `.types` baselines.
-    pub types_out: Option<&'a str>,
-    /// The same for the symbol at every name: to compare with `.symbols` baselines. Needs `types_out`.
-    pub symbols_out: Option<&'a str>,
-    /// Where to write the declaration files of every test that requests them, if anywhere: to
-    /// compare with the `.d.ts` sections of the `.js` baselines. Mutually exclusive with
-    /// `types_out`.
-    pub dts_out: Option<&'a str>,
+    /// Whether the `.types` and `.symbols` baselines are compared.
+    pub types_and_symbols: bool,
+    /// Whether the `.js` baselines are compared, without the JavaScript in them.
+    pub declarations: bool,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
@@ -1144,16 +1263,41 @@ fn is_unsupported(compiler: &[(Vec<u8>, Json)]) -> bool {
 }
 
 /// One test in one configuration. `None`: typescript-go does not run it.
+/// What `run_one` produces besides the errors.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Also {
+    Nothing,
+    TypesAndSymbols,
+    Declarations,
+}
+
+struct Ran {
+    report: Report,
+    /// The files that `.errors.txt` shows.
+    inputs: Vec<(String, Vec<u8>)>,
+    /// `allFiles` of `verifyTypesAndSymbols`, each with its `TestFile.Content`.
+    walked: Vec<(Walked, Vec<u8>)>,
+    /// `tsCode` of `DoJSEmitBaseline`, without the header.
+    ts_code: Vec<u8>,
+    /// `result.DTS`: the name and the text of each file.
+    declarations: Vec<(Vec<u8>, Vec<u8>)>,
+    /// `prepareDeclarationCompilationContext`: `declInputFiles` and `declOtherFiles`.
+    declaration_files: Option<(Vec<Unit>, Vec<Unit>)>,
+    /// Whether `DoJSEmitBaseline` compares the declaration files with those of `noCheck`.
+    repeats_without_checking: bool,
+    /// `compilerTest.hasNonDtsFiles`
+    has_non_dts_files: bool,
+}
+
 fn run_one(
     setup: &Setup,
     path: &str,
     code: &[u8],
     settings: &BTreeMap<String, String>,
     has_baselines: bool,
-    types: Option<&Mutex<String>>,
-    symbols: Option<&Mutex<String>>,
-    dts: Option<&Mutex<Vec<(u32, Vec<u8>)>>>,
-) -> Option<(Report, Vec<(String, Vec<u8>)>)> {
+    also: Also,
+    declaration_files: Option<&(Vec<Unit>, Vec<Unit>)>,
+) -> Option<Ran> {
     let Parsed { mut units, links } = units_of(code, path);
     let cwd = absolute(
         settings.get("currentdirectory").map_or("", |s| s.as_str()),
@@ -1256,6 +1400,11 @@ fn run_one(
         }
     }
 
+    // `compileDeclarationFiles`
+    if let Some((inputs, other_files)) = declaration_files {
+        (roots, others) = (inputs.iter().collect(), other_files.iter().collect());
+    }
+
     let mut host = Virtual::new(is_case_sensitive, mounted, setup.bundle);
     for unit in roots.iter().chain(&others) {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
@@ -1314,6 +1463,10 @@ fn run_one(
                 config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
             }
         };
+        // `compileDeclarationFiles` passes on `ConfigFile` and not `Errors`.
+        if declaration_files.is_some() {
+            project.errors.clear();
+        }
         project.files = files.clone();
         project.options.files = files.clone();
         // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
@@ -1330,93 +1483,46 @@ fn run_one(
         return None;
     }
 
-    // The types and symbols output of each file. An invalid task is retried, so a file can be visited twice: the last visit replaces the
-    // first, in place.
-    type Sections = Vec<(bun_sema::program::FileId, String, String)>;
+    // What is found in each file. An invalid task is retried, so a file can be visited twice: the
+    // last visit replaces the first, in place.
+    type Sections = Vec<(bun_sema::program::FileId, Vec<Walked>)>;
     let sections: Mutex<Sections> = Mutex::new(Vec::new());
-    // One line per location: unit, line, offset, source text without line breaks, type.
-    // `unit_text`: the text of the unit at `path`, when the unit is not `file` itself.
     let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
                       file: bun_sema::program::FileId,
-                      path: &str,
-                      unit_text: Option<&[u8]>| {
-        if types.is_none() {
-            return;
-        }
-        // The harness iterates over the units of the test, regardless of their names.
-        let mut units = roots.iter().chain(&others);
-        if is_default_library(path) && !units.any(|unit| absolute(&unit.name, &cwd) == path) {
-            return;
-        }
+                      path: &str| {
         let text = checker.hir(file).text.clone();
         let starts = compute_ecma_line_starts(&text);
-        let unit = without_prefixes(path, setup.lib_dir);
-        // The source is included, so that each entry of a baseline can be mapped to its line.
-        let mut lines = format!(
-            "#source\t{unit}\t{}\n",
-            String::from_utf8_lossy(unit_text.unwrap_or(&text))
-                .replace('\\', "\\\\")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t")
-        );
-        for found in checker.types_at_locations(file) {
-            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
+        let result = |start: u32, end: u32, type_or_symbol: String| {
+            let (start, end) = (start as usize, (end as usize).min(text.len()));
             // A missing identifier has no text.
-            if start > end {
-                continue;
-            }
+            let source_text = text.get(start..end)?;
             let line = starts.partition_point(|&s| s as usize <= start) - 1;
-            let source = String::from_utf8_lossy(&text[start..end])
-                .replace("\r\n", "")
-                .replace('\n', "");
-            let kind = format!("{:?}", found.kind);
-            let kind = kind.split('(').next().unwrap_or_default();
-            lines.push_str(&format!(
-                "{unit}\t{line}\t{start}\t{source}\t{}\t{kind}\n",
-                found.type_text
-            ));
-        }
-        if checker.mark_linked_references_recursively(file) {
-            lines.push_str(EMIT_ADDS_ERRORS);
-        }
-        let section_of =
-            |sections: &mut Sections| sections.iter().position(|it| it.0 == file).unwrap();
-        {
-            let mut sections = sections.lock().unwrap();
-            let at = section_of(&mut sections);
-            sections[at].1.push_str(&lines);
-        }
-        if symbols.is_none() {
-            return;
-        }
-        let mut lines = String::new();
-        for found in checker.symbols_at_locations(file) {
-            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
-            // A missing identifier has no text.
-            if start > end {
-                continue;
-            }
-            let line = starts.partition_point(|&s| s as usize <= start) - 1;
-            let source = String::from_utf8_lossy(&text[start..end])
-                .replace("\r\n", "")
-                .replace('\n', "");
-            lines.push_str(&format!(
-                "{unit}\t{line}\t{start}\t{source}\t{}\tsymbol\n",
-                found.symbol_text
-            ));
-        }
+            // `lineDelimiter.ReplaceAllString(result.sourceText, "")`
+            let source_text = bstr::ByteSlice::replace(source_text, "\r\n", "");
+            let source_text = bstr::ByteSlice::replace(&source_text[..], "\n", "");
+            Some((line, source_text, type_or_symbol))
+        };
+        let types = checker.types_at_locations(file).into_iter();
+        let types = types.filter_map(|it| result(it.start, it.end, it.type_text));
+        let types = types.collect();
+        let symbols = checker.symbols_at_locations(file).into_iter();
+        let symbols = symbols.filter_map(|it| result(it.start, it.end, it.symbol_text));
+        let walked = Walked {
+            name: path.to_owned(),
+            types,
+            symbols: symbols.collect(),
+        };
         let mut sections = sections.lock().unwrap();
-        let at = section_of(&mut sections);
-        sections[at].2.push_str(&lines);
+        let section = sections.iter_mut().find(|it| it.0 == file).unwrap();
+        section.1.push(walked);
     };
     let write_types = |checker: &mut bun_sema::check::Checker<'_, '_>,
                        file: bun_sema::program::FileId| {
         {
             let mut sections = sections.lock().unwrap();
             match sections.iter_mut().find(|it| it.0 == file) {
-                Some(section) => (section.1.clear(), section.2.clear()).0,
-                None => sections.push((file, String::new(), String::new())),
+                Some(section) => section.1.clear(),
+                None => sections.push((file, Vec::new())),
             }
         }
         let files = &checker.p.files;
@@ -1436,154 +1542,225 @@ fn run_one(
         // A later unit with the same name replaces the file. The harness walks the result of
         // `GetSourceFile` once for each of them, alongside the text of that unit.
         let units = roots.iter().chain(&others);
-        let of_this_name: Vec<_> = units
-            .filter(|unit| absolute(&unit.name, &cwd) == path)
-            .collect();
-        if of_this_name.len() > 1 {
-            for unit in of_this_name {
-                write_unit(checker, file, &path, Some(&unit.content[..]));
-            }
-        } else {
-            write_unit(checker, file, &path, None);
+        for _ in units.filter(|unit| absolute(&unit.name, &cwd) == path) {
+            write_unit(checker, file, &path);
         }
         for copy in copies {
-            write_unit(checker, file, &copy, host.read(copy.as_bytes()).as_deref());
+            write_unit(checker, file, &copy);
         }
     };
-    // `DoJSEmitBaseline`: `//// [name]`, followed by the emitted text of the file. The harness
-    // requests `\r\n`.
+    let is_true = |option: &[u8]| {
+        let mut all = project.raw_compiler_options.iter();
+        all.any(|it| it.0 == option && matches!(it.1, Json::Bool(true)))
+    };
+    let (declaration, emit_bom) = (is_true(b"declaration"), is_true(b"emitBOM"));
+    let (no_emit, no_check) = (project.options.no_emit, project.options.no_check);
+    let no_emit_on_error = project.options.no_emit_on_error;
+    let emits_declarations = project.options.emits_declarations;
+    let (out_dir, allow_js) = (project.options.out_dir.clone(), project.options.allow_js);
+    // Of each declaration file: the place of its source in the program, whether `getOutputPath`
+    // finds it, its name and its text.
+    let dts: Mutex<Vec<(u32, bool, Vec<u8>, Vec<u8>)>> = Mutex::new(Vec::new());
+    let common_source_directory: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     let write_dts = |checker: &mut bun_sema::check::Checker<'_, '_>,
                      file: bun_sema::program::FileId| {
-        if !checker.p.files.options.emits_declarations {
+        // `emitDeclarationFile`
+        if !emits_declarations || no_emit {
             return;
         }
-        let path = checker.p.files.modules[file.idx()].path.to_vec();
-        let options = &checker.p.files.options;
-        let output_dir = [&options.declaration_dir, &options.out_dir]
-            .into_iter()
-            .find(|dir| !dir.is_empty())
-            .map(|dir| dir.strip_suffix(b"/").unwrap_or(dir).to_vec());
-        // `GetCommonSourceDirectory`
-        let common = if !options.root_dir.is_empty() {
-            options.root_dir.clone()
-        } else if !options.config_path.is_empty() {
-            let end =
-                bun_core::strings::last_index_of_char(&options.config_path, b'/').unwrap_or(0);
-            options.config_path[..end].to_vec()
-        } else {
-            let sources = (roots.iter().chain(&others))
-                .map(|unit| absolute(&unit.name, &cwd).into_bytes())
-                .filter(|it| bun_sema::resolve::output_declaration_file_name(it, None).is_some());
-            let common = sources.reduce(|a, b| {
-                let same = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-                a[..same].to_vec()
-            });
-            let common = common.unwrap_or_default();
-            let end = bun_core::strings::last_index_of_char(&common, b'/').unwrap_or(0);
-            common[..end].to_vec()
-        };
-        let common = common.strip_suffix(b"/").unwrap_or(&common).to_vec();
-        let output = output_dir.as_ref().map(|dir| (&dir[..], &common[..]));
-        let (Some(written), Some(output)) = (
-            checker.emit_declaration_file(file),
-            bun_sema::resolve::output_declaration_file_name(&path, output)
-                .or_else(|| bun_sema::resolve::output_declaration_file_name(&path, None)),
-        ) else {
-            return;
-        };
-        // `fileOutput`, `removeTestPathPrefixes`
-        let name = if settings.get("fullemitpaths").is_some_and(|it| it == "true") {
-            output.strip_prefix(b"/.src/").unwrap_or(&output)
-        } else {
-            output.rsplit(|&b| b == b'/').next().unwrap_or_default()
-        };
-        let mut section = [b"//// [", name, b"]\r\n"].concat();
-        for line in written.split_inclusive(|&b| b == b'\n') {
-            match line.strip_suffix(b"\n") {
-                Some(line) => section.extend_from_slice(&[line, b"\r\n"].concat()),
-                None => section.extend_from_slice(line),
+        let files = &checker.p.files;
+        let (path, output) = (files.module(file).path, files.declaration_file_path(file));
+        let common = files.common_source_directory;
+        *common_source_directory.lock().unwrap() = common.map(<[u8]>::to_vec);
+        // `getOutputPath`, which looks in `outDir` for what is in `declarationDir`.
+        let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
+        let looked_up = match common.filter(|it| moves && !it.is_empty()) {
+            Some(common) => {
+                use bun_paths::{platform::Posix, resolve_path::relative_normalized};
+                let dir = match out_dir.is_empty() {
+                    true => cwd.as_bytes(),
+                    false => &out_dir[..],
+                };
+                join(dir, relative_normalized::<Posix, true>(common, path))
             }
-        }
+            None => path.to_vec(),
+        };
+        let looked_up = bun_sema::resolve::output_declaration_file_name(&looked_up, None);
         // In the order of the program.
-        let order = checker.p.files.order;
+        let order = files.order;
         let place = order
             .iter()
             .position(|&it| it == file)
             .unwrap_or(order.len());
-        let mut written = dts.unwrap().lock().unwrap();
+        let Some(written) = checker.emit_declaration_file(file) else {
+            return;
+        };
+        let mut text: Vec<u8> = match emit_bom {
+            true => "\u{feff}".into(),
+            false => Vec::new(),
+        };
+        // The harness requests `\r\n`.
+        for line in written.split_inclusive(|&b| b == b'\n') {
+            match line.strip_suffix(b"\n") {
+                Some(line) => text.extend_from_slice(&[line, b"\r\n"].concat()),
+                None => text.extend_from_slice(line),
+            }
+        }
+        let is_found = looked_up.as_ref() == Some(&output);
+        let mut written = dts.lock().unwrap();
         written.retain(|it| it.0 != place as u32);
-        written.push((place as u32, section));
+        written.push((place as u32, is_found, output, text));
     };
-    let closed_a_cycle = AtomicBool::new(false);
-    let note_cycle = |program: &bun_sema::check::Program| {
-        let closed = program.closed_a_cycle.load(Ordering::Relaxed);
-        closed_a_cycle.store(closed, Ordering::Relaxed);
+    type AfterFile<'a> =
+        &'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync);
+    let check = |project: Project, after_file: Option<AfterFile>| {
+        let request = Request {
+            compiler_options: &[],
+            cwd: cwd.as_bytes(),
+            project: None,
+            paths: &[],
+            threads: 1,
+            lib_dir: Some(setup.lib_dir.as_bytes()),
+            global_node_modules: None,
+            progress: None,
+            only: None,
+            order: 1,
+            digests: false,
+            plan_options: bun_sema_driver::PlanOptions::default(),
+            retains_everything: false,
+            stops_like_tsc: false,
+            uses_typescript_wording: true,
+            loaded: None,
+            checked: None,
+            declaration_file_emitted: None,
+            after_file,
+        };
+        let began = std::time::Instant::now();
+        bun_sema_driver::check_project(&host, project, &request, Report::default(), began)
     };
-    let request = Request {
-        compiler_options: &[],
-        cwd: cwd.as_bytes(),
-        project: None,
-        paths: &[],
-        threads: 1,
-        lib_dir: Some(setup.lib_dir.as_bytes()),
-        global_node_modules: None,
-        progress: None,
-        only: None,
-        order: 1,
-        digests: false,
-        plan_options: bun_sema_driver::PlanOptions::default(),
-        retains_everything: false,
-        stops_like_tsc: false,
-        uses_typescript_wording: true,
-        loaded: None,
-        checked: types
-            .is_some()
-            .then_some(&note_cycle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-        declaration_file_emitted: None,
-        after_file: match (types, dts) {
-            (Some(_), _) => Some(&write_types),
-            (None, Some(_)) => Some(&write_dts),
-            (None, None) => None,
-        },
-    };
-    let report = bun_sema_driver::check_project(
-        &host,
-        project,
-        &request,
-        Report::default(),
-        std::time::Instant::now(),
-    );
-    // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked.
-    // The types and the symbols are read from a second program, which has emitted first. The query
-    // order is observable only where a cycle is detected, so the second program is created only
-    // then.
-    if closed_a_cycle.load(Ordering::Relaxed) {
-        sections.lock().unwrap().clear();
-        let mut project = parsed_command_line();
-        project.options.emits_first = true;
-        bun_sema_driver::check_project(
-            &host,
-            project,
-            &request,
-            Report::default(),
-            std::time::Instant::now(),
-        );
-    }
-    for (_, types_of_file, symbols_of_file) in sections.lock().unwrap().iter() {
-        if let Some(types) = types {
-            types.lock().unwrap().push_str(types_of_file);
+    // `compileFilesWithHost`: `preProgram` is only checked. `postProgram` emits first, and the types
+    // and the symbols are read from it.
+    let report = match also {
+        // `result.DTS` is what `postProgram` emits.
+        Also::Declarations => {
+            let mut project = project;
+            project.options.emits_first = true;
+            check(project, Some(&write_dts))
         }
-        if let Some(symbols) = symbols {
-            symbols.lock().unwrap().push_str(symbols_of_file);
+        Also::Nothing | Also::TypesAndSymbols => {
+            let pre = check(project, None);
+            let mut project = parsed_command_line();
+            project.options.emits_first = true;
+            let write_types = (also == Also::TypesAndSymbols).then_some(&write_types as AfterFile);
+            errors_of_both_programs(pre, check(project, write_types))
+        }
+    };
+    let sections = sections.into_inner().unwrap();
+    let mut found: Vec<Walked> = sections.into_iter().flat_map(|it| it.1).collect();
+    let mut walked = Vec::new();
+    for unit in roots.iter().chain(&others) {
+        let name = absolute(&unit.name, &cwd);
+        // `program.GetSourceFile(f.UnitName) != nil`
+        if let Some(at) = found.iter().position(|it| it.name == name) {
+            walked.push((found.remove(at), unit.content.clone()));
         }
     }
+    // `tsSources`
+    let sources: Vec<Vec<u8>> = (others.iter().chain(&roots))
+        .map(|unit| {
+            let name = unit.name.rsplit(['/', '\\']).next().unwrap_or_default();
+            [b"//// [", name.as_bytes(), b"]\r\n", &unit.content[..]].concat()
+        })
+        .collect();
+    let mut declarations = dts.into_inner().unwrap();
+    // `HandleNoEmitOnError`
+    if no_emit_on_error && !report.diagnostics.is_empty() {
+        declarations.clear();
+    }
+    // `IsEmitBlocked`: `blockEmittingOfFile` is called with the file that these name.
+    let blocked = report
+        .diagnostics
+        .iter()
+        .filter(|it| matches!(it.code, 5055 | 5056));
+    let blocked: Vec<&[u8]> = blocked
+        .filter_map(|it| it.text.split(|&b| b == b'\'').nth(1))
+        .collect();
+    declarations.retain(|it| !blocked.contains(&&it.2[..]));
+    // `newCompilationResult`: in the order of the inputs, then "any unhandled outputs, ordered by
+    // unit name".
+    declarations.sort_by(|a, b| match (a.1, b.1) {
+        (true, true) => a.0.cmp(&b.0),
+        (false, false) => a.2.cmp(&b.2),
+        (a_is_found, _) => (!a_is_found).cmp(&a_is_found),
+    });
+    let declarations: Vec<(Vec<u8>, Vec<u8>)> =
+        declarations.into_iter().map(|it| (it.2, it.3)).collect();
+    // `prepareDeclarationCompilationContext`
+    let has_errors = !report.diagnostics.is_empty();
+    let declaration_files = (declaration && !has_errors && !declarations.is_empty()).then(|| {
+        let common = common_source_directory.into_inner().unwrap();
+        // `findResultCodeFile`
+        let find_result_code_file = |name: &str| {
+            let moved = match (&common, out_dir.is_empty()) {
+                (Some(common), false) => {
+                    // `EnsureTrailingDirectorySeparator`
+                    let common = format!("{}/", text(common).trim_end_matches('/'));
+                    join(&out_dir, name.replacen(&common, "", 1).as_bytes())
+                }
+                _ => name.as_bytes().to_vec(),
+            };
+            let name = bun_sema::resolve::output_declaration_file_name(&moved, None)?;
+            declarations.iter().find(|it| it.0 == name)
+        };
+        let mut lists: [Vec<Unit>; 2] = [Vec::new(), Vec::new()];
+        for (list, units) in [&roots, &others].into_iter().enumerate() {
+            // `addDtsFile`
+            for unit in units {
+                let name = absolute(&unit.name, &cwd);
+                let is_one_of =
+                    |extensions: &[&str]| extensions.iter().any(|it| name.ends_with(it));
+                if bun_sema::resolve::is_declaration_file_name(name.as_bytes())
+                    || name.ends_with(".json")
+                {
+                    lists[list].push(Unit {
+                        name,
+                        content: unit.content.clone(),
+                    });
+                } else if (is_one_of(&[".ts", ".tsx", ".mts", ".cts"])
+                    || allow_js && is_one_of(&[".js", ".jsx", ".mjs", ".cjs"]))
+                    && let Some((name, content)) = find_result_code_file(&name)
+                    && !lists
+                        .iter()
+                        .flatten()
+                        .any(|it| it.name.as_bytes() == &name[..])
+                {
+                    let without_mark = content.strip_prefix("\u{feff}".as_bytes());
+                    lists[list].push(Unit {
+                        name: text(name),
+                        content: without_mark.unwrap_or(content).to_vec(),
+                    });
+                }
+            }
+        }
+        let [inputs, other_files] = lists;
+        (inputs, other_files)
+    });
     let inputs = config_unit
         .iter()
         .chain(roots.iter().copied())
         .chain(others.iter().copied())
         .map(|unit| (absolute(&unit.name, &cwd), unit.content.clone()))
         .collect();
-    Some((report, inputs))
+    Some(Ran {
+        report,
+        inputs,
+        walked,
+        ts_code: sources.join(&b"\r\n"[..]),
+        declarations,
+        declaration_files,
+        repeats_without_checking: emits_declarations && !no_check && !no_emit,
+        has_non_dts_files: (roots.iter().chain(&others)).any(|it| !it.name.ends_with(".d.ts")),
+    })
 }
 
 /// Runs the tests of `suite`.
@@ -1663,87 +1840,196 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             format!("{stem}({configuration})")
                         };
                         let name = format!("{}/{configured}", suite.name);
-                        let types = setup.types_out.map(|_| Mutex::new(String::new()));
-                        let symbols = setup.symbols_out.map(|_| Mutex::new(String::new()));
-                        let dts = setup.dts_out.map(|_| Mutex::new(Vec::new()));
                         let _watched = Watched::new(&name);
-                        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            run_one(
-                                setup,
-                                path,
-                                &code,
-                                &settings,
-                                has_baselines,
-                                types.as_ref(),
-                                symbols.as_ref(),
-                                dts.as_ref(),
-                            )
-                        }));
-                        if let (Some(out), Some(dts), Ok(Some(_))) = (setup.dts_out, dts, &ran) {
-                            let mut sections = dts.into_inner().unwrap();
-                            sections.sort();
-                            let sections: Vec<Vec<u8>> =
-                                sections.into_iter().map(|it| it.1).collect();
-                            let dir = format!("{out}/{}", suite.name);
-                            let _ = std::fs::create_dir_all(&dir);
-                            let _ = std::fs::write(
-                                format!("{dir}/{configured}.dts"),
-                                sections.concat(),
-                            );
+                        let run_one = |also: Also,
+                                       settings: &BTreeMap<String, String>,
+                                       declaration_files: Option<&(Vec<Unit>, Vec<Unit>)>| {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                run_one(
+                                    setup,
+                                    path,
+                                    &code,
+                                    settings,
+                                    has_baselines,
+                                    also,
+                                    declaration_files,
+                                )
+                            }))
+                        };
+                        let also = match setup.types_and_symbols {
+                            true => Also::TypesAndSymbols,
+                            false => Also::Nothing,
+                        };
+                        let ran = run_one(also, &settings, None);
+                        // `tests/cases/compiler/a.ts`
+                        let header = path.rfind("/tests/cases/").map_or(&path[..], |at| &path[at + 1..]);
+                        let mut others: Vec<(Kind, Option<String>)> = Vec::new();
+                        let compare = |kind: Kind, ours: &[u8], expected: &[u8]| {
+                            let difference = first_difference(ours, expected);
+                            if let (Some(out), Some(_)) = (setup.out, &difference) {
+                                let dir = format!("{out}/{}", suite.name);
+                                let _ = std::fs::create_dir_all(&dir);
+                                let path = format!("{dir}/{configured}.{}", kind.extension());
+                                let _ = std::fs::write(&path, ours);
+                                let _ = std::fs::write(format!("{path}.expected"), expected);
+                            }
+                            (kind, difference)
+                        };
+                        let baseline = |kind: Kind| {
+                            setup.read(&format!(
+                                "{}/{configured}.{}",
+                                suite.baselines,
+                                kind.extension()
+                            ))
+                        };
+                        let is_set = |option: &str| {
+                            (settings.get(option)).is_some_and(|it| it.eq_ignore_ascii_case("true"))
+                        };
+                        // `verifyTypesAndSymbols`
+                        if setup.types_and_symbols && !is_set("notypesandsymbols") {
+                            match &ran {
+                                Ok(Some(ran)) => {
+                                    // `typeWriterWalker.hadErrorBaseline`: the error type is printed
+                                    // with its intrinsic name only in a test without errors.
+                                    let name = match ran.report.diagnostics.is_empty() {
+                                        true => "error",
+                                        false => "any",
+                                    };
+                                    let walked: Vec<(Walked, Vec<u8>)> = (ran.walked.iter())
+                                        .map(|(walked, content)| {
+                                            let types = walked.types.iter().cloned().map(|mut it| {
+                                                if it.2 == bun_sema::check::type_writer::ERROR_TYPE_TEXT
+                                                {
+                                                    it.2 = name.to_owned();
+                                                }
+                                                it
+                                            });
+                                            let walked = Walked {
+                                                name: walked.name.clone(),
+                                                types: types.collect(),
+                                                symbols: walked.symbols.clone(),
+                                            };
+                                            (walked, content.clone())
+                                        })
+                                        .collect();
+                                    for kind in [Kind::Types, Kind::Symbols] {
+                                        let ours = type_or_symbol_baseline(
+                                            header,
+                                            &walked,
+                                            kind == Kind::Symbols,
+                                            setup.lib_dir,
+                                        );
+                                        let expected = baseline(kind).unwrap_or_default();
+                                        others.push(compare(kind, &ours, &expected));
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    for kind in [Kind::Types, Kind::Symbols] {
+                                        others.push((kind, Some("panicked".to_owned())));
+                                    }
+                                }
+                            }
                         }
-                        if let (Some(out), Some(symbols), Ok(Some(_))) =
-                            (setup.symbols_out, symbols, &ran)
-                        {
-                            let dir = format!("{out}/{}", suite.name);
-                            let _ = std::fs::create_dir_all(&dir);
-                            let _ = std::fs::write(
-                                format!("{dir}/{configured}.tsv"),
-                                symbols.into_inner().unwrap(),
-                            );
-                        }
-                        if let (Some(out), Some(types), Ok(Some((report, _)))) =
-                            (setup.types_out, types, &ran)
-                        {
-                            let mut lines = types.into_inner().unwrap();
-                            // `typeWriterWalker.hadErrorBaseline`: the error type is printed with
-                            // its intrinsic name only in a test without errors.
-                            // `compileFilesWithHost` adds an error, TS-1, where `Emit` has added
-                            // one.
-                            let had_error_baseline =
-                                !report.diagnostics.is_empty() || lines.contains(EMIT_ADDS_ERRORS);
-                            lines = lines.replace(EMIT_ADDS_ERRORS, "");
-                            let marked =
-                                format!("\t{}\t", bun_sema::check::type_writer::ERROR_TYPE_TEXT);
-                            let name = if had_error_baseline {
-                                "\tany\t"
-                            } else {
-                                "\terror\t"
-                            };
-                            lines = lines.replace(&marked, name);
-                            let dir = format!("{out}/{}", suite.name);
-                            let _ = std::fs::create_dir_all(&dir);
-                            let _ = std::fs::write(format!("{dir}/{configured}.tsv"), lines);
+                        // `len(result.Diagnostics) > 0`
+                        let has_errors =
+                            !matches!(&ran, Ok(Some(ran)) if ran.report.diagnostics.is_empty());
+                        // `verifyJavaScriptOutput`
+                        if setup.declarations && !SKIPPED_EMIT.contains(&base) {
+                            match run_one(Also::Declarations, &settings, None) {
+                                Ok(Some(ran)) if ran.has_non_dts_files => {
+                                    let ts_code =
+                                        [b"//// [", header.as_bytes(), b"] ////\r\n\r\n", &ran.ts_code]
+                                            .concat();
+                                    // `fileOutput`
+                                    let file_output = |(name, text): &(Vec<u8>, Vec<u8>)| {
+                                        let name = match is_set("fullemitpaths") {
+                                            true => without_prefixes_in_bytes(name, setup.lib_dir),
+                                            false => {
+                                                name.rsplit(|&b| b == b'/').next().unwrap().to_vec()
+                                            }
+                                        };
+                                        [b"//// [", &name[..], b"]\r\n", &text[..]].concat()
+                                    };
+                                    let mut ours = Vec::new();
+                                    if !ran.declarations.is_empty() {
+                                        ours.extend_from_slice(b"\r\n\r\n");
+                                        ours.extend(ran.declarations.iter().flat_map(file_output));
+                                    }
+                                    // `compileDeclarationFiles`
+                                    if let Some(files) = &ran.declaration_files
+                                        && !has_errors
+                                        && let Ok(Some(compiled)) =
+                                            run_one(Also::Nothing, &settings, Some(files))
+                                        && !compiled.report.diagnostics.is_empty()
+                                    {
+                                        let errors = render(
+                                            &compiled.report.diagnostics,
+                                            &compiled.inputs,
+                                            setup.lib_dir,
+                                            false,
+                                        );
+                                        ours.extend_from_slice(
+                                            b"\r\n\r\n//// [DtsFileErrors]\r\n\r\n\r\n",
+                                        );
+                                        ours.extend(bstr::ByteSlice::replace(&errors[..], "\n", "\r\n"));
+                                    }
+                                    // `compareResultFileSets(&withoutChecking.DTS, &result.DTS)`
+                                    let mut without_checking = settings.clone();
+                                    without_checking.insert("nocheck".to_owned(), "true".to_owned());
+                                    if ran.repeats_without_checking
+                                        && let Ok(Some(without_checking)) =
+                                            run_one(Also::Declarations, &without_checking, None)
+                                    {
+                                        for doc in &without_checking.declarations {
+                                            let mut originals = ran.declarations.iter();
+                                            let what: &[u8] = match originals.find(|it| it.0 == doc.0) {
+                                                None => b" missing from original emit, but present in noCheck emit\r\n",
+                                                Some(original) if original.1 != doc.1 => {
+                                                    b" differs from original emit in noCheck emit\r\n"
+                                                }
+                                                Some(_) => continue,
+                                            };
+                                            let name = without_prefixes_in_bytes(&doc.0, setup.lib_dir);
+                                            ours.extend_from_slice(
+                                                &[b"\r\n\r\n!!!! File ", &name[..], what].concat(),
+                                            );
+                                            ours.extend(file_output(doc));
+                                        }
+                                    }
+                                    others.push(match baseline(Kind::Declarations) {
+                                        // `baseline.NoContent`
+                                        None => compare(Kind::Declarations, &ours, b""),
+                                        Some(expected) => match after_the_javascript(&expected, &ts_code)
+                                        {
+                                            Some(expected) => {
+                                                compare(Kind::Declarations, &ours, expected)
+                                            }
+                                            None => compare(Kind::Declarations, &ts_code, &expected),
+                                        },
+                                    });
+                                }
+                                Ok(_) => {}
+                                Err(_) => {
+                                    others.push((Kind::Declarations, Some("panicked".to_owned())))
+                                }
+                            }
                         }
                         let outcome = match ran {
                             Err(_) => Outcome {
                                 name,
                                 level: Level::Broken,
                                 note: "panicked".to_owned(),
+                                others,
                             },
                             Ok(None) => continue,
-                            Ok(Some((mut report, inputs))) => {
+                            Ok(Some(Ran { report, inputs, .. })) => {
                                 let expected = setup
                                     .read(&format!("{}/{configured}.errors.txt", suite.baselines))
                                     .map(|bytes| {
                                         String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
                                     })
                                     .unwrap_or_default();
-                                let removed = errors_removed_by_emit(&expected);
-                                if !removed.is_empty() {
-                                    report.diagnostics.retain(|d| {
-                                        !removed.contains(&as_listed(d, setup.lib_dir).as_str())
-                                    });
-                                }
                                 let ours = if report.diagnostics.is_empty() {
                                     String::new()
                                 } else {
@@ -1757,7 +2043,6 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     ))
                                     .into_owned()
                                 };
-                                let expected = without_errors_added_by_emit(&expected);
                                 let level = level_of(&ours, &expected);
                                 if let Some(out) = setup.out
                                     && level != Level::All
@@ -1782,7 +2067,12 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 } else {
                                     String::new()
                                 };
-                                Outcome { name, level, note }
+                                Outcome {
+                                    name,
+                                    level,
+                                    note,
+                                    others,
+                                }
                             }
                         };
                         outcomes.lock().unwrap().push(outcome);
@@ -1841,13 +2131,14 @@ impl Drop for Watched {
 }
 
 /// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n] [--threads=n] [--report=file]
-/// [--out=dir] [--types-out=dir] [--symbols-out=dir] [--dts-out=dir]
+/// [--out=dir] [--types-and-symbols] [--declarations]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
 /// With `--bundle`, the directories and the file with the names are paths in it.
 ///
-/// Prints how many tests match their `.errors.txt` baseline and how closely, and the first of
-/// those that do not. Returns whether all match byte for byte.
+/// Prints how many tests match their `.errors.txt` baseline and how closely, how many match each
+/// of the other baselines that are compared, and the first of those that do not. Returns whether
+/// all match byte for byte.
 pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     let args: Vec<String> = args
         .iter()
@@ -1862,8 +2153,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         eprintln!("--lib and --testlib are required");
         return false;
     };
-    let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
-    let (symbols_out, dts_out) = (flag("symbols-out"), flag("dts-out"));
+    let (only, out) = (flag("only"), flag("out"));
     // Declared before whatever reads from it, so it is dropped after.
     let bundle = match flag("bundle") {
         None => None,
@@ -1883,9 +2173,8 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         test_lib: &test_lib,
         only: only.as_deref(),
         out: out.as_deref(),
-        types_out: types_out.as_deref(),
-        symbols_out: symbols_out.as_deref(),
-        dts_out: dts_out.as_deref(),
+        types_and_symbols: args.iter().any(|it| it == "--types-and-symbols"),
+        declarations: args.iter().any(|it| it == "--declarations"),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
     };
@@ -1916,25 +2205,65 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         (Level::Codes, "the same errors at the same places"),
         (Level::Words, "and in the same words"),
         (Level::Spans, "and as long: all but the related information"),
-        (Level::All, "byte for byte"),
     ] {
         let n = at_least(level);
         println!("{n:>6} {:>6.2}%  {what}", percent(n));
     }
+    let n = at_least(Level::All);
+    println!(
+        "{n:>6} {:>6.2}%  of {} Errors, byte for byte",
+        percent(n),
+        all.len()
+    );
     let mut failed: Vec<&Outcome> = all.iter().filter(|o| o.level < Level::All).collect();
     failed.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     for outcome in failed.iter().take(50) {
-        println!("FAIL {:?} {} {}", outcome.level, outcome.name, outcome.note);
+        println!(
+            "FAIL Errors {} {:?} {}",
+            outcome.name, outcome.level, outcome.note
+        );
+    }
+    let mut are_the_others_the_same = true;
+    for kind in Kind::ALL {
+        let compared: Vec<(&Outcome, &Option<String>)> = (all.iter())
+            .filter_map(|o| Some((o, &o.others.iter().find(|it| it.0 == kind)?.1)))
+            .collect();
+        if compared.is_empty() {
+            continue;
+        }
+        let same = compared.iter().filter(|it| it.1.is_none()).count();
+        are_the_others_the_same &= same == compared.len();
+        println!(
+            "{same:>6} {:>6.2}%  of {} {kind:?}, byte for byte",
+            same as f64 * 100.0 / compared.len() as f64,
+            compared.len()
+        );
+        let differences = compared
+            .iter()
+            .filter_map(|it| Some((it.0, it.1.as_ref()?)));
+        for (outcome, difference) in differences.take(50) {
+            println!("FAIL {kind:?} {} {difference}", outcome.name);
+        }
     }
     if let Some(path) = flag("report") {
         let lines: Vec<String> = all
             .iter()
-            .map(|o| format!("{:?}\t{}\t{}", o.level, o.name, o.note))
+            .map(|o| {
+                let differs = o.others.iter().filter(|it| it.1.is_some());
+                let differs: Vec<String> = differs.map(|it| format!("{:?}", it.0)).collect();
+                format!(
+                    "{:?}\t{}\t{}\t{}",
+                    o.level,
+                    o.name,
+                    o.note,
+                    differs.join(",")
+                )
+            })
             .collect();
         if std::fs::write(&path, lines.join("\n") + "\n").is_err() {
             eprintln!("cannot write {path}");
             return false;
         }
     }
-    !all.is_empty() && failed.is_empty()
+    !all.is_empty() && failed.is_empty() && are_the_others_the_same
 }

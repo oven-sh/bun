@@ -615,6 +615,8 @@ impl<'s> Program<'s> {
             relation_too_deep: false,
             current_source_element: None,
             is_type_checked: false,
+            is_emitting: false,
+            cached_by_emit: Vec::new(),
             reported: Vec::new(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
@@ -1122,6 +1124,12 @@ pub struct Checker<'p, 's> {
     pub(super) current_source_element: Option<CurrentNode>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
     is_type_checked: bool,
+    /// `check_file` is at what `Emit` asks the checker before the check (`Options::emits_first`).
+    is_emitting: bool,
+    /// The computed names of `task.file` whose expression `GetConstantValue` was the first to
+    /// check: `checkExpressionCached` has assigned the `links.resolvedType` that
+    /// `checkComputedPropertyName` tests before it checks and reports.
+    cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
     reported: Vec<Reported>,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over

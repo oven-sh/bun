@@ -371,7 +371,8 @@ impl<'p, 's> Checker<'p, 's> {
         // visits them.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
-            self.reported.retain(|d| d.start < start || d.start >= end);
+            self.reported
+                .retain(|d| d.start < start || d.start >= end || d.by_emit);
         }
         let mut refused: Vec<DecoratorOwner> = Vec::new();
         for i in 0..hir.decorators.len() {
@@ -391,7 +392,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));
                 self.reported
-                    .retain(|d| d.start <= at_sign || d.start >= end);
+                    .retain(|d| d.start <= at_sign || d.start >= end || d.by_emit);
                 if !refused.contains(&owner) {
                     refused.push(owner);
                     let is_overload = matches!(owner, DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Method && matches!(hir[hir[m].func].body, FnBody::None));

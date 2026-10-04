@@ -1480,16 +1480,45 @@ impl Name {
     }
 }
 
+/// `Type.Kind` of a `NamedTupleMember`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TupleMemberType {
+    /// `name: T`
+    Plain,
+    /// `name: ...T`, a `RestType`, which is an error (`checkNamedTupleMember`).
+    Rest,
+    /// `name: T?`, an `OptionalType`, which is an error too.
+    Optional,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct TupleElem {
     pub ty: TypeNodeId,
+    /// `T` as it is written. It is `ty`, except in a `NamedTupleMember` that is an error, where `ty`
+    /// is what the element means: `T | undefined` for `name: T?`, and the element type of an array
+    /// type `T` for `name: ...T` and `...name?: T`.
+    pub written: TypeNodeId,
+    pub member_type: TupleMemberType,
     pub name: Atom,
     pub optional: bool,
     pub rest: bool,
+    /// It starts with `...`. `...name?: T` does and is not `rest` (`getTupleElementFlags`).
+    pub has_dots: bool,
     /// Position of its first token: the `...`, the name, or the type.
     pub start: u32,
     /// `node.End()`
     pub end: u32,
+}
+
+/// `Attributes` of an `ImportTypeNode`, by their `Token`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ImportAttributesToken {
+    /// `Attributes == nil`
+    None,
+    /// `{ with: { .. } }`, or any other token in place of `with`, which is an error.
+    With,
+    /// `{ assert: { .. } }`
+    Assert,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1573,6 +1602,8 @@ pub enum TypeNodeKind {
         args: IdList<TypeNodeId>,
         is_typeof: bool,
         mode: ResolutionMode,
+        /// See [`FileIn::attributes_of_import_type`].
+        attributes: ImportAttributesToken,
     },
     /// `x is T`, `asserts x`, `asserts x is T`, `this is T`. `param` is `this` for the last.
     Predicate {
@@ -1722,11 +1753,16 @@ pub struct FileIn<S: Storage> {
     pub deferred_import_calls: S::Few<(ExprId, u32)>,
     /// The specifier of each `import<T>(..)`, and the type arguments.
     pub import_call_type_args: S::Few<(ExprId, IdList<TypeNodeId>)>,
-    /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
+    /// `with { .. }` of imports, exports and import types, in source order: the start of `with` or
+    /// of the token in its place, and the attributes as an `ExprKind::Object`.
     pub import_attributes: S::Few<(u32, ExprId)>,
     /// The module specifiers of imports and exports that are not string literals. They are bound,
     /// and nothing in them is checked.
     pub specifier_expressions: S::Few<ExprId>,
+    /// The `ExportDeclaration`s among them. Nothing in one is bound or checked, so its statement is
+    /// `StmtKind::Empty`. This is what it would be with a string literal, and that expression. The
+    /// specifier is "".
+    pub exports_from_expressions: S::Few<(StmtId, StmtKind, ExprId)>,
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
     pub parens: S::List<(ExprId, u32, u32)>,
@@ -1888,6 +1924,29 @@ impl<S: Storage> FileIn<S> {
         written
             .find(|of| of.0 == specifier)
             .map_or(IdList::EMPTY, |of| of.1)
+    }
+    /// `Attributes` of the `ImportTypeNode` `node`, an `ExprKind::Object`: the first ones after its
+    /// argument.
+    pub fn attributes_of_import_type(&self, node: TypeNodeId) -> Option<ExprId> {
+        let TypeNodeKind::Import {
+            spec,
+            args,
+            attributes,
+            ..
+        } = self[node].kind
+        else {
+            return None;
+        };
+        if attributes == ImportAttributesToken::None {
+            return None;
+        }
+        // An argument that is not a string is in `args`.
+        let argument_end = match self.ids(args).next() {
+            Some(argument) if spec.is_none() => self[argument].end,
+            _ => self[node].pos,
+        };
+        let mut all = self.import_attributes.iter();
+        all.find(|of| of.0 > argument_end).map(|of| of.1)
     }
     /// Sets the kind of `stmt` to `kind`, and records `stmt` in the declaration it holds.
     pub fn set_stmt_kind(&mut self, stmt: StmtId, kind: StmtKind) {
@@ -2155,6 +2214,7 @@ impl FileBuilder {
             import_call_type_args: few_to_arena(self.import_call_type_args, arena),
             import_attributes: few_to_arena(self.import_attributes, arena),
             specifier_expressions: few_to_arena(self.specifier_expressions, arena),
+            exports_from_expressions: few_to_arena(self.exports_from_expressions, arena),
             parens: copy_to_arena(&mut self.parens, arena),
             jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
             jsx_pragmas: self.jsx_pragmas,

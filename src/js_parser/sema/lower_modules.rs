@@ -213,14 +213,22 @@ impl Lower<'_, '_> {
             }
             None => (Atom::NONE, ResolutionMode::None),
         };
+        // `checkExportDeclaration` stops at a specifier that is not a string.
+        let expression = match export.module {
+            Some(module) if spec.is_none() => {
+                let expressions = &self.b.file.specifier_expressions;
+                Some(match module.expression {
+                    Some(_) => expressions.last().copied().unwrap_or(ExprId::NONE),
+                    None => ExprId::NONE,
+                })
+            }
+            _ => None,
+        };
+        let spec = match expression {
+            Some(_) => known::empty,
+            None => spec,
+        };
         let specifiers = match export.clause {
-            // `checkExportDeclaration` stops at a specifier that is not a string.
-            ts::ExportClause::Star { .. } if spec.is_none() => {
-                return self.b.file.stmt(StmtKind::Empty, at);
-            }
-            ts::ExportClause::Named(_) if export.module.is_some() && spec.is_none() => {
-                return self.b.file.stmt(StmtKind::Empty, at);
-            }
             ts::ExportClause::Star {
                 star_loc,
                 alias,
@@ -228,15 +236,16 @@ impl Lower<'_, '_> {
             } => {
                 let kind = StmtKind::ExportStar {
                     spec,
-                    alias: alias.map_or(Atom::NONE, |alias| {
-                        self.b.identifier(&alias.text, pos(alias.loc))
+                    alias: alias.map_or(Atom::NONE, |alias| match expression {
+                        Some(_) => self.b.atom(&alias.text),
+                        None => self.b.identifier(&alias.text, pos(alias.loc)),
                     }),
                     type_only: export.is_type_only,
                     mode,
                     star_pos: pos(star_loc),
                     alias_pos: pos(alias_loc),
                 };
-                return self.b.file.stmt(kind, at);
+                return self.export_statement(kind, expression, at);
             }
             ts::ExportClause::Named(specifiers) => specifiers,
         };
@@ -250,7 +259,7 @@ impl Lower<'_, '_> {
                 name,
                 end,
             } = self.b.ts[specifier];
-            if is_type_only {
+            if is_type_only && expression.is_none() {
                 self.b
                     .js_error_at_range((pos(loc), pos(end)), 8006, b"export...type");
             }
@@ -274,7 +283,21 @@ impl Lower<'_, '_> {
             mode,
             stmt: StmtId::NONE,
         });
-        self.b.file.stmt(StmtKind::ExportNamed(declaration), at)
+        self.export_statement(StmtKind::ExportNamed(declaration), expression, at)
+    }
+
+    /// `expression`: what the `ExportDeclaration` has in place of a string literal, if it has
+    /// (`hir::File::exports_from_expressions`).
+    fn export_statement(&mut self, kind: StmtKind, expression: Option<ExprId>, at: u32) -> StmtId {
+        let Some(expression) = expression else {
+            return self.b.file.stmt(kind, at);
+        };
+        let statement = self.b.file.stmt(StmtKind::Empty, at);
+        self.b
+            .file
+            .exports_from_expressions
+            .push((statement, kind, expression));
+        statement
     }
 
     /// `NamespaceExportDeclaration`, which does not make the file a module.

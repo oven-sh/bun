@@ -322,6 +322,8 @@ pub struct Options {
     /// Each file is emitted before it is checked. Not a TypeScript option: its tests read types and
     /// symbols from such a program.
     pub emits_first: bool,
+    /// `GetCurrentDirectory`
+    pub current_directory: Vec<u8>,
     /// Where `lib.*.d.ts` are.
     pub lib_dir: Vec<u8>,
     /// The `N` of each `lib.N.d.ts` to start from: the entries of `compilerOptions.lib`, or the

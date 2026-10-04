@@ -459,6 +459,11 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .rev()
             .find(|r| r.0 == file && r.1 == e)?;
+        // `GetConstantValue` does check the access before what encloses it: the resolutions since
+        // then began with the message, and the second visit closes none of them.
+        if self.is_emitting {
+            return Some(TypeId::ERROR);
+        }
         // `getResolvedSignature`: a call hides the resolutions below it (`resolutionStart`).
         let after_call = self.stack[depth..]
             .iter()

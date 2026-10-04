@@ -4202,7 +4202,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The end of `getIterationTypesOfIterableWorker`: `ty` is not iterable, and `diags` becomes
     /// the related information of that error. tsgo defers it (`addDeferredDiagnostic`) so that
-    /// printing the type cannot cause a cycle: nothing is being resolved by then.
+    /// printing the type cannot cause a cycle: nothing is being resolved by then. Outside
+    /// `checkSourceFile` it is dropped (`saveDeferredDiagnostics`).
     fn report_type_not_iterable(
         &mut self,
         error_node: Option<Place>,
@@ -4211,7 +4212,9 @@ impl<'p, 's> Checker<'p, 's> {
         for_of: bool,
         diags: Vec<Reported>,
     ) {
-        if let Some(error_node) = error_node {
+        if let Some(error_node) = error_node
+            && !self.is_emitting
+        {
             let reprinting = std::mem::replace(&mut self.reprinting, true);
             let mut diagnostic = self.type_not_iterable_error(error_node, ty, allows_async, for_of);
             self.reprinting = reprinting;

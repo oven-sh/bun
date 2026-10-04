@@ -540,6 +540,14 @@ impl<'p, 's> Checker<'p, 's> {
             NodeData::PatElem(p) => of_pattern(hir[p].pat)?,
             _ => return None,
         };
+        // Every declaration of a `var` has the type of `symbol.ValueDeclaration`.
+        let symbol = bound.pat_symbol[pat.idx()];
+        if symbol.is_some() {
+            let symbol = self.files().sym(file, symbol);
+            if self.files().flags(symbol).intersects(SymFlags::VARIABLE) {
+                return Some(self.type_of_symbol(symbol));
+            }
+        }
         Some(self.type_of_pat(file, pat))
     }
 
@@ -1745,8 +1753,13 @@ impl<'p, 's> Checker<'p, 's> {
                         matches!(prop.source, PropSource::Literal(f, p) if f == file && p == element.prop)
                     })
                 });
-            // No element is marked optional.
-            let Some(target) = target.filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL))
+            // `e.Optional`: the `?` of a method or a property assignment.
+            let question = hir[element.prop].postfix_token;
+            let is_optional = matches!(hir[element.prop].kind, PropKind::Method | PropKind::Init)
+                && question != 0
+                && hir.text.get(question as usize) == Some(&b'?');
+            let Some(target) =
+                target.filter(|prop| prop.flags.contains(PropFlags::OPTIONAL) == is_optional)
             else {
                 if reports {
                     tx.inference_fallbacks.push(node);
@@ -1754,9 +1767,10 @@ impl<'p, 's> Checker<'p, 's> {
                 return false;
             };
             let prop_type = self.type_of_prop(target, mapper);
+            let prop_type = self.remove_missing_type(prop_type, is_optional);
             let is_same = match &element.kind {
                 PseudoElementKind::Property(pt) => {
-                    if self.iso_is_equivalent(tx, pt, prop_type, false, false) {
+                    if self.iso_is_equivalent(tx, pt, prop_type, is_optional, false) {
                         continue;
                     }
                     if reports {
@@ -1937,57 +1951,9 @@ impl<'p, 's> Checker<'p, 's> {
     // ─────────────────────────────
 
     /// `transformImportDeclaration`: 9026
-    pub(super) fn iso_transform_import(&mut self, tx: &mut Emit, s: StmtId, i: ImportId) {
-        let file = tx.file;
-        let (hir, files) = (self.hir(file), self.files());
-        let import = &hir[i];
-        if import.namespace.is_some() {
-            return;
-        }
-        if import.named.is_empty() {
-            // `import "mod"` and `import a from "mod"` have no list, `import {} from "mod"` has.
-            let after = self.skip_trivia_from(file, self.start_after_modifiers(file, s) + 6);
-            if import.default.is_some() || hir.text.get(after as usize) != Some(&b'{') {
-                return;
-            }
-        }
-        let mut is_visible = |decl: Decl| self.is_declaration_visible(file, decl);
-        if import.default.is_some() && is_visible(Decl::ImportDefault(i))
-            || import.named.iter().any(|x| is_visible(Decl::ImportSpec(x)))
-        {
-            return;
-        }
-        // `IsImportRequiredByAugmentation`
-        if !files.module(file).is_module() {
-            return;
-        }
-        let mode = files.mode_of_import(file, import.mode);
-        let Some(module) = files.module_of_specifier_as(file, import.spec, mode) else {
-            return;
-        };
-        let target = files
-            .decls_of(module)
-            .iter()
-            .find(|(_, decl)| matches!(decl, Decl::File))
-            .map(|&(of, _)| of);
-        let Some(target) = target.filter(|&target| target != file) else {
-            return;
-        };
-        // `file.Symbol` is the symbol the binder created. The exports an `export *` adds come from
-        // the table of a merged module, which holds the merged symbols themselves.
-        let bound = self.bound(file);
-        let is_required = bound
-            .table(bound.symbols[bound.file_symbol.idx()].exports)
-            .iter()
-            .any(|&(_, id)| {
-                let merged = files.sym(file, id);
-                merged != (Sym { file, id })
-                    && files.decls_of(merged).iter().any(|&(of, _)| of == target)
-            });
-        if is_required {
-            let reported = self.iso_diagnostic(file, self.hir(file).node(s), 9026);
-            tx.reported.push(reported);
-        }
+    pub(super) fn iso_transform_import(&self, tx: &mut Emit, s: StmtId) {
+        let reported = self.iso_diagnostic(tx.file, self.hir(tx.file).node(s), 9026);
+        tx.reported.push(reported);
     }
 
     /// `transformEnumDeclaration`: 9020

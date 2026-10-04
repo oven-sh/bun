@@ -53,7 +53,7 @@ it.skipIf(isASAN /* malloc is not mimalloc */)(
 
       // what needs no idle thread settles first, without going idle
       let before = purgeCalls();
-      for (let stable = 0; stable < 3; ) {
+      for (let stable = 0, tries = 0; stable < 3 && tries < 50; tries++) {
         spin(60);
         const now = purgeCalls();
         stable = now === before ? stable + 1 : 0;

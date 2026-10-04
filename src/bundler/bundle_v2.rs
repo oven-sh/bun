@@ -2517,10 +2517,11 @@ pub mod bv2_impl {
             };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
-            let mut sources = sources.iter().zip(loaders).filter_map(|(source, loader)| {
-                (loader.is_javascript_like_or_json() && source.path.is_file())
-                    .then(|| (source.path.text, source.contents()))
-            });
+            let mut sources = (sources.iter().zip(loaders))
+                .filter(|(source, loader)| {
+                    loader.is_javascript_like_or_json() && source.path.is_file()
+                })
+                .map(|(source, _)| (source.path.text, source.contents()));
             if type_check(
                 self.transpiler.fs().top_level_dir,
                 &self.transpiler.options.entry_points,

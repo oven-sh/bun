@@ -32,6 +32,7 @@ import {
   Socket,
   Stream,
 } from "node:net";
+import { constants } from "node:os";
 import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 
@@ -3541,4 +3542,57 @@ it.skipIf(isWindows || isMusl).each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+});
+
+// Node connects through the handle's connect()/connect6(), which interceptors
+// such as @mswjs/interceptors replace to take over the connection.
+// https://github.com/oven-sh/bun/issues/44551
+describe("a connect() replaced on the handle", () => {
+  it.each([
+    ["connect", { host: "127.0.0.1", port: 1 }, ["127.0.0.1", 1]],
+    ["connect6", { host: "::1", port: 1 }, ["::1", 1]],
+    ["connect", { path: join(socket_domain, "intercepted.sock") }, [join(socket_domain, "intercepted.sock")]],
+  ])("%s %o dispatches the connection", async (method, options, expected) => {
+    const socket = new Socket();
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ thisValue: unknown; req: any; args: unknown[] }>();
+      socket.on("error", reject);
+      socket.once("connectionAttempt", () => {
+        socket._handle[method] = function (req, ...args) {
+          resolve({ thisValue: this, req, args });
+          return 0;
+        };
+      });
+      socket.connect(options);
+      const { thisValue, req, args } = await promise;
+      expect(thisValue).toBe(socket._handle);
+      expect(args).toEqual(expected);
+
+      const connected = once(socket, "connect");
+      req.oncomplete(0, socket._handle, req, true, true);
+      await connected;
+      expect(socket.connecting).toBe(false);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("returning an error destroys the socket with it", async () => {
+    const socket = new Socket();
+    try {
+      socket.once("connectionAttempt", () => {
+        socket._handle.connect = () => -constants.errno.EACCES;
+      });
+      socket.connect({ host: "127.0.0.1", port: 1 });
+      const [error] = await once(socket, "error");
+      expect(error).toMatchObject({
+        syscall: "connect",
+        errno: -constants.errno.EACCES,
+        address: "127.0.0.1",
+        port: 1,
+      });
+    } finally {
+      socket.destroy();
+    }
+  });
 });

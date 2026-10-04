@@ -1705,6 +1705,12 @@ function traceConnectEnd(req) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
+  // Node connects through the handle (TCPWrap#connect/connect6), and
+  // interceptors like @mswjs/interceptors replace those on the handle.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1149-L1158
+  const handle = self._handle;
+  const handleConnect = addressType === 6 ? handle.connect6 : handle.connect;
+  if (typeof handleConnect === "function") return handleConnect.$call(handle, req, address, port);
   return kConnectDispatch(self, req, {
     hostname: address,
     port,
@@ -1726,6 +1732,10 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
+  // PipeWrap#connect; see kConnectTcp.
+  const handle = self._handle;
+  const handleConnect = handle.connect;
+  if (typeof handleConnect === "function") return handleConnect.$call(handle, req, address);
   return kConnectDispatch(self, req, {
     hostname: address,
     unix: address,

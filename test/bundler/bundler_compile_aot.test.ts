@@ -234,6 +234,41 @@ describe("bundler", () => {
         run: usesImage("6765\n42\n"),
       });
     }
+
+    itBundled("ImportReadInLoopOfClosureThatHoldsItsCaptures", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import { table } from "./shared";
+          function first(a: number) {
+            const x = a + 1;
+            return function second(b: number) {
+              const y = b + x;
+              return function third(c: number) {
+                const z = c + y;
+                return function sum(list: number[]) {
+                  let s = 0;
+                  for (let i = 0; i < list.length; i++)
+                    s += table[i] + list[i] + z;
+                  return s;
+                };
+              };
+            };
+          }
+          console.log(first(1)(2)(3)([1, 2, 3, 4]));
+          const lazy = await import("./lazy");
+          console.log(lazy.size());
+        `,
+        "/lazy.ts": /* js */ `
+          import { table } from "./shared";
+          export function size() { return table.length; }
+        `,
+        "/shared.ts": /* js */ `
+          export const table = [1, 2, 3, 4];
+        `,
+      },
+      run: usesImage("48\n4\n"),
+    });
   }
 
   test("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
@@ -1593,7 +1628,6 @@ describe("--compile-aot with a type table", () => {
     "useTypeTags=1",
     "useAOTTypedFields=1",
     `aotTypeTablePath=${join(root, "types.bin")}`,
-    `aotOverriddenMethodsPath=${join(root, "overridden.txt")}`,
   ].join(",");
 
   async function buildAndRun(options: string, env: Record<string, string>) {
@@ -1606,7 +1640,6 @@ describe("--compile-aot with a type table", () => {
         ...env,
         BUN_SOUND_TYPES_TAGS: join(root, "tags.bin"),
         BUN_SOUND_TYPES_ORACLE_ROOT: root,
-        BUN_AOT_OVERRIDDEN_METHODS: join(root, "overridden.txt"),
         BUN_AOT_OPTIONS: [typed, `aotRemarksPath=${path}`, options].filter(Boolean).join(","),
       },
       cwd: root,
@@ -1648,7 +1681,6 @@ describe("--compile-aot with a type table", () => {
       await build(outfile, ["--compile-aot", ...args], {
         BUN_SOUND_TYPES_TAGS: join(root, "tags.bin"),
         BUN_SOUND_TYPES_ORACLE_ROOT: root,
-        BUN_AOT_OVERRIDDEN_METHODS: join(root, "overridden.txt"),
         BUN_AOT_OPTIONS: `${typed},aotMapFilePath=${out(outfile + ".map")}`,
       });
       const functions = (await Bun.file(out(outfile + ".map")).text())

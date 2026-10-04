@@ -5002,7 +5002,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                    // Check if we can use the cached structure (same property count AND names,
                                                    // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
                                                    bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
-                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                       && cachedStructure->outOfLineCapacity() == 0 && !cachedStructure->isDictionary();
                                                    if (useCache) {
                                                        for (unsigned j = 0; j < propCount; j++) {
                                                            if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {

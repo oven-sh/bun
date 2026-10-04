@@ -618,13 +618,6 @@ impl BuildCommand {
         }
         let _ = client_transpiler;
 
-        // var env_loader = this_transpiler.env;
-
-        if ctx.debug.dump_environment_variables {
-            this_transpiler.dump_environment_variables();
-            return Ok(());
-        }
-
         let mut reachable_file_count: usize = 0;
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;

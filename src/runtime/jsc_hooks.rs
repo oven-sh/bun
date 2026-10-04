@@ -820,7 +820,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         };
 
         // SAFETY: per fn contract.
-        unsafe { (*vm).pending_internal_promise = Some(promise) };
+        unsafe { (*vm).set_pending_internal_promise(Some(promise)) };
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
@@ -837,7 +837,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
                     // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
+                    let pip = unsafe { &*vm }
+                        .pending_internal_promise()
+                        .unwrap_or(promise);
                     // SAFETY: `pip` is a live JSC heap cell (set just above or
                     // the protected `promise` fallback).
                     if unsafe { &*pip }.status() != PromiseStatus::Pending {
@@ -846,7 +848,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `el` is the live per-thread event loop.
                     unsafe { (*el).tick() };
                     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
+                    let pip = unsafe { &*vm }
+                        .pending_internal_promise()
+                        .unwrap_or(promise);
                     // SAFETY: `pip` is a live JSC heap cell (see above).
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
@@ -4211,11 +4215,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, plugin_runner_is_none, store_enabled) = unsafe {
+        let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).plugin_runner.is_none(),
+                (*jsc_vm).global().has_plugins(),
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
@@ -4226,7 +4230,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             && !lr.is_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
-            && plugin_runner_is_none
+            && !has_plugins
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -4433,8 +4437,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     // launder provenance through a shared ref and the `&mut *jsc_vm` /
     // transpiler writes below would be UB under Stacked Borrows.
     let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
-    // Note: spec asserted `jsc_vm.plugin_runner != null` then dropped the
-    // assert ("not required for build.module()") — keep parity (no assert).
 
     let specifier_slice = specifier_str.to_utf8();
     let specifier = specifier_slice.slice();

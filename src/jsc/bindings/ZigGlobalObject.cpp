@@ -3501,20 +3501,24 @@ extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character
 extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_t);
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
-extern "C" bool Bun__hasPluginRunner(void*);
+extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
+    if (!useImportMap)
+        RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
+
     WTF::String keyString;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(globalObject->bunVM())) {
+        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(globalObject)) {
             CString narrowed;
             std::span<const Latin1Character> chars;
             if (moduleName->is8Bit())
@@ -3556,29 +3560,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    // The new C++ loader calls resolve() on keys that moduleLoaderImportModule
-    // already resolved through plugin onResolve. If the key already carries a
-    // plugin namespace that has an onLoad handler, it is a fully-resolved
-    // virtual key — return it unchanged so we don't fall through to the
-    // filesystem resolver and fail with "Cannot find module".
-    //
-    // FIXME(module-loader): this short-circuit ignores the plugin's filter
-    // and bypasses any onResolve handler for static imports written directly
-    // as "ns:..." in source. The proper fix is for moduleLoaderImportModule
-    // to mark keys it already resolved so we can skip only those.
-    if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
-        if (auto colon = keyString.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyString[0]))) {
-            // colon == 1 with a leading ASCII letter is a Windows drive
-            // ("C:\\..."), never a plugin namespace.
-            auto ns = keyString.left(colon);
-            for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
-                if (registered == ns) {
-                    return Identifier::fromString(vm, keyString);
-                }
-            }
-        }
-    }
-
     ErrorableString res;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
@@ -3598,11 +3579,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     return Identifier::fromString(vm, resolved);
 }
 
-JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)
+JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool useImportMap)
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
-    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(zigGlobalObject->bunVM())) {
+    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
         auto* string = uncheckedDowncast<JSString>(key);
         if (!string->isRope()) {
             auto view = string->tryGetValue();
@@ -3618,7 +3599,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             }
         }
     }
-    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), b);
+    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3654,8 +3635,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
-    JSC::Identifier resolvedIdentifier;
-
     // Not `auto` (GCOwnedDataScope): importModule below can drive moduleLoaderFetch synchronously; see that function for why no scope may be live.
     WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3679,51 +3658,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
-    if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
-
-            auto result = loader->requestImportModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
-            if (scope.exception()) [[unlikely]] {
-                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-            }
-            return result;
-        }
-    }
-
-    {
-        if (moduleName.startsWith("file://"_s)) {
-            auto url = WTF::URL(moduleName);
-            if (url.isValid() && !url.isEmpty()) {
-                moduleName = url.fileSystemPath();
-            }
-        }
-
-        ErrorableString res;
-        BunString moduleNameZ = Bun::toString(moduleName);
-        BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
-        BunString queryZ = BunStringEmpty;
-        Zig__GlobalObject__resolve(&res, globalObject, &moduleNameZ, &sourceOriginZ, &queryZ);
-        RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
-        if (!res.success) [[unlikely]] {
-            throwException(scope, res.result.err, globalObject);
-            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        }
-        auto resolved = res.result.value.transferToWTFString();
-        auto query = queryZ.transferToWTFString();
-
-        if (query.isEmpty()) {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, resolved);
-        } else {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved, query));
-        }
-    }
-
-    // The C++ module loader now extracts `with.type` into a
-    // ScriptFetchParameters before calling this hook, so `parameters` is
-    // already the parsed RefPtr (or null). Just forward it.
-    auto result = loader->requestImportModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+    auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
+        JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
@@ -4107,7 +4043,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
             // Embedded modules import each other by final key, so most edges dedup without a resolve.
             Identifier key = request.m_specifier;
             if (!closure.records.contains(key.impl())) {
-                key = StandaloneGlobalObject::moduleLoaderResolve(globalObject, loader, identifierToJSValue(vm, request.m_specifier), identifierToJSValue(vm, closure.modules[index].key), nullptr, false);
+                key = StandaloneGlobalObject::moduleLoaderResolve(globalObject, loader, identifierToJSValue(vm, request.m_specifier), identifierToJSValue(vm, closure.modules[index].key), nullptr, /* useImportMap */ true);
                 RETURN_IF_EXCEPTION(scope, void());
             }
             resolved[i] = key;
@@ -4204,7 +4140,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
-    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPluginRunner(globalObject->bunVM()))
+    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPlugins(globalObject))
         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     JSString* keyJS = key.toString(globalObject);
@@ -4730,11 +4666,9 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
 }
 
-// Whether `value` is an object of a realm retired above; native code does not call into one.
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
 {
-    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    return object && Bun::isRetiredTestIsolationRealm(object->globalObject());
+    return Bun::isFromRetiredTestIsolationRealm(JSC::JSValue::decode(encodedValue));
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

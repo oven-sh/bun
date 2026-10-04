@@ -2630,7 +2630,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `resolveTypeReferenceName`
-    fn resolve_type_reference_name(
+    pub(super) fn resolve_type_reference_name(
         &mut self,
         file: FileId,
         scope: ScopeId,

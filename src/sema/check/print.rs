@@ -3721,15 +3721,6 @@ impl<'p> Printer<'_, 'p> {
         self.name_from_name_type(prop.name)
     }
 
-    /// `ObjectFlagsAnonymous`
-    fn is_anonymous_object_type(&self, ty: TypeId) -> bool {
-        match self.c.data(ty) {
-            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
-            TypeData::Fns { .. } | TypeData::Synth(_) => true,
-            _ => false,
-        }
-    }
-
     /// The links of the property `name` of the reverse mapped type `owner`.
     fn reverse_mapped_property(&mut self, owner: TypeId, name: Atom) -> ReverseMappedProperty {
         let (source, mapped) = match *self.c.data(owner) {
@@ -3757,7 +3748,7 @@ impl<'p> Printer<'_, 'p> {
             return true;
         }
         if let Some(last) = stack.last()
-            && !self.is_anonymous_object_type(last.property_type)
+            && !self.c.is_anonymous_object_type(last.property_type)
         {
             return true;
         }

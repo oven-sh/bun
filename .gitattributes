@@ -57,6 +57,9 @@ test/js/node/test/common linguist-vendored
 
 test/js/bun/css/files linguist-vendored
 
+# Every file in it is preceded by its length in bytes, and some are about line endings and byte order marks.
+test/cli/check/typescript-go/bundle.txt -text linguist-vendored
+
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 

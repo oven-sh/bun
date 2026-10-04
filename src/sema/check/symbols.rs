@@ -1712,7 +1712,15 @@ impl<'p> Checker<'p> {
                 self.enter(Query::Expr(file, e))
             }
         {
+            // The resolutions of the declaration itself are right below the frame of `e`.
+            let to = self.stack.len() - 1;
+            let mut below = self.stack[..to].iter();
+            let from = below
+                .rposition(|&q| !self.is_resolution(q))
+                .map_or(0, |i| i + 1);
+            self.quick_initializers.push((from, to));
             let quick = self.quick_type_of_expr(file, e);
+            self.quick_initializers.pop();
             let _ = self.leave(Query::Expr(file, e));
             if let Some(quick) = quick {
                 return quick;

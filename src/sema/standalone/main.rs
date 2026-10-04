@@ -510,62 +510,9 @@ fn main() {
             })
         }
         Some("baselines") => {
-            // baselines --lib=<dir> --testlib=<dir> [--only=substring] [--out=dir] [--report=file] [--threads=n]
-            //           <name>=<tests>=<baselines>=<file with the names of all the baselines> ..
-            use bun_sema_standalone::baseline::{Level, Setup, Suite, run};
-            let flag = |name: &str| {
-                args.iter()
-                    .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
-            };
-            let (lib_dir, test_lib) = (flag("lib").unwrap(), flag("testlib").unwrap());
-            let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
-            let (symbols_out, dts_out) = (flag("symbols-out"), flag("dts-out"));
-            let setup = Setup {
-                lib_dir: &lib_dir,
-                test_lib: &test_lib,
-                only: only.as_deref(),
-                out: out.as_deref(),
-                types_out: types_out.as_deref(),
-                symbols_out: symbols_out.as_deref(),
-                dts_out: dts_out.as_deref(),
-                threads: flag("threads").and_then(|t| t.parse().ok()).unwrap_or(8),
-            };
-            let mut all = Vec::new();
-            for spec in args[1..].iter().filter(|a| !a.starts_with("--")) {
-                let parts: Vec<&str> = spec.split('=').collect();
-                let names: Vec<String> = std::fs::read_to_string(parts[3])
-                    .unwrap()
-                    .lines()
-                    .map(str::to_owned)
-                    .collect();
-                all.extend(run(
-                    &Suite {
-                        name: parts[0],
-                        cases: parts[1],
-                        baselines: parts[2],
-                        names: &names,
-                    },
-                    &setup,
-                ));
-            }
-            let at_least = |level: Level| all.iter().filter(|o| o.level >= level).count();
-            let percent = |n: usize| n as f64 * 100.0 / all.len().max(1) as f64;
-            println!("{} tests (each configuration counts)", all.len());
-            for (level, what) in [
-                (Level::Codes, "the same errors at the same places"),
-                (Level::Words, "and in the same words"),
-                (Level::Spans, "and as long: all but the related information"),
-                (Level::All, "byte for byte"),
-            ] {
-                let n = at_least(level);
-                println!("{n:>6} {:>6.2}%  {what}", percent(n));
-            }
-            if let Some(path) = flag("report") {
-                let lines: Vec<String> = all
-                    .iter()
-                    .map(|o| format!("{:?}\t{}\t{}", o.level, o.name, o.note))
-                    .collect();
-                std::fs::write(path, lines.join("\n") + "\n").unwrap();
+            let rest: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
+            if !bun_sema_baselines::run_from_command_line(&rest) {
+                std::process::exit(1);
             }
         }
         _ => eprintln!("usage: bun-sema cli | baselines | hir"),

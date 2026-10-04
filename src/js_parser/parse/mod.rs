@@ -3204,7 +3204,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         p.ts_conditional_arrow_attempts.insert(insert_at, key << 1);
                     }
                 }
-                arrow => return arrow,
+                arrow => {
+                    p.release_parser_snapshot(&snapshot);
+                    return arrow;
+                }
             }
         }
         p.lexer.next()?;

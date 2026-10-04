@@ -4088,6 +4088,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
+        if !backtrack {
+            self.release_type_syntax_checkpoint(&noted);
+        }
 
         Ok(!backtrack)
     }
@@ -4133,6 +4136,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
+        if !backtrack {
+            self.release_type_syntax_checkpoint(&noted);
+        }
 
         Ok(result)
     }
@@ -4150,7 +4156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.lexer.restore(start);
         let snapshot = self.parser_snapshot();
         if trial(self) && self.lexer.start == end {
-            return;
+            return self.release_parser_snapshot(&snapshot);
         }
         // Error recovery, which is off while the log is disabled, took a different path. Keeps the
         // result of the first run, without errors.

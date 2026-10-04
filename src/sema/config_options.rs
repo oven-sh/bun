@@ -262,6 +262,11 @@ pub fn problems(
             });
             continue;
         }
+        // `null` unsets the value from a configuration that this one extends. `onPropertySet` looks
+        // no further, so an unknown option that is `null` is not reported.
+        if matches!(value, Json::Null) {
+            continue;
+        }
         let Some(kind) = kind_of(name) else {
             let suggestion = if as_typescript_does {
                 OPTIONS
@@ -282,10 +287,6 @@ pub fn problems(
             });
             continue;
         };
-        // `null` unsets the value from a configuration that this one extends.
-        if matches!(value, Json::Null) {
-            continue;
-        }
         let mut wrong = |takes: &[u8]| {
             out.push(Problem {
                 name: name.clone(),

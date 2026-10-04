@@ -156,7 +156,7 @@ impl Checker<'_> {
         if !has_import_attributes && let Some(options) = options {
             let at = (
                 file,
-                self.start_of(file, options),
+                self.error_start_of(file, options),
                 self.error_end_of(file, options),
             );
             return self.grammar_error_at(at, 1324, &[]);

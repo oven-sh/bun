@@ -341,15 +341,13 @@ impl Checker<'_> {
     }
 
     /// `isReadonlySymbol`: among the exports of a namespace or a module, constants and enum
-    /// members.
+    /// members. Not an alias of one.
     fn is_read_only(&self, prop: &Prop) -> bool {
         match prop.source {
             PropSource::Symbol(export) if !self.is_member_symbol(export) => {
-                (self.files().resolve_alias_if_needed(export)).is_some_and(|target| {
-                    let flags = self.files().flags(target);
-                    flags.contains(SymFlags::ENUM_MEMBER)
-                        || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
-                })
+                let flags = self.files().flags(export);
+                flags.contains(SymFlags::ENUM_MEMBER)
+                    || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
             }
             _ => prop.flags.contains(PropFlags::READONLY),
         }

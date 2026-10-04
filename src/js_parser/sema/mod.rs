@@ -583,6 +583,8 @@ pub(crate) struct TypeSyntax<'a> {
     pub(crate) last_object_type: Option<keep::ObjectTypeBody>,
     /// The index signature `parse_class_index_signature` parsed last.
     pub(crate) last_index_signature: Option<ts::Member>,
+    /// The results above as they were at each `Checkpoint` of a speculative parse in progress.
+    pub(crate) saved_results: Vec<notes::Results>,
     /// The index signatures of classes, which become HIR nodes together with the other members of
     /// their class.
     pub(crate) class_index_signatures: Vec<bun_sema::hir::Member>,
@@ -620,6 +622,7 @@ impl<'a> TypeSyntax<'a> {
             next_braces_are_interface_body: false,
             last_object_type: None,
             last_index_signature: None,
+            saved_results: Vec::new(),
             class_index_signatures: Vec::new(),
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),

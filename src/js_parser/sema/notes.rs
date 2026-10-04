@@ -60,6 +60,26 @@ pub(crate) struct Checkpoint {
     type_stack: u32,
     name_stack: u32,
     rows: Rows,
+    /// Index in `TypeSyntax::saved_results`. Not the results themselves: an ordinary build makes
+    /// and copies checkpoints too.
+    results: u32,
+}
+
+/// What `TypeSyntax` holds for the caller of the function that parsed it. A speculative parse
+/// overwrites it: in `A | ({ [P in B<C>]: D })` the lookahead for a function type after the `|`
+/// parses `<C>`, while `A` is the type parsed last.
+#[derive(Copy, Clone)]
+pub(crate) struct Results {
+    pending_type_arguments: Option<(u32, Loc)>,
+    last_type: ts::TypeId,
+    last_type_start: i32,
+    last_type_args: Option<ts::Types>,
+    last_binding: ts::PatternId,
+    last_params: Option<ts::Params>,
+    pending_fn_type_head: Option<super::keep::FnTypeHead>,
+    last_type_params: Option<ts::TypeParams>,
+    last_object_type: Option<super::keep::ObjectTypeBody>,
+    last_index_signature: Option<ts::Member>,
 }
 
 macro_rules! rows {
@@ -777,10 +797,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// `mark`: pass the result to `rewind_type_syntax` if the parse from this point on is
-    /// abandoned.
+    /// abandoned, and to `release_type_syntax_checkpoint` if it succeeds.
     #[inline]
-    pub(crate) fn type_syntax_checkpoint(&self) -> Checkpoint {
-        match &self.type_syntax {
+    pub(crate) fn type_syntax_checkpoint(&mut self) -> Checkpoint {
+        match &mut self.type_syntax {
             Some(syntax) if SEMA => Checkpoint {
                 nodes: syntax.notes.nodes.len() as u32,
                 notes: syntax.notes.notes.len() as u32,
@@ -791,8 +811,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 type_stack: syntax.type_stack.len() as u32,
                 name_stack: syntax.name_stack.len() as u32,
                 rows: syntax.rows(),
+                results: syntax.save_results(),
             },
             _ => Checkpoint::default(),
+        }
+    }
+
+    /// The speculative parse since `checkpoint` succeeded. Speculative parses nest, so what they
+    /// saved is a stack.
+    #[inline]
+    pub(crate) fn release_type_syntax_checkpoint(&mut self, checkpoint: &Checkpoint) {
+        if SEMA && let Some(syntax) = &mut self.type_syntax {
+            syntax.saved_results.truncate(checkpoint.results as usize);
         }
     }
 
@@ -807,6 +837,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 }
 
 impl TypeSyntax<'_> {
+    fn save_results(&mut self) -> u32 {
+        self.saved_results.push(Results {
+            pending_type_arguments: self.pending_type_arguments,
+            last_type: self.last_type,
+            last_type_start: self.last_type_start,
+            last_type_args: self.last_type_args,
+            last_binding: self.last_binding,
+            last_params: self.last_params,
+            pending_fn_type_head: self.pending_fn_type_head,
+            last_type_params: self.last_type_params,
+            last_object_type: self.last_object_type,
+            last_index_signature: self.last_index_signature,
+        });
+        self.saved_results.len() as u32 - 1
+    }
+
     /// The type that `parse_and_keep_type` parsed last. If it is unusable, an error type at its
     /// start.
     pub(super) fn last_type_or_error(&mut self) -> ts::TypeId {
@@ -830,7 +876,6 @@ impl TypeSyntax<'_> {
         }
         nodes.truncate(snapshot.nodes as usize);
         ranges.truncate(snapshot.ranges as usize);
-        self.pending_type_arguments = None;
         self.after_skipped.truncate(snapshot.after_skipped as usize);
         self.stray_decorators
             .truncate(snapshot.stray_decorators as usize);
@@ -839,43 +884,18 @@ impl TypeSyntax<'_> {
         self.type_stack.truncate(snapshot.type_stack as usize);
         self.name_stack.truncate(snapshot.name_stack as usize);
         self.rewind_rows(snapshot.rows);
-        // A result parsed last during the speculative parse is gone with its nodes. A result parsed
-        // before it remains the last parsed one.
-        let file = &self.b.file;
-        if self.last_type.is_some() && self.last_type.idx() >= file.types.len() {
-            self.last_type = ts::TypeId::NONE;
-        }
-        if self.last_binding.is_some() && self.last_binding.idx() >= file.pats.len() {
-            self.last_binding = ts::PatternId::NONE;
-        }
-        // An empty list still has the start index at which it was created.
-        macro_rules! remaining {
-            ($list:expr, $rows:expr) => {
-                match $list {
-                    Some(list) if list.is_empty() => Some(Default::default()),
-                    list => list.filter(|list| list.range().end <= $rows.len()),
-                }
-            };
-        }
-        self.last_type_args = remaining!(self.last_type_args, file.ids);
-        self.last_params = remaining!(self.last_params, file.params);
-        self.last_type_params = remaining!(self.last_type_params, file.type_params);
-        self.last_object_type = self.last_object_type.filter(|body| match body {
-            super::keep::ObjectTypeBody::Members(members) => {
-                members.range().end <= file.members.len()
-            }
-            super::keep::ObjectTypeBody::Mapped(mapped) => {
-                mapped.param.idx() < file.type_params.len()
-                    && mapped.members.range().end <= file.members.len()
-                    && (mapped.ty.is_none() || mapped.ty.idx() < file.types.len())
-            }
-        });
-        self.pending_fn_type_head = self
-            .pending_fn_type_head
-            .filter(|head| head.is_within(file.type_params.len()));
-        self.last_index_signature = self
-            .last_index_signature
-            .filter(|member| member.signature.idx() < file.fns.len());
+        let results = self.saved_results[snapshot.results as usize];
+        self.saved_results.truncate(snapshot.results as usize);
+        self.pending_type_arguments = results.pending_type_arguments;
+        self.last_type = results.last_type;
+        self.last_type_start = results.last_type_start;
+        self.last_type_args = results.last_type_args;
+        self.last_binding = results.last_binding;
+        self.last_params = results.last_params;
+        self.pending_fn_type_head = results.pending_fn_type_head;
+        self.last_type_params = results.last_type_params;
+        self.last_object_type = results.last_object_type;
+        self.last_index_signature = results.last_index_signature;
     }
 }
 

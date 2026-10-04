@@ -177,6 +177,19 @@ impl<'p> Checker<'p> {
         target: TypeId,
         around: MapperId,
     ) -> Vec<TypeId> {
+        self.infer_from_types_comparing(params, source, target, around, &mut |c, s, t| {
+            c.is_assignable(s, t)
+        })
+    }
+
+    pub(super) fn infer_from_types_comparing(
+        &mut self,
+        params: &[TypeId],
+        source: TypeId,
+        target: TypeId,
+        around: MapperId,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> Vec<TypeId> {
         let mut inference = Inference::for_params(params, None);
         inference.around = around;
         self.infer(
@@ -186,7 +199,7 @@ impl<'p> Checker<'p> {
             PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT,
         );
         (0..params.len())
-            .map(|i| self.get_inferred_type(&inference, i, false))
+            .map(|i| self.get_inferred_type_comparing(&inference, i, false, compare))
             .collect()
     }
 
@@ -927,7 +940,12 @@ impl<'p> Checker<'p> {
         let rank = |c: &mut Self, t: TypeId| -> Option<(u32, TypeId)> {
             match c.data(t) {
                 TypeData::Template { texts, types } => c
-                    .is_type_matched_by_template_literal_type(source, texts, types)
+                    .is_type_matched_by_template_literal_type(
+                        source,
+                        texts,
+                        types,
+                        &mut |c, s, t| c.is_assignable(s, t),
+                    )
                     .then_some((1, source)),
                 TypeData::StringMapping { kind, .. } => {
                     (c.string_mapping(*kind, source) == source).then_some((2, source))
@@ -2485,6 +2503,19 @@ impl<'p> Checker<'p> {
         index: usize,
         is_fixed: bool,
     ) -> TypeId {
+        self.get_inferred_type_comparing(n, index, is_fixed, &mut |c, s, t| c.is_assignable(s, t))
+    }
+
+    /// `compare`: `InferenceContext.compareTypes`, as "is not `TernaryFalse`". A comparison of two
+    /// signatures passes its own `isRelatedTo`, so that what is in progress and how deep it is
+    /// count for the constraint of an inferred type too. Otherwise `compareTypesAssignable`.
+    fn get_inferred_type_comparing(
+        &mut self,
+        n: &Inference,
+        index: usize,
+        is_fixed: bool,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> TypeId {
         let c = &n.candidates[index];
         if let Some(fixed) = c.fixed {
             return fixed;
@@ -2492,7 +2523,7 @@ impl<'p> Checker<'p> {
         if let Some(inferred) = c.inferred.get() {
             return inferred;
         }
-        let inferred = self.get_inferred_type_uncached(n, index, is_fixed);
+        let inferred = self.get_inferred_type_uncached(n, index, is_fixed, compare);
         n.candidates[index].inferred.set(Some(inferred));
         inferred
     }
@@ -2502,6 +2533,7 @@ impl<'p> Checker<'p> {
         n: &Inference,
         index: usize,
         is_fixed: bool,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> TypeId {
         let c = &n.candidates[index];
         let param = n.params[index];
@@ -2570,7 +2602,7 @@ impl<'p> Checker<'p> {
                         smallvec![TypeId::UNKNOWN; n.params.len() - index];
                     let backreference = self.mapper_from(&n.params[index..], &unknowns);
                     default = self.instantiate(default, backreference);
-                    let so_far = self.non_fixing_mapper(n, default);
+                    let so_far = self.non_fixing_mapper_comparing(n, default, compare);
                     default = self.instantiate(default, so_far);
                 }
                 inferred = Some(default);
@@ -2593,26 +2625,35 @@ impl<'p> Checker<'p> {
         let constraint = self.instantiate(constraint, outer);
         // Its constraint may refer back to it.
         c.inferred.set(Some(provisional));
-        let so_far = self.non_fixing_mapper(n, constraint);
+        let so_far = self.non_fixing_mapper_comparing(n, constraint, compare);
         let constraint = self.instantiate(constraint, so_far);
-        if let Some(ty) = inferred
-            && !self.is_assignable(ty, constraint)
-            && !self.satisfies_constraint_in_outer_context(n, ty, constraint)
-        {
-            // An inference from the contextual return type alone is speculative anyway: the part of
-            // it that satisfies the constraint is used.
-            let filtered = if c.priority == PRIORITY_RETURN {
-                self.filter(ty, |k, m| k.is_assignable(m, constraint))
-            } else {
-                TypeId::NEVER
-            };
-            inferred = (!filtered.is_never()).then_some(filtered);
+        if let Some(ty) = inferred {
+            let constraint_with_this = self.type_with_this_argument(constraint, ty);
+            if !compare(self, ty, constraint_with_this)
+                && !self.satisfies_constraint_in_outer_context(n, ty, constraint)
+            {
+                // An inference from the contextual return type alone is speculative anyway: the
+                // part of it that satisfies the constraint is used.
+                let filtered = if c.priority == PRIORITY_RETURN {
+                    self.filter(ty, |k, m| compare(k, m, constraint_with_this))
+                } else {
+                    TypeId::NEVER
+                };
+                inferred = (!filtered.is_never()).then_some(filtered);
+            }
         }
         match inferred {
             Some(ty) => ty,
             None => match fallback {
-                Some(fallback) if self.is_assignable(fallback, constraint) => fallback,
-                _ => constraint,
+                Some(fallback) => {
+                    let constraint_with_this = self.type_with_this_argument(constraint, fallback);
+                    if compare(self, fallback, constraint_with_this) {
+                        fallback
+                    } else {
+                        constraint
+                    }
+                }
+                None => constraint,
             },
         }
     }
@@ -2640,6 +2681,15 @@ impl<'p> Checker<'p> {
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.
     pub(super) fn non_fixing_mapper(&mut self, n: &Inference, ty: TypeId) -> MapperId {
+        self.non_fixing_mapper_comparing(n, ty, &mut |c, s, t| c.is_assignable(s, t))
+    }
+
+    fn non_fixing_mapper_comparing(
+        &mut self,
+        n: &Inference,
+        ty: TypeId,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> MapperId {
         if !self.has_type_variables(ty) {
             return MapperId::IDENTITY;
         }
@@ -2647,7 +2697,8 @@ impl<'p> Checker<'p> {
         let mentioned = self.params_mentioned_in(ty, &n.params);
         for i in 0..n.params.len() {
             if mentioned[i] {
-                pairs.push((n.params[i], self.get_inferred_type(n, i, false)));
+                let inferred = self.get_inferred_type_comparing(n, i, false, compare);
+                pairs.push((n.params[i], inferred));
             }
         }
         if pairs.is_empty() {
@@ -2701,8 +2752,16 @@ impl<'p> Checker<'p> {
 
     /// Maps every parameter to its current inference.
     pub(super) fn inference_mapper(&mut self, n: &Inference) -> MapperId {
+        self.inference_mapper_comparing(n, &mut |c, s, t| c.is_assignable(s, t))
+    }
+
+    pub(super) fn inference_mapper_comparing(
+        &mut self,
+        n: &Inference,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> MapperId {
         let types: SmallVec<[TypeId; 4]> = (0..n.params.len())
-            .map(|i| self.get_inferred_type(n, i, false))
+            .map(|i| self.get_inferred_type_comparing(n, i, false, compare))
             .collect();
         self.mapper_from(&n.params, &types)
     }
@@ -2779,7 +2838,7 @@ impl<'p> Checker<'p> {
                 TypeData::Synth(shape) => {
                     if all {
                         signatures.extend(shape.call.iter().chain(&shape.construct).copied());
-                    } else if !shape.call.is_empty() {
+                    } else if !shape.call.is_empty() || !shape.construct.is_empty() {
                         return true;
                     }
                     for p in &shape.props {

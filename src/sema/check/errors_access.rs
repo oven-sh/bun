@@ -1446,11 +1446,13 @@ impl Checker<'_> {
         if is_static {
             return true;
         }
-        // And only through an instance of that class, which a union is not (`hasBaseType`).
+        // And only through an instance of that class, which a union is not (`hasBaseType`). The
+        // caller passes `getApparentType`: of `this & X`, which `this is X` narrows `this` to, it
+        // is the intersection of the class and `X`.
         let through = if self.is_deferred(containing) {
             self.base_constraint(containing)
         } else {
-            containing
+            self.apparent_type_of_intersection(containing)
         };
         if self.has_base(through, enclosing_class, 0) {
             return true;

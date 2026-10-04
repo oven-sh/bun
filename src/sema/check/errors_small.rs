@@ -248,9 +248,19 @@ impl Checker<'_> {
             return false;
         }
         match self.hir(file)[e].kind {
-            ExprKind::Ident(name) => self
-                .symbol_of_identifier(file, e, name)
-                .is_some_and(|s| self.files().flags(s).intersects(SymFlags::ENUM)),
+            ExprKind::Ident(name) => {
+                // `declareModuleMember`: where an exported declaration is in scope its name
+                // resolves to a local symbol, which has `SymbolFlagsExportValue` and no other flag.
+                let bound = self.bound(file);
+                let local = bound.expr_symbol[e.idx()];
+                if local.is_some()
+                    && (bound.symbols[local.idx()].flags).contains(SymFlags::EXPORT_VALUE)
+                {
+                    return false;
+                }
+                self.symbol_of_identifier(file, e, name)
+                    .is_some_and(|s| self.files().flags(s).intersects(SymFlags::ENUM))
+            }
             ExprKind::Dot { obj, name, .. } => {
                 let of = self.type_of_expr(file, obj);
                 let of = self.apparent_type(of);

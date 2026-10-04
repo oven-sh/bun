@@ -272,7 +272,7 @@ impl Checker<'_> {
     fn span_of_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
         (
             file,
-            self.start_of(file, callee),
+            self.error_start_of(file, callee),
             self.error_end_of(file, callee),
         )
     }
@@ -852,7 +852,7 @@ impl Checker<'_> {
         {
             let type_params = self.sig_type_params(candidate);
             if let Ok(Some((index, actual, constraint))) =
-                self.failing_type_argument(candidate, &type_params, type_args)
+                self.failing_type_argument(candidate, &type_params, type_args, true)
             {
                 let node = hir.ids(list).nth(index).unwrap();
                 let end = self.end_of_type_node(file, node);
@@ -988,12 +988,14 @@ impl Checker<'_> {
     }
 
     /// `checkTypeArguments`: the first type argument that does not satisfy its constraint, and the
-    /// two types. `Err`: unknown.
+    /// two types. `Err`: unknown. `with_this_argument`: false for `checkTypeArgumentConstraints`,
+    /// which compares with the constraint as it is.
     pub(super) fn failing_type_argument(
         &mut self,
         sig: SigId,
         type_params: &[TypeId],
         type_args: &[TypeId],
+        with_this_argument: bool,
     ) -> Result<Option<(usize, TypeId, TypeId)>, ()> {
         let filled = self.fill_sig_type_args(sig, type_params, type_args);
         let mapper = self.mapper_from(type_params, &filled);
@@ -1006,6 +1008,11 @@ impl Checker<'_> {
             };
             let constraint = self.filled_in_around(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
+            let constraint = if with_this_argument {
+                self.type_with_this_argument(constraint, filled[i])
+            } else {
+                constraint
+            };
             if !self.is_assignable(filled[i], constraint) {
                 return Ok(Some((i, filled[i], constraint)));
             }
@@ -1053,7 +1060,7 @@ impl Checker<'_> {
                     let (start, end) = match (this_arg, decorator) {
                         (None, Some(written)) => (written.at_sign, written.end),
                         _ => (
-                            self.start_of(file, this_arg.unwrap_or(e)),
+                            self.error_start_of(file, this_arg.unwrap_or(e)),
                             self.error_end_of(file, this_arg.unwrap_or(e)),
                         ),
                     };
@@ -1105,7 +1112,7 @@ impl Checker<'_> {
                     (Some(written), _) => (written.start, written.end),
                     (None, Some(range)) => range,
                     (None, None) => (
-                        self.start_inside_parentheses(file, check_node),
+                        self.error_start_inside_parentheses(file, check_node),
                         self.error_end_inside_parentheses(file, check_node),
                     ),
                 };
@@ -1145,7 +1152,7 @@ impl Checker<'_> {
                                 match self.range_of_jsdoc_type_assertion(file, check_node) {
                                     Some(range) => range,
                                     None => (
-                                        self.start_inside_parentheses(file, check_node),
+                                        self.error_start_inside_parentheses(file, check_node),
                                         self.error_end_inside_parentheses(file, check_node),
                                     ),
                                 }
@@ -1216,7 +1223,10 @@ impl Checker<'_> {
                     ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
                         (name_pos, self.end_of_name_at(file, name_pos))
                     }
-                    _ => (self.start_of(file, callee), self.error_end_of(file, callee)),
+                    _ => (
+                        self.error_start_of(file, callee),
+                        self.error_end_of(file, callee),
+                    ),
                 }
             }
             _ => (

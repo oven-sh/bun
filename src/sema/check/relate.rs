@@ -4659,7 +4659,12 @@ impl<'p> Checker<'p> {
                     // to `string`.
                     self.report_unreliable(source);
                 }
-                if self.is_type_matched_by_template_literal_type(source, texts, types) {
+                if self.is_type_matched_by_template_literal_type(
+                    source,
+                    texts,
+                    types,
+                    &mut |c, s, t| c.is_related_to(r, s, t, REC_BOTH) != Ternary::FALSE,
+                ) {
                     return Ternary::TRUE;
                 }
             }
@@ -4845,11 +4850,12 @@ impl<'p> Checker<'p> {
                     // parameters: each maps to itself.
                     if !source_params.is_empty() && source_extends != target_extends {
                         let around = self.cond_origin(source).2;
-                        let inferred = self.infer_from_types(
+                        let inferred = self.infer_from_types_comparing(
                             &source_params,
                             target_extends,
                             source_extends,
                             around,
+                            &mut |c, s, t| c.is_related_to(r, s, t, REC_BOTH) != Ternary::FALSE,
                         );
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
@@ -5688,6 +5694,7 @@ impl<'p> Checker<'p> {
         // `anyFunctionType` has no `ObjectFlagsObjectLiteral`.
         let require_optional_properties = r.relation.is_subtype()
             && (!self.is_object_literal_type(source) || self.is_any_function_type(source))
+            && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
         // `getUnmatchedProperty`
@@ -6563,7 +6570,9 @@ impl<'p> Checker<'p> {
         }
         let source_type_params = self.sig_type_params(source);
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
-            source = self.instantiate_sig_in_context(source, target, true);
+            source = self.instantiate_sig_in_context(source, target, true, &mut |c, s, t| {
+                c.is_related_to_ex::<false>(r, s, t, REC_BOTH, state) != Ternary::FALSE
+            });
         }
         let sp = self.sig_params(source);
         let source_count = self.parameter_count(&sp);
@@ -7174,19 +7183,20 @@ impl<'p> Checker<'p> {
         ss[..start] != ts[..start] || se[se.len() - end..] != te[te.len() - end..]
     }
 
-    /// `isTypeMatchedByTemplateLiteralType`
+    /// `isTypeMatchedByTemplateLiteralType`. `compare`: `compareTypes`, as "is not `TernaryFalse`".
     pub(super) fn is_type_matched_by_template_literal_type(
         &mut self,
         source: TypeId,
         texts: &[Atom],
         types: &[TypeId],
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> bool {
         let Some(inferences) = self.infer_types_from_template_literal_type(source, texts, types)
         else {
             return false;
         };
         inferences.into_iter().zip(types).all(|(inference, &t)| {
-            self.is_valid_type_for_template_literal_placeholder(inference, t)
+            self.is_valid_type_for_template_literal_placeholder(inference, t, compare)
         })
     }
 
@@ -7365,18 +7375,19 @@ impl<'p> Checker<'p> {
     }
 
     /// `isValidTypeForTemplateLiteralPlaceholder`
-    pub(super) fn is_valid_type_for_template_literal_placeholder(
+    fn is_valid_type_for_template_literal_placeholder(
         &mut self,
         piece: TypeId,
         hole: TypeId,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> bool {
         if let TypeData::Intersection(parts) = self.data(hole) {
             return parts.iter().all(|&p| {
                 p == TypeId::EMPTY_OBJECT
-                    || self.is_valid_type_for_template_literal_placeholder(piece, p)
+                    || self.is_valid_type_for_template_literal_placeholder(piece, p, compare)
             });
         }
-        if hole == TypeId::STRING || self.is_assignable(piece, hole) {
+        if hole == TypeId::STRING || compare(self, piece, hole) {
             return true;
         }
         match self.data(piece) {
@@ -7398,7 +7409,7 @@ impl<'p> Checker<'p> {
             TypeData::Template { texts, types } => {
                 texts.len() == 2
                     && texts.iter().all(|&t| self.atoms().bytes(t).is_empty())
-                    && self.is_assignable(types[0], hole)
+                    && compare(self, types[0], hole)
             }
             _ => false,
         }

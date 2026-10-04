@@ -8467,8 +8467,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         &mut self,
         mut snapshot: ParserSnapshot<'a>,
     ) {
+        self.release_type_syntax_checkpoint(&snapshot.noted);
         snapshot.noted = self.type_syntax_checkpoint();
         self.restore_parser_snapshot(snapshot);
+    }
+
+    /// The speculative parse since [`Self::parser_snapshot`] succeeded.
+    #[inline]
+    pub(crate) fn release_parser_snapshot(&mut self, snapshot: &ParserSnapshot<'a>) {
+        self.release_type_syntax_checkpoint(&snapshot.noted);
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].

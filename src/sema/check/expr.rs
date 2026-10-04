@@ -197,7 +197,9 @@ impl<'p> Checker<'p> {
             );
             let source =
                 c.instantiate_signature_in_inference_context(n, contextual_signature, &read, true);
-            c.instantiate_sig_in_context(signature, source, false)
+            c.instantiate_sig_in_context(signature, source, false, &mut |c, s, t| {
+                c.is_assignable(s, t)
+            })
         });
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
@@ -3373,7 +3375,22 @@ impl<'p> Checker<'p> {
         if holds {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
+        } else if let Some(at) = self.frames.iter().position(|frame| frame.tainted) {
+            let under = (at, self.frames[at].serial, (file, func), assigned);
+            self.context_checked_under.push(under);
         }
+    }
+
+    /// The entry of `context_checked_under` for `func`.
+    fn context_checked_under_taint(&mut self, file: FileId, func: FnId) -> Option<Option<SigId>> {
+        if self.context_checked_under.is_empty() {
+            return None;
+        }
+        let frames = &self.frames;
+        self.context_checked_under
+            .retain(|&(at, serial, ..)| frames.get(at).is_some_and(|frame| frame.serial == serial));
+        let mut under = self.context_checked_under.iter();
+        under.find(|c| c.2 == (file, func)).map(|c| c.3)
     }
 
     /// `links.flags&NodeCheckFlagsContextChecked != 0`. The first contextual check of a function also updates the inference context of the
@@ -3382,6 +3399,7 @@ impl<'p> Checker<'p> {
     fn is_context_checked(&mut self, file: FileId, e: ExprId, func: FnId) -> bool {
         // `context_checked_here` is a subset of `Program::context_checked`.
         self.context_checking.iter().any(|c| c.0 == (file, func))
+            || self.context_checked_under_taint(file, func).is_some()
             || (self.p.context_checked.get(&mut self.task, &(file, func))).is_some()
                 && (self.inference_contexts.is_empty()
                     || self.context_checked_here.contains(&(file, func))
@@ -3400,7 +3418,10 @@ impl<'p> Checker<'p> {
             .find(|c| c.0 == (file, func))
         {
             Some(in_progress) => Some(in_progress.1),
-            None => self.p.context_checked.get(&mut self.task, &(file, func)),
+            None => match self.context_checked_under_taint(file, func) {
+                Some(assigned) => Some(assigned),
+                None => self.p.context_checked.get(&mut self.task, &(file, func)),
+            },
         }
     }
 

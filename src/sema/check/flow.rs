@@ -1127,10 +1127,13 @@ impl<'p> Checker<'p> {
 
     /// Whether an entry of `flow_loops` pushed when `stack` had `depth` frames is on `flowLoopStack` now. `checkExpressionCached`
     /// empties `flowLoopStack`, and it computes what a resolution caches: a resolution entered since the push hides the entry.
+    /// Not while `checkDeclarationInitializer` has the type from `getQuickTypeOfExpression`, which checks the callee uncached.
     fn is_flow_loop_visible(&self, depth: usize) -> bool {
-        !self.stack[depth.min(self.stack.len())..]
-            .iter()
-            .any(|&q| self.is_resolution(q))
+        let depth = depth.min(self.stack.len());
+        !self.stack[depth..].iter().enumerate().any(|(i, &q)| {
+            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&(depth + i));
+            self.is_resolution(q) && !self.quick_initializers.iter().any(is_quick)
+        })
     }
 
     /// The depth of `stack` when the top of `flowLoopStack` was pushed, if that was after
@@ -6087,45 +6090,49 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getExplicitTypeOfSymbol` for the property `name` of `obj`.
+    /// `getExplicitTypeOfSymbol(getPropertyOfType(obj, name))`
     fn explicit_type_of_property(&mut self, obj: TypeId, name: Atom) -> Option<TypeId> {
-        let apparent = self.apparent_type(obj);
-        let (prop, mapper) = self.prop_ref(apparent, name)?;
-        // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration has a type
-        // annotation. Not a getter, even an annotated one.
+        let (prop, mapper) = self.get_property_of_type(obj, name)?;
+        (self.has_explicit_type(prop)).then(|| self.type_of_prop(prop, mapper))
+    }
+
+    /// Whether `getExplicitTypeOfSymbol` returns the type of `prop`: it is a method, or a property
+    /// whose value declaration has a type annotation. Not a getter, even an annotated one.
+    fn has_explicit_type(&mut self, prop: &Prop) -> bool {
         if prop.flags.contains(PropFlags::ACCESSOR) {
-            return None;
+            return false;
         }
         match &prop.source {
-            PropSource::Literal(..) => return None,
             PropSource::Symbol(sym) => match self.files().value_declaration(*sym) {
                 Some((f, Decl::Member(m))) => {
                     let member = &self.hir(f)[m];
-                    if member.kind == MemberKind::Property && member.ty.is_none() {
-                        return None;
-                    }
+                    member.kind != MemberKind::Property || member.ty.is_some()
                 }
-                Some((f, Decl::ParameterProperty(p))) => {
-                    if self.hir(f)[p].ty.is_none() {
-                        return None;
-                    }
-                }
+                Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].ty.is_some(),
                 // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
                 Some((f, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                     let h = self.hir(f);
-                    let has_return_type_annotation = matches!(h[first].kind, ExprKind::Assign { value, .. }
-                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()));
-                    if !has_return_type_annotation {
-                        return None;
-                    }
+                    matches!(h[first].kind, ExprKind::Assign { value, .. }
+                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()))
                 }
-                _ => {
-                    self.explicit_type_of_symbol(*sym)?;
-                }
+                _ => self.explicit_type_of_symbol(*sym).is_some(),
             },
-            _ => {}
+            // `syntheticOrigin`
+            PropSource::Mapped(_, _, Some(origin)) => origin
+                .first()
+                .is_some_and(|origin| self.has_explicit_type(origin)),
+            // It has the `ValueDeclaration` and the flags of the first.
+            PropSource::Copy(_, copied, true) => copied
+                .first()
+                .is_some_and(|first| self.has_explicit_type(first)),
+            // No `ValueDeclaration`, or that of a property assignment.
+            PropSource::Literal(..)
+            | PropSource::Type(_)
+            | PropSource::Intersected(..)
+            | PropSource::Mapped(_, _, None)
+            | PropSource::Copy(_, _, false)
+            | PropSource::ReverseMapped(..) => false,
         }
-        Some(self.type_of_prop(prop, mapper))
     }
 
     /// `getExplicitTypeOfSymbol` for the symbol that a name or a namespace export resolves to.
@@ -6190,8 +6197,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getExplicitThisType`: the declared type of `this`. Nothing is narrowed, and the enclosing
-    /// context contributes nothing.
+    /// `getExplicitThisType`: the declared type of `this`. Nothing is narrowed.
     fn explicit_this_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         use crate::bind::{FnOwner, MemberOwner};
         let (class, is_static) = match self.this_container(file, e)? {
@@ -6200,6 +6206,16 @@ impl<'p> Checker<'p> {
                 let this_ty = self.hir(file)[func].this_ty(self.hir(file));
                 if this_ty.is_some() {
                     return Some(self.type_from_node(file, this_ty));
+                }
+                // `assignContextualParameterTypes` gives a function without a `this` parameter a
+                // copy of that of its contextual signature, which has the declaration of the
+                // original: `this: T`.
+                if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
+                    && self.is_context_sensitive_function_or_method(file, func, owner)
+                    && let Some(sig) = self.assigned_contextual_signature(file, func)
+                    && let Some(this) = self.sig_this_type(sig)
+                {
+                    return Some(this);
                 }
                 let FnOwner::Member(m) = self.bound(file).fns[func.idx()].owner else {
                     return None;

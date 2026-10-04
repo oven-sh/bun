@@ -1623,7 +1623,12 @@ impl<'p> Checker<'p> {
         if self.mapped_decl(file, node).name_ty.is_some() {
             return ty;
         }
-        let modifiers = self.instantiate(source, mapper);
+        // Not `source`: in the true branch of `T extends X[] ? .. : ..` the `T` of `keyof T` is a
+        // substitution type, whose base constraint is `X[]`.
+        let Some((modifiers, _)) = self.mapped_modifiers_source(file, node) else {
+            return ty;
+        };
+        let modifiers = self.instantiate(modifiers, mapper);
         let base = if matches!(
             self.data(modifiers),
             TypeData::Anon {

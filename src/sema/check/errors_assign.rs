@@ -701,14 +701,11 @@ impl Checker<'_> {
                 {
                     return;
                 }
-                let names: smallvec::SmallVec<[Atom; 4]> = hir.texts(name).collect();
+                // `getResolvedSymbolOrNil`
                 let scope = self.bound(file).type_scope[node.idx()];
-                let found = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE);
                 (
                     args,
-                    found.and_then(|sym| self.files().resolve_alias_if_needed(sym)),
+                    self.resolve_type_reference_name(file, scope, name, true),
                 )
             }
             TypeNodeKind::Import {
@@ -789,8 +786,9 @@ impl Checker<'_> {
             {
                 continue;
             }
+            // `checkTypeArgumentConstraints`
             if let Ok(Some((i, argument, constraint))) =
-                self.failing_type_argument(sig, &type_parameters, &actual)
+                self.failing_type_argument(sig, &type_parameters, &actual, false)
             {
                 let node: TypeNodeId = hir.id_at(nodes, i);
                 let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
@@ -1151,7 +1149,7 @@ impl Checker<'_> {
         } else {
             (
                 file,
-                self.start_inside_parentheses(file, e),
+                self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),
             )
         };
@@ -1299,11 +1297,15 @@ impl Checker<'_> {
             let at = if is_effective {
                 (
                     file,
-                    self.start_inside_parentheses(file, e),
+                    self.error_start_inside_parentheses(file, e),
                     self.error_end_inside_parentheses(file, e),
                 )
             } else {
-                (file, self.start_of(file, e), self.error_end_of(file, e))
+                (
+                    file,
+                    self.error_start_of(file, e),
+                    self.error_end_of(file, e),
+                )
             };
             let mut diags = Vec::new();
             let output = Some(&mut diags);
@@ -1438,18 +1440,13 @@ impl Checker<'_> {
             }
             tuple
         };
-        // A tuple-like type does not constrain the indexes it has no property for. Not checked for
-        // a union, where the index signature of one member substitutes for the property of another
-        // (`createUnionOrIntersectionProperty`).
-        let (is_laid_out, apparent) = (
-            !self.is_union(target) && self.is_tuple_like(target),
-            self.apparent_type(target),
-        );
+        // A tuple-like type does not constrain the indexes it has no property for.
+        let is_tuple_like = self.is_tuple_like(target);
         let mut reported = false;
         for (i, item) in hir.ids(items).enumerate() {
             let name = self.number_name(i as f64);
             if matches!(hir[item].kind, ExprKind::Missing)
-                || is_laid_out && self.prop_of(apparent, name).is_none()
+                || is_tuple_like && self.get_property_of_type(target, name).is_none()
             {
                 continue;
             }
@@ -1459,7 +1456,7 @@ impl Checker<'_> {
             }
             let at = (
                 file,
-                self.start_inside_parentheses(file, check_node),
+                self.error_start_inside_parentheses(file, check_node),
                 self.error_end_inside_parentheses(file, check_node),
             );
             let output = diagnostic_output.as_deref_mut();
@@ -1641,6 +1638,15 @@ impl Checker<'_> {
         {
             return Some(same);
         }
+        // Anonymous types that are instantiations of one alias.
+        if self.is_anonymous_object_type(source)
+            && let Some(alias) = self.alias_symbol_of_type(source)
+            && let Some(&same) = parts.iter().find(|&&t| {
+                self.is_anonymous_object_type(t) && self.alias_symbol_of_type(t) == Some(alias)
+            })
+        {
+            return Some(same);
+        }
         // `findBestTypeForObjectLiteral`
         if self.is_object_literal_type(source)
             && parts.iter().any(|&t| self.is_array_like(t))
@@ -1735,7 +1741,7 @@ impl Checker<'_> {
         }
         let at = (
             file,
-            self.start_of(file, body),
+            self.error_start_of(file, body),
             self.error_end_of(file, body),
         );
         let mut diags = Vec::new();
@@ -1932,11 +1938,8 @@ impl Checker<'_> {
                 let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
                     continue;
                 };
-                let names: Vec<Atom> = hir.texts(name).collect();
-                let base = self
-                    .files()
-                    .resolve_entity(file, bound.type_scope[node.idx()], &names, SymFlags::TYPE)
-                    .and_then(|s| self.files().resolve_alias_if_needed(s));
+                let scope = bound.type_scope[node.idx()];
+                let base = self.resolve_type_reference_name(file, scope, name, true);
                 if !base.is_some_and(|b| {
                     self.files().flags(b).contains(SymFlags::INTERFACE)
                         && !self.is_declared_as_reference(b, depth + 1)

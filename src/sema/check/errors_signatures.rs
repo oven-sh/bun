@@ -201,14 +201,8 @@ impl Checker<'_> {
                 for t in hir.ids(args) {
                     self.resolve_type_node_eagerly(file, t, resolution, depth + 1);
                 }
-                let names: Vec<Atom> = hir.texts(name).collect();
-                let sym = self.files().resolve_entity(
-                    file,
-                    bound.type_scope[node.idx()],
-                    &names,
-                    SymFlags::TYPE,
-                );
-                if let Some(sym) = sym.and_then(|sym| self.files().resolve_alias_if_needed(sym)) {
+                let scope = bound.type_scope[node.idx()];
+                if let Some(sym) = self.resolve_type_reference_name(file, scope, name, true) {
                     let (least, most) = self.type_argument_arity(sym);
                     if (least..=most).contains(&args.len()) {
                         let params = self.type_params_of_symbol(sym);

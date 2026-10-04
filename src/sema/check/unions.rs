@@ -467,9 +467,13 @@ impl<'p> Checker<'p> {
             // value. `isMemberOfStringMapping` requires that applying the mapping to the type
             // yields the type itself, and the mapping yields the plain literal.
             let mut is_matched_by = |pattern: TypeId| match self.data(pattern) {
-                TypeData::Template { texts, types } => {
-                    self.is_type_matched_by_template_literal_type(literal, texts, types)
-                }
+                TypeData::Template { texts, types } => self
+                    .is_type_matched_by_template_literal_type(
+                        literal,
+                        texts,
+                        types,
+                        &mut |c, s, t| c.is_assignable(s, t),
+                    ),
                 _ => is_plain && self.is_assignable(m, pattern),
             };
             let matched = match &by_prefix {

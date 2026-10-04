@@ -1287,6 +1287,7 @@ dependencies = [
  "bun_router",
  "bun_s3_signing",
  "bun_safety",
+ "bun_sema_baselines",
  "bun_sema_driver",
  "bun_semver",
  "bun_semver_jsc",
@@ -1364,6 +1365,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_sema_baselines"
+version = "0.0.0"
+dependencies = [
+ "bun_paths",
+ "bun_sema",
+ "bun_sema_driver",
+ "bun_threading",
+]
+
+[[package]]
 name = "bun_sema_driver"
 version = "0.0.0"
 dependencies = [
@@ -1386,6 +1397,7 @@ dependencies = [
  "bun_js_parser",
  "bun_paths",
  "bun_sema",
+ "bun_sema_baselines",
  "bun_sema_driver",
  "bun_threading",
  "libc",

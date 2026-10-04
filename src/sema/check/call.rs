@@ -1776,18 +1776,21 @@ impl<'p> Checker<'p> {
         if members.shape().call.is_empty() && members.shape().construct.is_empty() {
             return ty;
         }
-        let actual = |c: &mut Self, sigs: &[SigId]| -> Vec<SigId> {
+        // Also returns whether the result is `sigs` (`core.Same`).
+        let actual = |c: &mut Self, sigs: &[SigId]| -> (Vec<SigId>, bool) {
             let mut out = Vec::new();
+            let mut is_same = true;
             for &sig in sigs {
                 let sig = c.instantiate_sig(sig, members.mapper);
                 let params = c.sig_type_params(sig);
                 // `getInstantiatedSignatures`: the empty list of `f<>` fits every generic signature.
                 if params.is_empty() || !c.has_correct_type_argument_arity(&params, args.len()) {
+                    is_same = false;
                     continue;
                 }
                 // `checkTypeArguments`
                 if let Ok(Some((index, argument, constraint))) =
-                    c.failing_type_argument(sig, &params, args)
+                    c.failing_type_argument(sig, &params, args, true)
                 {
                     let (file, nodes) = c.type_argument_nodes(node);
                     let at = c.hir(file).id_at(nodes, index);
@@ -1799,14 +1802,18 @@ impl<'p> Checker<'p> {
                 }
                 let filled = c.fill_sig_type_args(sig, &params, args);
                 let mapper = c.mapper_from(&params, &filled);
+                is_same = false;
                 out.push(c.instantiate_sig(sig, mapper));
             }
-            out
+            (out, is_same)
         };
-        let call = actual(self, &members.shape().call);
-        let construct = actual(self, &members.shape().construct);
+        let (call, is_same_call) = actual(self, &members.shape().call);
+        let (construct, is_same_construct) = actual(self, &members.shape().construct);
         own.0 = true;
         own.1 |= !call.is_empty() || !construct.is_empty();
+        if is_same_call && is_same_construct {
+            return ty;
+        }
         let mut props = Vec::with_capacity(members.shape().props.len());
         for prop in &members.shape().props {
             let mut prop = prop.clone();
@@ -2228,7 +2235,7 @@ impl<'p> Checker<'p> {
     fn do_type_arguments_fit(&mut self, sig: SigId, type_args: &[TypeId]) -> bool {
         let type_params = self.sig_type_params(sig);
         !matches!(
-            self.failing_type_argument(sig, &type_params, type_args),
+            self.failing_type_argument(sig, &type_params, type_args, true),
             Ok(Some(_))
         )
     }
@@ -2486,12 +2493,13 @@ impl<'p> Checker<'p> {
     }
 
     /// `instantiateSignatureInContextOf`. `with_result`: inferences are also made from the return
-    /// type of `expected`, at a lower priority than from its parameters.
+    /// type of `expected`, at a lower priority than from its parameters. `compare`: `compareTypes`.
     pub(super) fn instantiate_sig_in_context(
         &mut self,
         sig: SigId,
         expected: SigId,
         with_result: bool,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
         inference.around_source = self
@@ -2545,7 +2553,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        let mapper = self.inference_mapper(&inference);
+        let mapper = self.inference_mapper_comparing(&inference, compare);
         self.instantiate_sig(sig, mapper)
     }
 

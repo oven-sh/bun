@@ -1672,13 +1672,6 @@ pub(crate) struct FnTypeHead {
     start: u32,
 }
 
-impl FnTypeHead {
-    /// Whether its type parameters are among the first `rows` nodes.
-    pub(super) fn is_within(&self, rows: usize) -> bool {
-        self.type_params.is_none_or(|list| list.range().end <= rows)
-    }
-}
-
 /// `None` for `get` and `set`, which are not modifiers.
 pub(crate) fn modifier_flag(keyword: PropertyModifierKeyword) -> Option<Flags> {
     Some(match keyword {

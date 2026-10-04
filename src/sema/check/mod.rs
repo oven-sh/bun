@@ -528,6 +528,8 @@ impl Program {
             taints_before_patterns: 0,
             cycles: 0,
             lowest_taint: usize::MAX,
+            context_checked_under: Vec::new(),
+            quick_initializers: Vec::new(),
             depth: 0,
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -1143,6 +1145,14 @@ pub struct Checker<'p> {
     context_checking: Vec<((FileId, crate::hir::FnId), Option<SigId>)>,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
+    /// The functions whose first check is not published because a frame in progress is tainted,
+    /// with the index and the serial of the lowest such frame. tsgo sets
+    /// `NodeCheckFlagsContextChecked` and assigns the parameter types whatever is in progress. So
+    /// until that frame is left the function is checked, with that signature.
+    context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), Option<SigId>)>,
+    /// Ranges of `stack`: the resolutions of declarations whose initializer
+    /// `getQuickTypeOfExpression` is evaluating. See `is_flow_loop_visible`.
+    quick_initializers: Vec<(usize, usize)>,
     /// `NodeCheckFlagsInCheckIdentifier`: the patterns for which `getNarrowedTypeOfSymbol` is in
     /// progress.
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
@@ -2299,6 +2309,15 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn is_type_variable(&self, ty: TypeId) -> bool {
         self.flags(ty) & tf::TYPE_VARIABLE != 0
+    }
+
+    /// `ObjectFlagsAnonymous`
+    pub(super) fn is_anonymous_object_type(&self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
+            TypeData::Fns { .. } | TypeData::Synth(_) => true,
+            _ => false,
+        }
     }
 
     /// A type whose members cannot be resolved before its type parameters are instantiated.

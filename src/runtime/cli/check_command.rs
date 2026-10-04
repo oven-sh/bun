@@ -329,8 +329,21 @@ fn style_for(
     }
 }
 
+/// Whether `bun check --run-typescript-tests` exists, for `test/cli/check/conformance.test.ts`. A
+/// release build has none of it.
+const HAS_TYPESCRIPT_TEST_RUNNER: bool =
+    bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+
 impl CheckCommand {
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
+        if HAS_TYPESCRIPT_TEST_RUNNER
+            && let [first, rest @ ..] = args
+            && first.as_bytes() == b"--run-typescript-tests"
+        {
+            let rest: Vec<&[u8]> = rest.iter().map(|arg| arg.as_bytes()).collect();
+            let passed = bun_sema_baselines::run_from_command_line(&rest);
+            Global::exit(u32::from(!passed));
+        }
         let options = parse(args);
         let cwd = working_directory();
         let report = run(

@@ -1,0 +1,1893 @@
+//! Runs TypeScript's compiler and conformance tests the way typescript-go's own runner does
+//! (`internal/testrunner`, `internal/testutil/harnessutil`, `internal/testutil/tsbaseline`): each
+//! test is split into its files, which are placed in an in-memory file system and checked through
+//! the same driver as `bun check`. The output is written in the format of the `.errors.txt`
+//! baselines committed there, for comparison with them.
+
+use bun_sema::check::compute_ecma_line_starts;
+use bun_sema::config::{self, Project};
+use bun_sema::json::Json;
+use bun_sema::messages::text;
+use bun_sema::resolve::{Host, Options, join, to_file_name_lower_case};
+use bun_sema_driver::{Category, Diagnostic, Report, Request};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// `srcFolder`
+const SRC: &str = "/.src";
+/// `testLibFolder`
+const LIB: &str = "/.lib";
+
+/// `skippedTests`
+const SKIPPED: &[&str] = &[
+    "APILibCheck.ts",
+    "APISample_Watch.ts",
+    "APISample_WatchWithDefaults.ts",
+    "APISample_WatchWithOwnWatchHost.ts",
+    "APISample_compile.ts",
+    "APISample_jsdoc.ts",
+    "APISample_linter.ts",
+    "APISample_parseConfig.ts",
+    "APISample_transform.ts",
+    "APISample_watcher.ts",
+    "preserveUnusedImports.ts",
+    "noCrashWithVerbatimModuleSyntaxAndImportsNotUsedAsValues.ts",
+    "verbatimModuleSyntaxCompat.ts",
+    "verbatimModuleSyntaxCompat2.ts",
+    "verbatimModuleSyntaxCompat3.ts",
+    "verbatimModuleSyntaxCompat4.ts",
+    "preserveValueImports.ts",
+    "preserveValueImports_importsNotUsedAsValues.ts",
+    "preserveValueImports_errors.ts",
+    "preserveValueImports_mixedImports.ts",
+    "preserveValueImports_module.ts",
+    "importsNotUsedAsValues_error.ts",
+    "alwaysStrictNoImplicitUseStrict.ts",
+    "nonPrimitiveIndexingWithForInSupressError.ts",
+    "parameterInitializerBeforeDestructuringEmit.ts",
+    "mappedTypeUnionConstraintInferences.ts",
+    "lateBoundConstraintTypeChecksCorrectly.ts",
+    "keyofDoesntContainSymbols.ts",
+    "isolatedModulesOut.ts",
+    "noStrictGenericChecks.ts",
+    "noImplicitUseStrict_umd.ts",
+    "noImplicitUseStrict_system.ts",
+    "noImplicitUseStrict_es6.ts",
+    "noImplicitUseStrict_commonjs.ts",
+    "noImplicitUseStrict_amd.ts",
+    "noImplicitAnyIndexingSuppressed.ts",
+    "excessPropertyErrorsSuppressed.ts",
+    "moduleNoneDynamicImport.ts",
+    "moduleNoneErrors.ts",
+    "moduleNoneOutFile.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile1.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile2.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile3.ts",
+    "requireOfJsonFileWithModuleEmitNone.ts",
+    "requireOfJsonFileWithModuleNodeResolutionEmitNone.ts",
+];
+
+/// `harnessCommandLineOptions`, in lower case, and the other directives that are not compiler
+/// options.
+/// Written among the type lines: `Emit` adds an error to those of the check
+/// (`Checker::mark_linked_references_recursively`).
+const EMIT_ADDS_ERRORS: &str = "#emit adds errors\n";
+
+const HARNESS_OPTIONS: &[&str] = &[
+    "usecasesensitivefilenames",
+    "baselinefile",
+    "includebuiltfile",
+    "filename",
+    "libfiles",
+    "noimplicitreferences",
+    "currentdirectory",
+    "symlink",
+    "link",
+    "notypesandsymbols",
+    "fullemitpaths",
+    "reportdiagnostics",
+    "capturesuggestions",
+    "typescriptversion",
+];
+
+/// The tests, their baselines and the libraries in one file, as `sync.ts` writes it. One file after
+/// the other: `=== <path> <length in bytes>\n`, the bytes, `\n`.
+pub struct Bundle {
+    files: BTreeMap<&'static [u8], &'static [u8]>,
+}
+
+impl Bundle {
+    /// `None` if `bytes` is malformed.
+    pub fn parse(bytes: &'static [u8]) -> Option<Bundle> {
+        let mut files = BTreeMap::new();
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            let header = rest.strip_prefix(b"=== ")?;
+            let end = header.iter().position(|&b| b == b'\n')?;
+            let (header, after) = (&header[..end], &header[end + 1..]);
+            let space = header.iter().rposition(|&b| b == b' ')?;
+            let length: usize = std::str::from_utf8(&header[space + 1..])
+                .ok()?
+                .parse()
+                .ok()?;
+            files.insert(&header[..space], after.get(..length)?);
+            rest = after.get(length..)?.strip_prefix(b"\n")?;
+        }
+        Some(Bundle { files })
+    }
+
+    fn read(&self, path: &[u8]) -> Option<&'static [u8]> {
+        self.files.get(path).copied()
+    }
+
+    /// The paths of the files in `dir`, at any depth, without `dir` and the `/` after it.
+    fn under<'a>(&'a self, dir: &'a [u8]) -> impl Iterator<Item = &'static [u8]> + 'a {
+        self.files
+            .range::<[u8], _>((std::ops::Bound::Included(dir), std::ops::Bound::Unbounded))
+            .map_while(move |(path, _)| path.strip_prefix(dir))
+            .filter_map(|rest| rest.strip_prefix(b"/"))
+    }
+}
+
+/// An in-memory file system, except for the default library and `tests/lib`, which are read from
+/// the bundle, or else from disk.
+pub struct Virtual {
+    /// Keyed by path. On a case-insensitive file system, keyed by the lowercased path, with the
+    /// original path alongside.
+    files: BTreeMap<Vec<u8>, (Vec<u8>, Cow<'static, [u8]>)>,
+    /// All non-empty directories, keyed the same way.
+    directories: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// Symlinks and their targets.
+    links: BTreeMap<Vec<u8>, Vec<u8>>,
+    is_case_sensitive: bool,
+    /// Path prefixes that are mapped to the bundle or the disk, and their locations there.
+    mounted: Vec<(Vec<u8>, Vec<u8>)>,
+    bundle: Option<&'static Bundle>,
+    disk: bun_sema_driver::host::Disk,
+}
+
+impl Virtual {
+    fn new(
+        is_case_sensitive: bool,
+        mounted: Vec<(Vec<u8>, Vec<u8>)>,
+        bundle: Option<&'static Bundle>,
+    ) -> Virtual {
+        Virtual {
+            bundle,
+            files: BTreeMap::new(),
+            directories: BTreeMap::new(),
+            links: BTreeMap::new(),
+            is_case_sensitive,
+            mounted,
+            disk: bun_sema_driver::host::Disk::new(1),
+        }
+    }
+
+    fn key(&self, path: &[u8]) -> Vec<u8> {
+        if self.is_case_sensitive {
+            path.to_vec()
+        } else {
+            to_file_name_lower_case(path)
+        }
+    }
+
+    fn add_directories_above(&mut self, path: &[u8]) {
+        let mut dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+        loop {
+            if self
+                .directories
+                .insert(self.key(dir), dir.to_vec())
+                .is_some()
+                || dir == b"/"
+                || dir.is_empty()
+            {
+                break;
+            }
+            dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dir);
+        }
+    }
+
+    fn add_file(&mut self, path: &[u8], content: Vec<u8>) {
+        self.files
+            .insert(self.key(path), (path.to_vec(), Cow::Owned(content)));
+        self.add_directories_above(path);
+    }
+
+    fn add_link(&mut self, path: &[u8], target: &[u8]) {
+        self.links.insert(self.key(path), target.to_vec());
+        self.add_directories_above(path);
+    }
+
+    /// The location of `path` on the disk, if it has one.
+    fn on_disk(&self, path: &[u8]) -> Option<Vec<u8>> {
+        self.mounted.iter().find_map(|(prefix, real)| {
+            let rest = path.strip_prefix(prefix.as_slice())?;
+            (rest.is_empty() || rest.starts_with(b"/")).then(|| [&real[..], &rest[..]].concat())
+        })
+    }
+
+    /// `path` with its symlinks resolved.
+    fn followed(&self, path: &[u8]) -> Vec<u8> {
+        let mut path = path.to_vec();
+        'again: for _ in 0..40 {
+            if self.links.is_empty() {
+                break;
+            }
+            let mut end = 0;
+            while end < path.len() {
+                end = path[end + 1..]
+                    .iter()
+                    .position(|&b| b == b'/')
+                    .map_or(path.len(), |i| end + 1 + i);
+                if let Some(target) = self.links.get(&self.key(&path[..end])) {
+                    path = [target, &path[end..]].concat();
+                    continue 'again;
+                }
+            }
+            break;
+        }
+        path
+    }
+}
+
+impl Host for Virtual {
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if let Some(real) = self.on_disk(path) {
+            return match self.bundle {
+                Some(bundle) => bundle.read(&real).map(Cow::Borrowed),
+                None => self.disk.read(&real),
+            };
+        }
+        let (_, content) = self.files.get(&self.key(&self.followed(path)))?;
+        Some(Cow::Owned(decode(content)))
+    }
+    fn is_file(&self, path: &[u8]) -> bool {
+        match (self.on_disk(path), self.bundle) {
+            (Some(real), Some(bundle)) => bundle.read(&real).is_some(),
+            (Some(real), None) => self.disk.is_file(&real),
+            (None, _) => self.files.contains_key(&self.key(&self.followed(path))),
+        }
+    }
+    fn is_dir(&self, path: &[u8]) -> bool {
+        match (self.on_disk(path), self.bundle) {
+            (Some(real), Some(bundle)) => bundle.under(&real).next().is_some(),
+            (Some(real), None) => self.disk.is_dir(&real),
+            (None, _) => self
+                .directories
+                .contains_key(&self.key(&self.followed(path))),
+        }
+    }
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        let followed = self.followed(path);
+        let key = self.key(&followed);
+        match (self.files.get(&key), self.directories.get(&key)) {
+            (Some((written, _)), _) => written.clone(),
+            (_, Some(written)) => written.clone(),
+            _ => followed,
+        }
+    }
+    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+        if let Some(real) = self.on_disk(path) {
+            let Some(bundle) = self.bundle else {
+                return self.disk.list_dir(&real);
+            };
+            let names: BTreeSet<&[u8]> = bundle
+                .under(&real)
+                .filter_map(|rest| rest.split(|&b| b == b'/').next())
+                .collect();
+            return names.into_iter().map(<[u8]>::to_vec).collect();
+        }
+        let dir = self.followed(path);
+        let prefix = if dir == b"/" {
+            b"/".to_vec()
+        } else {
+            [&self.key(&dir)[..], b"/"].concat()
+        };
+        let mut names = BTreeSet::new();
+        let written = self
+            .files
+            .iter()
+            .map(|(key, (written, _))| (key, written))
+            .chain(self.directories.iter());
+        for (key, written) in written {
+            if let Some(rest) = key.strip_prefix(&prefix[..])
+                && !rest.is_empty()
+                && !rest.contains(&b'/')
+            {
+                names.insert(written[written.len() - rest.len()..].to_vec());
+            }
+        }
+        for key in self.links.keys() {
+            if let Some(rest) = key.strip_prefix(&prefix[..])
+                && !rest.is_empty()
+                && !rest.contains(&b'/')
+            {
+                names.insert(rest.to_vec());
+            }
+        }
+        names.into_iter().collect()
+    }
+    fn is_case_sensitive(&self) -> bool {
+        self.is_case_sensitive
+    }
+    fn parse(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        atoms: &bun_sema::atom::Interner,
+        options: &Options,
+    ) -> bun_sema::hir::File {
+        self.disk.parse(path, text, atoms, options)
+    }
+    // One thread of the pool, as in `bun check --threads 1`: it has the same stack as in
+    // production, and knows its stack limit.
+    fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.parallel(count, work);
+    }
+}
+
+/// `decodeBytes`: the text of a file, decoded according to its byte order mark.
+fn decode(bytes: &[u8]) -> Vec<u8> {
+    let utf16 = |rest: &[u8], big: bool| {
+        let units = rest.chunks_exact(2).map(|pair| {
+            if big {
+                u16::from_be_bytes([pair[0], pair[1]])
+            } else {
+                u16::from_le_bytes([pair[0], pair[1]])
+            }
+        });
+        char::decode_utf16(units)
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect::<String>()
+            .into_bytes()
+    };
+    match bytes {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, false),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, true),
+        [0xEF, 0xBB, 0xBF, rest @ ..] => rest.to_vec(),
+        _ => bytes.to_vec(),
+    }
+}
+
+/// `GetNormalizedAbsolutePath`, in the checker's path representation, where `c:/a` is `/c:/a`.
+fn absolute(path: &str, cwd: &str) -> String {
+    text(&match path.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => join(b"/", path.as_bytes()),
+        _ => join(cwd.as_bytes(), path.as_bytes()),
+    })
+}
+
+fn trim(bytes: &[u8]) -> &[u8] {
+    bytes.trim_ascii()
+}
+
+/// `optionRegex` applied to one line: the name and the value.
+fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
+    let rest = line.strip_prefix(b"//")?;
+    let rest = rest.trim_ascii_start().strip_prefix(b"@")?;
+    let end = rest
+        .iter()
+        .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))?;
+    if end == 0 {
+        return None;
+    }
+    let value = rest[end..].trim_ascii_start().strip_prefix(b":")?;
+    // `[^\r\n]*`
+    let value = value.trim_ascii_start();
+    let value_end = value
+        .iter()
+        .position(|&b| b == b'\r' || b == b'\n')
+        .unwrap_or(value.len());
+    Some((
+        String::from_utf8_lossy(&rest[..end]).to_lowercase(),
+        &value[..value_end],
+    ))
+}
+
+/// `lineDelimiter.Split`
+fn lines_of(text: &[u8]) -> Vec<&[u8]> {
+    text.split(|&b| b == b'\n').collect()
+}
+
+struct Unit {
+    name: String,
+    content: Vec<u8>,
+}
+
+struct Parsed {
+    units: Vec<Unit>,
+    /// Symlinks and their targets.
+    links: Vec<(String, String)>,
+}
+
+/// `ParseTestFilesAndSymlinks`
+fn units_of(code: &[u8], file_name: &str) -> Parsed {
+    let mut units = Vec::new();
+    let mut links: Vec<(String, String)> = Vec::new();
+    let mut content: Vec<u8> = Vec::new();
+    let mut name = String::new();
+    let all: Vec<&[u8]> = lines_of(code);
+    let last = all.len() - 1;
+    for (i, line) in all.into_iter().enumerate() {
+        // `\r?\n`: a `\r` at the very end of the text is not before a `\n`.
+        let line = if i < last {
+            line.strip_suffix(b"\r").unwrap_or(line)
+        } else {
+            line
+        };
+        if let Some((option, value)) = option_in(line) {
+            // `linkRegex`
+            if option == "link"
+                && let Some(arrow) = value.windows(2).position(|w| w == b"->")
+            {
+                let text = |b: &[u8]| String::from_utf8_lossy(trim(b)).into_owned();
+                links.push((text(&value[arrow + 2..]), text(&value[..arrow])));
+                continue;
+            }
+            let value = String::from_utf8_lossy(trim(value)).into_owned();
+            if option != "filename" {
+                if option == "symlink" && !name.is_empty() {
+                    for link in value.split(',').map(str::trim).filter(|l| !l.is_empty()) {
+                        links.push((link.to_owned(), name.clone()));
+                    }
+                }
+                continue;
+            }
+            if !name.is_empty() {
+                units.push(Unit {
+                    name: std::mem::take(&mut name),
+                    content: std::mem::take(&mut content),
+                });
+            }
+            content.clear();
+            name = value;
+        } else {
+            if !content.is_empty() {
+                content.push(b'\n');
+            }
+            content.extend_from_slice(line);
+        }
+    }
+    if units.is_empty() && name.is_empty() {
+        name = file_name.rsplit('/').next().unwrap_or(file_name).to_owned();
+    }
+    units.push(Unit { name, content });
+    Parsed { units, links }
+}
+
+/// `extractCompilerSettings`
+fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
+    let mut settings = BTreeMap::new();
+    for line in code.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if let Some((name, value)) = option_in(line) {
+            let value = String::from_utf8_lossy(trim(value)).into_owned();
+            let value = value.strip_suffix(';').unwrap_or(&value).to_owned();
+            settings.insert(name, value);
+        }
+    }
+    settings
+}
+
+/// `splitOptionValues` when a single value remains: that value.
+fn the_one_value(option: &str, value: &str) -> String {
+    let Some(all) = bun_sema::config_options::choices(option.as_bytes()) else {
+        return value.to_owned();
+    };
+    let (mut includes, mut excludes, mut star) = (Vec::new(), Vec::new(), false);
+    for item in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if item == "*" {
+            star = true;
+        } else if let Some(excluded) = item.strip_prefix(['-', '!']) {
+            excludes.push(excluded.to_lowercase());
+        } else {
+            includes.push(item.to_owned());
+        }
+    }
+    if star {
+        includes.extend(all.iter().map(|&s| text(s)));
+    }
+    includes
+        .into_iter()
+        .find(|item| !excludes.contains(&item.to_lowercase()))
+        .unwrap_or_else(|| value.to_owned())
+}
+
+/// `removeTestPathPrefixes`
+fn without_prefixes(text: &str, lib_dir: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let lib = format!("{lib_dir}/");
+    let mut rest = text;
+    'next: while !rest.is_empty() {
+        for prefix in ["/.ts/", "/.lib/", "/.src/", lib.as_str()] {
+            if let Some(after) = rest.strip_prefix(prefix) {
+                rest = after;
+                continue 'next;
+            }
+        }
+        // `/c:/a` is `c:/a` to TypeScript.
+        if let [b'/', drive, b':', b'/', ..] = rest.as_bytes()
+            && drive.is_ascii_alphabetic()
+        {
+            rest = &rest[1..];
+            continue;
+        }
+        let c = rest.chars().next().unwrap();
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// `isDefaultLibraryFile`
+fn is_default_library(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.starts_with("lib.") && name.ends_with(".d.ts")
+}
+
+fn category_name(category: Category) -> &'static str {
+    match category {
+        Category::Error => "error",
+        Category::Warning => "warning",
+        Category::Suggestion => "suggestion",
+        Category::Message => "message",
+    }
+}
+
+/// `utf8.RuneCountInString`
+fn runes(bytes: &[u8]) -> usize {
+    String::from_utf8_lossy(bytes).chars().count()
+}
+
+const RESET: &str = "\u{1b}[0m";
+const GREY: &str = "\u{1b}[90m";
+const YELLOW: &str = "\u{1b}[93m";
+const CYAN: &str = "\u{1b}[96m";
+/// `gutterStyleSequence`
+const GUTTER: &str = "\u{1b}[7m";
+
+/// `getCategoryFormat`
+fn category_color(category: Category) -> &'static str {
+    match category {
+        Category::Error => "\u{1b}[91m",
+        Category::Warning => YELLOW,
+        Category::Suggestion => GREY,
+        Category::Message => "\u{1b}[94m",
+    }
+}
+
+/// `WriteLocation`
+fn write_location(out: &mut String, d: &Diagnostic) {
+    out.push_str(&format!(
+        "{CYAN}{}{RESET}:{YELLOW}{}{RESET}:{YELLOW}{}{RESET}",
+        text(&d.path),
+        d.line,
+        d.column
+    ));
+}
+
+/// `writeCodeSnippet`
+fn write_code_snippet(out: &mut String, d: &Diagnostic, color: &str, indent: &str) {
+    let utf16_len = |text: &str| text.encode_utf16().count();
+    let (first_line, first_char) = (d.line as usize - 1, d.column as usize - 1);
+    let (last_line, mut last_char) = (d.end_line as usize - 1, d.end_column as usize - 1);
+    // For an empty span, the text right after it is marked.
+    if d.end <= d.start {
+        last_char += 1;
+    }
+    let is_long = last_line - first_line >= 4;
+    let mut width = (last_line + 1).to_string().len();
+    if is_long {
+        width = width.max("...".len());
+    }
+    let mut i = first_line;
+    while i <= last_line {
+        out.push('\n');
+        // Of five lines or more the first two and the last two are shown.
+        if is_long && first_line + 1 < i && i < last_line - 1 {
+            out.push_str(&format!("{indent}{GUTTER}{:>width$}{RESET} \n", "..."));
+            i = last_line - 1;
+        }
+        let line = d
+            .source
+            .get((i + 1).saturating_sub(d.source_line as usize))
+            .map_or_else(String::new, |line| text(line));
+        let line = line.trim_end().replace('\t', " ");
+        out.push_str(&format!(
+            "{indent}{GUTTER}{:>width$}{RESET} {line}\n",
+            i + 1
+        ));
+        out.push_str(&format!("{indent}{GUTTER}{:>width$}{RESET} {color}", ""));
+        let (blanks, tildes) = if i == first_line {
+            let end = if i == last_line {
+                last_char
+            } else {
+                utf16_len(&line)
+            };
+            (first_char, end.saturating_sub(first_char))
+        } else if i == last_line {
+            (0, last_char)
+        } else {
+            (0, utf16_len(&line))
+        };
+        out.push_str(&" ".repeat(blanks));
+        out.push_str(&"~".repeat(tildes));
+        out.push_str(RESET);
+        i += 1;
+    }
+}
+
+/// `FormatDiagnosticsWithColorAndContext`, with `\n` for `\r\n`.
+fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
+    let mut out = String::new();
+    for (i, d) in diagnostics.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if !d.path.is_empty() {
+            write_location(&mut out, d);
+            out.push_str(" - ");
+        }
+        out.push_str(&format!(
+            "{}{}{RESET}{GREY} TS{}: {RESET}{}",
+            category_color(d.category),
+            category_name(d.category),
+            d.code,
+            text(&d.text)
+        ));
+        // `File_appears_to_be_binary`
+        if !d.path.is_empty() && d.code != 1490 {
+            out.push('\n');
+            write_code_snippet(&mut out, d, category_color(d.category), "");
+            out.push('\n');
+        }
+        for related in &d.related {
+            if !related.path.is_empty() {
+                out.push_str("\n  ");
+                write_location(&mut out, related);
+                out.push_str(" - ");
+                out.push_str(&text(&related.text));
+                write_code_snippet(&mut out, related, CYAN, "    ");
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// `WriteErrorSummaryText`, with `\n` for `\r\n`.
+fn error_summary(diagnostics: &[Diagnostic]) -> String {
+    let errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.category == Category::Error)
+        .collect();
+    if errors.is_empty() {
+        return String::new();
+    }
+    // Keyed by file, sorted by name: the error count and `prettyPathForFileError`.
+    let mut by_file: BTreeMap<&[u8], (usize, String)> = BTreeMap::new();
+    for &d in &errors {
+        if !d.path.is_empty() {
+            by_file
+                .entry(&d.path)
+                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", text(&d.path), d.line)))
+                .0 += 1;
+        }
+    }
+    let first = by_file.values().next().map_or("", |file| file.1.as_str());
+    let message = match (errors.len(), by_file.len()) {
+        (1, 0) => "Found 1 error.".to_owned(),
+        (1, _) => format!("Found 1 error in {first}"),
+        (count, 0) => format!("Found {count} errors."),
+        (count, 1) => format!("Found {count} errors in the same file, starting at: {first}"),
+        (count, files) => format!("Found {count} errors in {files} files."),
+    };
+    let mut out = format!("\n{message}\n\n");
+    // `writeTabularErrorsDisplay`
+    if by_file.len() > 1 {
+        let most = by_file.values().map(|file| file.0).max().unwrap_or(0);
+        let digits = most.to_string().len();
+        let goal = digits.max("Errors".len());
+        out.push_str(&" ".repeat(digits.saturating_sub("Errors".len())));
+        out.push_str("Errors  Files\n");
+        for (count, name) in by_file.values() {
+            out.push_str(&format!("{count:>goal$}  {name}\n"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `GetErrorBaseline`, with `\n` for `\r\n`.
+fn render(
+    diagnostics: &[Diagnostic],
+    inputs: &[(String, Vec<u8>)],
+    lib_dir: &str,
+    pretty: bool,
+) -> Vec<u8> {
+    let clean = |text: &str| without_prefixes(text, lib_dir);
+    let mut out: Vec<u8> = Vec::new();
+    if pretty {
+        out.extend_from_slice(clean(&with_color_and_context(diagnostics)).as_bytes());
+    }
+    for d in diagnostics.iter().filter(|_| !pretty) {
+        let mut line = String::new();
+        if !d.path.is_empty() {
+            let path = text(&d.path);
+            if is_default_library(&path) {
+                line.push_str(&format!("{path}(--,--): "));
+            } else {
+                line.push_str(&format!("{path}({},{}): ", d.line, d.column));
+            }
+        }
+        line.push_str(&format!(
+            "{} TS{}: {}\n",
+            category_name(d.category),
+            d.code,
+            text(&d.text)
+        ));
+        out.extend_from_slice(clean(&line).as_bytes());
+    }
+    out.extend_from_slice(b"\n\n");
+    let mut is_first = true;
+    let mut new_line = |out: &mut Vec<u8>| {
+        if !std::mem::take(&mut is_first) {
+            out.push(b'\n');
+        }
+    };
+    let error_text = |out: &mut Vec<u8>, new_line: &mut dyn FnMut(&mut Vec<u8>), d: &Diagnostic| {
+        for line in clean(&text(&d.text)).split('\n').filter(|l| !l.is_empty()) {
+            new_line(out);
+            out.extend_from_slice(
+                format!("!!! {} TS{}: {line}", category_name(d.category), d.code).as_bytes(),
+            );
+        }
+        for related in &d.related {
+            let path = text(&related.path);
+            let location = if path.is_empty() {
+                String::new()
+            } else if is_default_library(&path) {
+                clean(&format!(" {path}:--:--"))
+            } else {
+                clean(&format!(" {path}:{}:{}", related.line, related.column))
+            };
+            new_line(out);
+            out.extend_from_slice(
+                format!(
+                    "!!! related TS{}{location}: {}",
+                    related.code,
+                    text(&related.text)
+                )
+                .as_bytes(),
+            );
+        }
+    };
+    for d in diagnostics.iter().filter(|d| d.path.is_empty()) {
+        error_text(&mut out, &mut new_line, d);
+    }
+    for (name, content) in inputs {
+        let name = clean(name);
+        let errors: Vec<&Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| !d.path.is_empty() && clean(&text(&d.path)).eq_ignore_ascii_case(&name))
+            .collect();
+        new_line(&mut out);
+        out.extend_from_slice(format!("==== {name} ({} errors) ====", errors.len()).as_bytes());
+        let starts = compute_ecma_line_starts(content);
+        let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
+        for (index, line) in lines.iter().enumerate() {
+            let is_last = index == lines.len() - 1;
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let this_start = starts
+                .get(index)
+                .map_or(content.len() as i64, |&s| i64::from(s));
+            let next_start = if is_last {
+                content.len() as i64
+            } else {
+                starts
+                    .get(index + 1)
+                    .map_or(content.len() as i64, |&s| i64::from(s))
+            };
+            new_line(&mut out);
+            out.extend_from_slice(b"    ");
+            out.extend_from_slice(line);
+            for d in &errors {
+                let (start, end) = (i64::from(d.start), i64::from(d.end.max(d.start)));
+                if end >= this_start && (start < next_start || is_last) {
+                    let relative = start - this_start;
+                    let length = (end - start) - (this_start - start).max(0);
+                    let from = (relative.max(0) as usize).min(line.len());
+                    new_line(&mut out);
+                    out.extend_from_slice(b"    ");
+                    for c in String::from_utf8_lossy(&line[..from]).chars() {
+                        if matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ') {
+                            out.push(c as u8);
+                        } else {
+                            out.push(b' ');
+                        }
+                    }
+                    let to = from.max((from as i64 + length).clamp(0, line.len() as i64) as usize);
+                    out.extend(std::iter::repeat_n(b'~', runes(&line[from..to])));
+                    if is_last || next_start > end {
+                        error_text(&mut out, &mut new_line, d);
+                    }
+                }
+            }
+        }
+    }
+    if pretty {
+        out.extend_from_slice(clean(&error_summary(diagnostics)).as_bytes());
+    }
+    out
+}
+
+/// How closely the output matches the expected baseline.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Level {
+    /// It crashed, or took too long.
+    Broken,
+    /// The errors have different codes or positions.
+    Differs,
+    /// The same codes at the same positions.
+    Codes,
+    /// And the same message text.
+    Words,
+    /// And the same spans: everything matches except the related information.
+    Spans,
+    /// Byte for byte.
+    All,
+}
+
+pub struct Outcome {
+    /// `compiler/foo(target=es2015)`
+    pub name: String,
+    pub level: Level,
+    pub note: String,
+}
+
+/// The lines before the first empty line: one error each, with its elaboration below it.
+fn top_of(text: &str) -> &str {
+    text.find("\n\n\n").map_or(text, |end| &text[..end])
+}
+
+/// Where and what, of each error in `top`.
+fn heads(top: &str) -> Vec<String> {
+    let mut heads: Vec<String> = top
+        .lines()
+        .filter(|line| !line.starts_with(' ') && !line.is_empty())
+        .filter_map(|line| {
+            let at = line.find(" TS")?;
+            let code_end = line[at + 3..].find(':')? + at + 3;
+            Some(line[..code_end].to_owned())
+        })
+        .collect();
+    heads.sort();
+    heads
+}
+
+/// `compileFilesWithHost` compiles twice, and reports TS-1 where emit has added errors: "such an
+/// error may not be reflected on the command line or in the editor". With that removed, the
+/// remainder is the pre-emit diagnostics.
+fn without_errors_added_by_emit(text: &str) -> String {
+    if !text.contains("error TS-1: ") {
+        return text.to_owned();
+    }
+    // All pre-emit diagnostics are listed: none is common to both lists.
+    if let Some((before, after)) = counts_around_emit(text)
+        && before > after
+        && listed_under_the_mismatch(text).len() >= before
+    {
+        return String::new();
+    }
+    let mut lines: Vec<Cow<'_, str>> = Vec::new();
+    // With `pretty`, its entry in the top section extends to the next line that is not indented.
+    let (mut is_pretty, mut is_in_it_on_top, mut is_in_it) = (false, false, false);
+    for line in text.split('\n') {
+        if line.starts_with("error TS-1: ") {
+            continue;
+        }
+        if line.starts_with("\u{1b}[91merror\u{1b}[0m\u{1b}[90m TS-1: ") {
+            (is_pretty, is_in_it_on_top) = (true, true);
+            continue;
+        }
+        if is_in_it_on_top && (line.is_empty() || line.starts_with(' ')) {
+            continue;
+        }
+        is_in_it_on_top = false;
+        if line.starts_with("!!! error TS-1: ") {
+            is_in_it = true;
+            continue;
+        }
+        if is_in_it && line.starts_with("!!! related ") {
+            continue;
+        }
+        is_in_it = false;
+        // `WriteErrorSummaryText` counts it.
+        let counted = line
+            .strip_prefix("Found ")
+            .filter(|_| is_pretty)
+            .and_then(|rest| rest.split_once(" errors"))
+            .and_then(|(count, rest)| Some((count.parse::<usize>().ok()?, rest)));
+        lines.push(match counted {
+            Some((2, rest)) => Cow::Owned(
+                match rest.strip_prefix(" in the same file, starting at: ") {
+                    Some(place) => format!("Found 1 error in {place}"),
+                    None => "Found 1 error.".to_owned(),
+                },
+            ),
+            Some((count, rest)) if count > 2 => {
+                Cow::Owned(format!("Found {} errors{rest}", count - 1))
+            }
+            _ => Cow::Borrowed(line),
+        });
+    }
+    let left = lines.join("\n");
+    if heads(top_of(&left)).is_empty() {
+        String::new()
+    } else {
+        left
+    }
+}
+
+/// The numbers in `Pre-emit (8) and post-emit (6) diagnostic counts do not match!`
+fn counts_around_emit(text: &str) -> Option<(usize, usize)> {
+    let (_, rest) = text.split_once("Pre-emit (")?;
+    let (before, rest) = rest.split_once(") and post-emit (")?;
+    let (after, _) = rest.split_once(')')?;
+    Some((before.parse().ok()?, after.parse().ok()?))
+}
+
+/// The entries listed under TS-1, each as the text after `!!! related TS`.
+fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
+    text.lines()
+        .skip_while(|line| !line.starts_with("!!! error TS-1: "))
+        .skip(1)
+        .map_while(|line| line.strip_prefix("!!! related TS"))
+        .filter(|listed| !listed.starts_with("-1:"))
+        .collect()
+}
+
+/// `compileFilesWithHost` uses the shorter of its two lists. Where emit has removed errors, that is
+/// the post-emit list, and the additional pre-emit errors are listed under TS-1.
+fn errors_removed_by_emit(text: &str) -> Vec<&str> {
+    match counts_around_emit(text) {
+        Some((before, after)) if before > after => listed_under_the_mismatch(text),
+        _ => Vec::new(),
+    }
+}
+
+/// `d` formatted as it would be listed there.
+fn as_listed(d: &Diagnostic, lib_dir: &str) -> String {
+    let path = text(&d.path);
+    let location = if path.is_empty() {
+        String::new()
+    } else if is_default_library(&path) {
+        format!(" {path}:--:--")
+    } else {
+        format!(" {path}:{}:{}", d.line, d.column)
+    };
+    format!(
+        "{}{}: {}",
+        d.code,
+        without_prefixes(&location, lib_dir),
+        text(&d.text).lines().next().unwrap_or("")
+    )
+}
+
+fn without_related(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.starts_with("!!! related "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn level_of(ours: &str, expected: &str) -> Level {
+    if ours == expected {
+        return Level::All;
+    }
+    if without_related(ours) == without_related(expected) {
+        return Level::Spans;
+    }
+    let (a, b) = (top_of(ours), top_of(expected));
+    if a == b {
+        return Level::Words;
+    }
+    if heads(a) == heads(b) {
+        return Level::Codes;
+    }
+    Level::Differs
+}
+
+pub struct Suite<'a> {
+    /// `compiler`, `conformance`
+    pub name: &'a str,
+    /// Location of the tests.
+    pub cases: &'a str,
+    /// Location of the `.errors.txt` baselines.
+    pub baselines: &'a str,
+    /// The names of all baselines of the suite, of every kind.
+    pub names: &'a [String],
+}
+
+pub struct Setup<'a> {
+    /// What the paths of the libraries, the tests and the baselines are paths in. `None`: the
+    /// disk.
+    pub bundle: Option<&'static Bundle>,
+    /// Where `lib.*.d.ts` are.
+    pub lib_dir: &'a str,
+    /// TypeScript's `tests/lib`.
+    pub test_lib: &'a str,
+    pub only: Option<&'a str>,
+    /// Where to write the output, if anywhere.
+    pub out: Option<&'a str>,
+    /// Where to write the type at every expression and name of every test, if anywhere: to compare with `.types` baselines.
+    pub types_out: Option<&'a str>,
+    /// The same for the symbol at every name: to compare with `.symbols` baselines. Needs `types_out`.
+    pub symbols_out: Option<&'a str>,
+    /// Where to write the declaration files of every test that requests them, if anywhere: to
+    /// compare with the `.d.ts` sections of the `.js` baselines. Mutually exclusive with
+    /// `types_out`.
+    pub dts_out: Option<&'a str>,
+    pub threads: usize,
+    /// Only every n-th test, in the order of their paths. 1: all of them.
+    pub every: usize,
+}
+
+impl Setup<'_> {
+    fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
+        match self.bundle {
+            Some(bundle) => bundle.read(path.as_bytes()).map(Cow::Borrowed),
+            None => std::fs::read(path).ok().map(Cow::Owned),
+        }
+    }
+
+    /// The tests in `dir`, at any depth.
+    fn tests_under(&self, dir: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        match self.bundle {
+            Some(bundle) => found.extend(
+                bundle
+                    .under(dir.as_bytes())
+                    .filter(|rest| rest.ends_with(b".ts") || rest.ends_with(b".tsx"))
+                    .map(|rest| format!("{dir}/{}", String::from_utf8_lossy(rest))),
+            ),
+            None => files_under(dir, &mut found),
+        }
+        found.sort_unstable();
+        found
+    }
+}
+
+fn files_under(dir: &str, found: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path().to_string_lossy().into_owned();
+        if entry.path().is_dir() {
+            files_under(&path, found);
+        } else if path.ends_with(".ts") || path.ends_with(".tsx") {
+            found.push(path);
+        }
+    }
+}
+
+/// `SkipUnsupportedCompilerOptions`
+fn is_unsupported(compiler: &[(Vec<u8>, Json)]) -> bool {
+    let get = |name: &str| {
+        let mut options = compiler.iter().rev();
+        options.find(|o| o.0 == name.as_bytes()).map(|o| &o.1)
+    };
+    let word = |name: &str| {
+        get(name)
+            .and_then(Json::as_str)
+            .map(|word| text(word).to_lowercase())
+            .unwrap_or_default()
+    };
+    matches!(word("module").as_str(), "amd" | "umd" | "system")
+        || matches!(
+            word("moduleResolution").as_str(),
+            "node10" | "node" | "classic"
+        )
+        || matches!(get("esModuleInterop"), Some(Json::Bool(false)))
+        || matches!(get("allowSyntheticDefaultImports"), Some(Json::Bool(false)))
+        || !word("baseUrl").is_empty()
+        || !word("outFile").is_empty()
+        || matches!(word("target").as_str(), "es5" | "es3")
+        || matches!(get("alwaysStrict"), Some(Json::Bool(false)))
+}
+
+/// One test in one configuration. `None`: typescript-go does not run it.
+fn run_one(
+    setup: &Setup,
+    path: &str,
+    code: &[u8],
+    settings: &BTreeMap<String, String>,
+    has_baselines: bool,
+    types: Option<&Mutex<String>>,
+    symbols: Option<&Mutex<String>>,
+    dts: Option<&Mutex<Vec<(u32, Vec<u8>)>>>,
+) -> Option<(Report, Vec<(String, Vec<u8>)>)> {
+    let Parsed { mut units, links } = units_of(code, path);
+    let cwd = absolute(
+        settings.get("currentdirectory").map_or("", |s| s.as_str()),
+        SRC,
+    );
+    // The options from the test directives, in the form of `compilerOptions`.
+    let mut reported: Vec<(Vec<u8>, Json)> = Vec::new();
+    for (name, value) in settings {
+        if HARNESS_OPTIONS.contains(&name.as_str()) {
+            continue;
+        }
+        match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
+            // `getOptionValue`: an option declared `IsFilePath` is resolved against the current
+            // directory.
+            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
+                let path = absolute(&text(&path), &cwd).into_bytes();
+                reported.push((name.to_owned(), Json::String(path)))
+            }
+            Some((name, value)) => reported.push((name.to_owned(), value)),
+            None => match name.as_str() {
+                "suppressoutputpathcheck" => reported.push((
+                    b"suppressOutputPathCheck".to_vec(),
+                    Json::Bool(value.eq_ignore_ascii_case("true")),
+                )),
+                "allownontsextensions" | "noerrortruncation" => {}
+                // `t.Fatalf`
+                _ if !has_baselines => return None,
+                _ => {}
+            },
+        }
+    }
+    let is_case_sensitive = settings
+        .get("usecasesensitivefilenames")
+        .is_none_or(|v| !v.eq_ignore_ascii_case("false"));
+    let mounted = vec![
+        (setup.lib_dir.into(), setup.lib_dir.into()),
+        (LIB.into(), setup.test_lib.into()),
+    ];
+
+    // `makeUnitsFromTest`: the first `tsconfig.json` or `jsconfig.json` is the configuration,
+    // parsed against a file system that contains only the files of the test.
+    let config_at = units.iter().position(|unit| {
+        let name = unit.name.replace('\\', "/");
+        let name = name.rsplit('/').next().unwrap_or(&name).to_lowercase();
+        name == "tsconfig.json" || name == "jsconfig.json"
+    });
+    let config_cwd = settings
+        .get("currentdirectory")
+        .filter(|s| !s.is_empty())
+        .map_or(SRC.to_owned(), |dir| absolute(dir, "/"));
+    let mut named_by_config: Option<Vec<Vec<u8>>> = None;
+    let mut config_unit = None;
+    if let Some(at) = config_at {
+        let mut only_units = Virtual::new(true, Vec::new(), None);
+        for unit in &units {
+            only_units.add_file(
+                absolute(&unit.name, &config_cwd).as_bytes(),
+                unit.content.clone(),
+            );
+        }
+        let config_path = absolute(&units[at].name, &config_cwd);
+        let project =
+            config::load_as_typescript_does(&only_units, config_path.as_bytes(), Vec::new());
+        named_by_config = Some(project.files);
+        config_unit = Some(units.remove(at));
+    }
+
+    let (mut roots, mut others): (Vec<&Unit>, Vec<&Unit>) = (Vec::new(), Vec::new());
+    match &named_by_config {
+        Some(named) => {
+            for unit in &units {
+                if named.contains(&absolute(&unit.name, &cwd).into_bytes()) {
+                    roots.push(unit);
+                } else {
+                    others.push(unit);
+                }
+            }
+        }
+        None => {
+            let last = units.last().unwrap();
+            let refers = |needle: &[u8]| last.content.windows(needle.len()).any(|w| w == needle);
+            let has_reference = last.content.windows(14).any(|w| {
+                w.starts_with(b"reference") && w[9].is_ascii_whitespace() && &w[10..] == b"path"
+            });
+            if settings
+                .get("noimplicitreferences")
+                .is_some_and(|v| !v.is_empty())
+                || refers(b"require(")
+                || has_reference
+            {
+                roots.push(last);
+                others.extend(units[..units.len() - 1].iter());
+            } else {
+                roots.extend(units.iter());
+            }
+        }
+    }
+
+    let mut host = Virtual::new(is_case_sensitive, mounted, setup.bundle);
+    for unit in roots.iter().chain(&others) {
+        host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
+    }
+    for (link, target) in &links {
+        host.add_link(
+            absolute(link, &cwd).as_bytes(),
+            absolute(target, &cwd).as_bytes(),
+        );
+    }
+    let mut files: Vec<String> = roots
+        .iter()
+        .map(|unit| absolute(&unit.name, &cwd))
+        .filter(|name| !name.ends_with(".json") && !name.ends_with(".tsbuildinfo"))
+        .collect();
+    let no_lib = reported
+        .iter()
+        .any(|o| o.0 == b"noLib" && matches!(o.1, Json::Bool(true)));
+    if let Some(lib_files) = settings.get("libfiles") {
+        for lib in lib_files
+            .split(',')
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            if lib == "lib.d.ts" && !no_lib {
+                continue;
+            }
+            files.push(format!("{LIB}/{lib}"));
+        }
+    }
+
+    let files: Vec<Vec<u8>> = files.into_iter().map(String::into_bytes).collect();
+
+    // `CompileFiles`: the default options of a test, unless it overrides them.
+    let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
+        if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
+            compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
+        }
+        compiler.push((b"noErrorTruncation".to_vec(), Json::Bool(true)));
+    };
+    if let Some(unit) = &config_unit {
+        host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
+    }
+    // `compileFilesWithHost` creates two programs from it.
+    let parsed_command_line = || -> Project {
+        let mut project: Project = match &config_unit {
+            Some(unit) => {
+                let mut over = reported.clone();
+                defaults(&mut over);
+                config::load_as_typescript_does(&host, absolute(&unit.name, &cwd).as_bytes(), over)
+            }
+            None => {
+                let mut compiler = reported.clone();
+                defaults(&mut compiler);
+                config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
+            }
+        };
+        project.files = files.clone();
+        project.options.files = files.clone();
+        // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
+        project.options.file_specs.clear();
+        project.options.include_specs.clear();
+        project.options.is_default_include_spec = false;
+        project.options.captures_suggestions = settings
+            .get("capturesuggestions")
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        project
+    };
+    let project = parsed_command_line();
+    if !has_baselines && is_unsupported(&project.raw_compiler_options) {
+        return None;
+    }
+
+    // The types and symbols output of each file. An invalid task is retried, so a file can be visited twice: the last visit replaces the
+    // first, in place.
+    type Sections = Vec<(bun_sema::program::FileId, String, String)>;
+    let sections: Mutex<Sections> = Mutex::new(Vec::new());
+    // One line per location: unit, line, offset, source text without line breaks, type.
+    // `unit_text`: the text of the unit at `path`, when the unit is not `file` itself.
+    let write_unit = |checker: &mut bun_sema::check::Checker<'_>,
+                      file: bun_sema::program::FileId,
+                      path: &str,
+                      unit_text: Option<&[u8]>| {
+        if types.is_none() {
+            return;
+        }
+        // The harness iterates over the units of the test, regardless of their names.
+        let mut units = roots.iter().chain(&others);
+        if is_default_library(path) && !units.any(|unit| absolute(&unit.name, &cwd) == path) {
+            return;
+        }
+        let text = checker.hir(file).text.clone();
+        let starts = compute_ecma_line_starts(&text);
+        let unit = without_prefixes(path, setup.lib_dir);
+        // The source is included, so that each entry of a baseline can be mapped to its line.
+        let mut lines = format!(
+            "#source\t{unit}\t{}\n",
+            String::from_utf8_lossy(unit_text.unwrap_or(&text))
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t")
+        );
+        for found in checker.types_at_locations(file) {
+            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
+            // A missing identifier has no text.
+            if start > end {
+                continue;
+            }
+            let line = starts.partition_point(|&s| s as usize <= start) - 1;
+            let source = String::from_utf8_lossy(&text[start..end])
+                .replace("\r\n", "")
+                .replace('\n', "");
+            let kind = format!("{:?}", found.kind);
+            let kind = kind.split('(').next().unwrap_or_default();
+            lines.push_str(&format!(
+                "{unit}\t{line}\t{start}\t{source}\t{}\t{kind}\n",
+                found.type_text
+            ));
+        }
+        if checker.mark_linked_references_recursively(file) {
+            lines.push_str(EMIT_ADDS_ERRORS);
+        }
+        let section_of =
+            |sections: &mut Sections| sections.iter().position(|it| it.0 == file).unwrap();
+        {
+            let mut sections = sections.lock().unwrap();
+            let at = section_of(&mut sections);
+            sections[at].1.push_str(&lines);
+        }
+        if symbols.is_none() {
+            return;
+        }
+        let mut lines = String::new();
+        for found in checker.symbols_at_locations(file) {
+            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
+            // A missing identifier has no text.
+            if start > end {
+                continue;
+            }
+            let line = starts.partition_point(|&s| s as usize <= start) - 1;
+            let source = String::from_utf8_lossy(&text[start..end])
+                .replace("\r\n", "")
+                .replace('\n', "");
+            lines.push_str(&format!(
+                "{unit}\t{line}\t{start}\t{source}\t{}\tsymbol\n",
+                found.symbol_text
+            ));
+        }
+        let mut sections = sections.lock().unwrap();
+        let at = section_of(&mut sections);
+        sections[at].2.push_str(&lines);
+    };
+    let write_types = |checker: &mut bun_sema::check::Checker<'_>,
+                       file: bun_sema::program::FileId| {
+        {
+            let mut sections = sections.lock().unwrap();
+            match sections.iter_mut().find(|it| it.0 == file) {
+                Some(section) => (section.1.clear(), section.2.clear()).0,
+                None => sections.push((file, String::new(), String::new())),
+            }
+        }
+        let files = &checker.p.files;
+        let path = text(&files.modules[file.idx()].path);
+        // `GetSourceFile` of a path in `redirectFilesByPath` returns the retained copy of the
+        // package: the harness walks it once more, alongside the text of that unit.
+        let mut copies: Vec<String> = Vec::new();
+        if path.contains("/node_modules/") {
+            let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
+            copies.extend(
+                same_file
+                    .map(|(other, _)| text(other))
+                    .filter(|other| *other != path),
+            );
+            copies.sort();
+        }
+        // A later unit with the same name replaces the file. The harness walks the result of
+        // `GetSourceFile` once for each of them, alongside the text of that unit.
+        let units = roots.iter().chain(&others);
+        let of_this_name: Vec<_> = units
+            .filter(|unit| absolute(&unit.name, &cwd) == path)
+            .collect();
+        if of_this_name.len() > 1 {
+            for unit in of_this_name {
+                write_unit(checker, file, &path, Some(&unit.content[..]));
+            }
+        } else {
+            write_unit(checker, file, &path, None);
+        }
+        for copy in copies {
+            write_unit(checker, file, &copy, host.read(copy.as_bytes()).as_deref());
+        }
+    };
+    // `DoJSEmitBaseline`: `//// [name]`, followed by the emitted text of the file. The harness
+    // requests `\r\n`.
+    let write_dts = |checker: &mut bun_sema::check::Checker<'_>,
+                     file: bun_sema::program::FileId| {
+        if !checker.p.files.options.emits_declarations {
+            return;
+        }
+        let path = checker.p.files.modules[file.idx()].path.clone();
+        let options = &checker.p.files.options;
+        let output_dir = [&options.declaration_dir, &options.out_dir]
+            .into_iter()
+            .find(|dir| !dir.is_empty())
+            .map(|dir| dir.strip_suffix(b"/").unwrap_or(dir).to_vec());
+        // `GetCommonSourceDirectory`
+        let common = if !options.root_dir.is_empty() {
+            options.root_dir.clone()
+        } else if !options.config_path.is_empty() {
+            let end = options
+                .config_path
+                .iter()
+                .rposition(|&b| b == b'/')
+                .unwrap_or(0);
+            options.config_path[..end].to_vec()
+        } else {
+            let sources = (roots.iter().chain(&others))
+                .map(|unit| absolute(&unit.name, &cwd).into_bytes())
+                .filter(|it| bun_sema::resolve::output_declaration_file_name(it, None).is_some());
+            let common = sources.reduce(|a, b| {
+                let same = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                a[..same].to_vec()
+            });
+            let common = common.unwrap_or_default();
+            let end = common.iter().rposition(|&b| b == b'/').unwrap_or(0);
+            common[..end].to_vec()
+        };
+        let common = common.strip_suffix(b"/").unwrap_or(&common).to_vec();
+        let output = output_dir.as_ref().map(|dir| (&dir[..], &common[..]));
+        let (Some(written), Some(output)) = (
+            checker.emit_declaration_file(file),
+            bun_sema::resolve::output_declaration_file_name(&path, output)
+                .or_else(|| bun_sema::resolve::output_declaration_file_name(&path, None)),
+        ) else {
+            return;
+        };
+        // `fileOutput`, `removeTestPathPrefixes`
+        let name = if settings.get("fullemitpaths").is_some_and(|it| it == "true") {
+            output.strip_prefix(b"/.src/").unwrap_or(&output)
+        } else {
+            output.rsplit(|&b| b == b'/').next().unwrap_or_default()
+        };
+        let mut section = [b"//// [", name, b"]\r\n"].concat();
+        for line in written.split_inclusive(|&b| b == b'\n') {
+            match line.strip_suffix(b"\n") {
+                Some(line) => section.extend_from_slice(&[line, b"\r\n"].concat()),
+                None => section.extend_from_slice(line),
+            }
+        }
+        // In the order of the program.
+        let order = &checker.p.files.order;
+        let place = order
+            .iter()
+            .position(|&it| it == file)
+            .unwrap_or(order.len());
+        let mut written = dts.unwrap().lock().unwrap();
+        written.retain(|it| it.0 != place as u32);
+        written.push((place as u32, section));
+    };
+    let closed_a_cycle = AtomicBool::new(false);
+    let note_cycle = |program: &bun_sema::check::Program| {
+        let closed = program.closed_a_cycle.load(Ordering::Relaxed);
+        closed_a_cycle.store(closed, Ordering::Relaxed);
+    };
+    let request = Request {
+        compiler_options: &[],
+        cwd: cwd.as_bytes(),
+        project: None,
+        paths: &[],
+        threads: 1,
+        lib_dir: Some(setup.lib_dir.as_bytes()),
+        global_node_modules: None,
+        progress: None,
+        only: None,
+        order: 1,
+        digests: false,
+        plan_options: bun_sema_driver::PlanOptions::default(),
+        retains_everything: false,
+        stops_like_tsc: false,
+        uses_typescript_wording: true,
+        loaded: None,
+        checked: types
+            .is_some()
+            .then_some(&note_cycle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
+        declaration_file_emitted: None,
+        after_file: match (types, dts) {
+            (Some(_), _) => Some(&write_types),
+            (None, Some(_)) => Some(&write_dts),
+            (None, None) => None,
+        },
+    };
+    let report = bun_sema_driver::check_project(
+        &host,
+        project,
+        &request,
+        Report::default(),
+        std::time::Instant::now(),
+    );
+    // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked.
+    // The types and the symbols are read from a second program, which has emitted first. The query
+    // order is observable only where a cycle is detected, so the second program is created only
+    // then.
+    if closed_a_cycle.load(Ordering::Relaxed) {
+        sections.lock().unwrap().clear();
+        let mut project = parsed_command_line();
+        project.options.emits_first = true;
+        bun_sema_driver::check_project(
+            &host,
+            project,
+            &request,
+            Report::default(),
+            std::time::Instant::now(),
+        );
+    }
+    for (_, types_of_file, symbols_of_file) in sections.lock().unwrap().iter() {
+        if let Some(types) = types {
+            types.lock().unwrap().push_str(types_of_file);
+        }
+        if let Some(symbols) = symbols {
+            symbols.lock().unwrap().push_str(symbols_of_file);
+        }
+    }
+    let inputs = config_unit
+        .iter()
+        .chain(roots.iter().copied())
+        .chain(others.iter().copied())
+        .map(|unit| (absolute(&unit.name, &cwd), unit.content.clone()))
+        .collect();
+    Some((report, inputs))
+}
+
+/// Runs the tests of `suite`.
+pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
+    let tests = setup.tests_under(suite.cases);
+    // Keyed by test: the configurations that have baselines.
+    let mut configurations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for name in suite.names {
+        // A test name can contain dots, so the baseline kind is stripped from the end.
+        const KINDS: [&str; 7] = [
+            ".errors.txt",
+            ".sourcemap.txt",
+            ".trace.json",
+            ".js.map",
+            ".symbols",
+            ".types",
+            ".js",
+        ];
+        let name = name.strip_suffix(".diff").unwrap_or(name);
+        let Some(configured) = KINDS.iter().find_map(|kind| name.strip_suffix(kind)) else {
+            continue;
+        };
+        let (stem, configuration) = match configured.strip_suffix(')').map(|c| (c, c.rfind('('))) {
+            Some((inner, Some(open))) => (&inner[..open], &inner[open + 1..]),
+            _ => (configured, ""),
+        };
+        configurations
+            .entry(stem)
+            .or_default()
+            .insert(configuration);
+    }
+    let outcomes = Mutex::new(Vec::new());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..setup.threads.max(1) {
+            // A task is checked on this thread, which needs the stack of a thread of Bun's pool.
+            let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+            let thread = std::thread::Builder::new().stack_size(stack);
+            let spawned = thread.spawn_scoped(scope, || {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(path) = tests.get(i) else { break };
+                    let base = path.rsplit('/').next().unwrap();
+                    if SKIPPED.contains(&base)
+                        || setup.only.is_some_and(|only| !path.contains(only))
+                        || i % setup.every.max(1) != 0
+                    {
+                        continue;
+                    }
+                    let stem = base
+                        .strip_suffix(".tsx")
+                        .or_else(|| base.strip_suffix(".ts"))
+                        .unwrap();
+                    let code = decode(&setup.read(path).unwrap());
+                    let settings = settings_of(&code);
+                    let none = BTreeSet::from([""]);
+                    let (known, has_baselines) = match configurations.get(stem) {
+                        Some(known) => (known, true),
+                        None => (&none, false),
+                    };
+                    for configuration in known {
+                        let mut settings = settings.clone();
+                        let varied: Vec<(&str, &str)> = configuration
+                            .split(',')
+                            .filter_map(|pair| pair.split_once('='))
+                            .collect();
+                        for (name, value) in settings.iter_mut() {
+                            match varied.iter().find(|v| v.0 == name) {
+                                Some(&(_, chosen)) => *value = chosen.to_owned(),
+                                None => *value = the_one_value(name, value),
+                            }
+                        }
+                        let configured = if configuration.is_empty() {
+                            stem.to_owned()
+                        } else {
+                            format!("{stem}({configuration})")
+                        };
+                        let name = format!("{}/{configured}", suite.name);
+                        let types = setup.types_out.map(|_| Mutex::new(String::new()));
+                        let symbols = setup.symbols_out.map(|_| Mutex::new(String::new()));
+                        let dts = setup.dts_out.map(|_| Mutex::new(Vec::new()));
+                        let _watched = Watched::new(&name);
+                        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            run_one(
+                                setup,
+                                path,
+                                &code,
+                                &settings,
+                                has_baselines,
+                                types.as_ref(),
+                                symbols.as_ref(),
+                                dts.as_ref(),
+                            )
+                        }));
+                        if let (Some(out), Some(dts), Ok(Some(_))) = (setup.dts_out, dts, &ran) {
+                            let mut sections = dts.into_inner().unwrap();
+                            sections.sort();
+                            let sections: Vec<Vec<u8>> =
+                                sections.into_iter().map(|it| it.1).collect();
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(
+                                format!("{dir}/{configured}.dts"),
+                                sections.concat(),
+                            );
+                        }
+                        if let (Some(out), Some(symbols), Ok(Some(_))) =
+                            (setup.symbols_out, symbols, &ran)
+                        {
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(
+                                format!("{dir}/{configured}.tsv"),
+                                symbols.into_inner().unwrap(),
+                            );
+                        }
+                        if let (Some(out), Some(types), Ok(Some((report, _)))) =
+                            (setup.types_out, types, &ran)
+                        {
+                            let mut lines = types.into_inner().unwrap();
+                            // `typeWriterWalker.hadErrorBaseline`: the error type is printed with
+                            // its intrinsic name only in a test without errors.
+                            // `compileFilesWithHost` adds an error, TS-1, where `Emit` has added
+                            // one.
+                            let had_error_baseline =
+                                !report.diagnostics.is_empty() || lines.contains(EMIT_ADDS_ERRORS);
+                            lines = lines.replace(EMIT_ADDS_ERRORS, "");
+                            let marked =
+                                format!("\t{}\t", bun_sema::check::type_writer::ERROR_TYPE_TEXT);
+                            let name = if had_error_baseline {
+                                "\tany\t"
+                            } else {
+                                "\terror\t"
+                            };
+                            lines = lines.replace(&marked, name);
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(format!("{dir}/{configured}.tsv"), lines);
+                        }
+                        let outcome = match ran {
+                            Err(_) => Outcome {
+                                name,
+                                level: Level::Broken,
+                                note: "panicked".to_owned(),
+                            },
+                            Ok(None) => continue,
+                            Ok(Some((mut report, inputs))) => {
+                                let expected = setup
+                                    .read(&format!("{}/{configured}.errors.txt", suite.baselines))
+                                    .map(|bytes| {
+                                        String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
+                                    })
+                                    .unwrap_or_default();
+                                let removed = errors_removed_by_emit(&expected);
+                                if !removed.is_empty() {
+                                    report.diagnostics.retain(|d| {
+                                        !removed.contains(&as_listed(d, setup.lib_dir).as_str())
+                                    });
+                                }
+                                let ours = if report.diagnostics.is_empty() {
+                                    String::new()
+                                } else {
+                                    String::from_utf8_lossy(&render(
+                                        &report.diagnostics,
+                                        &inputs,
+                                        setup.lib_dir,
+                                        settings
+                                            .get("pretty")
+                                            .is_some_and(|v| v.eq_ignore_ascii_case("true")),
+                                    ))
+                                    .into_owned()
+                                };
+                                let expected = without_errors_added_by_emit(&expected);
+                                let level = level_of(&ours, &expected);
+                                if let Some(out) = setup.out
+                                    && level != Level::All
+                                {
+                                    let dir = format!("{out}/{}", suite.name);
+                                    let _ = std::fs::create_dir_all(&dir);
+                                    let _ = std::fs::write(
+                                        format!("{dir}/{configured}.errors.txt"),
+                                        &ours,
+                                    );
+                                }
+                                let note = if level == Level::Differs {
+                                    let (a, b) = (heads(top_of(&ours)), heads(top_of(&expected)));
+                                    let only_in = |x: &[String], y: &[String]| {
+                                        x.iter()
+                                            .filter(|h| !y.contains(h))
+                                            .map(|h| h.rsplit(' ').next().unwrap_or(h).to_owned())
+                                            .collect::<Vec<_>>()
+                                            .join(",")
+                                    };
+                                    format!("false:{} missed:{}", only_in(&a, &b), only_in(&b, &a))
+                                } else {
+                                    String::new()
+                                };
+                                Outcome { name, level, note }
+                            }
+                        };
+                        outcomes.lock().unwrap().push(outcome);
+                    }
+                }
+            });
+            spawned.unwrap();
+        }
+    });
+    let mut outcomes = outcomes.into_inner().unwrap();
+    outcomes.sort_by(|a, b| a.name.cmp(&b.name));
+    outcomes
+}
+
+/// A test in progress. The checker has no time limit, so a test that does not terminate would
+/// silently hang the whole run: after ten minutes the run aborts and reports which test it was.
+struct Watched(usize);
+
+static IN_PROGRESS: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());
+
+impl Watched {
+    fn new(name: &str) -> Watched {
+        static WATCHDOG: std::sync::Once = std::sync::Once::new();
+        WATCHDOG.call_once(|| {
+            std::thread::spawn(|| {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    for (name, since) in IN_PROGRESS.lock().unwrap().iter().flatten() {
+                        if since.elapsed() > std::time::Duration::from_secs(60) {
+                            eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
+                            std::process::exit(3);
+                        }
+                    }
+                }
+            });
+        });
+        let mut in_progress = IN_PROGRESS.lock().unwrap();
+        let entry = Some((name.to_owned(), std::time::Instant::now()));
+        match in_progress.iter().position(Option::is_none) {
+            Some(free) => {
+                in_progress[free] = entry;
+                Watched(free)
+            }
+            None => {
+                in_progress.push(entry);
+                Watched(in_progress.len() - 1)
+            }
+        }
+    }
+}
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        IN_PROGRESS.lock().unwrap()[self.0] = None;
+    }
+}
+
+/// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n] [--threads=n] [--report=file]
+/// [--out=dir] [--types-out=dir] [--symbols-out=dir] [--dts-out=dir]
+/// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
+///
+/// With `--bundle`, the directories and the file with the names are paths in it.
+///
+/// Prints how many tests match their `.errors.txt` baseline and how closely, and the first of
+/// those that do not. Returns whether all match byte for byte.
+pub fn run_from_command_line(args: &[&[u8]]) -> bool {
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect();
+    let flag = |name: &str| {
+        args.iter()
+            .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
+    };
+    let number = |name: &str| flag(name).and_then(|n| n.parse().ok());
+    let (Some(lib_dir), Some(test_lib)) = (flag("lib"), flag("testlib")) else {
+        eprintln!("--lib and --testlib are required");
+        return false;
+    };
+    let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
+    let (symbols_out, dts_out) = (flag("symbols-out"), flag("dts-out"));
+    let bundle = match flag("bundle") {
+        None => None,
+        // Both last as long as the process.
+        Some(path) => match (std::fs::read(&path).ok()).and_then(|b| Bundle::parse(b.leak())) {
+            Some(bundle) => Some(&*Box::leak(Box::new(bundle))),
+            None => {
+                eprintln!("cannot read {path}");
+                return false;
+            }
+        },
+    };
+    let setup = Setup {
+        bundle,
+        lib_dir: &lib_dir,
+        test_lib: &test_lib,
+        only: only.as_deref(),
+        out: out.as_deref(),
+        types_out: types_out.as_deref(),
+        symbols_out: symbols_out.as_deref(),
+        dts_out: dts_out.as_deref(),
+        threads: number("threads").unwrap_or(8),
+        every: number("every").unwrap_or(1),
+    };
+    let mut all = Vec::new();
+    for spec in args.iter().filter(|a| !a.starts_with("--")) {
+        let [name, cases, baselines, names] = spec.split('=').collect::<Vec<_>>()[..] else {
+            eprintln!("not <name>=<tests>=<baselines>=<names>: {spec}");
+            return false;
+        };
+        let Some(listed) = setup.read(names) else {
+            eprintln!("cannot read {names}");
+            return false;
+        };
+        let listed = String::from_utf8_lossy(&listed);
+        let names: Vec<String> = listed.lines().map(str::to_owned).collect();
+        let suite = Suite {
+            name,
+            cases,
+            baselines,
+            names: &names,
+        };
+        all.extend(run(&suite, &setup));
+    }
+    let at_least = |level: Level| all.iter().filter(|o| o.level >= level).count();
+    let percent = |n: usize| n as f64 * 100.0 / all.len().max(1) as f64;
+    println!("{} tests (each configuration counts)", all.len());
+    for (level, what) in [
+        (Level::Codes, "the same errors at the same places"),
+        (Level::Words, "and in the same words"),
+        (Level::Spans, "and as long: all but the related information"),
+        (Level::All, "byte for byte"),
+    ] {
+        let n = at_least(level);
+        println!("{n:>6} {:>6.2}%  {what}", percent(n));
+    }
+    let mut failed: Vec<&Outcome> = all.iter().filter(|o| o.level < Level::All).collect();
+    failed.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    for outcome in failed.iter().take(50) {
+        println!("FAIL {:?} {} {}", outcome.level, outcome.name, outcome.note);
+    }
+    if let Some(path) = flag("report") {
+        let lines: Vec<String> = all
+            .iter()
+            .map(|o| format!("{:?}\t{}\t{}", o.level, o.name, o.note))
+            .collect();
+        if std::fs::write(&path, lines.join("\n") + "\n").is_err() {
+            eprintln!("cannot write {path}");
+            return false;
+        }
+    }
+    !all.is_empty() && failed.is_empty()
+}

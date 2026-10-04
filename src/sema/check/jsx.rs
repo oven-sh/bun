@@ -486,8 +486,8 @@ impl<'p> Checker<'p> {
         if self.is_tuple(ty) {
             return true;
         }
-        let (zero, apparent) = (self.atoms().intern(b"0"), self.apparent_type(ty));
-        if self.prop_of(apparent, zero).is_some() {
+        let zero = self.atoms().intern(b"0");
+        if self.get_property_of_type(ty, zero).is_some() {
             return true;
         }
         self.is_array_like(ty)

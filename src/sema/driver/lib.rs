@@ -1365,7 +1365,7 @@ fn check_named_files(
             .map(of_configuration),
     );
     let always_reported = report.diagnostics.len();
-    let about_options: Vec<Diagnostic> = project
+    let mut about_options: Vec<Diagnostic> = project
         .errors
         .iter()
         .filter(|error| error.is_about_options)
@@ -1422,698 +1422,623 @@ fn check_named_files(
     project.options.has_project_references = !project.references.is_empty();
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
-    // `Program::disputed_order` of the first attempt. The trees of the files that nothing refers to are freed by then, so the second
-    // attempt loads the program again.
-    let mut hints: Option<bun_sema::check::OrderHints> = None;
-    let counters = request.progress.map(|it| {
-        [
-            &it.to_check,
-            &it.checked,
-            &it.bytes_to_check,
-            &it.bytes_checked,
-            &it.errors,
-        ]
-    });
-    let counted_before = counters.map(|all| all.map(|it| it.load(Ordering::Relaxed)));
-    // Of both attempts.
-    let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
-    'attempts: loop {
-        let mut about_options = about_options.clone();
-        // Declared before everything that is allocated in it, so it is dropped last.
-        let session = Session::new();
-        let files = Files::load(&session, host, project.options.clone(), &project.files);
-        host.loaded();
-        // In an arena, so that no destructor runs for them: the session frees what they refer to all
-        // at once. `Program::release` frees the little that is on the regular heap.
-        let files = session.arena().alloc(files);
-        let root = session.arena().alloc(Program::new(&session, files));
-        let program: &Program = root;
-        report.files_loaded = program.files.modules.len();
-        report.load_time = started.elapsed();
-        let after = host.times();
-        for (i, phase) in report.load_phases.iter_mut().enumerate() {
-            *phase = after[i] - before[i];
-        }
-        if let Some(loaded) = request.loaded {
-            loaded(program);
-        }
-        if is_true(b"listFiles") || is_true(b"listFilesOnly") {
-            let path = |&file: &FileId| program.files.module(file).path.to_vec();
-            report.listed_files = program.files.order.iter().map(path).collect();
-        }
-        about_options.extend(
-            program
-                .files
-                .program_problems()
-                .iter()
-                .map(|problem| ConfigError::of_problem(host, &session, &config_path, problem))
-                .map(|error| of_configuration(&error)),
-        );
+    // Declared before everything that is allocated in it, so it is dropped last.
+    let session = Session::new();
+    let files = Files::load(&session, host, project.options, &project.files);
+    host.loaded();
+    // In an arena, so that no destructor runs for them: the session frees what they refer to all
+    // at once. `Program::release` frees the little that is on the regular heap.
+    let files = session.arena().alloc(files);
+    let root = session.arena().alloc(Program::new(&session, files));
+    let program: &Program = root;
+    report.files_loaded = program.files.modules.len();
+    report.load_time = started.elapsed();
+    let after = host.times();
+    for (i, phase) in report.load_phases.iter_mut().enumerate() {
+        *phase = after[i] - before[i];
+    }
+    if let Some(loaded) = request.loaded {
+        loaded(program);
+    }
+    if is_true(b"listFiles") || is_true(b"listFilesOnly") {
+        let path = |&file: &FileId| program.files.module(file).path.to_vec();
+        report.listed_files = program.files.order.iter().map(path).collect();
+    }
+    about_options.extend(
+        program
+            .files
+            .program_problems()
+            .iter()
+            .map(|problem| ConfigError::of_problem(host, &session, &config_path, problem))
+            .map(|error| of_configuration(&error)),
+    );
 
-        let checking = Instant::now();
-        let mut to_check: Vec<FileId> = (0..program.files.modules.len())
+    let checking = Instant::now();
+    let mut to_check: Vec<FileId> = (0..program.files.modules.len())
+        .filter(|&i| {
+            let module = &program.files.modules[i];
+            match module.hir.kind {
+                // Only parse errors are reported for JSON files.
+                FileKind::Json => module.hir.has_parse_diagnostics,
+                _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
+                FileKind::Declaration => !skip_lib_check,
+                FileKind::Ts | FileKind::Tsx => true,
+            }
+        })
+        .map(|i| FileId(i as u32))
+        .collect();
+    let is_reached = named.map(|named| {
+        let modules = &program.files.modules;
+        let mut is_reached = vec![false; modules.len()];
+        let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| {
-                let module = &program.files.modules[i];
-                match module.hir.kind {
-                    // Only parse errors are reported for JSON files.
-                    FileKind::Json => module.hir.has_parse_diagnostics,
-                    _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
-                    FileKind::Declaration => !skip_lib_check,
-                    FileKind::Ts | FileKind::Tsx => true,
-                }
-            })
-            .map(|i| FileId(i as u32))
-            .collect();
-        let is_reached = named.map(|named| {
-            let modules = &program.files.modules;
-            let mut is_reached = vec![false; modules.len()];
-            let mut to_follow: Vec<usize> = (0..modules.len())
-                .filter(|&i| {
-                    named
-                        .binary_search_by(|it| it.as_slice().cmp(modules[i].path))
-                        .is_ok()
-                })
-                .collect();
-            for &i in &to_follow {
-                is_reached[i] = true;
-            }
-            while let Some(i) = to_follow.pop() {
-                for edge in modules[i].edges {
-                    if !std::mem::replace(&mut is_reached[edge.idx()], true) {
-                        to_follow.push(edge.idx());
-                    }
-                }
-            }
-            is_reached
-        });
-        if let Some(is_reached) = &is_reached {
-            to_check.retain(|file| is_reached[file.idx()]);
-        }
-        if let Some(owned_elsewhere) = owned_elsewhere {
-            to_check.retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path));
-        }
-        if let Some(only) = request.only {
-            to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].path, only));
-        }
-        if is_true(b"listFilesOnly") && request.stops_like_tsc {
-            to_check.clear();
-        }
-        // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
-        let place = |f: FileId| program.files.rank_of_file(f);
-        to_check.sort_by_key(|&f| place(f));
-        let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
-        report.files_checked = to_check.len();
-        if let Some(progress) = request.progress {
-            let bytes = to_check
-                .iter()
-                .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
-                .sum();
-            progress.bytes_to_check.fetch_add(bytes, Ordering::Relaxed);
-            progress
-                .to_check
-                .fetch_add(to_check.len(), Ordering::Relaxed);
-        }
-        let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
-        // `GetDeclarationDiagnostics`
-        let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
-        let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
-        let deepest_stack = AtomicUsize::new(0);
-        // `Files::parse_and_bind` retains the text of every file except those of the default library.
-        let text_of = |file: FileId| {
-            let module = &program.files.modules[file.idx()];
-            if module.is_lib {
-                host.read(module.path).unwrap_or_default()
-            } else {
-                std::borrow::Cow::Borrowed(&module.hir.text[..])
-            }
-        };
-        let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Diagnostic>>| {
-            if errors.is_empty() {
-                return;
-            }
-            let module = &program.files.modules[file.idx()];
-            let text = &text_of(file)[..];
-            let starts = compute_ecma_line_starts(text);
-            let shown: Vec<Diagnostic> = errors
-                .into_iter()
-                .map(|e| {
-                    let related = e
-                        .related
-                        .into_iter()
-                        .map(|related| {
-                            let reported = Diagnostic {
-                                code: related.code,
-                                category: related.category,
-                                text: related.text,
-                                ..global(0, &[""; 0])
-                            };
-                            let Some((of, start, end)) = related.at else {
-                                return reported;
-                            };
-                            if of == file {
-                                return located(module.path, text, &starts, start, end, reported);
-                            }
-                            let other = &program.files.modules[of.idx()];
-                            let text = &text_of(of)[..];
-                            located(
-                                other.path,
-                                text,
-                                &compute_ecma_line_starts(text),
-                                start,
-                                end,
-                                reported,
-                            )
-                        })
-                        .collect();
-                    let reported = Diagnostic {
-                        related,
-                        code: e.code,
-                        category: e.category,
-                        text: if request.uses_typescript_wording {
-                            e.text
-                        } else {
-                            in_terms_of_bun(e.text)
-                        },
-                        ..global(0, &[""; 0])
-                    };
-                    located(module.path, text, &starts, e.start, e.end, reported)
-                })
-                .collect();
-            if let Some(progress) = request.progress {
-                progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
-            }
-            found.lock().extend(shown);
-        };
-        let new_checker = |expected: Requested| {
-            let mut checker = program.checker();
-            checker.set_requested(expected);
-            checker.begin_stack_budget();
-            checker
-        };
-        // 0: the tasks are not `checkerPool` checkers.
-        let checker_count = match request.plan_options.checkers {
-            0 => 0,
-            checkers => checkers.min(program.files.order.len()).clamp(1, 256),
-        };
-        // The files that are checked but not yet rendered. The task of another file may still report
-        // diagnostics in them.
-        let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
-        /// The result of a task at the barrier.
-        struct Outcome<'s> {
-            /// `None`: the files were checked outside the plan.
-            finished: Option<Finished<'s>>,
-            /// For `finish_files`.
-            checked: Vec<(FileId, Checked)>,
-            /// The files in which the native stack ran out.
-            incomplete: Vec<FileId>,
-            generic_relation_entries_not_published: u64,
-            /// The files whose HIR is freed once the task is validated: a retry reads it again.
-            trees_to_free: Vec<FileId>,
-            /// What `Checker::check_statements_ahead` returned. 0 for any other task.
-            obstacles: u8,
-        }
-        let free_trees = |files: Vec<FileId>| {
-            for file in files {
-                // SAFETY: the only task that reads the HIR has ended and will not be retried.
-                unsafe { program.files.free_tree(file) };
-            }
-        };
-        // `task`: its step, its index in the step, and `is_read_later`. `None`: the files are checked
-        // outside the plan.
-        let check_chunk =
-            |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool)>| {
-                let mut checker = new_checker(expected);
-                if let Some((step, index, is_read_later)) = task {
-                    checker.begin_task(step as u32, index as u32, is_read_later);
-                    checker.set_checker_count(checker_count as u32);
-                    if let Some(&first) = files.first() {
-                        checker.watch_provisional_variances(place(first), is_read_later);
-                    }
-                }
-                let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
-                for &file in files {
-                    checked.push((file, checker.check_file(file)));
-                    if let Some(after_file) = request.after_file
-                        && expected == Requested::All
-                    {
-                        after_file(&mut checker, file);
-                    }
-                    if checker.take_ran_out_of_stack() {
-                        incomplete.push(file);
-                    }
-                    if let (Some(progress), Some(_)) = (request.progress, task) {
-                        progress.checked.fetch_add(1, Ordering::Relaxed);
-                        let bytes = size(file) as usize;
-                        progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
-                    }
-                }
-                deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-                let mut outcome = Outcome {
-                    finished: task.map(|_| checker.end_task()),
-                    checked,
-                    incomplete,
-                    generic_relation_entries_not_published: checker
-                        .generic_relation_entries_not_published(),
-                    trees_to_free: Vec::new(),
-                    obstacles: 0,
-                };
-                // It holds references into the HIR of files.
-                drop(checker);
-                // At the end of the task, not of the file: an entry of the buffer can hold a value that is
-                // bound to an earlier file of the task.
-                // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
-                // again by its task.
-                if let Some(finished) = &outcome.finished {
-                    let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
-                    outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
-                    if !finished.can_be_invalid() {
-                        free_trees(std::mem::take(&mut outcome.trees_to_free));
-                    }
-                }
-                outcome
-            };
-        // `place`: the step of the task, and its index in the step.
-        let check_ahead =
-            |file: FileId, range: (u32, u32), expected: Requested, place: [usize; 2]| {
-                let mut checker = new_checker(expected);
-                checker.begin_task(place[0] as u32, place[1] as u32, true);
-                let everything = request.plan_options.split_publishes_everything;
-                let obstacles = checker.check_statements_ahead(file, range, everything);
-                Outcome {
-                    finished: Some(checker.end_task()),
-                    checked: Vec::new(),
-                    incomplete: Vec::new(),
-                    generic_relation_entries_not_published: checker
-                        .generic_relation_entries_not_published(),
-                    trees_to_free: Vec::new(),
-                    obstacles,
-                }
-            };
-        let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
-        let accept = |outcome: Outcome| {
-            // The diagnostics that were found are reported. Others may be missing, so the report lists
-            // the file as incomplete.
-            for file in outcome.incomplete {
-                let path = program.files.modules[file.idx()].path.to_vec();
-                incomplete.lock().push(path);
-            }
-            unfinished.lock().extend(outcome.checked);
-        };
-        // The report. No task is running: every diagnostic is in the buffer of its file. It makes no
-        // query and reads no HIR.
-        let finish_files = || {
-            let unfinished: Vec<Guarded<Option<(FileId, Checked)>>> = unfinished
-                .lock()
-                .drain(..)
-                .map(|one| Guarded::new(Some(one)))
-                .collect();
-            host.parallel(unfinished.len(), &|i| {
-                let (file, mut checked) = unfinished[i].lock().take().unwrap();
-                if let Some(written) = checked.declaration_file.take() {
-                    let path = program.files.modules[file.idx()].path.to_vec();
-                    declaration_files.lock().push((path, written));
-                }
-                let declaration = checked.take_declaration_diagnostics();
-                show(file, program.finish_file(file, checked), &found);
-                if let Some(declaration) = declaration {
-                    let declaration = program.finish_file(file, declaration);
-                    show(file, declaration, &emit_diagnostics);
-                }
-            });
-        };
-        let bytes_of = |index: usize| size(to_check[index]) as usize;
-        // Cost estimate for checking a file: the number of identifiers in its expressions. Each is a
-        // symbol to resolve and a type to compute. The text size is a poor predictor: on storybook,
-        // tasks partitioned by it take 1.8 times as long as tasks partitioned by the measured time,
-        // whereas tasks partitioned by this estimate take 1.1 times as long.
-        // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
-        // instructions of the check.
-        let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
-        let costs: Vec<usize> = (to_check.iter())
-            .map(|&file| {
-                let hir = program.files.hir(file);
-                let tags = hir.exprs.iter().map(|it| it.kind.tag());
-                let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-                tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+                named
+                    .binary_search_by(|it| it.as_slice().cmp(modules[i].path))
+                    .is_ok()
             })
             .collect();
-        let size_of = |index: usize| costs[index];
-        // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
-        // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
-        // deferred. Nothing that mentions a node of a leaf is published.
-        let ranges_of = |index: usize, parts: usize| -> Vec<(u32, u32)> {
-            let module = &program.files.modules[to_check[index].idx()];
-            let (hir, options) = (&module.hir, &program.files.options);
-            let mut ranges: Vec<(u32, u32)> = Vec::new();
-            if module.is_leaf
-                || hir.kind != FileKind::Declaration
-                || options.skip_lib_check
-                || options.no_check
-            {
-                return ranges;
-            }
-            let mut part_of_last = usize::MAX;
-            for s in hir.ids(hir.body) {
-                let start = hir[s].start;
-                let part = start as usize * parts / (hir.source_len as usize + 1);
-                if part != part_of_last {
-                    if let Some(last) = ranges.last_mut() {
-                        last.1 = start;
-                    }
-                    ranges.push((start, u32::MAX));
-                    part_of_last = part;
+        for &i in &to_follow {
+            is_reached[i] = true;
+        }
+        while let Some(i) = to_follow.pop() {
+            for edge in modules[i].edges {
+                if !std::mem::replace(&mut is_reached[edge.idx()], true) {
+                    to_follow.push(edge.idx());
                 }
             }
-            if ranges.len() < 2 {
-                ranges.clear();
-            }
-            ranges
-        };
-        let plan = match request.plan_options.checkers {
-            0 => Plan::new(
-                to_check.len(),
-                &bytes_of,
-                &size_of,
-                &ranges_of,
-                request.plan_options,
-            ),
-            checkers => Plan::of_checkers(
-                to_check.len(),
-                &|index| place(to_check[index]) as usize,
-                program.files.order.len(),
-                checkers,
-            ),
-        };
-        let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
-            host.parallel(count, work);
-        };
-        // For every task since the last barrier: wall time, the number of files, the index of the first file.
-        let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
-        // The ranks of the files of the steps after `number`, in ascending order.
-        let ranks_after = |number: usize| -> Vec<u32> {
-            let later = plan.steps[number + 1..].iter().flatten().flatten();
-            let mut ranks: Vec<u32> = later.map(|&file| place(to_check[file])).collect();
-            ranks.sort_unstable();
-            ranks
-        };
-        // Two steps before the first, with one task each. The tasks of the plan leave `hints.files` out (`run_round`): a file is checked
-        // once.
-        let follow = |hints: &bun_sema::check::OrderHints, expected: Requested| {
-            let barrier = |finished| {
-                let mut finished = vec![finished];
-                program.validate(&finished, &[]);
-                program.link(&mut finished, &in_parallel);
-                program.publish(&mut finished, &in_parallel, false);
-            };
-            let mut checker = new_checker(expected);
-            checker.begin_task(0, 0, true);
-            checker.measure_variances(&hints.variance_entries);
-            let measured = checker.end_task();
-            drop(checker);
-            barrier(measured);
-            let is_to_check = |file: &FileId| to_check.contains(file);
-            let files: Vec<FileId> = hints.files.iter().copied().filter(is_to_check).collect();
-            let mut outcome = check_chunk(&files, expected, Some((0, 0, true)));
-            barrier(outcome.finished.take().unwrap());
-            free_trees(std::mem::take(&mut outcome.trees_to_free));
-            accept(outcome);
-        };
-        // Returns the invalid tasks.
-        // `ahead`: by task. Empty: every task checks whole files.
-        let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
-            // After the last step the published state is read by the loop over the files that are not
-            // checked, which runs with `after_file`, and by a caller that goes on to query the program.
-            // The tasks of split files read the ranges, and nothing else of the step before theirs.
-            let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-                || request.retains_everything
-                || request.after_file.is_some();
-            let tasks = step.len();
-            let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
-            // The largest first, so that no thread begins it when the others are nearly done.
-            let mut start_order: Vec<usize> = (0..tasks).collect();
-            match request.order {
-                1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
-                order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
-            }
-            let outcomes: Vec<Guarded<Option<Outcome>>> =
-                (0..tasks).map(|_| Guarded::new(None)).collect();
-            let (started, busy) = (Instant::now(), AtomicU64::new(0));
-            host.parallel(tasks, &|i| {
-                let (index, began) = (start_order[i], Instant::now());
-                let mut files: Vec<FileId> =
-                    step[index].iter().map(|&file| to_check[file]).collect();
-                let outcome = match ahead.get(index).copied().flatten() {
-                    Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                    None => {
-                        if let Some(hints) = &hints {
-                            files.retain(|file| !hints.files.contains(file));
+        }
+        is_reached
+    });
+    if let Some(is_reached) = &is_reached {
+        to_check.retain(|file| is_reached[file.idx()]);
+    }
+    if let Some(owned_elsewhere) = owned_elsewhere {
+        to_check.retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path));
+    }
+    if let Some(only) = request.only {
+        to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].path, only));
+    }
+    if is_true(b"listFilesOnly") && request.stops_like_tsc {
+        to_check.clear();
+    }
+    // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
+    let place = |f: FileId| program.files.rank_of_file(f);
+    to_check.sort_by_key(|&f| place(f));
+    let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
+    report.files_checked = to_check.len();
+    if let Some(progress) = request.progress {
+        let bytes = to_check
+            .iter()
+            .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
+            .sum();
+        progress.bytes_to_check.fetch_add(bytes, Ordering::Relaxed);
+        progress
+            .to_check
+            .fetch_add(to_check.len(), Ordering::Relaxed);
+    }
+    let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    // `GetDeclarationDiagnostics`
+    let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let deepest_stack = AtomicUsize::new(0);
+    // `Files::parse_and_bind` retains the text of every file except those of the default library.
+    let text_of = |file: FileId| {
+        let module = &program.files.modules[file.idx()];
+        if module.is_lib {
+            host.read(module.path).unwrap_or_default()
+        } else {
+            std::borrow::Cow::Borrowed(&module.hir.text[..])
+        }
+    };
+    let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Diagnostic>>| {
+        if errors.is_empty() {
+            return;
+        }
+        let module = &program.files.modules[file.idx()];
+        let text = &text_of(file)[..];
+        let starts = compute_ecma_line_starts(text);
+        let shown: Vec<Diagnostic> = errors
+            .into_iter()
+            .map(|e| {
+                let related = e
+                    .related
+                    .into_iter()
+                    .map(|related| {
+                        let reported = Diagnostic {
+                            code: related.code,
+                            category: related.category,
+                            text: related.text,
+                            ..global(0, &[""; 0])
+                        };
+                        let Some((of, start, end)) = related.at else {
+                            return reported;
+                        };
+                        if of == file {
+                            return located(module.path, text, &starts, start, end, reported);
                         }
-                        check_chunk(&files, expected, Some((number, index, is_read_later)))
-                    }
-                };
-                *outcomes[index].lock() = Some(outcome);
-                let elapsed = began.elapsed();
-                busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                task_times
-                    .lock()
-                    .push((elapsed, files.len(), step[index][0]));
-            });
-            let in_tasks = started.elapsed();
-            // The barrier. Everything from here on is in task order.
-            let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
-                .map(|mut outcome| outcome.get_mut().take().unwrap())
-                .collect();
-            let mut finished: Vec<Finished> = (outcomes.iter_mut())
-                .map(|outcome| outcome.finished.take().unwrap())
-                .collect();
-            // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
-            let mut invalid: Vec<Task> = Vec::new();
-            let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
-            if checker_count == 0 {
-                // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
-                let mut is_invalid = program.validate(&finished, &ranks_after(number));
-                // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
-                // evaluates what is missing.
-                let tolerated = request.plan_options.split_tolerates & 7;
-                for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
-                    *is_invalid |= outcome.obstacles & !tolerated != 0;
-                    for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
-                        *count += usize::from((outcome.obstacles >> bit) & 1);
-                    }
-                }
-                let mut at = is_invalid.iter();
-                finished.retain(|_| !*at.next().unwrap());
-                let mut at = is_invalid.iter().zip(step).enumerate();
-                outcomes.retain(|_| {
-                    let (index, (&is_invalid, task)) = at.next().unwrap();
-                    if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
-                        ranges_dropped += 1;
-                    } else if is_invalid {
-                        if let Some(progress) = request.progress {
-                            let bytes = task.iter().map(|&file| bytes_of(file)).sum();
-                            progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
-                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                        }
-                        invalid.push(task.clone());
-                    }
-                    !is_invalid
-                });
-            }
-            for outcome in &mut outcomes {
-                free_trees(std::mem::take(&mut outcome.trees_to_free));
-            }
-            let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
-            for finished in &finished {
-                for (sum, &more) in foreign_evaluations
-                    .iter_mut()
-                    .zip(&finished.foreign_evaluations)
-                {
-                    *sum += u64::from(more);
-                }
-            }
-            let linking = Instant::now();
-            let records = program.link(&mut finished, &in_parallel);
-            let (in_link, publishing) = (linking.elapsed(), Instant::now());
-            let entries = program.publish(&mut finished, &in_parallel, request.digests);
-            let in_publish = publishing.elapsed();
-            let not_published = outcomes
-                .iter()
-                .map(|it| it.generic_relation_entries_not_published);
-            let generic_relation_entries_not_published = not_published.sum();
-            outcomes.into_iter().for_each(&accept);
-            let mut slowest = std::mem::take(&mut *task_times.lock());
-            slowest.sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-            slowest.truncate(5);
-            let path_of = |file: usize| program.files.modules[to_check[file].idx()].path.to_vec();
-            steps.lock().push(StepReport {
-                slowest_tasks: (slowest.into_iter())
-                    .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                    .collect(),
-                tasks,
-                ranges: ahead.iter().flatten().count(),
-                ranges_dropped,
-                ranges_by_obstacle,
-                files: step.iter().map(Vec::len).sum(),
-                in_tasks,
-                in_link,
-                in_publish,
-                idle: (in_tasks * threads as u32)
-                    .saturating_sub(Duration::from_nanos(busy.into_inner())),
-                entries,
-                records,
-                generic_relation_entries_not_published,
-                foreign_evaluations,
-            });
-            invalid
-        };
-        // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
-        // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-        let run_step = |number: usize, step: &[Task], expected: Requested| {
-            let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
-            while !invalid.is_empty() {
-                let again = Plan::cut(invalid.concat(), &size_of, request.plan_options);
-                invalid = run_round(number, &again, &[], expected);
-            }
-        };
-        let global_errors = || -> Vec<Diagnostic> {
-            program
-                .global_errors()
-                .iter()
-                .map(|(code, args)| global(*code, args))
-                .collect()
-        };
-        // `GetDiagnosticsOfAnyProgram`: TypeScript's command line proceeds to the next kind of error
-        // only if there is none of the previous kind. A file that does not parse, or is checked under
-        // inconsistent options, produces errors that are not worth reading.
-        let stops = request.stops_like_tsc;
-        let check_files = |expected: Requested| {
-            if let Some(hints) = &hints {
-                follow(hints, expected);
-            }
-            for (number, step) in plan.steps.iter().enumerate() {
-                run_step(number, step, expected);
-            }
-            finish_files();
-        };
-        // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the declaration transformer
-        // reports under `noEmit` too (`emitDeclarationFile`). `HandleNoEmitOnError` skips `Emit`, and so does `noEmit` on an incremental
-        // program. Every `tsc -b` program is incremental. Otherwise this models `tsc -p --noEmit`.
-        let options = &program.files.options;
-        let emits_despite_errors = options.emits_declarations
-            && !options.no_emit_on_error
-            && !match options.is_build {
-                true => options.no_emit,
-                false => options.is_incremental,
-            };
-        let emit_on_early_exit = || -> Vec<Diagnostic> {
-            if emits_despite_errors {
-                check_files(Requested::Declaration);
-                found.lock().clear();
-            }
-            std::mem::take(&mut *emit_diagnostics.lock())
-        };
-        'stages: {
-            if stops {
-                let suspects: Vec<FileId> = (0..program.files.modules.len())
-                    .filter(|&i| {
-                        let hir = &program.files.modules[i].hir;
-                        (hir.has_parse_diagnostics
-                            || hir.has_parse_or_grammar_diagnostics()
-                            || hir.is_js)
-                            && is_reached.as_ref().is_none_or(|reached| reached[i])
+                        let other = &program.files.modules[of.idx()];
+                        let text = &text_of(of)[..];
+                        located(
+                            other.path,
+                            text,
+                            &compute_ecma_line_starts(text),
+                            start,
+                            end,
+                            reported,
+                        )
                     })
-                    .map(|i| FileId(i as u32))
                     .collect();
-                host.parallel(suspects.len(), &|i| {
-                    accept(check_chunk(&suspects[i..=i], Requested::Syntactic, None));
-                });
-                finish_files();
-                let syntactic = std::mem::take(&mut *found.lock());
-                if !syntactic.is_empty() {
-                    report.diagnostics.extend(syntactic);
-                    report.files_checked = 0;
-                    report.diagnostics.extend(emit_on_early_exit());
-                    break 'stages;
-                }
+                let reported = Diagnostic {
+                    related,
+                    code: e.code,
+                    category: e.category,
+                    text: if request.uses_typescript_wording {
+                        e.text
+                    } else {
+                        in_terms_of_bun(e.text)
+                    },
+                    ..global(0, &[""; 0])
+                };
+                located(module.path, text, &starts, e.start, e.end, reported)
+            })
+            .collect();
+        if let Some(progress) = request.progress {
+            progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
+        }
+        found.lock().extend(shown);
+    };
+    let new_checker = |expected: Requested| {
+        let mut checker = program.checker();
+        checker.set_requested(expected);
+        checker.begin_stack_budget();
+        checker
+    };
+    // 0: the tasks are not `checkerPool` checkers.
+    let checker_count = match request.plan_options.checkers {
+        0 => 0,
+        checkers => checkers.min(program.files.order.len()).clamp(1, 256),
+    };
+    // The files that are checked but not yet rendered. The task of another file may still report
+    // diagnostics in them.
+    let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
+    /// The result of a task at the barrier.
+    struct Outcome<'s> {
+        /// `None`: the files were checked outside the plan.
+        finished: Option<Finished<'s>>,
+        /// For `finish_files`.
+        checked: Vec<(FileId, Checked)>,
+        /// The files in which the native stack ran out.
+        incomplete: Vec<FileId>,
+        generic_relation_entries_not_published: u64,
+        /// The files whose HIR is freed once the task is validated: a retry reads it again.
+        trees_to_free: Vec<FileId>,
+        /// What `Checker::check_statements_ahead` returned. 0 for any other task.
+        obstacles: u8,
+    }
+    let free_trees = |files: Vec<FileId>| {
+        for file in files {
+            // SAFETY: the only task that reads the HIR has ended and will not be retried.
+            unsafe { program.files.free_tree(file) };
+        }
+    };
+    // `task`: its step, its index in the step, and `is_read_later`. `None`: the files are checked
+    // outside the plan.
+    let check_chunk =
+        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool)>| {
+            let mut checker = new_checker(expected);
+            if let Some((step, index, is_read_later)) = task {
+                checker.begin_task(step as u32, index as u32, is_read_later);
+                checker.set_checker_count(checker_count as u32);
             }
-            report.diagnostics.append(&mut about_options);
-            if stops {
-                report.diagnostics.extend(global_errors());
-                if report.diagnostics.len() > always_reported {
-                    report.files_checked = 0;
-                    report.diagnostics.extend(emit_on_early_exit());
-                    break 'stages;
-                }
-            }
-            check_files(Requested::All);
-            // The second attempt stands.
-            let disputed = match hints.is_none() && checker_count == 0 {
-                true => program.disputed_order(),
-                false => None,
-            };
-            if disputed.is_some() {
-                if let (Some(counters), Some(before)) = (counters, counted_before) {
-                    for (counter, before) in counters.into_iter().zip(before) {
-                        counter.store(before, Ordering::Relaxed);
-                    }
-                }
-                report.diagnostics.truncate(always_reported);
-                hints = disputed;
-                root.release();
-                continue 'attempts;
-            }
-            report.diagnostics.append(&mut found.lock());
-            report.diagnostics.extend(global_errors());
-            // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
-            let is_error = |d: &Diagnostic| d.category == Category::Error;
-            if !stops
-                || emits_despite_errors
-                || !report.diagnostics[always_reported..].iter().any(is_error)
-            {
-                report.diagnostics.append(&mut emit_diagnostics.lock());
-            }
-            // `iterateBaseline`: a caller that writes output for every file also does so for the files
-            // that are not checked.
-            if let Some(after_file) = request.after_file {
-                let mut is_checked = vec![false; program.files.modules.len()];
-                for file in &to_check {
-                    is_checked[file.idx()] = true;
-                }
-                for i in 0..program.files.modules.len() {
-                    let (file, module) = (FileId(i as u32), &program.files.modules[i]);
-                    if module.is_lib
-                        || !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
-                        || is_checked[i]
-                    {
-                        continue;
-                    }
-                    let mut checker = program.checker();
-                    checker.begin_stack_budget();
+            let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
+            for &file in files {
+                checked.push((file, checker.check_file(file)));
+                if let Some(after_file) = request.after_file
+                    && expected == Requested::All
+                {
                     after_file(&mut checker, file);
                 }
+                if checker.take_ran_out_of_stack() {
+                    incomplete.push(file);
+                }
+                if let (Some(progress), Some(_)) = (request.progress, task) {
+                    progress.checked.fetch_add(1, Ordering::Relaxed);
+                    let bytes = size(file) as usize;
+                    progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
+                }
+            }
+            deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            let mut outcome = Outcome {
+                finished: task.map(|_| checker.end_task()),
+                checked,
+                incomplete,
+                generic_relation_entries_not_published: checker
+                    .generic_relation_entries_not_published(),
+                trees_to_free: Vec::new(),
+                obstacles: 0,
+            };
+            // It holds references into the HIR of files.
+            drop(checker);
+            // At the end of the task, not of the file: an entry of the buffer can hold a value that is
+            // bound to an earlier file of the task.
+            // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
+            // again by its task.
+            if let Some(finished) = &outcome.finished {
+                let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
+                outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
+                if !finished.can_be_invalid() {
+                    free_trees(std::mem::take(&mut outcome.trees_to_free));
+                }
+            }
+            outcome
+        };
+    // `place`: the step of the task, and its index in the step.
+    let check_ahead = |file: FileId, range: (u32, u32), expected: Requested, place: [usize; 2]| {
+        let mut checker = new_checker(expected);
+        checker.begin_task(place[0] as u32, place[1] as u32, true);
+        let everything = request.plan_options.split_publishes_everything;
+        let obstacles = checker.check_statements_ahead(file, range, everything);
+        Outcome {
+            finished: Some(checker.end_task()),
+            checked: Vec::new(),
+            incomplete: Vec::new(),
+            generic_relation_entries_not_published: checker
+                .generic_relation_entries_not_published(),
+            trees_to_free: Vec::new(),
+            obstacles,
+        }
+    };
+    let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
+    let accept = |outcome: Outcome| {
+        // The diagnostics that were found are reported. Others may be missing, so the report lists
+        // the file as incomplete.
+        for file in outcome.incomplete {
+            let path = program.files.modules[file.idx()].path.to_vec();
+            incomplete.lock().push(path);
+        }
+        unfinished.lock().extend(outcome.checked);
+    };
+    // The report. No task is running: every diagnostic is in the buffer of its file. It makes no
+    // query and reads no HIR.
+    let finish_files = || {
+        let unfinished: Vec<Guarded<Option<(FileId, Checked)>>> = unfinished
+            .lock()
+            .drain(..)
+            .map(|one| Guarded::new(Some(one)))
+            .collect();
+        host.parallel(unfinished.len(), &|i| {
+            let (file, mut checked) = unfinished[i].lock().take().unwrap();
+            if let Some(written) = checked.declaration_file.take() {
+                let path = program.files.modules[file.idx()].path.to_vec();
+                declaration_files.lock().push((path, written));
+            }
+            let declaration = checked.take_declaration_diagnostics();
+            show(file, program.finish_file(file, checked), &found);
+            if let Some(declaration) = declaration {
+                let declaration = program.finish_file(file, declaration);
+                show(file, declaration, &emit_diagnostics);
+            }
+        });
+    };
+    let bytes_of = |index: usize| size(to_check[index]) as usize;
+    // Cost estimate for checking a file: the number of identifiers in its expressions. Each is a
+    // symbol to resolve and a type to compute. The text size is a poor predictor: on storybook,
+    // tasks partitioned by it take 1.8 times as long as tasks partitioned by the measured time,
+    // whereas tasks partitioned by this estimate take 1.1 times as long.
+    // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
+    // instructions of the check.
+    let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
+    let costs: Vec<usize> = (to_check.iter())
+        .map(|&file| {
+            let hir = program.files.hir(file);
+            let tags = hir.exprs.iter().map(|it| it.kind.tag());
+            let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
+            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+        })
+        .collect();
+    let size_of = |index: usize| costs[index];
+    // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
+    // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
+    // deferred. Nothing that mentions a node of a leaf is published.
+    let ranges_of = |index: usize, parts: usize| -> Vec<(u32, u32)> {
+        let module = &program.files.modules[to_check[index].idx()];
+        let (hir, options) = (&module.hir, &program.files.options);
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        if module.is_leaf
+            || hir.kind != FileKind::Declaration
+            || options.skip_lib_check
+            || options.no_check
+        {
+            return ranges;
+        }
+        let mut part_of_last = usize::MAX;
+        for s in hir.ids(hir.body) {
+            let start = hir[s].start;
+            let part = start as usize * parts / (hir.source_len as usize + 1);
+            if part != part_of_last {
+                if let Some(last) = ranges.last_mut() {
+                    last.1 = start;
+                }
+                ranges.push((start, u32::MAX));
+                part_of_last = part;
             }
         }
-        report.deepest_stack = deepest_stack.into_inner();
-        report.steps = std::mem::take(&mut *steps.lock());
-        report.incomplete = std::mem::take(&mut *incomplete.lock());
-        report.incomplete.sort();
-        report.incomplete.dedup();
-        let unreadable = host.take_unreadable();
-        let cannot_read = unreadable.iter().map(|path| global(5083, &[path]));
-        report.diagnostics.extend(cannot_read);
-        sort_and_deduplicate(&mut report.diagnostics);
-        // A program diagnostic without a file has position -1 (`NewCompilerDiagnostic`), a checker
-        // diagnostic without a file has position 0 (`NewDiagnosticForNode`).
-        let of_the_checker = program.global_errors();
-        let in_no_file = report.diagnostics.partition_point(|d| d.path.is_empty());
-        report.diagnostics[..in_no_file]
-            .sort_by_key(|d| of_the_checker.iter().any(|(code, _)| *code == d.code));
-        report.check_time = checking.elapsed();
-        report.declaration_files = std::mem::take(&mut *declaration_files.lock());
-        if let Some(checked) = request.checked {
-            checked(program);
+        if ranges.len() < 2 {
+            ranges.clear();
         }
-        root.release();
-        return report;
+        ranges
+    };
+    let plan = match request.plan_options.checkers {
+        0 => Plan::new(
+            to_check.len(),
+            &bytes_of,
+            &size_of,
+            &ranges_of,
+            request.plan_options,
+        ),
+        checkers => Plan::of_checkers(
+            to_check.len(),
+            &|index| place(to_check[index]) as usize,
+            program.files.order.len(),
+            checkers,
+        ),
+    };
+    let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+        host.parallel(count, work);
+    };
+    let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
+    // For every task since the last barrier: wall time, the number of files, the index of the first file.
+    let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
+    // Returns the invalid tasks.
+    // `ahead`: by task. Empty: every task checks whole files.
+    let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
+        // After the last step the published state is read by the loop over the files that are not
+        // checked, which runs with `after_file`, and by a caller that goes on to query the program.
+        // The tasks of split files read the ranges, and nothing else of the step before theirs.
+        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
+            || request.retains_everything
+            || request.after_file.is_some();
+        let tasks = step.len();
+        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+        // The largest first, so that no thread begins it when the others are nearly done.
+        let mut start_order: Vec<usize> = (0..tasks).collect();
+        match request.order {
+            1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
+            order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
+        }
+        let outcomes: Vec<Guarded<Option<Outcome>>> =
+            (0..tasks).map(|_| Guarded::new(None)).collect();
+        let (started, busy) = (Instant::now(), AtomicU64::new(0));
+        host.parallel(tasks, &|i| {
+            let (index, began) = (start_order[i], Instant::now());
+            let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
+            let outcome = match ahead.get(index).copied().flatten() {
+                Some(range) => check_ahead(files[0], range, expected, [number, index]),
+                None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+            };
+            *outcomes[index].lock() = Some(outcome);
+            let elapsed = began.elapsed();
+            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+            task_times
+                .lock()
+                .push((elapsed, files.len(), step[index][0]));
+        });
+        let in_tasks = started.elapsed();
+        // The barrier. Everything from here on is in task order.
+        let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+            .map(|mut outcome| outcome.get_mut().take().unwrap())
+            .collect();
+        let mut finished: Vec<Finished> = (outcomes.iter_mut())
+            .map(|outcome| outcome.finished.take().unwrap())
+            .collect();
+        // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
+        let mut invalid: Vec<Task> = Vec::new();
+        let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
+        if checker_count == 0 {
+            // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
+            let mut is_invalid = program.validate(&finished);
+            // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
+            // evaluates what is missing.
+            let tolerated = request.plan_options.split_tolerates & 7;
+            for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
+                *is_invalid |= outcome.obstacles & !tolerated != 0;
+                for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
+                    *count += usize::from((outcome.obstacles >> bit) & 1);
+                }
+            }
+            let mut at = is_invalid.iter();
+            finished.retain(|_| !*at.next().unwrap());
+            let mut at = is_invalid.iter().zip(step).enumerate();
+            outcomes.retain(|_| {
+                let (index, (&is_invalid, task)) = at.next().unwrap();
+                if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
+                    ranges_dropped += 1;
+                } else if is_invalid {
+                    if let Some(progress) = request.progress {
+                        let bytes = task.iter().map(|&file| bytes_of(file)).sum();
+                        progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
+                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                    }
+                    invalid.push(task.clone());
+                }
+                !is_invalid
+            });
+        }
+        for outcome in &mut outcomes {
+            free_trees(std::mem::take(&mut outcome.trees_to_free));
+        }
+        let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
+        for finished in &finished {
+            for (sum, &more) in foreign_evaluations
+                .iter_mut()
+                .zip(&finished.foreign_evaluations)
+            {
+                *sum += u64::from(more);
+            }
+        }
+        let linking = Instant::now();
+        let records = program.link(&mut finished, &in_parallel);
+        let (in_link, publishing) = (linking.elapsed(), Instant::now());
+        let entries = program.publish(&mut finished, &in_parallel, request.digests);
+        let in_publish = publishing.elapsed();
+        let not_published = outcomes
+            .iter()
+            .map(|it| it.generic_relation_entries_not_published);
+        let generic_relation_entries_not_published = not_published.sum();
+        outcomes.into_iter().for_each(&accept);
+        let mut slowest = std::mem::take(&mut *task_times.lock());
+        slowest.sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+        slowest.truncate(5);
+        let path_of = |file: usize| program.files.modules[to_check[file].idx()].path.to_vec();
+        steps.lock().push(StepReport {
+            slowest_tasks: (slowest.into_iter())
+                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
+                .collect(),
+            tasks,
+            ranges: ahead.iter().flatten().count(),
+            ranges_dropped,
+            ranges_by_obstacle,
+            files: step.iter().map(Vec::len).sum(),
+            in_tasks,
+            in_link,
+            in_publish,
+            idle: (in_tasks * threads as u32)
+                .saturating_sub(Duration::from_nanos(busy.into_inner())),
+            entries,
+            records,
+            generic_relation_entries_not_published,
+            foreign_evaluations,
+        });
+        invalid
+    };
+    // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
+    // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
+    let run_step = |number: usize, step: &[Task], expected: Requested| {
+        let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
+        while !invalid.is_empty() {
+            let again = Plan::cut(invalid.concat(), &size_of, request.plan_options);
+            invalid = run_round(number, &again, &[], expected);
+        }
+    };
+    let global_errors = || -> Vec<Diagnostic> {
+        program
+            .global_errors()
+            .iter()
+            .map(|(code, args)| global(*code, args))
+            .collect()
+    };
+    // `GetDiagnosticsOfAnyProgram`: TypeScript's command line proceeds to the next kind of error
+    // only if there is none of the previous kind. A file that does not parse, or is checked under
+    // inconsistent options, produces errors that are not worth reading.
+    let stops = request.stops_like_tsc;
+    let check_files = |expected: Requested| {
+        for (number, step) in plan.steps.iter().enumerate() {
+            run_step(number, step, expected);
+        }
+        finish_files();
+    };
+    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the declaration transformer
+    // reports under `noEmit` too (`emitDeclarationFile`). `HandleNoEmitOnError` skips `Emit`, and so does `noEmit` on an incremental
+    // program. Every `tsc -b` program is incremental. Otherwise this models `tsc -p --noEmit`.
+    let options = &program.files.options;
+    let emits_despite_errors = options.emits_declarations
+        && !options.no_emit_on_error
+        && !match options.is_build {
+            true => options.no_emit,
+            false => options.is_incremental,
+        };
+    let emit_on_early_exit = || -> Vec<Diagnostic> {
+        if emits_despite_errors {
+            check_files(Requested::Declaration);
+            found.lock().clear();
+        }
+        std::mem::take(&mut *emit_diagnostics.lock())
+    };
+    'stages: {
+        if stops {
+            let suspects: Vec<FileId> = (0..program.files.modules.len())
+                .filter(|&i| {
+                    let hir = &program.files.modules[i].hir;
+                    (hir.has_parse_diagnostics
+                        || hir.has_parse_or_grammar_diagnostics()
+                        || hir.is_js)
+                        && is_reached.as_ref().is_none_or(|reached| reached[i])
+                })
+                .map(|i| FileId(i as u32))
+                .collect();
+            host.parallel(suspects.len(), &|i| {
+                accept(check_chunk(&suspects[i..=i], Requested::Syntactic, None));
+            });
+            finish_files();
+            let syntactic = std::mem::take(&mut *found.lock());
+            if !syntactic.is_empty() {
+                report.diagnostics.extend(syntactic);
+                report.files_checked = 0;
+                report.diagnostics.extend(emit_on_early_exit());
+                break 'stages;
+            }
+        }
+        report.diagnostics.append(&mut about_options);
+        if stops {
+            report.diagnostics.extend(global_errors());
+            if report.diagnostics.len() > always_reported {
+                report.files_checked = 0;
+                report.diagnostics.extend(emit_on_early_exit());
+                break 'stages;
+            }
+        }
+        check_files(Requested::All);
+        report.diagnostics.append(&mut found.lock());
+        report.diagnostics.extend(global_errors());
+        // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
+        let is_error = |d: &Diagnostic| d.category == Category::Error;
+        if !stops
+            || emits_despite_errors
+            || !report.diagnostics[always_reported..].iter().any(is_error)
+        {
+            report.diagnostics.append(&mut emit_diagnostics.lock());
+        }
+        // `iterateBaseline`: a caller that writes output for every file also does so for the files
+        // that are not checked.
+        if let Some(after_file) = request.after_file {
+            let mut is_checked = vec![false; program.files.modules.len()];
+            for file in &to_check {
+                is_checked[file.idx()] = true;
+            }
+            for i in 0..program.files.modules.len() {
+                let (file, module) = (FileId(i as u32), &program.files.modules[i]);
+                if module.is_lib
+                    || !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
+                    || is_checked[i]
+                {
+                    continue;
+                }
+                let mut checker = program.checker();
+                checker.begin_stack_budget();
+                after_file(&mut checker, file);
+            }
+        }
     }
+    report.deepest_stack = deepest_stack.into_inner();
+    report.steps = std::mem::take(&mut *steps.lock());
+    report.incomplete = std::mem::take(&mut *incomplete.lock());
+    report.incomplete.sort();
+    report.incomplete.dedup();
+    let unreadable = host.take_unreadable();
+    let cannot_read = unreadable.iter().map(|path| global(5083, &[path]));
+    report.diagnostics.extend(cannot_read);
+    sort_and_deduplicate(&mut report.diagnostics);
+    // A program diagnostic without a file has position -1 (`NewCompilerDiagnostic`), a checker
+    // diagnostic without a file has position 0 (`NewDiagnosticForNode`).
+    let of_the_checker = program.global_errors();
+    let in_no_file = report.diagnostics.partition_point(|d| d.path.is_empty());
+    report.diagnostics[..in_no_file]
+        .sort_by_key(|d| of_the_checker.iter().any(|(code, _)| *code == d.code));
+    report.check_time = checking.elapsed();
+    report.declaration_files = std::mem::take(&mut *declaration_files.lock());
+    if let Some(checked) = request.checked {
+        checked(program);
+    }
+    root.release();
+    report
 }

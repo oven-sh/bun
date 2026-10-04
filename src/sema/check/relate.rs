@@ -2369,7 +2369,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// type arguments relate. Empty while the computation is in progress.
     pub(super) fn variances_of(&mut self, sym: Sym) -> &'s [u8] {
         if let Some(known) = self.p.variances.get(&mut self.task, &sym) {
-            self.note_stored_variances_read(sym);
             return known;
         }
         self.variances_worker(sym)
@@ -2390,17 +2389,13 @@ impl<'p, 's> Checker<'p, 's> {
                 Err(_) => variances,
             };
         }
-        if let Some(at) = self.variances_in_progress.iter().rposition(|&it| it == sym) {
+        if self.variances_in_progress.contains(&sym) {
             self.variance_cycles += 1;
-            if at + 1 < self.variances_in_progress.len() {
-                self.lowest_variance_reentered = self.lowest_variance_reentered.min(at);
-            }
             return &[];
         }
         // The value of the first task in serial order, for a task that is retried (`Program::validate`).
         let serial = self.p.serial_variances.lock().get(&sym).copied();
         if let Some(variances) = serial {
-            self.note_stored_variances_read(sym);
             let scope = self.begin_scope();
             return match self.end_scope_as(scope, false) {
                 Ok(stored) => self
@@ -2422,17 +2417,12 @@ impl<'p, 's> Checker<'p, 's> {
             self.cut_short_again();
             return known;
         }
-        let depth = self.variances_in_progress.len();
         self.variances_in_progress.push(sym);
-        let reentered_before = std::mem::replace(&mut self.lowest_variance_reentered, usize::MAX);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         let variance_cycles = self.variance_cycles;
         if !was_computing {
-            self.variance_cycle_members.clear();
             self.variances_measured.clear();
         }
-        let members_before = self.variance_cycle_members.len();
-        let touched_before = self.first_member_touched.take();
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
         // forever.
@@ -2495,38 +2485,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
-        // Tarjan's algorithm: `sym` is in a strongly connected component of several symbols if a
-        // symbol above it re-entered it or a symbol below it. It is the root, the member that was
-        // entered first, if nothing below it was re-entered.
-        let reentered = std::mem::replace(&mut self.lowest_variance_reentered, reentered_before);
-        if reentered < depth {
-            self.lowest_variance_reentered = reentered_before.min(reentered);
-        }
-        if reentered <= depth {
-            self.variance_cycle_members.push((sym, None));
-        }
-        if reentered == depth {
-            for member in &mut self.variance_cycle_members[members_before..] {
-                member.1.get_or_insert(sym);
-            }
-        }
-        // The member at which a request for the variances of `sym` enters a cycle, if nothing is stored.
-        let touched = std::mem::replace(&mut self.first_member_touched, touched_before);
-        let enters = if reentered <= depth {
-            Some(sym)
-        } else {
-            touched
-        };
-        if let Some(member) = enters {
-            self.first_member_touched.get_or_insert(member);
-        }
         // Kept until the check ends, published or not: a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
         let variances = match self.end_scope(scope) {
             Ok(stored) => {
-                if let (Some(member), true) = (enters, self.notes_cycle_entries) {
-                    self.note_cycle_entry(sym, member, variances);
-                }
                 self.variances_measured.push((sym, variances));
                 self.p
                     .variances
@@ -2544,16 +2506,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let at = self.task.order_dependent_variances.len() as u32;
                 self.order_dependent.insert(sym, at);
                 self.order_dependent_filter |= Self::order_dependent_bit(sym);
-                let mut members = self.variance_cycle_members.iter();
                 self.task.order_dependent_variances.push(OrderDependent {
                     sym,
                     variances,
-                    root: members.find(|it| it.0 == sym).and_then(|it| it.1),
-                    rank: (self.task.file).map_or(0, |file| self.p.files.rank_of_file(file)),
-                    from: self.p.rank_of_first_dependent(sym),
-                    is_provisional: false,
-                    enters: sym,
-                    first_use: None,
                     compared: 0,
                     failed: 0,
                     void_targets: 0,
@@ -2562,97 +2517,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         variances
-    }
-
-    /// Called after `begin_task`. `first_rank`: of the first file of the task. `is_read_later`: see `begin_task`.
-    ///
-    /// Of each provisional cycle (`EntryOrder`) that a later file has measured, the task notes where
-    /// it touches it first: had nothing been published, it would have entered the cycle there.
-    ///
-    /// A cache hit on the variances of a symbol outside the cycle that were measured through it
-    /// hides the request for the member at which that measurement touched the cycle first, so it
-    /// counts as that request. A task that publishes notes which of its own lead into a cycle.
-    pub fn watch_provisional_variances(&mut self, first_rank: u32, is_read_later: bool) {
-        self.notes_cycle_entries = is_read_later;
-        let program = self.p;
-        let order = program.entry_order.lock();
-        for it in order.provisional.iter() {
-            if first_rank < it.rank {
-                let at = self.task.order_dependent_variances.len() as u32;
-                self.watched_variances.insert(it.sym, at);
-                self.task.order_dependent_variances.push(OrderDependent {
-                    sym: it.sym,
-                    variances: it.variances,
-                    root: Some(it.root),
-                    rank: it.rank,
-                    from: 0,
-                    is_provisional: true,
-                    enters: it.enters,
-                    first_use: None,
-                    compared: 0,
-                    failed: 0,
-                    void_targets: 0,
-                    inferred: 0,
-                });
-            }
-            if is_read_later {
-                self.cycle_entries.insert(it.sym, it.enters);
-            }
-            if first_rank < it.rank || is_read_later {
-                self.watched_variances_filter |= Self::order_dependent_bit(it.sym);
-            }
-        }
-    }
-
-    /// The task stores the variances of `sym`. A request for them has entered a cycle of several
-    /// symbols at `member`, or has read what is stored for it before that of any other member.
-    fn note_cycle_entry(&mut self, sym: Sym, member: Sym, variances: &'s [u8]) {
-        self.cycle_entries.insert(sym, member);
-        self.watched_variances_filter |= Self::order_dependent_bit(sym);
-        if member != sym {
-            self.task.leads_into_cycles.push(LeadsIntoCycle {
-                sym,
-                member,
-                variances,
-            });
-        }
-    }
-
-    /// A request for the variances of `sym` is answered from what is stored.
-    #[inline]
-    fn note_stored_variances_read(&mut self, sym: Sym) {
-        if self.watched_variances_filter & Self::order_dependent_bit(sym) != 0 {
-            self.note_cycle_touched_through(sym);
-        }
-    }
-
-    #[cold]
-    fn note_cycle_touched_through(&mut self, sym: Sym) {
-        if let Some(&at) = self.watched_variances.get(&sym) {
-            self.note_first_use(at);
-        }
-        if self.in_variance_computation
-            && let Some(&member) = self.cycle_entries.get(&sym)
-        {
-            self.first_member_touched.get_or_insert(member);
-        }
-    }
-
-    /// The first use of a provisional cycle by the task. Nothing else that leads into it is watched any longer.
-    fn note_first_use(&mut self, at: u32) {
-        let visiting = self.task.file;
-        let watched = &mut self.task.order_dependent_variances;
-        watched[at as usize].first_use =
-            Some(visiting.map_or(0, |file| self.p.files.rank_of_file(file)));
-        let root = watched[at as usize].root;
-        self.watched_variances
-            .retain(|_, at| watched[*at as usize].root != root);
-        let keys = self
-            .watched_variances
-            .keys()
-            .chain(self.cycle_entries.keys());
-        self.watched_variances_filter =
-            keys.fold(0, |filter, &sym| filter | Self::order_dependent_bit(sym));
     }
 
     #[inline]
@@ -2718,10 +2582,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `variances_of`, as a list.
     fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
         match self.p.variances.get_ref(&mut self.task, &sym) {
-            Some(known) => {
-                self.note_stored_variances_read(sym);
-                List::Kept(known)
-            }
+            Some(known) => List::Kept(known),
             None => List::Kept(self.variances_worker(sym)),
         }
     }

@@ -64,10 +64,6 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// See `Finished::leads_into_cycles`.
-    pub(super) leads_into_cycles: Vec<LeadsIntoCycle<'s>>,
-    /// See `Finished::limits_reached`.
-    pub(super) limits_reached: Vec<LimitReached>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -90,8 +86,6 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
-            leads_into_cycles: Vec::new(),
-            limits_reached: Vec::new(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -161,8 +155,6 @@ impl<'s> Task<'s> {
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
-        self.leads_into_cycles.clear();
-        self.limits_reached.clear();
         self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
@@ -229,8 +221,6 @@ impl<'s> Task<'s> {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
-        let leads_into_cycles = std::mem::take(&mut self.leads_into_cycles);
-        let limits_reached = std::mem::take(&mut self.limits_reached);
         self.drop_everything();
         Finished {
             step,
@@ -239,8 +229,6 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
-            leads_into_cycles,
-            limits_reached,
             own,
             link: Link::default(),
             tables: published,
@@ -259,10 +247,6 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// See `EntryOrder`.
-    pub(super) leads_into_cycles: Vec<LeadsIntoCycle<'s>>,
-    /// See `EntryOrder`.
-    pub(super) limits_reached: Vec<LimitReached>,
     /// The task-local records that the entries mention, in creation order.
     pub own: OwnRecords<'s>,
     /// `Program::link` fills it in, `publish` follows it.
@@ -281,40 +265,10 @@ impl Finished<'_> {
     }
 }
 
-/// The task has stored the variances of `sym`, which is in no cycle of several symbols. To measure them it has entered such a cycle
-/// at `member`, or has read what is stored for `member` before that of any other member.
-#[derive(Copy, Clone)]
-pub struct LeadsIntoCycle<'s> {
-    pub(super) sym: Sym,
-    pub(super) member: Sym,
-    pub(super) variances: &'s [u8],
-}
-
-/// The task has reported that an instantiation limit was reached (2589), and has stored the error type.
-#[derive(Copy, Clone)]
-pub struct LimitReached {
-    /// The file that the task was visiting.
-    pub(super) file: FileId,
-    /// The first file in program order among `file` and the checked files whose syntax a query in progress names.
-    pub(super) first: FileId,
-}
-
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on
 /// the entry point into the cycle. The masks record how the task used them: one bit per type parameter, the last bit for the 32nd on.
 pub struct OrderDependent<'s> {
     pub(super) sym: Sym,
-    /// If `sym` is in a cycle of several symbols: the member at which the cycle was entered.
-    pub(super) root: Option<Sym>,
-    /// The rank of the file that the task that measured it was visiting.
-    pub(super) rank: u32,
-    /// `Program::rank_of_first_dependent`
-    pub(super) from: u32,
-    /// An earlier step has measured and published it: see `EntryOrder`. The task only notes `first_use`.
-    pub(super) is_provisional: bool,
-    /// The member of the cycle that a request for the variances of `sym` touches first if nothing is stored. `sym`, if it is one.
-    pub(super) enters: Sym,
-    /// Of the members of its cycle the task used this one first, while it visited the file of this rank.
-    pub(super) first_use: Option<u32>,
     pub(super) variances: &'s [u8],
     /// Two different type arguments were compared under this variance and are related.
     pub(super) compared: u32,

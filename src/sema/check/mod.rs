@@ -112,10 +112,9 @@ use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::atomic::AtomicBool;
 use symbols::AliasTarget;
-use task::{LeadsIntoCycle, LimitReached, Open, OrderDependent, Stored, Task};
+use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
-pub use check_source_file::OrderHints;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
 
@@ -182,9 +181,6 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
-    entry_order: Guarded<check_source_file::EntryOrder<'s>>,
-    /// `check_source_file::ranks_of_first_dependents`
-    ranks_of_first_dependents: &'s [u32],
     /// `autoArrayType`
     auto_array_type: TypeId,
     pub files: &'s Files<'s>,
@@ -401,11 +397,6 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
-            entry_order: Guarded::new(check_source_file::EntryOrder::new_in(session.arena())),
-            ranks_of_first_dependents: check_source_file::ranks_of_first_dependents(
-                files,
-                session.arena(),
-            ),
             auto_array_type,
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -613,13 +604,6 @@ impl<'s> Program<'s> {
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
             variance_cycles: 0,
-            lowest_variance_reentered: usize::MAX,
-            variance_cycle_members: Vec::new(),
-            first_member_touched: None,
-            notes_cycle_entries: false,
-            cycle_entries: FxHashMap::default(),
-            watched_variances: FxHashMap::default(),
-            watched_variances_filter: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
             order_dependent: Default::default(),
@@ -1113,23 +1097,6 @@ pub struct Checker<'p, 's> {
     variances_in_progress: Vec<Sym>,
     /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
     variance_cycles: u32,
-    /// The lowest index in `variances_in_progress` that a symbol above it has re-entered since the
-    /// innermost `variances_worker` call on the stack began. `usize::MAX`: none.
-    lowest_variance_reentered: usize,
-    /// The symbols in cycles of several symbols that were measured since the outermost
-    /// `variances_worker` call on the stack began, each with the root of its cycle once that is measured.
-    variance_cycle_members: Vec<(Sym, Option<Sym>)>,
-    /// The first member of a cycle of several symbols that was entered, or whose stored variances
-    /// were read, since the innermost `variances_worker` call on the stack began.
-    first_member_touched: Option<Sym>,
-    /// See `watch_provisional_variances`.
-    notes_cycle_entries: bool,
-    /// For stored variances: `OrderDependent::enters`. Filled if `notes_cycle_entries`.
-    cycle_entries: FxHashMap<Sym, Sym>,
-    /// The index in `Task::order_dependent_variances` of each provisional record that is still watched.
-    watched_variances: FxHashMap<Sym, u32>,
-    /// A 64-bit Bloom filter for the keys of `cycle_entries` and `watched_variances`.
-    watched_variances_filter: u64,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// After `type_arguments_related_to` returns false: the index of the pair that is not related.
@@ -2315,32 +2282,12 @@ impl<'p, 's> Checker<'p, 's> {
             return self.mark_tainted_from(0);
         };
         self.add_diagnostic_of(None, Reported::bare(at, code));
-        // Elsewhere `settled` drops the diagnostic, whichever task reports it.
-        if self.reports_semantic_errors(at.0) {
-            self.note_limit_reached();
-        }
         // A query that began under an instantiation had less depth left than the same query has
         // from depth 0, where a finite type does not reach the limit. tsgo stores its result
         // regardless, and which types that breaks depends on the order in which it checks files.
         if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
             self.mark_tainted_from(from);
         }
-    }
-
-    /// One checker in program order has checked every file before the one it visits, so none of
-    /// their syntax is still to be evaluated. A task evaluates it on demand, and then reaches the
-    /// limit in place of that file. See `EntryOrder`.
-    fn note_limit_reached(&mut self) {
-        let Some(file) = self.task.file else {
-            return;
-        };
-        let named = self.stack.iter().filter_map(|q| Some(q.syntax()?.0));
-        let checked = named.filter(|&named| self.reports_semantic_errors(named));
-        let first = checked
-            .chain([file])
-            .min_by_key(|&it| self.files().rank_of_file(it));
-        let first = first.unwrap_or(file);
-        self.task.limits_reached.push(LimitReached { file, first });
     }
 
     /// `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`.

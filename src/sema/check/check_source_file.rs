@@ -26,144 +26,6 @@ use smallvec::SmallVec;
 /// are subtracted too.
 const TASK_STACK: usize = 3 << 20;
 
-/// A member of a cycle of variances that a task has measured, and published, although a file that
-/// precedes the task's in program order and can reach the member had not run. Or a symbol outside
-/// the cycle whose published variances were measured through it (`LeadsIntoCycle`).
-pub(super) struct ProvisionalVariances<'s> {
-    pub(super) sym: Sym,
-    pub(super) variances: &'s [u8],
-    /// The member at which the task entered the cycle.
-    pub(super) root: Sym,
-    /// `OrderDependent::enters`
-    pub(super) enters: Sym,
-    /// Of the file that the task was visiting.
-    pub(super) rank: u32,
-}
-
-/// Speculation: where a result depends on which file asks for it first, the plan publishes what
-/// its first task to ask finds, and here is what it takes to tell, after the last step, whether
-/// one checker in program order finds the same (`Program::disputed_order`).
-///
-/// The variances of a cycle are a function of the member at which it is entered.
-///
-/// `instantiateTypeWithAlias` stores the error type of a limit like any other result, so the first
-/// file to reach the limit reports it, and the files after it read the error type.
-pub(super) struct EntryOrder<'s> {
-    pub(super) provisional: ArenaVec<'s, ProvisionalVariances<'s>>,
-    /// For each cycle: the rank of the file that measured it, and its root.
-    entries: ArenaVec<'s, (u32, Sym)>,
-    /// By root. The first file that used a provisional cycle and precedes the one that measured
-    /// it: its rank, and the member it used first.
-    earlier_uses: ArenaHashMap<'s, Sym, (u32, Sym)>,
-    /// Of the valid tasks.
-    limits_reached: ArenaVec<'s, LimitReached>,
-}
-
-/// What the second attempt does before its first step, in this order. See `Program::disputed_order`.
-#[derive(Default)]
-pub struct OrderHints {
-    /// For `Checker::measure_variances`.
-    pub variance_entries: Vec<Sym>,
-    /// Checked by one task, and published. The tasks of the plan leave them out.
-    pub files: Vec<FileId>,
-}
-
-impl<'s> EntryOrder<'s> {
-    /// `arena`: of the thread that calls `Program::validate`.
-    pub(super) fn new_in(arena: &'s Arena) -> EntryOrder<'s> {
-        EntryOrder {
-            provisional: ArenaVec::new_in(arena),
-            entries: ArenaVec::new_in(arena),
-            earlier_uses: map_in(arena),
-            limits_reached: ArenaVec::new_in(arena),
-        }
-    }
-
-    /// `it`: of a valid task. `is_first`: it has set the serial value. `not_run`: see `validate`.
-    fn note(&mut self, it: &OrderDependent<'s>, is_first: bool, not_run: &[u32]) {
-        let Some(root) = it.root else {
-            return;
-        };
-        if it.is_provisional {
-            if let Some(rank) = it.first_use.filter(|&rank| rank < it.rank) {
-                let first = self.earlier_uses.entry(root).or_insert((rank, it.enters));
-                if rank < first.0 {
-                    *first = (rank, it.enters);
-                }
-            }
-        } else if is_first {
-            if !self.entries.iter().any(|entry| entry.1 == root) {
-                self.entries.push((it.rank, root));
-            }
-            let next = not_run.partition_point(|&rank| rank < it.from);
-            if not_run.get(next).is_some_and(|&rank| rank < it.rank) {
-                self.provisional.push(ProvisionalVariances {
-                    sym: it.sym,
-                    variances: it.variances,
-                    root,
-                    enters: it.sym,
-                    rank: it.rank,
-                });
-            }
-        }
-    }
-
-    /// `it`: of a valid task that publishes.
-    fn note_lead(&mut self, it: &LeadsIntoCycle<'s>) {
-        let mut provisional = self.provisional.iter();
-        let Some(member) = provisional.find(|member| member.sym == it.member) else {
-            return;
-        };
-        let (root, rank) = (member.root, member.rank);
-        if !self.provisional.iter().any(|known| known.sym == it.sym) {
-            self.provisional.push(ProvisionalVariances {
-                sym: it.sym,
-                variances: it.variances,
-                root,
-                enters: it.member,
-                rank,
-            });
-        }
-    }
-}
-
-/// For each `FileId` the rank of its first dependent in program order: the first file that can name
-/// one of its declarations or obtain a type that refers to one, through its imports and references,
-/// transitively, or through a file whose declarations need no import. A file depends on itself.
-/// Called before any tree is freed.
-pub(super) fn ranks_of_first_dependents<'s>(files: &Files, arena: &'s Arena) -> &'s [u32] {
-    let needs_no_import = |file: &&FileId| {
-        let module = &files.modules[file.idx()];
-        module.is_lib
-            || module.hir.is_js
-            || !module.hir.has_module_syntax
-            || !module.bound.global_augmentations.is_empty()
-            || !module.bound.ambient_modules.is_empty()
-            || !module.bound.umd_globals.is_empty()
-    };
-    let visible_everywhere = files.order.iter().filter(needs_no_import);
-    let in_program_order = (0u32..).zip(files.order.iter().copied());
-    let first = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
-    let mut reached: Vec<FileId> = Vec::new();
-    for (rank, file) in (visible_everywhere.map(|&file| (0, file))).chain(in_program_order) {
-        if first[file.idx()] != u32::MAX {
-            continue;
-        }
-        first[file.idx()] = rank;
-        reached.push(file);
-        while let Some(file) = reached.pop() {
-            let module = &files.modules[file.idx()];
-            for &imported in module.edges.iter().chain(module.imports.values()) {
-                if first[imported.idx()] == u32::MAX {
-                    first[imported.idx()] = rank;
-                    reached.push(imported);
-                }
-            }
-        }
-    }
-    first
-}
-
 /// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
     /// Optimistic concurrency control: validation, before link and publish. `getVariancesWorker`
@@ -177,12 +39,8 @@ impl<'s> Program<'s> {
     /// caller aborts an invalid task: it discards the task's output and retries its files, which
     /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
     /// with respect to that symbol. Returns whether each task is invalid.
-    ///
-    /// `not_run`: the ranks of the files of the later steps, in ascending order. `EntryOrder` tells
-    /// at the end whether it mattered that they had not run.
-    pub fn validate(&self, finished: &[Finished<'s>], not_run: &[u32]) -> Vec<bool> {
+    pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
-        let mut order = self.entry_order.lock();
         (finished.iter())
             .map(|finished| {
                 let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
@@ -194,106 +52,11 @@ impl<'s> Program<'s> {
                     return true;
                 }
                 for it in &finished.order_dependent_variances {
-                    if it.is_provisional {
-                        order.note(it, false, not_run);
-                        continue;
-                    }
-                    let mut is_first = false;
-                    serial.entry(it.sym).or_insert_with(|| {
-                        is_first = true;
-                        it.variances
-                    });
-                    order.note(it, is_first, not_run);
+                    serial.entry(it.sym).or_insert(it.variances);
                 }
-                for it in &finished.leads_into_cycles {
-                    order.note_lead(it);
-                }
-                order
-                    .limits_reached
-                    .extend_from_slice(&finished.limits_reached);
                 false
             })
             .collect()
-    }
-
-    /// No file before this one in program order requests the variances of `sym`.
-    pub(super) fn rank_of_first_dependent(&self, sym: Sym) -> u32 {
-        let declarations = self.files.decls(sym).into_iter();
-        let ranks = declarations.map(|(file, _)| self.ranks_of_first_dependents[file.idx()]);
-        ranks.min().unwrap_or(0)
-    }
-
-    /// Validation of the speculation of `EntryOrder`, after the last step. `None`: it holds.
-    /// Otherwise what was published follows from results that one checker in program order does
-    /// not find, so the caller starts over, with the hints.
-    pub fn disputed_order(&self) -> Option<OrderHints> {
-        let order = self.entry_order.lock();
-        let hints = OrderHints {
-            variance_entries: self.disputed_variance_entries(&order),
-            files: self.files_that_reach_limits_first(&order),
-        };
-        let is_disputed = !hints.variance_entries.is_empty() || !hints.files.is_empty();
-        is_disputed.then_some(hints)
-    }
-
-    /// Empty: wherever the plan has entered a cycle of variances, one checker in program order
-    /// enters it at the same member, or finds the same variances. Otherwise the members at which
-    /// that checker enters the cycles, in its order.
-    fn disputed_variance_entries(&self, order: &EntryOrder<'s>) -> Vec<Sym> {
-        let mut elsewhere: Vec<(u32, Sym, Sym)> = (order.earlier_uses.iter())
-            .filter(|(root, first)| **root != first.1)
-            .map(|(&root, &(rank, member))| (rank, member, root))
-            .collect();
-        if elsewhere.is_empty() {
-            return Vec::new();
-        }
-        elsewhere.sort_unstable();
-        let is_disputed =
-            |it: &&ProvisionalVariances| elsewhere.iter().any(|entry| entry.2 == it.root);
-        let disputed: Vec<&ProvisionalVariances> =
-            order.provisional.iter().filter(is_disputed).collect();
-        // In a program of its own: the published relations follow from the variances in question.
-        let afresh = Program::new(self.session, self.files);
-        for (&sym, variances) in self.serial_variances.lock().iter() {
-            if !disputed.iter().any(|it| it.sym == sym) {
-                (afresh.serial_variances.lock()).insert(sym, *variances);
-            }
-        }
-        let mut checker = afresh.checker();
-        checker.begin_stack_budget();
-        for &(_, member, _) in &elsewhere {
-            checker.variances_of(member);
-        }
-        if (disputed.iter()).all(|it| checker.variances_of(it.sym) == it.variances) {
-            return Vec::new();
-        }
-        let first_use = |&(rank, root): &(u32, Sym)| {
-            (order.earlier_uses.get(&root).copied()).unwrap_or((rank, root))
-        };
-        let mut entries: Vec<(u32, Sym)> = order.entries.iter().map(first_use).collect();
-        entries.sort_unstable();
-        entries.into_iter().map(|entry| entry.1).collect()
-    }
-
-    /// Empty: a limit was reached by one file at most, while it evaluated nothing of a checked
-    /// file before it. Otherwise another file may have reached it in place of the first one that
-    /// does in program order, or beside it, in a task that cannot see what the first one stores.
-    /// Then, in program order: for each report the first file that evaluates what was in progress.
-    fn files_that_reach_limits_first(&self, order: &EntryOrder<'s>) -> Vec<FileId> {
-        let reached = &order.limits_reached;
-        let Some(one) = reached.first() else {
-            return Vec::new();
-        };
-        if reached
-            .iter()
-            .all(|it| it.file == one.file && it.first == it.file)
-        {
-            return Vec::new();
-        }
-        let mut files: Vec<FileId> = reached.iter().map(|it| it.first).collect();
-        files.sort_unstable_by_key(|&file| self.files.rank_of_file(file));
-        files.dedup();
-        files
     }
 
     /// The first half. Of the types, signatures, mappers and component lists that several tasks
@@ -354,19 +117,6 @@ impl<'s> Checker<'_, 's> {
         self.task.begin(step, index, is_read_later);
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
-        self.notes_cycle_entries = false;
-        self.cycle_entries.clear();
-        self.watched_variances.clear();
-        self.watched_variances_filter = 0;
-    }
-
-    /// Called after `begin_task`, in a task of its own, before any file is checked. `entries`:
-    /// `OrderHints::variance_entries`.
-    pub fn measure_variances(&mut self, entries: &[Sym]) {
-        for &sym in entries {
-            self.task.begin_file(sym.file, true);
-            self.variances_of(sym);
-        }
     }
 
     /// Called on the thread of the task, after everything else this checker does.

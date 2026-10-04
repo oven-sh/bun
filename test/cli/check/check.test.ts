@@ -37,15 +37,6 @@ function project(files: Record<string, string>, { withTypeScript = true } = {}) 
   return dir;
 }
 
-// `count` modules that nothing refers to, named `prefix` and a number.
-const fillers = (prefix: string, count: number) =>
-  Object.fromEntries(
-    Array.from({ length: count }, (_, i) => [
-      `${prefix}${String(i).padStart(3, "0")}.ts`,
-      `export const ${prefix}${i} = ${i};\n`,
-    ]),
-  );
-
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
   ...bunEnv,
@@ -1831,39 +1822,6 @@ dynamic.getSSRProps = binding => {
         const { stdout } = await check(dir);
         expect(stdout).toBe("");
       });
-
-      // A sample of the files is checked first. With 4 files in between, model.ts is in the sample and global.ts is not.
-      test.each([2, 3, 4, 5])("with the earlier file and %d files between the two, among 215 more", async between => {
-        // In program order: directives.ts, e*.ts, global.ts, h*.ts, model.ts, n*.ts.
-        using dir = project({ ...files, ...fillers("e", 115), ...fillers("h", between), ...fillers("n", 100) });
-        for (const threads of [1, 8]) {
-          const { stdout } = await check(dir, ["--threads", String(threads)]);
-          expect(stdout).toStartWith("model.ts(11,48): error TS2345: Argument of type 'Binding<any, string>'");
-        }
-      });
-    });
-
-    // TypeScript stores the error type of a limit like any other result: the first file to reach the limit reports it, and the files
-    // after it read the error type. `tsc --singleThreaded` reports TS2589 in deep.ts alone.
-    test.each([0, 4, 60])("an instantiation limit is reported by the first file that reaches it, %d files before the next", async between => {
-      // In program order: a*.ts, deep.ts, h*.ts, use.ts, v*.ts.
-      using dir = project({
-        "deep.ts": `
-type Deep<N extends number, A extends 1[] = []> = A["length"] extends N ? A : Deep<N, [...A, 1]>;
-export type Result = Deep<1500>;
-`,
-        "use.ts": `
-import type { Result } from "./deep";
-export const second: Result = 2;
-`,
-        ...fillers("a", 100),
-        ...fillers("h", between),
-        ...fillers("v", 100),
-      });
-      for (const threads of [1, 8]) {
-        const { stdout } = await check(dir, ["--threads", String(threads)]);
-        expect(stdout).toBe("deep.ts(3,22): error TS2589: Type instantiation is excessively deep and possibly infinite.");
-      }
     });
 
     test("an intersection with a conditional type whose constraint is any", async () => {

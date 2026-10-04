@@ -655,7 +655,7 @@ describe("bundler", () => {
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
-      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0,useAOTFamilies=1` },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -747,7 +747,7 @@ describe("bundler", () => {
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
-      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0,useAOTFamilies=1` },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -767,7 +767,7 @@ describe("bundler", () => {
       writesPermutedC: ["no-guess:same-names-born-in-another-module"],
       readsPermutedCThere: ["no-guess:same-names-born-in-another-module"],
       readsLargerC: ["no-guess:same-names-born-in-another-module"],
-      readsPermutedA: ["guessed-place:permutedA"],
+      readsPermutedA: ["no-guess:no-family"],
       readsLackingC: ["guessed-place:lackingC"],
       readsLargerCThere: ["guessed-place:largerC"],
     });
@@ -2706,13 +2706,14 @@ describe("--compile-aot with a type table", () => {
     });
   });
 
-  describe("untyped code reads typed objects by the names recorded in their Structures", () => {
+  describe("untyped code reads typed objects", () => {
     const fixture = join(import.meta.dir, "compile-aot-typed-names");
+    const families = "useAOTFamilies=1,useAOTGuardsOverWholeFunctions=1,minimumAOTGuardsOverWholeFunction=1";
     for (const [label, options] of [
       ["as it is", ""],
-      ["inline everywhere", "useAOTInlineGuessedPlacesEverywhere=1"],
       ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
-      ["without guesses", "useAOTGuessedPlaces=0"],
+      ["with families", families],
+      ["with families, validated", `${families},validateAOTInferredTypes=1,validateGraphAtEachPhase=1`],
     ] as const) {
       test(label, async () => {
         using dir = tempDir("compile-aot-typed-names", {});
@@ -2738,14 +2739,14 @@ describe("--compile-aot with a type table", () => {
         await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: expected, exitCode: 0, signalCode: null });
-        const guessed = new Set(
+        const guarded = new Set(
           (await Bun.file(remarksPath).text())
             .split("\n")
             .map(line => line.split("\t"))
-            .filter(([, remark]) => remark?.startsWith("guessed-place-read"))
+            .filter(([, remark]) => remark === "guards-over-whole-function")
             .map(([name]) => name),
         );
-        expect(["readsAll", "readsTwo"].filter(name => guessed.has(name))).toEqual(label === "without guesses" ? [] : ["readsAll", "readsTwo"]);
+        expect(["readsAll", "readsTwo"].filter(name => guarded.has(name))).toEqual(label.startsWith("with families") ? ["readsAll", "readsTwo"] : []);
       });
     }
   });

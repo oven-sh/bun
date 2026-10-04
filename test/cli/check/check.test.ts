@@ -2481,13 +2481,17 @@ export const wrong: number = { a: make() };
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"tsconfig.json(1,34): error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"tsconfig.json(1,34): error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration."`,
+      );
       expect(exitCode).toBe(1);
     });
 
     test("the default library is checked without \`skipLibCheck\`", async () => {
       using dir = project({
-        "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck: false } }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck: false },
+        }),
         "globals.d.ts": `interface Array<T> {
   readonly length: number;
 }
@@ -2514,7 +2518,9 @@ export const a: number = json.exports;
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '{ "./entry0": { types: string; default: string; }; "./entry1": { types: string; node: null; default: string; }; "./entry2": { types: string; default: string; }; "./entry3": { types: string; default: string; }; "./entry4": { types: string; default: string; }; "./entry5": { types: string; default: string; }; ... 7 mor...' is not assignable to type 'number'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,14): error TS2322: Type '{ "./entry0": { types: string; default: string; }; "./entry1": { types: string; node: null; default: string; }; "./entry2": { types: string; default: string; }; "./entry3": { types: string; default: string; }; "./entry4": { types: string; default: string; }; "./entry5": { types: string; default: string; }; ... 7 mor...' is not assignable to type 'number'."`,
+      );
       expect(exitCode).toBe(1);
     });
 

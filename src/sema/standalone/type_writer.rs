@@ -23,7 +23,7 @@ struct TypeWalk {
     text_of_expr: Vec<Option<(TypeId, String)>>,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
         self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
@@ -570,7 +570,8 @@ impl Checker<'_> {
         // (`isLateBindableAST`); `#x` outside a class; `1n`.
         let prop = self
             .member_name(file, member.key)
-            .and_then(|name| self.prop_of(container, name));
+            .and_then(|name| self.prop_ref(container, name))
+            .map(|(prop, mapper)| (prop.clone_in(self.arena), mapper));
         let own = PropSource::Symbol(self.symbol_of_member(file, m));
         let own_symbol = |name: Atom, mapper: MapperId| {
             let mut flags = PropFlags::empty();
@@ -583,7 +584,7 @@ impl Checker<'_> {
             Prop {
                 name,
                 flags,
-                source: own.clone(),
+                source: own.clone_in(self.arena),
                 mapper,
             }
         };
@@ -642,7 +643,7 @@ impl Checker<'_> {
 /// report of the test replaces it.
 pub const ERROR_TYPE_TEXT: &str = "\u{1}error";
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfExpression`, called after `file` has been checked. tsgo does not memoize `checkExpression`, so `e` and its
     /// subexpressions are checked again in the normal check mode with no contextual type pushed. Only what tsgo caches is reused:
     /// resolved signatures, symbol types, and the parameter and return types of functions. The contextual type of an argument
@@ -694,7 +695,7 @@ impl<'p> Checker<'p> {
                 .flows_too_deep
                 .get(&mut self.task, &(file, e))
                 .is_some()
-                && self.function_or_module_block_of(file, e) == crate::bind::Parent::File
+                && self.function_or_module_block_of(file, e) == crate::node::Node::FILE
         })
     }
 

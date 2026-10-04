@@ -31,12 +31,11 @@ enum Declaration {
 }
 
 /// What `getSymbolAtLocation` returns.
-#[derive(Clone)]
-enum Found {
+enum Found<'s> {
     Symbol(Sym),
-    Property(Prop),
+    Property(Prop<'s>),
     /// `createUnionOrIntersectionProperty`: the properties in `propSet`.
-    Properties(Vec<Prop>),
+    Properties(Vec<Prop<'s>>),
     /// A symbol with one declaration that is in no table: `__object`, `__type`, a `this` parameter.
     Anonymous {
         name: String,
@@ -65,7 +64,7 @@ enum PropertyParent {
     Named(String),
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `typeWriterWalker.getSymbols`, in no particular order. The file must have been checked, as in the harness.
     pub fn symbols_at_locations(&mut self, file: FileId) -> Vec<SymbolAtLocation> {
         let nodes = self.visited_nodes(file);
@@ -77,16 +76,16 @@ impl Checker<'_> {
     }
 }
 
-struct SymbolWriter<'c, 'p> {
-    c: &'c mut Checker<'p>,
+struct SymbolWriter<'c, 'p, 's> {
+    c: &'c mut Checker<'p, 's>,
     file: FileId,
     results: Vec<SymbolAtLocation>,
     /// `ECMALineMap`, by file.
     line_starts: FxHashMap<FileId, Vec<u32>>,
 }
 
-impl<'c, 'p> SymbolWriter<'c, 'p> {
-    fn new(c: &'c mut Checker<'p>, file: FileId) -> SymbolWriter<'c, 'p> {
+impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
+    fn new(c: &'c mut Checker<'p, 's>, file: FileId) -> SymbolWriter<'c, 'p, 's> {
         let capacity = c.hir(file).exprs.len();
         SymbolWriter {
             c,
@@ -197,7 +196,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getSymbolAtLocation`
-    fn get_symbol_at_visited_node(&mut self, kind: VisitedKind) -> Option<Found> {
+    fn get_symbol_at_visited_node(&mut self, kind: VisitedKind) -> Option<Found<'s>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         match kind {
@@ -230,7 +229,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     None => self
                         .c
                         .property_of_alias(symbol)
-                        .map(|prop| Found::Property(prop.clone())),
+                        .map(|prop| Found::Property(prop.clone_in(self.c.arena))),
                 }
             }
             // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the symbol of the
@@ -326,8 +325,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     return None;
                 };
                 let elements = self.c.jsx_type(file, known::IntrinsicElements)?;
-                match self.c.prop_of(elements, name) {
-                    Some((prop, _)) => Some(Found::Property(prop)),
+                match self.c.prop_ref(elements, name) {
+                    Some((prop, _)) => Some(Found::Property(prop.clone_in(self.c.arena))),
                     None => match self.get_applicable_index_symbol(elements, name) {
                         Some(found) => Some(found),
                         // An index signature without a declaration, such as that of `Record<string,
@@ -459,7 +458,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getSymbolAtLocation` for the expression `e`, or for its final name.
-    fn get_symbol_of_expression(&mut self, e: ExprId, is_name: bool) -> Option<Found> {
+    fn get_symbol_of_expression(&mut self, e: ExprId, is_name: bool) -> Option<Found<'s>> {
         let file = self.file;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         if let Some(found) = self.get_symbol_of_name_in_class_extends(e) {
@@ -566,7 +565,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `isInNameOfExpressionWithTypeArguments`, in the extends clause of a class: `e` is either the
     /// whole entity name expression, resolved with the value meaning, or the part before a dot in
     /// it, resolved with the namespace meaning. An alias matches regardless of its target.
-    fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found> {
+    fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found<'s>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         let mut whole = e;
         loop {
@@ -618,7 +617,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getSymbolAtLocation` for a string, a number or a template without substitutions.
-    fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found> {
+    fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found<'s>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         // `getSymbolForPrivateIdentifierExpression`: the `#x` of `#x in a`.
@@ -692,7 +691,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `member.Symbol` for a member of the file being written.
-    fn property_of_member(&mut self, member: MemberId) -> Found {
+    fn property_of_member(&mut self, member: MemberId) -> Found<'s> {
         let file = self.file;
         let name = self
             .c
@@ -706,7 +705,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getSignatureFromDeclaration(function).thisParameter`
-    fn this_parameter_of_function(&mut self, function: FnId) -> Option<Found> {
+    fn this_parameter_of_function(&mut self, function: FnId) -> Option<Found<'s>> {
         let file = self.file;
         if let Some(found) = self.this_parameter(file, function) {
             return Some(found);
@@ -736,7 +735,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// The symbol of the `this` parameter that `function` declares.
-    fn this_parameter(&self, file: FileId, function: FnId) -> Option<Found> {
+    fn this_parameter(&self, file: FileId, function: FnId) -> Option<Found<'s>> {
         let hir = self.c.hir(file);
         let this = hir.params.get(hir[function].this_param.idx())?;
         // `DeclarationNameToString`
@@ -780,7 +779,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getSymbolOfNameOrPropertyAccessExpression` for an identifier that is an expression.
-    fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found> {
+    fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found<'s>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
 
@@ -832,7 +831,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `getPropertyOfType`
-    fn get_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<Found> {
+    fn get_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<Found<'s>> {
         // `getReducedApparentType`
         let ty = self.c.reduced_apparent_type(ty);
         if !matches!(self.c.data(ty), TypeData::Union(_)) {
@@ -842,7 +841,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             if members.shape().prop(name).is_some() && self.c.prop_ref(ty, name).is_none() {
                 return None;
             }
-            let (prop, _) = self.c.property_of_type(&members, name)?;
+            let (prop, _) = self.c.property_in(&members, name)?;
             // `bindClassLikeDeclaration`
             if name == known::prototype
                 && matches!(prop.source, PropSource::Type(_))
@@ -881,25 +880,27 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     return Some(Found::SyntheticDefault(module));
                 }
             }
-            return Some(Found::Property(prop));
+            return Some(Found::Property(prop.clone_in(self.c.arena)));
         }
         let (prop, _) = self.c.get_property_of_type(ty, name)?;
         Some(match &prop.source {
             // `propSet`
             PropSource::Intersected(_, parts) => {
                 let is_declared = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
-                let mut props: Vec<Prop> = parts.iter().filter(is_declared).cloned().collect();
+                let mut props: Vec<Prop> = (parts.iter().filter(is_declared))
+                    .map(|part| part.clone_in(self.c.arena))
+                    .collect();
                 match props.len() {
                     1 => Found::Property(props.pop()?),
                     _ => Found::Properties(props),
                 }
             }
-            _ => Found::Property(prop.clone()),
+            _ => Found::Property(prop.clone_in(self.c.arena)),
         })
     }
 
     /// `getApplicableIndexSymbol`, for the key `name`.
-    fn get_applicable_index_symbol(&mut self, ty: TypeId, name: Atom) -> Option<Found> {
+    fn get_applicable_index_symbol(&mut self, ty: TypeId, name: Atom) -> Option<Found<'s>> {
         // `getIndexInfosOfType`: `getReducedApparentType`. An index info created by
         // `getUnionIndexInfos` has no declaration.
         let apparent = self.c.reduced_apparent_type(ty);
@@ -957,7 +958,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `t.symbol`
-    fn symbol_of_type(&mut self, ty: TypeId) -> Option<Found> {
+    fn symbol_of_type(&mut self, ty: TypeId) -> Option<Found<'s>> {
         let files = self.c.files();
         Some(match *self.c.data(ty) {
             TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => Found::Symbol(symbol),
@@ -1128,7 +1129,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// `Decl(a.ts, 3, 11)`
     fn push_declaration(&mut self, text: &mut String, file: FileId, declaration: Declaration) {
-        let path = &self.c.files().module(file).path;
+        let path = self.c.files().module(file).path;
         let file_name = &crate::messages::text(bun_paths::basename_posix(path));
         text.push_str("Decl(");
         text.push_str(file_name);
@@ -1233,14 +1234,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 // `isInstantiation`: instantiations of one property that have the same type are one property.
                 let mut prop_set: Vec<Prop> = Vec::new();
                 for part in parts.iter() {
-                    if let Some(single) = prop_set.first().cloned()
+                    if let Some(single) = prop_set.first()
                         && single.source == part.source
-                        && self.c.type_of_prop(&single, MapperId::IDENTITY)
+                        && self.c.type_of_prop(single, MapperId::IDENTITY)
                             == self.c.type_of_prop(part, MapperId::IDENTITY)
                     {
                         continue;
                     }
-                    prop_set.push(part.clone());
+                    prop_set.push(part.clone_in(self.c.arena));
                 }
                 return match &prop_set[..] {
                     [single] => self.describe_property(single, at),
@@ -1268,11 +1269,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             Some(&(file, Declaration::Bound(Decl::Property(property)))) => {
                 PropSource::Literal(file, property)
             }
-            _ => prop.source.clone(),
+            _ => prop.source.clone_in(self.c.arena),
         };
         let name = crate::messages::text(&self.c.prop_to_string(&Prop {
             source,
-            ..prop.clone()
+            ..prop.clone_in(self.c.arena)
         }));
         // `lookupSymbolChainWorker`: `class C<T> { T: number }` is one symbol, and a type parameter is not qualified.
         let is_type_parameter = |declaration: &(FileId, Declaration)| {
@@ -1468,7 +1469,7 @@ fn utf16_length(byte: u8) -> usize {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `lookupSymbolChain` as `symbolToExpression` calls it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone,
     /// ..)`, without `yieldModuleSymbol`. Returns whether the chain starts with `globalThis`, and the rest of the chain.
     /// `is_parent`: `symbol` is the parent of a symbol that is in no symbol table, so `endOfChain` is false and the meaning is

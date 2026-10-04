@@ -25,6 +25,7 @@ use crate::check::spans::{
     jsx_identifier_end, skip_trivia, skip_trivia_back, start_of_token_before,
 };
 use crate::hir::*;
+use crate::session::{Arena, ArenaBox};
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 
@@ -293,7 +294,7 @@ macro_rules! node_vectors {
         #[derive(Copy, Clone, Default)]
         pub struct NodeBases([u32; VECTORS + 1]);
 
-        impl File {
+        impl File<'_> {
             fn node_bases(&self) -> NodeBases {
                 let mut bases = [1u32; VECTORS + 1];
                 $(bases[$index + 1] = bases[$index] + self.$field.len() as u32;)*
@@ -320,7 +321,7 @@ macro_rules! node_vectors {
             /// that have children.
             fn children_of_all_rows<V: FnMut(Node) -> bool>(
                 &self,
-                v: &mut Children<'_, V>,
+                v: &mut Children<'_, '_, V>,
                 at_hand: &Cell<Node>,
                 open: &RefCell<Vec<Node>>,
             ) {
@@ -392,13 +393,13 @@ node_vectors! {
 }
 
 /// `node.Parent` for every node of a file.
-pub struct Parents {
+pub struct Parents<'s> {
     /// Indexed by HIR node: one load.
-    rows: Box<[Node]>,
+    rows: ArenaBox<'s, [Node]>,
     /// The parents of the `TemplateSpan` and the `JsxExpression` around an expression and of the
     /// `QualifiedName` that ends with a name, which are themselves the entry in `rows` for that
     /// expression or name. Sorted.
-    around: Box<[(Node, Node)]>,
+    around: ArenaBox<'s, [(Node, Node)]>,
 }
 
 /// A typed id that is, or belongs to, a node.
@@ -576,15 +577,15 @@ impl ToNode for Parent {
 }
 
 /// `Visitor`, and the file that the ids passed to it belong to.
-struct Children<'a, V: FnMut(Node) -> bool + ?Sized> {
-    file: &'a File,
+struct Children<'a, 's, V: FnMut(Node) -> bool + ?Sized> {
+    file: &'a File<'s>,
     visit: &'a mut V,
     /// Whether a parenthesized expression is visited as its `ParenthesizedExpression`, which
     /// requires a search.
     with_parentheses: bool,
 }
 
-impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
+impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
     /// `node.ForEachChild`. `data`: what `node` refers to. A caller that knows it statically is
     /// specialized to the one match arm.
     #[inline(always)]
@@ -1174,7 +1175,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
     }
 }
 
-impl File {
+impl<'s> File<'s> {
     /// The handle of the node that `id` is, or is the second HIR node of.
     #[inline]
     pub fn node(&self, id: impl ToNode) -> Node {
@@ -1182,8 +1183,8 @@ impl File {
     }
 
     #[inline]
-    fn parents(&self) -> &Parents {
-        self.parents.get_or_init(|| self.parents_of_all())
+    fn parents(&self) -> &Parents<'s> {
+        self.lazy.parents.get_or_init(|| self.parents_of_all())
     }
 
     /// `node.Parent`. `NONE` for the file, and for a HIR node that is unreachable from the file.
@@ -1317,7 +1318,7 @@ impl File {
     /// with the same child (a HIR node that is not a tsgo node, or that is unreachable, has the
     /// children of the node around it) the later one is the tsgo node, and overwrites the earlier.
     #[cold]
-    fn parents_of_all(&self) -> Parents {
+    fn parents_of_all(&self) -> Parents<'s> {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
         let mut around = Vec::new();
@@ -1385,9 +1386,10 @@ impl File {
             }
             is_same
         });
+        let arena = self.lazy.session.arena();
         Parents {
-            rows: rows.into(),
-            around: around.into(),
+            rows: ArenaBox::copy_from_slice_in(&rows, arena),
+            around: ArenaBox::copy_from_slice_in(&around, arena),
         }
     }
 
@@ -1761,7 +1763,9 @@ impl File {
                 _ => {}
             }
         }
-        (self.fn_nodes, self.class_nodes) = (fn_nodes, class_nodes);
+        let arena = self.arena();
+        self.fn_nodes = copy_to_arena(&mut fn_nodes, arena);
+        self.class_nodes = copy_to_arena(&mut class_nodes, arena);
     }
 
     /// `node.Kind`
@@ -2179,8 +2183,12 @@ impl File {
             TypeNodeKind::Keyof(_) | TypeNodeKind::Readonly(_) | TypeNodeKind::UniqueSymbol => {
                 Kind::TypeOperator
             }
-            TypeNodeKind::JSDoc { is_nullable, .. } if is_nullable => Kind::JSDocNullableType,
-            TypeNodeKind::JSDoc { .. } => Kind::JSDocNonNullableType,
+            TypeNodeKind::JSDoc { kind, .. } => match kind {
+                JSDocTypeKind::Nullable => Kind::JSDocNullableType,
+                JSDocTypeKind::NonNullable => Kind::JSDocNonNullableType,
+                JSDocTypeKind::Optional => Kind::JSDocOptionalType,
+                JSDocTypeKind::Variadic => Kind::JSDocVariadicType,
+            },
             TypeNodeKind::Typeof { .. } => Kind::TypeQuery,
             TypeNodeKind::Import { .. } => Kind::ImportType,
             TypeNodeKind::Predicate { .. } => Kind::TypePredicate,
@@ -2393,7 +2401,7 @@ impl File {
 
 // ───────────────────────────── ast.go: accessors ─────────────────────────────
 
-impl File {
+impl File<'_> {
     /// The node that represents the expression `e` in its parent.
     #[inline]
     pub fn child(&self, e: ExprId) -> Node {
@@ -2566,7 +2574,7 @@ impl File {
 
 /// Ranges of a file, for answering by position a question that would otherwise require walking up
 /// the parents.
-pub struct Places(Vec<TextRange>);
+pub struct Places<R = Vec<TextRange>>(R);
 
 impl Places {
     /// Nested or overlapping ranges are merged.
@@ -2585,6 +2593,13 @@ impl Places {
         Places(ranges)
     }
 
+    pub fn into_arena(self, arena: &Arena) -> Places<ArenaBox<'_, [TextRange]>> {
+        Places(ArenaBox::copy_from_slice_in(&self.0, arena))
+    }
+}
+
+impl<R: std::ops::Deref<Target = [TextRange]>> Places<R> {
+    #[inline]
     pub fn contain(&self, pos: u32) -> bool {
         let after = self.0.partition_point(|range| range.pos <= pos);
         after > 0 && pos < self.0[after - 1].end
@@ -2619,7 +2634,7 @@ impl Kind {
     }
 }
 
-impl File {
+impl File<'_> {
     /// `FindAncestorKind`
     pub fn find_ancestor_kind(&self, node: Node, kind: Kind) -> Node {
         self.find_ancestor(node, |n| self.kind(n) == kind)
@@ -2644,7 +2659,7 @@ impl File {
     /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in source order,
     /// except those for which `is_identifier_name` is true, of which only some are included.
     pub fn keyword_identifiers(&self) -> &[Node] {
-        self.keyword_identifiers.get_or_init(|| {
+        self.lazy.keyword_identifiers.get_or_init(|| {
             let mut found = Vec::new();
             for &pos in self.keyword_identifier_positions.iter() {
                 // Descends from the file, at each level into the last child that does not start
@@ -2669,7 +2684,7 @@ impl File {
             }
             found.sort_unstable_by_key(|&node| (self.start(node), node));
             found.dedup();
-            found.into()
+            ArenaBox::copy_from_slice_in(&found, self.lazy.session.arena())
         })
     }
 
@@ -3126,8 +3141,8 @@ impl File {
 
     /// The ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type
     /// literals, and the `declare` declarations.
-    fn ambient_or_type_places(&self) -> &Places {
-        self.ambient_or_type_places.get_or_init(|| {
+    fn ambient_or_type_places(&self) -> &Places<ArenaBox<'_, [TextRange]>> {
+        self.lazy.ambient_or_type_places.get_or_init(|| {
             let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
                 matches!(
                     statement.kind,
@@ -3150,6 +3165,7 @@ impl File {
                         end: if node.end == 0 { u32::MAX } else { node.end },
                     })),
             )
+            .into_arena(self.lazy.session.arena())
         })
     }
 
@@ -3289,7 +3305,7 @@ fn kind_of_modifier(flag: Flags) -> Kind {
     found.map_or(Kind::Unknown, |&(_, kind)| kind)
 }
 
-impl File {
+impl File<'_> {
     /// `GetDeclarationContainer`
     pub fn get_declaration_container(&self, node: Node) -> Node {
         let declaration = self.find_ancestor(self.get_root_declaration(node), |node| {

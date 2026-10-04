@@ -5,7 +5,7 @@ use super::related::Place;
 use super::*;
 use crate::bind::Decl;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// The end of `elaborateElement`: the related information of the error about the property or
     /// the element `name` of the expression compared with `target`.
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {

@@ -2509,6 +2509,29 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
+        /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
+        /// each file is in the graph.
+        fn type_check(&self) -> Result<(), Error> {
+            let Some(type_check) = self.transpiler.options.type_check else {
+                return Ok(());
+            };
+            let sources = self.graph.input_files.items_source();
+            let loaders = self.graph.input_files.items_loader();
+            let mut sources = sources.iter().zip(loaders).filter_map(|(source, loader)| {
+                (loader.is_javascript_like_or_json() && source.path.is_file())
+                    .then(|| (source.path.text, source.contents()))
+            });
+            if type_check(
+                self.transpiler.fs().top_level_dir,
+                &self.transpiler.options.entry_points,
+                &mut sources,
+                self.transpiler.log_mut(),
+            ) {
+                return Ok(());
+            }
+            Err(crate::Error::BuildFailed)
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -4361,6 +4384,7 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
+                this.type_check()?;
 
                 this.scan_for_secondary_paths();
 
@@ -5553,6 +5577,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
+            self.type_check()?;
 
             self.scan_for_secondary_paths();
 

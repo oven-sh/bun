@@ -41,6 +41,9 @@ pub(super) struct Candidate {
     pub covariant: SmallVec<[TypeId; 4]>,
     /// Type argument nesting depth at which each of `covariant` was found. The deepest come first.
     depths: SmallVec<[u32; 4]>,
+    /// `ObjectFlagsArrayLiteral` of each of `covariant`. `createArrayLiteralType` sets it on a clone
+    /// of the array type, so `number[]` and the type of `[1]` are two candidates.
+    array_literals: SmallVec<[bool; 4]>,
     pub contravariant: SmallVec<[TypeId; 4]>,
     /// Candidates of a worse priority are dropped.
     pub priority: u32,
@@ -79,7 +82,8 @@ pub(super) struct Inference {
     original_target: TypeId,
     /// The source is the type implied by a binding pattern (`patternForType`).
     pub(super) from_pattern: bool,
-    /// The types of the array literals in the arguments (`ObjectFlagsArrayLiteral`).
+    /// The types with `ObjectFlagsArrayLiteral` in the type of the argument that is being inferred
+    /// from (`Checker::array_literal_types_in`).
     pub(super) array_literals: Vec<TypeId>,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
     /// inferences is `any`.
@@ -162,7 +166,7 @@ impl Inference {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `ObjectFlagsNonInferrableType`: part of the type is missing.
     pub(super) fn is_non_inferrable_type(&self, ty: TypeId) -> bool {
         let flags = self.types().object_flags(ty);
@@ -547,10 +551,12 @@ impl<'p> Checker<'p> {
     ) {
         if n.candidates[index].fixed.is_none() {
             let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
+            let is_array_literal = n.array_literals.contains(&candidate);
             let c = &mut n.candidates[index];
             if priority < c.priority {
                 c.covariant.clear();
                 c.depths.clear();
+                c.array_literals.clear();
                 c.contravariant.clear();
                 c.top_level = true;
                 c.priority = priority;
@@ -562,11 +568,14 @@ impl<'p> Checker<'p> {
                         c.contravariant.push(candidate);
                     }
                 } else {
-                    let found = c.covariant.iter().position(|&t| t == candidate);
+                    let found = (0..c.covariant.len()).find(|&i| {
+                        c.covariant[i] == candidate && c.array_literals[i] == is_array_literal
+                    });
                     if found.is_none_or(|i| c.depths[i] < depth) {
                         if let Some(i) = found {
                             c.covariant.remove(i);
                             c.depths.remove(i);
+                            c.array_literals.remove(i);
                         }
                         let at = c
                             .depths
@@ -575,6 +584,7 @@ impl<'p> Checker<'p> {
                             .unwrap_or(c.depths.len());
                         c.covariant.insert(at, candidate);
                         c.depths.insert(at, depth);
+                        c.array_literals.insert(at, is_array_literal);
                     }
                 }
             }
@@ -619,7 +629,7 @@ impl<'p> Checker<'p> {
         }
         let variances = self.variances_of(of);
         self.note_inferred_by_variances(of, sources.len().min(targets.len()));
-        self.infer_from_type_arguments(n, sources, targets, &variances);
+        self.infer_from_type_arguments(n, sources, targets, variances);
     }
 
     /// `inferFromTypeArguments`
@@ -1019,21 +1029,43 @@ impl<'p> Checker<'p> {
     /// `createEmptyObjectTypeFromStringLiteral`: an object type with the named properties, each of
     /// type `any`.
     fn empty_object_type_from_string_literal(&mut self, ty: TypeId) -> TypeId {
-        let mut shape = Shape::default();
-        // A string enum member can have the value of another member or of a string literal.
-        let mut names = crate::util::FxHashSet::default();
-        for &t in self.parts(ty) {
-            if let Some(value) = self.string_literal_value(t)
-                && names.insert(value)
-            {
-                shape.props.push(Prop {
-                    name: value,
-                    flags: PropFlags::empty(),
-                    source: PropSource::Type(TypeId::ANY),
-                    mapper: MapperId::IDENTITY,
-                });
+        let mut shape = Shape::new_in(self.arena);
+        // `members[name] = literalProp`: a string enum member can have the value of a member of
+        // another enum or of a string literal. The last one replaces the others.
+        let mut index_of_name = crate::util::FxHashMap::default();
+        for t in self.sorted_parts(ty) {
+            let Some(value) = self.string_literal_value(t) else {
+                continue;
+            };
+            // `literalProp.Declarations = t.symbol.Declarations`: `getLiteralTypeFromProperty` reads
+            // the name of an enum member in its declaration. Without one the name is a string.
+            let (flags, source) = match *self.data(t) {
+                TypeData::EnumLit { member, .. } => {
+                    let declared = Prop {
+                        name: self.files().symbol(member).name,
+                        flags: PropFlags::empty(),
+                        source: PropSource::Symbol(member),
+                        mapper: MapperId::IDENTITY,
+                    };
+                    let source = Self::copy_of(TypeId::ANY, &[&declared], true, self.arena);
+                    (PropFlags::empty(), source)
+                }
+                _ => (PropFlags::STRING_NAME, PropSource::Type(TypeId::ANY)),
+            };
+            let literal_prop = Prop {
+                name: value,
+                flags,
+                source,
+                mapper: MapperId::IDENTITY,
+            };
+            if let Some(&earlier) = index_of_name.get(&value) {
+                shape.props[earlier] = literal_prop;
+            } else {
+                index_of_name.insert(value, shape.props.len());
+                shape.props.push(literal_prop);
             }
         }
+        self.get_named_members(&mut shape.props, |_| true, &[]);
         if ty == TypeId::STRING {
             shape
                 .index
@@ -1230,6 +1262,7 @@ impl<'p> Checker<'p> {
                             source_flags,
                             start_length + implied_arity,
                             end_length,
+                            false,
                         ) {
                             self.infer_types(n, rest, element_types[start_length + 1]);
                         }
@@ -1255,6 +1288,7 @@ impl<'p> Checker<'p> {
                                 source_flags,
                                 start_length,
                                 end_length + implied_arity,
+                                false,
                             ) {
                                 self.infer_types(n, rest, element_types[start_length]);
                             }
@@ -1275,9 +1309,13 @@ impl<'p> Checker<'p> {
                 let slice = self.slice_tuple(source_elems, source_flags, start_length, end_length);
                 self.infer_with_priority(n, slice, element_types[start_length], priority);
             } else if middle_length == 1 && element_flags[start_length].contains(ElemFlags::REST) {
-                if let Some(rest) =
-                    self.element_type_of_slice(source_elems, source_flags, start_length, end_length)
-                {
+                if let Some(rest) = self.element_type_of_slice(
+                    source_elems,
+                    source_flags,
+                    start_length,
+                    end_length,
+                    false,
+                ) {
                     self.infer_types(n, rest, element_types[start_length]);
                 }
             }
@@ -1304,7 +1342,7 @@ impl<'p> Checker<'p> {
         if index > fixed {
             // `getRestArrayTypeOfTupleType`: an array of all the element types from the first
             // non-fixed element on.
-            return match self.element_type_of_slice(elems, flags, fixed, 0) {
+            return match self.element_type_of_slice(elems, flags, fixed, 0, false) {
                 Some(rest) => self.array_of(rest),
                 None => self.tuple(&[], &[], false),
             };
@@ -1315,13 +1353,14 @@ impl<'p> Checker<'p> {
         self.normalized_tuple(&elems[index..end], &flags[index..end], false)
     }
 
-    /// `getElementTypeOfSliceOfTupleType`
-    fn element_type_of_slice(
+    /// `getElementTypeOfSliceOfTupleType`, for reading
+    pub(super) fn element_type_of_slice(
         &mut self,
         elems: &[TypeId],
         flags: &[ElemFlags],
         index: usize,
         end_skip_count: usize,
+        no_reductions: bool,
     ) -> Option<TypeId> {
         let length = elems.len().saturating_sub(end_skip_count);
         if index >= length {
@@ -1336,7 +1375,11 @@ impl<'p> Checker<'p> {
                 }
             })
             .collect();
-        Some(self.union(&types))
+        Some(if no_reductions {
+            self.union_unreduced(&types)
+        } else {
+            self.union(&types)
+        })
     }
 
     /// `typesDefinitelyUnrelated`
@@ -1399,6 +1442,12 @@ impl<'p> Checker<'p> {
             return;
         };
         for tp in &tm.shape().props {
+            // `getPropertyOfType(source, targetProp.Name)` comes before either `getTypeOfSymbol`: a
+            // target property that the source lacks may be the one whose type is being resolved.
+            let Some((sp, source_mapper)) = self.property_in(&sm, tp.name) else {
+                continue;
+            };
+            let actual = self.type_of_prop_as_read(sp, source_mapper);
             // A `NoInfer<T>` in the declaration is preserved.
             let expected = self.type_of_prop(tp, tm.mapper);
             if !self.has_type_variables(expected) || self.is_no_infer(expected) {
@@ -1412,10 +1461,6 @@ impl<'p> Checker<'p> {
             } else {
                 self.optional(expected)
             };
-            let Some((sp, source_mapper)) = self.property_in(&sm, tp.name) else {
-                continue;
-            };
-            let actual = self.type_of_prop_as_read(sp, source_mapper);
             self.infer_types(n, actual, expected);
         }
     }
@@ -1568,7 +1613,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `applyToParameterTypes`: the pairs it visits.
-    fn parameter_type_pairs(
+    pub(super) fn parameter_type_pairs(
         &mut self,
         source: SigId,
         target: SigId,
@@ -1907,7 +1952,9 @@ impl<'p> Checker<'p> {
                                 if self.is_non_inferrable(ty, depth + 1))
                         })
             }
-            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
+            TypeData::Intrinsic(
+                Intrinsic::Auto | Intrinsic::SilentNever | Intrinsic::NonInferrableAny,
+            ) => true,
             // `checkObjectLiteral` propagates the flag from the member types (`look_at_members`), and
             // `getWidenedTypeOfObjectLiteral` keeps it. The contextual type of a call is widened (`without_pattern_marks`).
             TypeData::Anon {
@@ -1977,8 +2024,8 @@ impl<'p> Checker<'p> {
         source: TypeId,
         target: TypeId,
         of: TypeId,
-    ) -> Shape {
-        let mut shape = Shape::default();
+    ) -> Shape<'s> {
+        let mut shape = Shape::new_in(self.arena);
         let Some(members) = self.members(source) else {
             return shape;
         };
@@ -2008,7 +2055,10 @@ impl<'p> Checker<'p> {
             shape.props.push(Prop {
                 name: prop.name,
                 flags,
-                source: PropSource::ReverseMapped(ty, Self::declared_properties(&[prop]).into()),
+                source: PropSource::ReverseMapped(
+                    ty,
+                    self.list_of(Self::declared_properties(&[prop], self.arena)),
+                ),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -2453,21 +2503,29 @@ impl<'p> Checker<'p> {
         param: TypeId,
         sig: SigId,
         is_fixed: bool,
-        array_literals: &[TypeId],
     ) -> (TypeId, Option<TypeId>) {
         // `unionObjectAndArrayLiteralCandidates`: the object and array literals count as one, after the others.
         let mut candidates = c.covariant.clone();
         if candidates.len() > 1 {
-            let is_literal =
-                |c: &Self, t: TypeId| c.is_object_literal_type(t) || array_literals.contains(&t);
-            let literals: SmallVec<[TypeId; 4]> = candidates
-                .iter()
-                .copied()
-                .filter(|&t| is_literal(self, t))
+            // `isObjectOrArrayLiteralType`
+            let is_literal: SmallVec<[bool; 4]> = (0..candidates.len())
+                .map(|i| {
+                    c.array_literals.get(i) == Some(&true)
+                        || self.is_object_literal_type(candidates[i])
+                })
                 .collect();
-            if !literals.is_empty() {
-                candidates.retain(|t| !is_literal(self, *t));
-                candidates.push(self.union_reduced(&literals));
+            if is_literal.contains(&true) {
+                let mut literals: SmallVec<[TypeId; 4]> = SmallVec::new();
+                let mut others: SmallVec<[TypeId; 4]> = SmallVec::new();
+                for (&candidate, &literal) in candidates.iter().zip(&is_literal) {
+                    if literal {
+                        literals.push(candidate);
+                    } else {
+                        others.push(candidate);
+                    }
+                }
+                others.push(self.union_reduced(&literals));
+                candidates = others;
             }
         }
         // Literals are widened if every inference was to the type parameter itself, its constraint
@@ -2553,8 +2611,7 @@ impl<'p> Checker<'p> {
             let covariant = if c.covariant.is_empty() {
                 None
             } else {
-                let (covariant, constraint) =
-                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals);
+                let (covariant, constraint) = self.covariant_inference(c, param, sig, is_fixed);
                 extended = Some(constraint);
                 Some(covariant)
             };
@@ -2740,7 +2797,10 @@ impl<'p> Checker<'p> {
             if let Some(contextual_type) =
                 self.contextual_type(file, e, ContextFlags::NO_CONSTRAINTS)
             {
+                let outside = n.array_literals.len();
+                self.array_literal_types_in(file, e, &mut n.array_literals);
                 self.infer(n, ty, contextual_type, 0);
+                n.array_literals.truncate(outside);
             }
         }
     }

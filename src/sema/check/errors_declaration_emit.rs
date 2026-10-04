@@ -20,8 +20,8 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::json::Json;
 use crate::resolve::{
-    JsxEmit, contains_path, is_declaration_file_name, is_relative, join, known_extension,
-    node_module_path_parts, path_is_relative, remove_file_extension,
+    JsxEmit, contains_path, ensure_path_is_non_module_name, is_declaration_file_name, is_relative,
+    join, known_extension, node_module_path_parts, path_is_relative, remove_file_extension,
 };
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -609,8 +609,8 @@ fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
 }
 
 /// `DeclarationTransformer`
-struct DeclarationEmit<'c, 'p> {
-    c: &'c mut Checker<'p>,
+struct DeclarationEmit<'c, 'p, 's> {
+    c: &'c mut Checker<'p, 's>,
     tracker: SymbolTrackerImpl,
     enclosing: Enclosing,
     suppresses_new_contexts: bool,
@@ -642,7 +642,7 @@ struct DeclarationEmit<'c, 'p> {
     expando_members: FxHashMap<StmtId, Vec<Statement>>,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `shouldStripInternal` for a node of `file` that is not a parameter. `pos`: `node.Pos()`.
     pub(super) fn should_strip_internal(&self, file: FileId, pos: u32) -> bool {
         if !self.files().options.strips_internal_declarations {
@@ -656,7 +656,7 @@ impl Checker<'_> {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getDeclarationDiagnosticsForFile`
     pub(super) fn check_declaration_emit(&mut self, file: FileId) {
         self.transform_declarations(file, false);
@@ -674,8 +674,12 @@ impl<'p> Checker<'p> {
         let module = files.module(file);
         // `sourceFileMayBeEmitted`
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            || strings::contains(&module.path, b"/node_modules/")
-                && !files.options.files.contains(&module.path)
+            || strings::contains(module.path, b"/node_modules/")
+                && !files
+                    .options
+                    .files
+                    .iter()
+                    .any(|listed| listed == module.path)
         {
             return None;
         }
@@ -706,7 +710,7 @@ impl<'p> Checker<'p> {
         // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
-            && let Some(output) = crate::resolve::output_declaration_file_name(&module.path, None)
+            && let Some(output) = crate::resolve::output_declaration_file_name(module.path, None)
         {
             let name =
                 &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
@@ -727,8 +731,8 @@ impl<'p> Checker<'p> {
     }
 }
 
-impl<'c, 'p> DeclarationEmit<'c, 'p> {
-    fn new(c: &'c mut Checker<'p>, file: FileId) -> DeclarationEmit<'c, 'p> {
+impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
+    fn new(c: &'c mut Checker<'p, 's>, file: FileId) -> DeclarationEmit<'c, 'p, 's> {
         let top = Enclosing::at_scope(file, ScopeId(0));
         let isolated_declarations = c.new_isolated_declarations(file);
         DeclarationEmit {
@@ -803,7 +807,7 @@ impl EmitResolverLinks {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `lookupSymbolChain` for a symbol that is not a type parameter: whether the chain starts with
     /// `globalThis`, and the rest of it.
     /// `fake_locals`: the locals of the synthetic blocks `enterNewScope` has created around `at`.
@@ -872,7 +876,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── symbols ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)`. `meaning`, `with_export_value`: see `Meaning::of`.
     pub(super) fn is_symbol_accessible_at(
         &mut self,
@@ -1070,7 +1074,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── visibility ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// The statement of the declaration `decl`, or the statement that contains an import or an
     /// export specifier.
     fn statement_of(&self, file: FileId, decl: Decl) -> Option<StmtId> {
@@ -1400,7 +1404,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── symbol accessibility ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getExportsOfSymbol`
     fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
         let symbol = self.target_of_module_clone(symbol);
@@ -1971,7 +1975,7 @@ impl<'p> Checker<'p> {
         }
         if results.is_empty() {
             // `c.program.SourceFiles()`
-            for &file in &files.order {
+            for &file in files.order {
                 let module = files.module(file);
                 // A leaf file exports no alias. The task that checks it frees its HIR
                 // (`Files::free_tree`). Test `is_leaf`, which is immutable after loading, before
@@ -2300,7 +2304,7 @@ impl<'p> Checker<'p> {
 
 impl SymbolTrackerImpl {
     /// `GetTextOfNode`
-    fn text(&self, c: &Checker<'_>, node: Node) -> Vec<u8> {
+    fn text(&self, c: &Checker<'_, '_>, node: Node) -> Vec<u8> {
         let file = self.current_source_file;
         c.source_text(file, c.hir(file).start(node), c.end_of_node(file, node))
     }
@@ -2318,7 +2322,7 @@ impl SymbolTrackerImpl {
     /// `getSymbolAccessibilityDiagnostic`: `diagnosticMessage`, `typeName`, `errorNode`. `None`: no diagnostic is reported.
     fn accessibility_diagnostic(
         &self,
-        c: &Checker<'_>,
+        c: &Checker<'_, '_>,
         access: &Access,
     ) -> Option<(u32, Node, Node)> {
         let hir = c.hir(self.current_source_file);
@@ -2473,7 +2477,7 @@ impl SymbolTrackerImpl {
     }
 
     /// `handleSymbolAccessibilityError`. Whether an error is reported.
-    fn handle_symbol_accessibility_error(&mut self, c: &Checker<'_>, access: Access) -> bool {
+    fn handle_symbol_accessibility_error(&mut self, c: &Checker<'_, '_>, access: Access) -> bool {
         match access.accessibility {
             Accessibility::Accessible => {
                 for (file, statement) in access.aliases {
@@ -2512,7 +2516,7 @@ impl SymbolTrackerImpl {
     }
 
     /// `errorDeclarationNameWithFallback`
-    fn error_declaration_name(&self, c: &Checker<'_>) -> Vec<u8> {
+    fn error_declaration_name(&self, c: &Checker<'_, '_>) -> Vec<u8> {
         let hir = c.hir(self.current_source_file);
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
@@ -2536,7 +2540,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
     /// `TrackSymbol`
     fn track_symbol(
         &mut self,
-        c: &mut Checker<'p>,
+        c: &mut Checker<'p, '_>,
         symbol: Sym,
         enclosing_declaration: Option<Enclosing>,
         meaning: SymFlags,
@@ -2557,7 +2561,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
     }
 
     /// The six reports that `Report` represents.
-    fn report(&mut self, c: &mut Checker<'p>, report: Report) {
+    fn report(&mut self, c: &mut Checker<'p, '_>, report: Report) {
         let (hir, location) = (c.hir(self.current_source_file), self.error_location());
         if location.is_none() {
             return;
@@ -2593,7 +2597,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
     }
 
     /// `ReportTruncationError`, which is not deferred.
-    fn report_truncation_error(&mut self, c: &mut Checker<'p>) {
+    fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>) {
         if self.error_location().is_some() {
             let location =
                 c.get_error_range_for_node(self.current_source_file, self.error_location());
@@ -2602,7 +2606,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
     }
 
     /// `ReportInferenceFallback`. A node in another file is reported for that file.
-    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: Node) {
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: Node) {
         if let Some(isolated_declarations) = &mut self.isolated_declarations
             && file == self.current_source_file
         {
@@ -2613,7 +2617,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
 
 // ───────────────────────────── `DeclarationTransformer` ─────────────────────────────
 
-impl<'p> DeclarationEmit<'_, 'p> {
+impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `visitSourceFile`, `transformSourceFile`
     fn transform_source_file(&mut self) -> Vec<u8> {
         self.set_indent(0);
@@ -4229,8 +4233,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let Some(members) = self.c.members(holder) else {
                 continue;
             };
-            let (infos, mapper) = (members.shape().index.clone(), members.mapper);
-            for info in infos {
+            let (infos, mapper) = (&members.shape().index, members.mapper);
+            for &info in infos {
                 if info.declaration.is_some() {
                     continue;
                 }
@@ -5191,15 +5195,6 @@ fn path_is_bare_specifier(path: &[u8]) -> bool {
     !path.starts_with(b"/") && !path_is_relative(path)
 }
 
-/// `ensurePathIsNonModuleName`
-fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
-    if path_is_bare_specifier(&path) {
-        [&b"./"[..], &path[..]].concat()
-    } else {
-        path
-    }
-}
-
 /// `CountPathComponents`
 fn count_path_components(path: &[u8]) -> usize {
     strings::count_char(path.strip_prefix(b"./").unwrap_or(path), b'/')
@@ -5233,17 +5228,9 @@ fn js_extension_for_file(path: &[u8], preserves_jsx: bool) -> &'static [u8] {
 
 /// `GetNormalizedAbsolutePath(path, "")` for a package name followed by a path inside the package.
 fn normalized_name(path: &[u8]) -> Vec<u8> {
-    let mut parts: Vec<&[u8]> = Vec::new();
-    for part in bun_core::strings::split(path, b"/") {
-        match part {
-            b"" | b"." => {}
-            b".." => {
-                parts.pop();
-            }
-            part => parts.push(part),
-        }
-    }
-    parts.join(&b"/"[..])
+    let mut name = join(b"/", path);
+    name.remove(0);
+    name
 }
 
 /// `GetPackageNameFromTypesPackageName`
@@ -5398,7 +5385,7 @@ fn module_name_from_package_exports(
     )
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// The relative specifiers in `file`, in source order.
     fn relative_specifiers_of(&self, file: FileId) -> Vec<&'p [u8]> {
         self.bound(file)
@@ -5506,7 +5493,7 @@ impl<'p> Checker<'p> {
     ) -> Vec<Ending> {
         let files = self.files();
         let allows_ts = files.options.allow_importing_ts_extensions
-            || is_declaration_file_name(&files.module(importing).path);
+            || is_declaration_file_name(files.module(importing).path);
         if mode == ResolutionMode::Import && files.options.resolves_like_node {
             return if allows_ts {
                 vec![Ending::Ts, Ending::Js]
@@ -5583,7 +5570,7 @@ impl<'p> Checker<'p> {
                     .any(|extension| {
                         files
                             .by_path
-                            .contains_key(&[directory, *extension].concat())
+                            .contains_key([directory, *extension].concat().as_slice())
                     }) =>
                 {
                     directory.to_vec()
@@ -5707,7 +5694,7 @@ impl<'p> Checker<'p> {
             let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
             self.process_ending(path, &allowed)
         };
-        if !dirname::<Posix>(&files.module(importing).path)
+        if !dirname::<Posix>(files.module(importing).path)
             .starts_with(&path[..top_level_node_modules])
         {
             return Vec::new();
@@ -5734,7 +5721,7 @@ impl<'p> Checker<'p> {
         targets: &[(Vec<u8>, bool)],
         importing: &[u8],
     ) -> Vec<(Vec<u8>, bool)> {
-        let links = &self.files().linked_directories;
+        let links = self.files().linked_directories;
         let mut paths = Vec::new();
         let mut directory = dirname::<Posix>(real);
         while !links.is_empty() && !directory.is_empty() && directory != b"/" {
@@ -5747,13 +5734,13 @@ impl<'p> Checker<'p> {
                 {
                     break;
                 }
-                let to_here: Vec<&(Vec<u8>, Vec<u8>)> = to_here.collect();
+                let to_here: Vec<&(&[u8], &[u8])> = to_here.collect();
                 for (target, is_redirect) in targets {
                     let Some(rest) = target.strip_prefix(directory) else {
                         continue;
                     };
                     for link in to_here.iter().filter(|_| rest.starts_with(b"/")) {
-                        paths.push(([link.1.as_slice(), rest].concat(), *is_redirect));
+                        paths.push(([link.1, rest].concat(), *is_redirect));
                     }
                 }
             }
@@ -5772,7 +5759,7 @@ impl<'p> Checker<'p> {
         mode: ResolutionMode,
         target_mode: ResolutionMode,
     ) -> Vec<u8> {
-        let from = dirname::<Posix>(&self.files().module(importing).path);
+        let from = dirname::<Posix>(self.files().module(importing).path);
         // The number of directory levels from the importing file up to the directory that contains
         // `path`.
         let distance = |path: &[u8]| {
@@ -5896,7 +5883,7 @@ impl<'p> Checker<'p> {
         if paths_only && options.paths.is_empty() {
             return Vec::new();
         }
-        let source_directory = dirname::<Posix>(&files.module(importing).path);
+        let source_directory = dirname::<Posix>(files.module(importing).path);
         let mut relative_path = self.try_get_module_name_from_root_dirs(
             module_file_name,
             source_directory,
@@ -6058,14 +6045,14 @@ impl<'p> Checker<'p> {
         if let Some(&(_, _, name)) = redirected.find(|it| it.0 == specifier && it.1 == mode) {
             return self.atoms().bytes(name).to_vec();
         }
-        let path = &files.module(importer.imports[&(specifier, mode)]).path;
+        let path = files.module(importer.imports[&(specifier, mode)]).path;
         let mut to_outputs = importer.project_reference_imports.iter();
         if to_outputs.any(|&it| it == (specifier, mode))
             && let Some(output) = self.reference_redirect(path)
         {
             return output;
         }
-        path.clone()
+        path.to_vec()
     }
 
     /// `GetModuleSpecifiers`, first result only: the specifier `importing` uses for the file
@@ -6085,7 +6072,7 @@ impl<'p> Checker<'p> {
         };
         // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
         let path = (files.options)
-            .source_of_project_reference_if_output_included(&files.module(target).path);
+            .source_of_project_reference_if_output_included(files.module(target).path);
         // `GetEachFileNameOfModule`. The output of a referenced project for the file comes first,
         // then the source: the `exports` of its package map to one or the other.
         let reference_redirect = self.reference_redirect(path);
@@ -6093,9 +6080,13 @@ impl<'p> Checker<'p> {
         targets.extend(reference_redirect.map(|output| (output, true)));
         targets.push((path.to_vec(), false));
         // `GetRedirectTargets`
-        let redirects = files.redirect_targets.get(&target).into_iter().flatten();
-        targets.extend(redirects.map(|path| (path.clone(), false)));
-        let mut paths = self.paths_through_links(path, &targets, &from.path);
+        let redirects = files
+            .redirect_targets
+            .get(&target)
+            .copied()
+            .unwrap_or_default();
+        targets.extend(redirects.iter().map(|path| (path.to_vec(), false)));
+        let mut paths = self.paths_through_links(path, &targets, from.path);
         // `containsIgnoredPath`, `shouldFilterIgnoredPaths`
         let contains_ignored_path = |path: &[u8]| {
             [b"/node_modules/.".as_slice(), b"/.git", b".#"]

@@ -78,7 +78,7 @@ struct Request {
     helpers: u32,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
         let files = self.files();
         let (options, module) = (&files.options, files.module(file));
@@ -158,7 +158,7 @@ impl Checker<'_> {
             return Some(found);
         }
         let (code, args) = match module.imports.get(&(tslib, mode)) {
-            Some(&target) => (2306, vec![files.module(target).path.clone()]),
+            Some(&target) => (2306, vec![files.module(target).path.to_vec()]),
             None if module.untyped_imports.contains(&(tslib, mode)) => return None,
             None => (2354, vec![TSLIB.as_bytes().to_vec()]),
         };
@@ -235,7 +235,7 @@ impl Checker<'_> {
     /// of a function expression, of an arrow function and of a method of an object literal, the
     /// whole of an accessor of an object literal, the members of a class expression, the operand of
     /// `void`, and the contents of a JSX element. `None`: it is ambient (`NodeFlagsAmbient`), or
-    /// its parent is not tracked.
+    /// it is in a type literal.
     fn emit_helpers_span(&self, file: FileId, mut at: Parent) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut deferred = 0;
@@ -246,38 +246,42 @@ impl Checker<'_> {
                     return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(deferred);
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
-                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
+                // `checkObjectLiteral` checks every computed name at once.
+                Parent::MethodKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
                 Parent::FnBody(f) => self.emit_helpers_out_of_fn(file, f, false, &mut deferred)?,
                 Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
                     self.emit_helpers_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
                 }
-                Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
-                    let MemberOwner::Class(class) = bound.member_owner[m.idx()] else {
-                        return None;
-                    };
+                Parent::MemberInit(m)
+                | Parent::MemberKey(m)
+                | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
                     if hir[m].flags.contains(Flags::AMBIENT) {
                         return None;
                     }
+                    let MemberOwner::Class(class) = bound.member_owner[m.idx()] else {
+                        at = self.parent_of_node(file, Parent::MemberInit(m));
+                        continue;
+                    };
                     if let ClassOwner::Expr(_) = bound.class_owner[class.idx()] {
                         deferred += 1;
                     }
                     Parent::ClassExtends(class)
+                }
+                Parent::EnumInit(m)
+                    if hir[bound.enum_member_owner[m.idx()]]
+                        .flags
+                        .contains(Flags::AMBIENT) =>
+                {
+                    return None;
                 }
                 Parent::ClassExtends(class)
                 | Parent::Decorator(class, DecoratorOwner::Class(_)) => {
                     if hir[class].flags.contains(Flags::AMBIENT) {
                         return None;
                     }
-                    self.outward(file, Parent::ClassExtends(class))
+                    self.parent_of_node(file, Parent::ClassExtends(class))
                 }
-                Parent::None
-                | Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::EnumInit(_) => {
-                    return None;
-                }
+                Parent::None => return None,
                 Parent::Expr(e) if e.is_none() => return None,
                 Parent::Expr(e) => {
                     deferred += match hir[e].kind {
@@ -288,7 +292,7 @@ impl Checker<'_> {
                     bound.expr_parent[e.idx()]
                 }
                 Parent::Stmt(s) if s.is_none() => return None,
-                other => self.outward(file, other),
+                other => self.parent_of_node(file, other),
             };
         }
     }
@@ -596,8 +600,8 @@ impl Checker<'_> {
         for (i, element) in hir.pat_props.iter().enumerate() {
             let p = PatPropId(i as u32);
             if element.is_rest
-                && let Some(deferred) =
-                    self.emit_helpers_span(file, self.outward(file, Parent::PatPropDefault(p)))
+                && let Some(deferred) = self
+                    .emit_helpers_span(file, self.parent_of_node(file, Parent::PatPropDefault(p)))
             {
                 let (start, end) = self.error_range_of_pat_prop(file, p);
                 requests.push(Request {

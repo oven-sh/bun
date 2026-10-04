@@ -671,7 +671,7 @@ impl Builder<'_> {
 /// The types in a file's JSDoc comments, as nodes of a separate HIR.
 #[derive(Default)]
 pub(crate) struct CommentTypes {
-    pub(crate) file: bun_sema::hir::File,
+    pub(crate) file: bun_sema::hir::FileBuilder,
     pub(crate) pending: Vec<PendingPart>,
     /// Node counts before and after each type and each type argument list was parsed, in source
     /// order.

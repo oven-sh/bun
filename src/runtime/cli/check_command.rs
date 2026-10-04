@@ -1,10 +1,14 @@
-//! `bun check`: type checks a TypeScript project. `bun run --check` and `bun build --check` go through [`check_before`].
+//! `bun check`: type checks a TypeScript project. `bun run --check` and `bun test --check` go through [`check_before`].
+//! `bun build --check` and `Bun.build({ check: true })` run the check inside the bundle, when the bundler has read every
+//! file ([`check_for_build_command`], [`check_for_bun_build`]).
 
 use bstr::BStr;
 
+use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::{CompilerOption, FlagError, Progress, Report, Request};
+use bun_sema_driver::host::AlreadyRead;
+use bun_sema_driver::{Category, CompilerOption, Diagnostic, FlagError, Progress, Report, Request};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
@@ -32,87 +36,108 @@ fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
     Global::exit(1);
 }
 
-/// `--flag value` or `--flag=value`.
-fn value_of<'a>(
-    arg: &'a [u8],
-    names: &[&[u8]],
-    rest: &mut core::slice::Iter<'_, &'a ZStr>,
-) -> Option<&'a [u8]> {
-    for name in names {
-        if arg == *name {
-            match rest.next() {
-                Some(value) => return Some(value.as_bytes()),
-                None => usage_error(format_args!("{} needs a value", BStr::new(name))),
-            }
+/// A compiler option is not in the table: see `unknown_long_flags_are_positional`.
+pub(crate) const PARAMS: &[clap::Param<clap::Help>] = &[
+    clap::param!(
+        "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
+    ),
+    clap::param!(
+        "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
+    ),
+    clap::param!(
+        "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
+    ),
+    clap::param!(
+        "--all              Show every error <d>(above 50, identical errors are grouped)<r>"
+    ),
+    clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
+    clap::param!("--timing           Print load and check times"),
+    clap::param!("--cwd <path>       Set the working directory"),
+    clap::param!("-h, --help         Print this help menu"),
+    // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
+    clap::param!("--no-emit"),
+    clap::param!("-b, --build"),
+    clap::param!("<POS>..."),
+];
+static TABLE: &clap::ConvertedTable = clap::comptime_table!(PARAMS, cold);
+
+/// `args`: what follows `check`.
+fn parse(args: &[&ZStr]) -> Options {
+    let mut diagnostic = clap::Diagnostic::default();
+    let parsed = clap::parse_with_table::<clap::Help>(
+        TABLE,
+        clap::ParseOptions {
+            diagnostic: Some(&mut diagnostic),
+            unknown_long_flags_are_positional: true,
+            ..Default::default()
+        },
+    );
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            let _ = diagnostic.report(Output::error_writer(), err);
+            bun_core::note!("run 'bun check --help' for more information");
+            Global::exit(1);
         }
-        if name.starts_with(b"--")
-            && let Some(value) = arg
-                .strip_prefix(*name)
-                .and_then(|after| after.strip_prefix(b"="))
-        {
-            return Some(value);
+    };
+    if parsed.flag(b"--help") {
+        crate::cli::command::tag_print_help(crate::cli::command::Tag::CheckCommand, true);
+        Global::exit(0);
+    }
+    if let Some(cwd) = parsed.option(b"--cwd") {
+        let path = bun_core::ZBox::from_bytes(cwd);
+        if let bun_sys::Result::Err(err) = bun_sys::chdir(&path) {
+            Output::err(
+                err,
+                "Could not change directory to \"{}\"",
+                (BStr::new(cwd),),
+            );
+            Global::exit(1);
         }
     }
-    None
-}
-
-fn parse(args: &[&ZStr]) -> Options {
-    let mut options = Options::default();
-    let mut rest = args.iter();
-    let mut takes_flags = true;
-    while let Some(arg) = rest.next() {
-        let arg = arg.as_bytes();
-        if !takes_flags || !arg.starts_with(b"-") || arg == b"-" {
-            options.paths.push(arg.to_vec());
-            continue;
+    let mut options = Options {
+        project: parsed.option(b"--project").map(<[u8]>::to_vec),
+        pretty: match parsed.option(b"--pretty") {
+            _ if parsed.flag(b"--no-pretty") => Some(false),
+            None => None,
+            Some(b"" | b"true") => Some(true),
+            Some(b"false") => Some(false),
+            Some(value) => usage_error(format_args!(
+                "--pretty does not take \"{}\"",
+                BStr::new(value)
+            )),
+        },
+        all: parsed.flag(b"--all"),
+        build: parsed.flag(b"--build"),
+        timing: parsed.flag(b"--timing"),
+        ..Default::default()
+    };
+    if let Some(threads) = parsed.option(b"--threads") {
+        match bun_core::fmt::parse_decimal::<usize>(threads) {
+            Some(n) if n > 0 => options.threads = n,
+            _ => usage_error(format_args!(
+                "--threads takes a number above zero, not \"{}\"",
+                BStr::new(threads)
+            )),
         }
-        if arg == b"--" {
-            takes_flags = false;
-        } else if arg == b"-h" || arg == b"--help" {
-            crate::cli::command::tag_print_help(crate::cli::command::Tag::CheckCommand, true);
-            Global::exit(0);
-        } else if let Some(project) = value_of(
-            arg,
-            &[b"-p", b"--project", b"--tsconfig-override"],
-            &mut rest,
-        ) {
-            options.project = Some(project.to_vec());
-        } else if let Some(cwd) = value_of(arg, &[b"--cwd"], &mut rest) {
-            let path = bun_core::ZBox::from_bytes(cwd);
-            if let bun_sys::Result::Err(err) = bun_sys::chdir(&path) {
-                Output::err(
-                    err,
-                    "Could not change directory to \"{}\"",
-                    (BStr::new(cwd),),
-                );
-                Global::exit(1);
+    }
+    let positionals = parsed.positionals();
+    let positionals = positionals
+        .strip_prefix(&[b"check".as_slice()])
+        .unwrap_or(positionals);
+    // What follows `--` is a path, whatever it looks like.
+    let after_dashes =
+        (args.iter().position(|arg| arg.as_bytes() == b"--")).map_or(0, |at| args.len() - at - 1);
+    let flags_end = positionals.len().saturating_sub(after_dashes);
+    let mut rest = positionals.iter();
+    while let Some(&arg) = rest.next() {
+        let at = positionals.len() - rest.len() - 1;
+        match arg.strip_prefix(b"--") {
+            Some(flag) if at < flags_end => {
+                let option = compiler_option(flag, &mut rest);
+                options.compiler_options.push(option);
             }
-        } else if let Some(threads) = value_of(arg, &[b"--threads"], &mut rest) {
-            match bun_core::fmt::parse_decimal::<usize>(threads) {
-                Some(n) if n > 0 => options.threads = n,
-                _ => usage_error(format_args!(
-                    "--threads takes a number above zero, not \"{}\"",
-                    BStr::new(threads)
-                )),
-            }
-        } else if arg == b"--pretty" || arg == b"--pretty=true" {
-            options.pretty = Some(true);
-        } else if arg == b"--no-pretty" || arg == b"--pretty=false" {
-            options.pretty = Some(false);
-        } else if arg == b"--all" {
-            options.all = true;
-        } else if arg == b"--timing" {
-            options.timing = true;
-        } else if arg == b"--no-emit" {
-            // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
-        } else if arg == b"-b" || arg == b"--build" {
-            options.build = true;
-        } else if let Some(flag) = arg.strip_prefix(b"--") {
-            options
-                .compiler_options
-                .push(compiler_option(flag, &mut rest));
-        } else {
-            usage_error(format_args!("Unknown flag \"{}\"", BStr::new(arg)));
+            _ => options.paths.push(arg.to_vec()),
         }
     }
     if options.build {
@@ -128,14 +153,14 @@ fn parse(args: &[&ZStr]) -> Options {
 /// `flag` is what follows `--`: `strict`, `target` with the value in the next argument, or `target=es2022`.
 fn compiler_option<'a>(
     flag: &'a [u8],
-    rest: &mut core::slice::Iter<'_, &'a ZStr>,
+    rest: &mut core::slice::Iter<'_, &'a [u8]>,
 ) -> CompilerOption {
     let (name, mut value) = match bun_core::strings::index_of_char_usize(flag, b'=') {
         Some(at) => (&flag[..at], Some(&flag[at + 1..])),
         None => (flag, None),
     };
     if value.is_none() {
-        let next = rest.as_slice().first().map(|next| next.as_bytes());
+        let next = rest.as_slice().first().copied();
         let takes_next = match next {
             // `--strict false`, but not `--strict src/index.ts`.
             Some(next) if bun_sema_driver::is_boolean_compiler_option(name) => {
@@ -179,15 +204,12 @@ fn working_directory() -> Vec<u8> {
 
 /// The directory where `bun add -g` installs packages.
 fn global_node_modules() -> Option<Vec<u8>> {
-    if let Some(dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Some([dir, b"/node_modules"].concat());
-    }
-    if let Some(dir) = env_var::BUN_INSTALL.get() {
-        return Some([dir, b"/install/global/node_modules"].concat());
-    }
-    env_var::HOME
-        .get()
-        .map(|home| [home, b"/.bun/install/global/node_modules"].concat())
+    use bun_install::package_manager_real::package_manager_options::global_dir_path;
+    let install = bun_options_types::context::try_get().and_then(|ctx| ctx.install.as_deref());
+    let explicit = install.and_then(|install| install.global_dir.as_deref());
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let dir = global_dir_path(explicit.unwrap_or(b""), &mut buf.0)?;
+    Some([dir, b"/node_modules"].concat())
 }
 
 /// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
@@ -225,11 +247,21 @@ fn run(
     paths: &[Vec<u8>],
     compiler_options: &[CompilerOption],
     threads: usize,
+    already_read: AlreadyRead,
     then: impl FnOnce(Report) -> Report,
 ) -> Report {
     // Only for an interactive user.
     if !Output::is_stderr_tty() || Output::is_ai_agent() {
-        return run_quietly(cwd, project, paths, compiler_options, threads, None, then);
+        return run_quietly(
+            cwd,
+            project,
+            paths,
+            compiler_options,
+            threads,
+            None,
+            already_read,
+            then,
+        );
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(
@@ -250,6 +282,7 @@ fn run(
             compiler_options,
             threads,
             progress,
+            already_read,
             |report| {
                 is_done.store(true, Ordering::Release);
                 shown.thread().unpark();
@@ -261,6 +294,7 @@ fn run(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_quietly(
     cwd: &[u8],
     project: Option<&[u8]>,
@@ -268,6 +302,7 @@ fn run_quietly(
     compiler_options: &[CompilerOption],
     threads: usize,
     progress: Option<&Progress>,
+    already_read: AlreadyRead,
     then: impl FnOnce(Report) -> Report,
 ) -> Report {
     let global = global_node_modules();
@@ -292,7 +327,7 @@ fn run_quietly(
         after_file: None,
         declaration_file_emitted: None,
     };
-    bun_sema_driver::check_then(&request, then)
+    bun_sema_driver::check_already_read_then(&request, already_read, then)
 }
 
 /// A terminal user gets a source excerpt around each error, and so does an agent, in tags and
@@ -352,6 +387,7 @@ impl CheckCommand {
             &options.paths,
             &options.compiler_options,
             options.threads,
+            AlreadyRead::default(),
             // The process exits without freeing what was loaded. Under leak detection, everything
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
@@ -414,44 +450,160 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     Global::exit(u32::from(!report.is_ok()));
 }
 
-/// Type checks `entry_points` and everything they import before they are run or bundled. Reports
-/// the errors on stderr, which leaves stdout to the program. Returns whether there are no errors.
+/// Type checks `entry_points` and everything they import before they are run. Reports the errors
+/// on stderr, which leaves stdout to the program. Returns whether there are no errors.
 pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
+    match what_to_check(&working_directory(), entry_points) {
+        Some((paths, options)) => check_and_report(&paths, &options, AlreadyRead::default()),
+        None => true,
+    }
+}
+
+/// `sources` of `bun_bundler::options::TypeCheck`.
+fn already_read(sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
+    sources
+        .map(|(path, text)| (bun_sema_driver::host::from_native(path), text.to_vec()))
+        .collect()
+}
+
+/// `BundleOptions::type_check` for `bun build --check`. Like `check_before`, except that the files
+/// of the bundle are not read again. Nothing has been written yet, so errors end the process.
+pub(crate) fn check_for_build_command(
+    cwd: &[u8],
+    entry_points: &[Box<[u8]>],
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    _log: &mut bun_ast::Log,
+) -> bool {
+    let entry_points: Vec<&[u8]> = entry_points.iter().map(|path| &**path).collect();
+    if let Some((paths, options)) = what_to_check(cwd, &entry_points)
+        && !check_and_report(&paths, &options, already_read(sources))
+    {
+        Global::exit(1);
+    }
+    true
+}
+
+/// `BundleOptions::type_check` for `Bun.build({ check: true })`. The errors are added to `log`,
+/// which the build reports like its own. It runs on the thread of the bundler and prints nothing.
+pub(crate) fn check_for_bun_build(
+    cwd: &[u8],
+    entry_points: &[Box<[u8]>],
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    let entry_points: Vec<&[u8]> = entry_points.iter().map(|path| &**path).collect();
+    let Some((paths, options)) = what_to_check(cwd, &entry_points) else {
+        return true;
+    };
+    let already_read = already_read(sources);
+    let report = run_quietly(
+        cwd,
+        None,
+        &paths,
+        &options,
+        0,
+        None,
+        already_read,
+        |report| report,
+    );
+    for reported in &report.diagnostics {
+        let kind = match reported.category {
+            Category::Error => bun_ast::Kind::Err,
+            Category::Warning => bun_ast::Kind::Warn,
+            Category::Suggestion | Category::Message => continue,
+        };
+        match kind {
+            bun_ast::Kind::Err => log.errors += 1,
+            _ => log.warnings += 1,
+        }
+        log.add_msg(bun_ast::Msg {
+            kind,
+            data: log_data_of(reported),
+            metadata: format::metadata_of(reported),
+            notes: reported.related.iter().map(log_data_of).collect(),
+            ..Default::default()
+        });
+    }
+    for path in &report.incomplete {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.",
+                BStr::new(bun_sema_driver::host::to_native(path))
+            ),
+        );
+    }
+    report.is_ok()
+}
+
+/// `TS2322: Type 'string' is not assignable to type 'number'.`, where it is.
+fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
+    use std::borrow::Cow;
+    let mut text = Vec::with_capacity(reported.text.len() + 8);
+    if reported.code != 0 {
+        use std::io::Write;
+        let _ = write!(text, "TS{}: ", reported.code);
+    }
+    text.extend_from_slice(&reported.text);
+    let line_text = || {
+        let index = reported.line.checked_sub(reported.source_line)?;
+        Some(Cow::Owned(reported.source.get(index as usize)?.clone()))
+    };
+    bun_ast::Data {
+        text: Cow::Owned(text),
+        location: (!reported.path.is_empty()).then(|| bun_ast::Location {
+            file: Cow::Owned(bun_sema_driver::host::to_native(&reported.path).to_vec()),
+            line_text: line_text(),
+            length: (reported.end - reported.start) as usize,
+            offset: reported.start as usize,
+            line: reported.line as i32,
+            column: reported.column as i32,
+            ..Default::default()
+        }),
+    }
+}
+
+/// The files to name in the check of `entry_points`, which are relative to `cwd`, and the compiler
+/// options that go with them. `None` if none of them has types to check.
+fn what_to_check(
+    cwd: &[u8],
+    entry_points: &[&[u8]],
+) -> Option<(Vec<Vec<u8>>, Vec<CompilerOption>)> {
     // An entry point that is neither TypeScript nor JavaScript has no types to check: `[eval]`, a
     // stylesheet, a page.
-    const CHECKED: [&[u8]; 8] = [
-        b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
-    ];
-    let is_checked = |path: &[u8]| CHECKED.iter().any(|extension| path.ends_with(extension));
+    use bun_ast::Loader;
+    let loader_of = |path: &[u8]| Loader::from_string(bun_paths::extension(path));
+    let is_checked = |path: &[u8]| loader_of(path).is_some_and(Loader::is_javascript_like);
     let mut paths: Vec<Vec<u8>> = Vec::new();
     for &entry_point in entry_points {
         if is_checked(entry_point) {
             paths.push(entry_point.to_vec());
         } else if entry_point.ends_with(b".html") {
-            let scripts = imports_of_page(entry_point);
+            let scripts = imports_of_page(cwd, entry_point);
             paths.extend(scripts.into_iter().filter(|path| is_checked(path)));
         }
     }
     if paths.is_empty() {
-        return true;
+        return None;
     }
     // A JavaScript entry point is loaded for its imports, regardless of `allowJs`. Its own errors
     // are reported only under `checkJs`.
     let allow_js: Vec<CompilerOption> = paths
         .iter()
-        .any(|path| !path.ends_with(b"ts") && !path.ends_with(b".tsx"))
+        .any(|path| !loader_of(path).is_some_and(Loader::is_typescript))
         .then(|| bun_sema_driver::compiler_option_from_flag(b"allowJs", None).ok())
         .flatten()
         .into_iter()
         .collect();
-    check_and_report(&paths, &allow_js)
+    Some((paths, allow_js))
 }
 
 /// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot
 /// be read or parsed, which the bundler reports.
-fn imports_of_page(page: &[u8]) -> Vec<Vec<u8>> {
+fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(&working_directory(), &[page]).to_vec();
+    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
     let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
         return Vec::new();
     };
@@ -470,12 +622,24 @@ fn imports_of_page(page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(&[], &[])
+    check_and_report(&[], &[], AlreadyRead::default())
 }
 
-fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
+fn check_and_report(
+    paths: &[Vec<u8>],
+    compiler_options: &[CompilerOption],
+    already_read: AlreadyRead,
+) -> bool {
     let cwd = working_directory();
-    let report = run(&cwd, None, paths, compiler_options, 0, |report| report);
+    let report = run(
+        &cwd,
+        None,
+        paths,
+        compiler_options,
+        0,
+        already_read,
+        |report| report,
+    );
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return true;
     }

@@ -43,7 +43,7 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
 /// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
-        let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| &m.path[..]).collect();
+        let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| m.path).collect();
         let _ = std::fs::write(to, paths.join(&b"\n"[..]));
     }
 }
@@ -75,7 +75,8 @@ fn main() {
                 files.extend(list.lines().map(PathBuf::from));
             }
             files.sort();
-            let atoms = Interner::new();
+            let session = bun_sema::session::Session::new();
+            let atoms = Interner::new_in(&session);
             // --repeat=n [--threads=n]: all files are read first, then parsed and lowered n times,
             // to measure parsing and lowering alone.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
@@ -89,7 +90,10 @@ fn main() {
                         files.len(),
                         |i| {
                             let path = files[i].to_string_lossy();
-                            drop(bun_sema_standalone::parse(&path, &texts[i], &atoms, false));
+                            let arena = session.arena();
+                            drop(bun_sema_standalone::parse(
+                                arena, &path, &texts[i], &atoms, false,
+                            ));
                         },
                     );
                 }
@@ -102,8 +106,8 @@ fn main() {
                 let Ok(text) = std::fs::read(&files[i]) else {
                     return;
                 };
-                let file =
-                    bun_sema_standalone::parse(&files[i].to_string_lossy(), &text, &atoms, false);
+                let path = files[i].to_string_lossy();
+                let file = bun_sema_standalone::parse(session.arena(), &path, &text, &atoms, false);
                 // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
                     return;
@@ -204,7 +208,8 @@ fn main() {
             let error_types: std::sync::Mutex<Vec<(String, usize, usize, String)>> =
                 Default::default();
             let note_error_types =
-                |checker: &mut bun_sema::check::Checker<'_>, file: bun_sema::program::FileId| {
+                |checker: &mut bun_sema::check::Checker<'_, '_>,
+                 file: bun_sema::program::FileId| {
                     let found = checker.error_types_at_locations(file);
                     let module = &checker.p.files.modules[file.idx()];
                     let text = &module.hir.text;
@@ -215,12 +220,13 @@ fn main() {
                             .map_or(0, |n| n + 1);
                         let line = bun_core::strings::count_char(before, b'\n') + 1;
                         let column = before.len() - line_start + 1;
-                        let path = bun_sema::messages::text(&module.path);
+                        let path = bun_sema::messages::text(module.path);
                         error_types.push((path, line, column, kind));
                     }
                 };
-            type AfterFile<'a> =
-                &'a (dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync);
+            type AfterFile<'a> = &'a (
+                    dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
+                );
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
             // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
             // its absolute path inside that directory.
@@ -250,6 +256,10 @@ fn main() {
                 warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
                 chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
                 min_tasks: number("--min-tasks=", defaults.min_tasks),
+                type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
+                split_files: number("--split-files=", 0) as u32,
+                split_tolerates: number("--split-tolerates=", 0) as u8,
+                split_publishes_everything: has("--split-publishes-everything"),
                 checkers: number("--checkers=", defaults.checkers),
             };
             let list_files_only = has("--listFilesOnly")
@@ -502,6 +512,20 @@ fn main() {
                             step.records.joined.iter().sum::<usize>(),
                             step.entries.digest
                         );
+                        if step.ranges != 0 {
+                            let [cycle, limit, nesting] = step.ranges_by_obstacle;
+                            eprintln!(
+                                "  ranges checked ahead {}, not published {}; met a cycle {cycle}, a limit {limit}, a cut at nested types {nesting}",
+                                step.ranges, step.ranges_dropped
+                            );
+                        }
+                        for (elapsed, files, path) in &step.slowest_tasks {
+                            eprintln!(
+                                "  task {:.3} s, {files} files, from {}",
+                                elapsed.as_secs_f64(),
+                                String::from_utf8_lossy(path)
+                            );
+                        }
                     }
                 }
                 std::process::exit(i32::from(!report.is_ok()));

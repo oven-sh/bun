@@ -24,33 +24,41 @@ pub(super) enum UntypedProperty {
 }
 
 /// Hash index from name to position in a property list. Used for more than `FEW` properties:
-/// shorter lists are scanned linearly.
+/// shorter lists are scanned linearly. `P`: in the arena for the index that is stored with a shape,
+/// a box for that of a `Builder`.
 #[derive(Default)]
-struct Names {
+struct Names<P> {
     /// 0, or the position of a property plus one. The length is a power of two, at least twice the
     /// number of properties.
-    places: Box<[u32]>,
+    places: P,
 }
 
-impl Names {
-    const FEW: usize = 8;
+const FEW: usize = 8;
 
+impl<'s> Names<ArenaBox<'s, [u32]>> {
+    fn of(props: &ArenaVec<'s, Prop<'s>>) -> Self {
+        if props.len() <= FEW {
+            return Names::default();
+        }
+        let places = std::iter::repeat_n(0, (props.len() * 2).next_power_of_two());
+        let mut names = Self {
+            places: ArenaBox::from_iter_in(places, props.allocator()),
+        };
+        names.add_all(props);
+        names
+    }
+}
+
+impl Names<Box<[u32]>> {
     /// Empty, with capacity for `count` properties.
-    fn with_capacity(count: usize) -> Names {
+    fn with_capacity(count: usize) -> Self {
         Names {
             places: vec![0; (count * 2).next_power_of_two()].into_boxed_slice(),
         }
     }
+}
 
-    fn of(props: &[Prop]) -> Names {
-        if props.len() <= Self::FEW {
-            return Names::default();
-        }
-        let mut names = Names::with_capacity(props.len());
-        names.add_all(props);
-        names
-    }
-
+impl<P: std::ops::DerefMut<Target = [u32]>> Names<P> {
     #[inline]
     fn first_place(&self, name: Atom) -> usize {
         (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize
@@ -90,13 +98,13 @@ impl Names {
     }
 }
 
-pub struct Resolved {
-    pub shape: Shape,
-    names: Names,
+pub struct Resolved<'s> {
+    pub shape: Shape<'s>,
+    names: Names<ArenaBox<'s, [u32]>>,
 }
 
 /// Every field is named, so that a new one is a compile error. `names` is derived from `shape`, so it is not shown.
-impl crate::types::Follow for Resolved {
+impl crate::types::Follow for Resolved<'_> {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
         let Resolved { shape, names: _ } = self;
         shape.visit(visitor);
@@ -106,14 +114,15 @@ impl crate::types::Follow for Resolved {
         let has_own_names = shape.props.iter().any(|prop| prop.name.is_own());
         shape.follow(link);
         // The slots are indexed by a hash of the atom ids, which have changed.
-        if has_own_names {
-            *names = Names::of(&shape.props);
+        if has_own_names && shape.props.len() > FEW {
+            names.places.fill(0);
+            names.add_all(&shape.props);
         }
     }
 }
 
-impl Resolved {
-    fn new(shape: Shape) -> Resolved {
+impl<'s> Resolved<'s> {
+    fn new(shape: Shape<'s>) -> Resolved<'s> {
         Resolved {
             names: Names::of(&shape.props),
             shape,
@@ -121,9 +130,9 @@ impl Resolved {
     }
 
     #[inline]
-    pub fn prop(&self, name: Atom) -> Option<&Prop> {
+    pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
         let props = &self.shape.props;
-        if props.len() > Names::FEW {
+        if props.len() > FEW {
             return self.names.find(props, name).map(|at| &props[at]);
         }
         props.iter().find(|p| p.name == name)
@@ -133,13 +142,13 @@ impl Resolved {
 /// The members of a type: a shape shared by instantiations, and the mapper of this instantiation.
 #[derive(Copy, Clone)]
 pub struct Members<'p> {
-    pub resolved: &'p Resolved,
+    pub resolved: &'p Resolved<'p>,
     pub mapper: MapperId,
 }
 
 impl<'p> Members<'p> {
     #[inline]
-    pub fn shape(&self) -> &'p Shape {
+    pub fn shape(&self) -> &'p Shape<'p> {
         &self.resolved.shape
     }
 }
@@ -151,7 +160,7 @@ pub(super) const RECENT_PROPS: usize = 256;
 /// A type, and its entry in `Program::members`.
 #[derive(Copy, Clone)]
 pub(super) struct RecentMembers<'p> {
-    resolved: Option<&'p Resolved>,
+    resolved: Option<&'p Resolved<'p>>,
     ty: TypeId,
     mapper: MapperId,
 }
@@ -184,7 +193,7 @@ impl CachedMembers {
 /// A shape, and its handle in the store if it is final.
 #[derive(Copy, Clone)]
 struct Built<'p> {
-    resolved: &'p Resolved,
+    resolved: &'p Resolved<'p>,
     kept: Option<Handle>,
 }
 
@@ -209,23 +218,21 @@ pub(super) enum Access {
 /// Whether it is an object type that a property access reads directly: any but a mapped type.
 #[inline]
 fn is_plain_object(data: &TypeData) -> bool {
-    match data {
-        TypeData::Ref { .. }
-        | TypeData::Tuple { .. }
-        | TypeData::Fns { .. }
-        | TypeData::Synth(_)
-        | TypeData::ReverseMapped { .. } => true,
-        TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
-        _ => false,
-    }
+    let is_mapped = matches!(
+        data,
+        TypeData::Anon {
+            origin: Origin::Mapped(..),
+            ..
+        }
+    );
+    super::relate::is_object_kind(data) && !is_mapped
 }
 
 /// Collects properties by name, in the order they are first seen.
-#[derive(Default)]
-struct Builder {
-    shape: Shape,
-    /// Position of each property, while there are more than `Names::FEW`. Empty otherwise.
-    names: Names,
+struct Builder<'s> {
+    shape: Shape<'s>,
+    /// Position of each property, while there are more than `FEW`. Empty otherwise.
+    names: Names<Box<[u32]>>,
     /// The keys of the index signatures that computed names implied.
     implied: Vec<TypeId>,
     /// The static members with computed names and those with other names, by name: the arguments
@@ -236,11 +243,19 @@ struct Builder {
 
 type StaticNames = (FileId, Vec<MemberId>, Vec<(Atom, SmallVec<[MemberId; 4]>)>);
 
-impl Builder {
+impl<'s> Builder<'s> {
+    fn new_in(arena: &'s Arena) -> Builder<'s> {
+        Builder {
+            shape: Shape::new_in(arena),
+            names: Names::default(),
+            implied: Vec::new(),
+            static_names: None,
+        }
+    }
     /// Position of the property `name`.
     #[inline]
     fn position(&self, name: Atom) -> Option<usize> {
-        if self.shape.props.len() <= Names::FEW {
+        if self.shape.props.len() <= FEW {
             return self.shape.props.iter().position(|p| p.name == name);
         }
         self.names.find(&self.shape.props, name)
@@ -253,33 +268,33 @@ impl Builder {
     fn reserve(&mut self, more: usize) {
         self.shape.props.reserve_exact(more);
         let all = self.shape.props.len() + more;
-        if all > Names::FEW && all * 2 > self.names.places.len() {
+        if all > FEW && all * 2 > self.names.places.len() {
             self.reserve_names(all);
         }
     }
     /// Rebuilds `names` with capacity for `count` properties.
     fn reserve_names(&mut self, count: usize) {
         self.names = Names::with_capacity(count);
-        if self.shape.props.len() > Names::FEW {
+        if self.shape.props.len() > FEW {
             self.names.add_all(&self.shape.props);
         }
     }
-    fn add(&mut self, prop: Prop) {
+    fn add(&mut self, prop: Prop<'s>) {
         match self.position(prop.name) {
             Some(i) => self.shape.props[i] = prop,
             None => self.add_new(prop),
         }
     }
     /// Adds a property whose name is not present yet.
-    fn add_new(&mut self, prop: Prop) {
+    fn add_new(&mut self, prop: Prop<'s>) {
         self.shape.props.push(prop);
         let count = self.shape.props.len();
-        if count <= Names::FEW {
+        if count <= FEW {
             return;
         }
         if count * 2 > self.names.places.len() {
             self.reserve_names(count * 2);
-        } else if count == Names::FEW + 1 {
+        } else if count == FEW + 1 {
             self.names.add_all(&self.shape.props);
         } else {
             self.names.add(&self.shape.props, count - 1);
@@ -291,16 +306,16 @@ impl Builder {
         };
         self.shape.props.remove(i);
         // The properties after it have shifted.
-        if self.shape.props.len() >= Names::FEW {
+        if self.shape.props.len() >= FEW {
             self.names.places.fill(0);
-            if self.shape.props.len() > Names::FEW {
+            if self.shape.props.len() > FEW {
                 self.names.add_all(&self.shape.props);
             }
         }
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getTypeArguments` for a reference to a class or an interface, an array type or a tuple
     /// type.
     #[inline]
@@ -363,12 +378,12 @@ impl<'p> Checker<'p> {
         let holds = self.leave(Query::TypeArguments(ty)).is_ok();
         if self.left_a_cycle {
             // `popTypeResolution` fails.
-            let errors = vec![TypeId::ERROR; declared.len()];
+            let errors = self.list_of(std::iter::repeat_n(TypeId::ERROR, declared.len()));
             let stored = (self.end_scope_as(scope, false)).unwrap_or_else(|_| self.cycle_result());
             let p = self.p;
             let resolved: &'p [TypeId] =
                 (p.resolved_type_arguments
-                    .insert_ref(&mut self.task, ty, errors.into(), stored))
+                    .insert_ref(&mut self.task, ty, errors, stored))
                 .1;
             let at = (
                 file,
@@ -387,15 +402,19 @@ impl<'p> Checker<'p> {
         // assigns, and the outermost assigns last. So only the outermost level stores.
         let is_outermost = !self.type_arguments_in_instantiation.contains(&ty);
         self.type_arguments_in_instantiation.push(ty);
-        let before = self.non_cacheable_mark();
-        let instantiated = self.instantiate_all(&declared, mapper);
+        let (before, in_place) = (self.non_cacheable_mark(), self.members_in_place_hits);
+        let instantiated = self.instantiate_list(&declared, mapper);
         self.type_arguments_in_instantiation.pop();
-        let is_open = !(holds && is_outermost && self.non_cacheable_mark() == before);
+        // `d.resolvedTypeArguments = ..`, whatever members were in place: a default type argument
+        // can need a member of the reference itself. See `members_in_place_hits`.
+        let in_place = self.members_in_place_hits - in_place;
+        let is_final = self.non_cacheable_mark() == (before.0 + in_place, before.1);
+        let is_open = !(holds && is_outermost && is_final);
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
-                let (p, resolved) = (self.p, instantiated.into());
+                let p = self.p;
                 (p.resolved_type_arguments
-                    .insert_ref(&mut self.task, ty, resolved, stored))
+                    .insert_ref(&mut self.task, ty, instantiated, stored))
                 .1
             }
             Err(_) => self.provisional_type_arguments(ty, &instantiated),
@@ -413,15 +432,15 @@ impl<'p> Checker<'p> {
     /// unchanged.
     pub(super) fn create_type_reference(&self, ty: TypeId, arguments: &[TypeId]) -> TypeId {
         match self.data(ty) {
-            TypeData::Ref { target, .. } => self.intern(TypeData::Ref {
+            TypeData::Ref { target, .. } => self.intern_key(TypeKey::Ref {
                 target: *target,
-                args: arguments.into(),
+                args: arguments,
             }),
             TypeData::Tuple {
                 flags, readonly, ..
-            } => self.intern(TypeData::Tuple {
-                elems: arguments.into(),
-                flags: flags.clone(),
+            } => self.intern_key(TypeKey::Tuple {
+                elems: arguments,
+                flags,
                 readonly: *readonly,
             }),
             _ => ty,
@@ -522,17 +541,17 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn shape_memo(&mut self, key: TypeId, build: impl FnOnce(&mut Self) -> Shape) -> Built<'p> {
-        self.shape_memo_or(key, build, |_| Shape::default())
+    fn shape_memo(&mut self, key: TypeId, build: impl FnOnce(&mut Self) -> Shape<'s>) -> Built<'p> {
+        self.shape_memo_or(key, build, |_| Shape::new_in(self.arena))
     }
 
     /// A shape that is not final. It lives until `release_provisional_shapes`.
-    fn provisional_shape(&mut self, shape: Shape) -> Built<'p> {
+    fn provisional_shape(&mut self, shape: Shape<'s>) -> Built<'p> {
         let resolved = Box::new(Resolved::new(shape));
         // SAFETY: a box does not move its contents, and it is dropped by
         // `release_provisional_shapes`, which is only called where no `Members` is live: between
         // files.
-        let provisional: &'p Resolved = unsafe { &*std::ptr::from_ref(&*resolved) };
+        let provisional: &'p Resolved<'p> = unsafe { &*std::ptr::from_ref(&*resolved) };
         self.provisional_shapes.push(resolved);
         Built {
             resolved: provisional,
@@ -550,8 +569,8 @@ impl<'p> Checker<'p> {
     fn shape_memo_or(
         &mut self,
         key: TypeId,
-        build: impl FnOnce(&mut Self) -> Shape,
-        meanwhile: impl FnOnce(&mut Self) -> Shape,
+        build: impl FnOnce(&mut Self) -> Shape<'s>,
+        meanwhile: impl FnOnce(&mut Self) -> Shape<'s>,
     ) -> Built<'p> {
         if let Some(kept) = self.p.shapes.handle(&mut self.task, &key) {
             return Built {
@@ -592,7 +611,7 @@ impl<'p> Checker<'p> {
             let shape = if is_in_progress {
                 meanwhile(self)
             } else {
-                Shape::default()
+                Shape::new_in(self.arena)
             };
             return self.provisional_shape(shape);
         }
@@ -682,7 +701,7 @@ impl<'p> Checker<'p> {
         self.lowest_unresolved_members_hit = self.lowest_unresolved_members_hit.min(at as u32);
         self.unresolved_members_hits += 1;
         self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
-        self.note_cycle();
+        self.note_members_in_place();
         let shape = self.build_declared_shape(target, MapperId::IDENTITY, false, false);
         Some(Members {
             resolved: self.provisional_shape(shape).resolved,
@@ -796,7 +815,11 @@ impl<'p> Checker<'p> {
                         mapper: identity,
                     })
                 };
-                let resolved = self.shape_memo(key, |c| c.build_origin_shape(origin));
+                let resolved = self.shape_memo_or(
+                    key,
+                    |c| c.build_origin_shape(origin, false),
+                    |c| c.origin_shape_in_the_meantime(origin),
+                );
                 Some((
                     resolved,
                     if identity == mapper {
@@ -812,13 +835,13 @@ impl<'p> Checker<'p> {
                 let key = if identity == mapper {
                     ty
                 } else {
-                    self.intern(TypeData::Fns {
-                        decls: decls.clone(),
+                    self.intern_key(TypeKey::Fns {
+                        decls,
                         mapper: identity,
                     })
                 };
                 let resolved = self.shape_memo(key, |c| {
-                    let mut shape = Shape::default();
+                    let mut shape = Shape::new_in(self.arena);
                     for &(file, func) in decls.iter() {
                         let sig = c.sig_of_declaration(file, func);
                         if c.hir(file)[func].kind == FnKind::ConstructorType {
@@ -842,7 +865,7 @@ impl<'p> Checker<'p> {
                 ))
             }
             TypeData::Synth(shape) => {
-                let resolved = self.shape_memo(ty, |_| (**shape).clone());
+                let resolved = self.shape_memo(ty, |_| (**shape).clone_in(self.arena));
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::ReverseMapped { source, mapped, of } => {
@@ -877,7 +900,11 @@ impl<'p> Checker<'p> {
         if member.flags.contains(Flags::OPTIONAL) {
             flags |= PropFlags::OPTIONAL;
         }
-        if member.flags.contains(Flags::READONLY) {
+        // `isReadonlySymbol`: the modifier counts on a `SymbolFlagsProperty` only.
+        if member.flags.contains(Flags::READONLY)
+            && member.kind == MemberKind::Property
+            && !member.flags.contains(Flags::ACCESSOR)
+        {
             flags |= PropFlags::READONLY;
         }
         if member.flags.contains(Flags::PRIVATE) {
@@ -894,7 +921,11 @@ impl<'p> Checker<'p> {
             MemberKind::Getter | MemberKind::Setter => flags |= PropFlags::ACCESSOR,
             // `bindPropertyWorker`: an `accessor` field is a getter and a setter.
             MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-                flags |= PropFlags::ACCESSOR
+                flags |= PropFlags::ACCESSOR;
+                // `getTypeOfAccessors`
+                if member.flags.contains(Flags::OPTIONAL) {
+                    flags |= PropFlags::WITHOUT_OPTIONALITY;
+                }
             }
             _ => {}
         }
@@ -997,7 +1028,7 @@ impl<'p> Checker<'p> {
     /// `early`: only those the binder can name, without checking any expression.
     fn add_members(
         &mut self,
-        b: &mut Builder,
+        b: &mut Builder<'s>,
         file: FileId,
         members: Span<MemberId>,
         want_static: bool,
@@ -1056,12 +1087,31 @@ impl<'p> Checker<'p> {
                     if f.params.len() != 1 || hir[f.params.at(0)].ty.is_none() {
                         continue;
                     }
+                    // `resolveDeclaredMembers`: a caller that resolves the members while their index
+                    // signatures are being resolved gets the members without index signatures.
+                    let is_static = member.flags.contains(Flags::STATIC);
+                    if (self.declared_index_infos_in_progress.iter()).any(|it| {
+                        it.1 == file
+                            && members.range().contains(&it.2.idx())
+                            && hir[it.2].kind == MemberKind::IndexSignature
+                            && hir[it.2].flags.contains(Flags::STATIC) == is_static
+                    }) {
+                        continue;
+                    }
+                    // With `early` the innermost query is not the one for these members.
+                    if !early {
+                        self.declared_index_infos_in_progress
+                            .push((self.stack.len(), file, m));
+                    }
                     let keys = self.type_from_node(file, hir[f.params.at(0)].ty);
                     let value = if member.ty.is_some() {
                         self.type_from_node(file, member.ty)
                     } else {
                         TypeId::ANY
                     };
+                    if !early {
+                        self.declared_index_infos_in_progress.pop();
+                    }
                     for &key in self.parts(keys) {
                         if !self.is_valid_index_key_type(key) {
                             continue;
@@ -1110,6 +1160,9 @@ impl<'p> Checker<'p> {
                         }
                         if param.flags.contains(Flags::PROTECTED) {
                             flags |= PropFlags::PROTECTED;
+                        }
+                        if param.flags.contains(Flags::ABSTRACT) {
+                            flags |= PropFlags::ABSTRACT;
                         }
                         let symbol = self
                             .bound(file)
@@ -1284,10 +1337,12 @@ impl<'p> Checker<'p> {
             flags |= PropFlags::OPTIONAL;
             // A method includes `undefined` if any of its declarations is optional
             // (`getTypeOfFuncClassEnumModule`), a property if the declaration that determines its
-            // type is (`getTypeForVariableLikeDeclaration`).
+            // type is (`getTypeForVariableLikeDeclaration`). `getTypeOfAccessors` adds none.
             let (f, first) = list[0];
             if !flags.contains(PropFlags::METHOD)
-                && !self.hir(f)[first].flags.contains(Flags::OPTIONAL)
+                && (!self.hir(f)[first].flags.contains(Flags::OPTIONAL)
+                    || self.has_get_or_set_accessor(list)
+                    || (list.iter()).any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ACCESSOR)))
             {
                 flags |= PropFlags::WITHOUT_OPTIONALITY;
             }
@@ -1340,7 +1395,7 @@ impl<'p> Checker<'p> {
     /// `others`: the siblings that are not among `named`, with their types.
     fn add_index_signatures_of_computed_names(
         &mut self,
-        b: &mut Builder,
+        b: &mut Builder<'s>,
         file: FileId,
         computed: &[MemberId],
         named: &[(Atom, SmallVec<[MemberId; 4]>)],
@@ -1498,7 +1553,7 @@ impl<'p> Checker<'p> {
     pub(super) fn is_spreadable_property(&self, prop: &Prop) -> bool {
         // Whether some declaration is in a class, and whether some is named `#x`.
         fn written(
-            c: &Checker<'_>,
+            c: &Checker<'_, '_>,
             source: &PropSource,
             in_class: &mut bool,
             is_private: &mut bool,
@@ -1544,10 +1599,11 @@ impl<'p> Checker<'p> {
                 {
                     return ty;
                 }
-                let with_this: Vec<TypeId> = args.iter().copied().chain([this_argument]).collect();
-                self.intern(TypeData::Ref {
+                let with_this: SmallVec<[TypeId; 8]> =
+                    args.iter().copied().chain([this_argument]).collect();
+                self.intern_key(TypeKey::Ref {
                     target: *target,
-                    args: with_this.into(),
+                    args: &with_this,
                 })
             }
             TypeData::Intersection(parts) => {
@@ -1590,9 +1646,9 @@ impl<'p> Checker<'p> {
         }
         let parameters: Vec<TypeId> = pairs.iter().map(|pair| pair.0).collect();
         let this = self.intern(TypeData::Marker(Marker::TupleThis));
-        let target = self.intern(TypeData::Tuple {
-            elems: parameters.clone().into(),
-            flags: flags.clone(),
+        let target = self.intern_key(TypeKey::Tuple {
+            elems: &parameters,
+            flags,
             readonly: *readonly,
         });
         let mut resolved = self.shape_memo(target, |c| {
@@ -1620,7 +1676,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The members `resolveObjectTypeMembers` inherits from one base type.
-    fn inherit(&mut self, b: &mut Builder, base: TypeId, this: Option<(Sym, TypeId)>) {
+    fn inherit(&mut self, b: &mut Builder<'s>, base: TypeId, this: Option<(Sym, TypeId)>) {
         // `anyBaseTypeIndexInfo`
         if base == TypeId::ANY {
             if !b.shape.index.iter().any(|i| i.key == TypeId::STRING) {
@@ -1653,7 +1709,7 @@ impl<'p> Checker<'p> {
             if b.has(prop.name) {
                 continue;
             }
-            let mut prop = prop.clone();
+            let mut prop = prop.clone_in(self.arena);
             match &mut prop.source {
                 PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
                 _ => {
@@ -1720,8 +1776,8 @@ impl<'p> Checker<'p> {
         under: MapperId,
         early: bool,
         inherits: bool,
-    ) -> Shape {
-        let mut b = Builder::default();
+    ) -> Shape<'s> {
+        let mut b = Builder::new_in(self.arena);
         for (file, decl) in self.files().decls(sym) {
             let hir = self.hir(file);
             let members = match decl {
@@ -1763,7 +1819,7 @@ impl<'p> Checker<'p> {
     /// For a type that is not a class or interface every property is contained.
     pub(super) fn get_named_members(
         &mut self,
-        props: &mut Vec<Prop>,
+        props: &mut ArenaVec<'s, Prop<'s>>,
         is_contained: impl Fn(usize) -> bool,
         ranges: &[(u32, u32)],
     ) {
@@ -1772,7 +1828,7 @@ impl<'p> Checker<'p> {
         }
         let atoms = &self.atoms();
         let mut keyed = Vec::with_capacity(props.len());
-        for (i, prop) in std::mem::take(props).into_iter().enumerate() {
+        for (i, prop) in props.drain(..).enumerate() {
             let is_outside =
                 !is_contained(i) && !self.is_within_ranges_of_declarations(&prop, ranges);
             let (nowhere, place) = self.order_of_property(&prop);
@@ -1909,12 +1965,11 @@ impl<'p> Checker<'p> {
         {
             constructor
         } else {
-            if holds && let Some(at) = self.place_to_report_base_at(file, c) {
-                // Printing the type may query the base constructor type.
-                let (error, stored) = (TypeId::ERROR, Stored::new());
-                self.p
-                    .base_constructor_types
-                    .insert(&mut self.task, class, error, stored);
+            if let Some(at) = self.place_to_report_base_at(file, c) {
+                // `TypeToString` comes before `data.resolvedBaseConstructorType` is assigned. If it
+                // leads back here the type is resolved and printed again, which closes a cycle
+                // through what the first printing is resolving:
+                // `const a = f(class extends (() => a) {})` is 7022 and 7024 too.
                 let mut err = self.new_diagnostic(at, 2507, &[Arg::Type(constructor)]);
                 if let TypeData::TypeParam(of, tp, _) = *self.data(constructor) {
                     let constraint = self.constraint_of_type_param(constructor);
@@ -1925,7 +1980,9 @@ impl<'p> Checker<'p> {
                     let related = self.new_diagnostic(at, 2735, &args);
                     err.add_related_info(related);
                 }
-                self.add_diagnostic_of(Some(Query::BaseConstructor(class)), err);
+                if holds {
+                    self.add_diagnostic_of(Some(Query::BaseConstructor(class)), err);
+                }
             }
             TypeId::ERROR
         };
@@ -1966,7 +2023,7 @@ impl<'p> Checker<'p> {
             && self.base_constructor_type_of_class(sym) == TypeId::ANY
     }
 
-    fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {
+    fn sigs_of_function_declarations(&mut self, sym: Sym) -> ArenaVec<'s, SigId> {
         let decls: Vec<(FileId, FnId)> = self
             .files()
             .decls(sym)
@@ -1976,7 +2033,7 @@ impl<'p> Checker<'p> {
                 _ => None,
             })
             .collect();
-        let mut sigs = Vec::with_capacity(decls.len());
+        let mut sigs = ArenaVec::with_capacity_in(decls.len(), self.arena);
         for (i, &(file, f)) in decls.iter().enumerate() {
             // `getSignaturesOfSymbol`: a declaration with a body that immediately follows another
             // declaration of the function is the implementation of the preceding overloads.
@@ -2020,7 +2077,7 @@ impl<'p> Checker<'p> {
     /// Whether `ty` is any instantiation of `sym`, or has one as a base type: `class C<T> extends
     /// C<T[]>` has no base type.
     pub(super) fn has_base(&mut self, ty: TypeId, sym: Sym, depth: u32) -> bool {
-        match self.data(ty).clone() {
+        match *self.data(ty) {
             TypeData::Ref { target, .. } => {
                 target == sym
                     || depth < 32
@@ -2030,7 +2087,7 @@ impl<'p> Checker<'p> {
                             .into_iter()
                             .any(|b| self.has_base(b, sym, depth + 1))
             }
-            TypeData::Intersection(parts) => {
+            TypeData::Intersection(ref parts) => {
                 parts.iter().any(|&p| self.has_base(p, sym, depth + 1))
             }
             _ => false,
@@ -2039,9 +2096,10 @@ impl<'p> Checker<'p> {
 
     /// `getBaseTypes`: the base types of a class or an interface, in terms of its own type
     /// parameters.
-    pub fn base_types(&mut self, sym: Sym) -> Arc<[TypeId]> {
-        if let Some(known) = self.p.base_types.get(&mut self.task, &sym) {
-            return known;
+    pub fn base_types(&mut self, sym: Sym) -> List<'p, TypeId> {
+        let p = self.p;
+        if let Some(known) = p.base_types.get_ref(&mut self.task, &sym) {
+            return List::Kept(known);
         }
         if !self.enter(Query::Bases(sym)) {
             return self.base_types_in_progress(sym);
@@ -2098,13 +2156,18 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        let bases: Arc<[TypeId]> = bases.into();
         let left = self.leave(Query::Bases(sym));
         let in_cycle = self.left_a_cycle;
         let bases = match left {
-            Ok(stored) => self.p.base_types.insert(&mut self.task, sym, bases, stored),
+            Ok(stored) => {
+                let bases = self.list(&bases);
+                List::Kept(p.base_types.insert_ref(&mut self.task, sym, bases, stored))
+            }
             // See `base_types_in_progress`.
-            Err(_) => (self.p.base_types.get(&mut self.task, &sym)).unwrap_or(bases),
+            Err(_) => match p.base_types.get_ref(&mut self.task, &sym) {
+                Some(known) => List::Kept(known),
+                None => List::Own(bases),
+            },
         };
         // `popTypeResolution`: they were requested again while being resolved. The error is
         // reported at every class declaration and every interface declaration of the name,
@@ -2134,7 +2197,7 @@ impl<'p> Checker<'p> {
     /// first, above a `resolution_start` barrier. The frames of the cycle below the barrier are
     /// tainted, except for `sym`, and `base_types` returns the stored value for them.
     #[cold]
-    fn base_types_in_progress(&mut self, sym: Sym) -> Arc<[TypeId]> {
+    fn base_types_in_progress(&mut self, sym: Sym) -> List<'p, TypeId> {
         // A checker of `checkerPool` has visited those of the earlier files that are its own.
         let own = self
             .task
@@ -2145,7 +2208,7 @@ impl<'p> Checker<'p> {
             .iter()
             .rposition(|&q| q == Query::Bases(sym));
         let (Some(own), Some(head)) = (own, head) else {
-            return Arc::from([]);
+            return List::default();
         };
         let before = self.files().rank_of_file(own);
         let members = self.stack[from + head..].iter().filter_map(|&q| match q {
@@ -2161,10 +2224,11 @@ impl<'p> Checker<'p> {
                 let resolution_start = std::mem::replace(&mut self.resolution_start, height);
                 self.base_types(first);
                 self.resolution_start = resolution_start;
-                let known = self.p.base_types.get(&mut self.task, &sym);
-                known.unwrap_or_else(|| Arc::from([]))
+                let p = self.p;
+                let known = p.base_types.get_ref(&mut self.task, &sym);
+                known.map_or(List::default(), |known| List::Kept(known))
             }
-            _ => Arc::from([]),
+            _ => List::default(),
         }
     }
 
@@ -2275,6 +2339,12 @@ impl<'p> Checker<'p> {
         if self.has_any_flag(constructor) {
             return constructor;
         }
+        // "if baseConstructorType.flags&(TypeFlagsObject|TypeFlagsIntersection|TypeFlagsAny) == 0":
+        // a union of constructor types gives no base type and no error.
+        let apparent = self.apparent_type(constructor);
+        if !self.is_object_type(apparent) && !self.is_intersection(apparent) {
+            return TypeId::ERROR;
+        }
         // `areAllOuterTypeParametersApplied`, applied to the declared type: a class declared inside
         // a generic declaration is resolved through its construct signatures.
         if let TypeData::Anon {
@@ -2302,10 +2372,7 @@ impl<'p> Checker<'p> {
         {
             Some(&sig) => self.sig_return(sig),
             None => {
-                let apparent = self.apparent_type(constructor);
-                if (self.is_object_type(apparent) || self.is_intersection(apparent))
-                    && let Some(at) = self.place_to_report_base_at(file, c)
-                {
+                if let Some(at) = self.place_to_report_base_at(file, c) {
                     self.error_at(at, 2508, &[]);
                 }
                 TypeId::ERROR
@@ -2374,8 +2441,102 @@ impl<'p> Checker<'p> {
         self.base_constructors(class, false).1
     }
 
+    /// `getWidenedProperty` (`is_widening`) and `transformTypeOfMembers` call `getTypeOfSymbol` for
+    /// the properties of the object literal type `ty`. Here a property is widened or made regular
+    /// when it is read (`PropFlags::WIDEN`, `PropFlags::REGULAR`). `checkObjectLiteral` has resolved
+    /// the type of a member of the literal by then, so this resolves the symbols that
+    /// `get_spread_symbol` has left unresolved. A cycle through one of them is found here.
+    /// Returns the property types that contain the type of a literal, where both go on.
+    fn resolve_spread_symbols(&mut self, ty: TypeId, is_widening: bool) -> SmallVec<[TypeId; 4]> {
+        let mut nested = SmallVec::new();
+        let mut add = |c: &Self, member: TypeId| {
+            let flags = c.types().object_flags(member);
+            if flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL) {
+                nested.push(member);
+            }
+        };
+        match self.data(ty) {
+            &TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e, ..),
+                ..
+            } => {
+                let hir = self.hir(file);
+                if let ExprKind::Object(props) = hir[e].kind {
+                    for p in props.iter() {
+                        if matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) {
+                            let member = self.type_of_literal_prop(file, p);
+                            add(self, member);
+                        }
+                    }
+                }
+            }
+            TypeData::Synth(shape) => {
+                for prop in &shape.props {
+                    match prop.source {
+                        PropSource::Type(member) | PropSource::Copy(member, ..) => {
+                            add(self, member);
+                        }
+                        PropSource::Literal(file, p)
+                            if matches!(
+                                self.hir(file)[p].kind,
+                                PropKind::Init | PropKind::Shorthand
+                            ) =>
+                        {
+                            let member = self.type_of_literal_prop(file, p);
+                            add(self, member);
+                        }
+                        // `prop.Flags&ast.SymbolFlagsProperty == 0`
+                        PropSource::Symbol(symbol)
+                            if !is_widening
+                                || self.files().flags(symbol).contains(SymFlags::PROPERTY) =>
+                        {
+                            self.type_of_prop(prop, MapperId::IDENTITY);
+                        }
+                        PropSource::Mapped(..) => {
+                            self.type_of_prop(prop, MapperId::IDENTITY);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        nested
+    }
+
+    /// The loop over the properties in `getWidenedTypeOfObjectLiteral`, see `resolve_spread_symbols`.
+    pub(super) fn resolve_spread_symbols_of_widened_literal(&mut self, ty: TypeId) {
+        for member in self.resolve_spread_symbols(ty, true) {
+            self.get_widened_type(member);
+        }
+    }
+
+    /// `transformTypeOfMembers(t, c.getRegularTypeOfObjectLiteral)`, see `resolve_spread_symbols`.
+    pub(super) fn resolve_spread_symbols_of_regular_literal(&mut self, ty: TypeId) {
+        let is_fresh = match self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(.., is_fresh),
+                ..
+            } => *is_fresh,
+            TypeData::Synth(shape) => shape.literal.is_of_expression() && !shape.is_regular,
+            _ => false,
+        };
+        if is_fresh {
+            for member in self.resolve_spread_symbols(ty, false) {
+                self.resolve_spread_symbols_of_regular_literal(member);
+            }
+        }
+    }
+
     /// `getRegularTypeOfObjectLiteral`
     pub(super) fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
+        self.resolve_spread_symbols_of_regular_literal(ty);
+        self.regular_type_of_resolved_object_literal(ty)
+    }
+
+    /// `getRegularTypeOfObjectLiteral` for the type of a property of a type that
+    /// `regular_type_of_object_literal` has returned.
+    fn regular_type_of_resolved_object_literal(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             &TypeData::Anon {
                 origin:
@@ -2393,19 +2554,35 @@ impl<'p> Checker<'p> {
                 mapper,
             }),
             TypeData::Synth(shape) if shape.literal.is_of_expression() && !shape.is_regular => {
-                let mut shape = Shape::clone(shape);
+                let mut shape = shape.clone_in(self.arena);
                 shape.is_regular = true;
                 for prop in &mut shape.props {
                     prop.flags |= PropFlags::REGULAR;
                 }
-                self.synth(shape)
+                self.intern(TypeData::Synth(shape))
             }
             _ => ty,
         }
     }
 
-    fn build_origin_shape(&mut self, origin: Origin) -> Shape {
-        let mut b = Builder::default();
+    /// What a caller gets that asks for the members of `origin` while `build_origin_shape` is
+    /// resolving them. `resolveAnonymousTypeMembers` has no guard. For a class it begins with
+    /// `getExportsOfSymbol`, which assigns the early-bound symbols to `links.resolvedExports`
+    /// before it checks the computed names, so a second visit from a name resolves everything from
+    /// those: `f(class { static [a] = 1 })` has its construct signature there. After that the
+    /// members are in place (`has_members_in_place`).
+    fn origin_shape_in_the_meantime(&mut self, origin: Origin) -> Shape<'s> {
+        match origin {
+            Origin::ClassStatic(sym) if self.late_binding_exports.contains(&sym) => {
+                self.build_origin_shape(origin, true)
+            }
+            _ => Shape::new_in(self.arena),
+        }
+    }
+
+    /// `early`: for the static side of a class, only the members that the binder can name.
+    fn build_origin_shape(&mut self, origin: Origin, early: bool) -> Shape<'s> {
+        let mut b = Builder::new_in(self.arena);
         // Argument for `get_named_members`. Only the static side of a class has a container.
         let mut contained = [0..usize::MAX, 0..0];
         let mut ranges = Vec::new();
@@ -2462,7 +2639,13 @@ impl<'p> Checker<'p> {
                         outer = self.identity_mapper(file, parent);
                     }
                     let members = hir[c].members;
-                    self.add_members(&mut b, file, members, true, false);
+                    if !early {
+                        self.late_binding_exports.push(sym);
+                    }
+                    self.add_members(&mut b, file, members, true, early);
+                    if !early {
+                        self.late_binding_exports.pop();
+                    }
                     self.add_this_properties(&mut b, file, c, true);
                     if hir.is_js {
                         self.add_late_bound_expandos(&mut b, sym);
@@ -2517,9 +2700,9 @@ impl<'p> Checker<'p> {
                 let declared = self.declared_type(sym);
                 let count = self.type_arguments(declared).len();
                 let instance = match self.data(declared) {
-                    TypeData::Ref { target, .. } if count != 0 => self.intern(TypeData::Ref {
+                    TypeData::Ref { target, .. } if count != 0 => self.intern_key(TypeKey::Ref {
                         target: *target,
-                        args: vec![TypeId::ANY; count].into(),
+                        args: &vec![TypeId::ANY; count],
                     }),
                     _ => declared,
                 };
@@ -2547,7 +2730,7 @@ impl<'p> Checker<'p> {
                     // `addInheritedMembers`
                     for prop in &members.shape().props {
                         if !b.has(prop.name) && !self.is_static_private_name(prop) {
-                            let mut prop = prop.clone();
+                            let mut prop = prop.clone_in(self.arena);
                             prop.mapper = self.compose(prop.mapper, members.mapper);
                             b.add(prop);
                         }
@@ -2654,7 +2837,7 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_symbol(module);
                 if let Some(members) = self.members(ty) {
                     for prop in &members.shape().props {
-                        let mut prop = prop.clone();
+                        let mut prop = prop.clone_in(self.arena);
                         if with_default {
                             // `getSpreadType(ty, { default })`: the spreadable properties, and the
                             // synthesized `default` wins.
@@ -2667,14 +2850,19 @@ impl<'p> Checker<'p> {
                                 prop = Prop {
                                     name: prop.name,
                                     flags: prop.flags & PropFlags::OPTIONAL,
-                                    source: Self::copy_of(TypeId::UNDEFINED, &[&prop], false),
+                                    source: Self::copy_of(
+                                        TypeId::UNDEFINED,
+                                        &[&prop],
+                                        false,
+                                        self.arena,
+                                    ),
                                     mapper: MapperId::IDENTITY,
                                 };
                             } else if prop.flags.contains(PropFlags::READONLY) {
                                 // A readonly property, an `export const`, is recreated too: with
                                 // its declarations, without a parent.
                                 let ty = self.type_of_prop(&prop, MapperId::IDENTITY);
-                                prop.source = Self::copy_of(ty, &[&prop], false);
+                                prop.source = Self::copy_of(ty, &[&prop], false, self.arena);
                                 prop.mapper = MapperId::IDENTITY;
                             }
                             prop.flags.remove(PropFlags::READONLY);
@@ -2781,7 +2969,7 @@ impl<'p> Checker<'p> {
     /// as a property name declares nothing. `this[key] = value` in a class declares a static
     /// property, in an instance member too: `getResolvedMembersOrExportsOfSymbol` only binds these
     /// declarations for the exports.
-    fn add_late_bound_expandos(&mut self, b: &mut Builder, owner: Sym) {
+    fn add_late_bound_expandos(&mut self, b: &mut Builder<'s>, owner: Sym) {
         let files = self.files();
         let Some(all) = files.export(owner, known::assignment_declaration) else {
             return;
@@ -2812,14 +3000,19 @@ impl<'p> Checker<'p> {
 
     /// `shape`, which has no properties, extended with `getExportsOfSymbol(owner)`, which are
     /// declared by assignments, in the order of `getNamedMembers`.
-    pub(super) fn with_expandos(&mut self, shape: Shape, file: FileId, owner: SymbolId) -> Shape {
+    pub(super) fn with_expandos(
+        &mut self,
+        shape: Shape<'s>,
+        file: FileId,
+        owner: SymbolId,
+    ) -> Shape<'s> {
         // Every function expression and every object literal reaches this point.
         if owner.is_none() || self.bound(file).symbols[owner.idx()].exports.is_none() {
             return shape;
         }
         let mut b = Builder {
             shape,
-            ..Default::default()
+            ..Builder::new_in(self.arena)
         };
         let before = b.shape.props.len();
         let owner = self.files().sym(file, owner);
@@ -2835,7 +3028,7 @@ impl<'p> Checker<'p> {
     /// declaration.
     fn add_this_properties(
         &mut self,
-        b: &mut Builder,
+        b: &mut Builder<'s>,
         file: FileId,
         class: ClassId,
         is_static: bool,
@@ -2868,7 +3061,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The values exported by a namespace merged with a function, a class or an enum.
-    fn add_namespace_exports(&mut self, b: &mut Builder, sym: Sym) {
+    fn add_namespace_exports(&mut self, b: &mut Builder<'s>, sym: Sym) {
         for (name, export) in self.exports_in_order(sym) {
             // The static members are left to `add_members`, their assignments to `this` to
             // `add_this_properties`.
@@ -2896,8 +3089,8 @@ impl<'p> Checker<'p> {
         elems: &[TypeId],
         flags: &[ElemFlags],
         readonly: bool,
-    ) -> Shape {
-        let mut b = Builder::default();
+    ) -> Shape<'s> {
+        let mut b = Builder::new_in(self.arena);
         let fixed = Self::fixed_length(flags);
         for i in 0..fixed {
             let optional = flags[i].contains(ElemFlags::OPTIONAL);
@@ -2991,15 +3184,9 @@ impl<'p> Checker<'p> {
 
     /// The union of the element types of the tuple.
     pub fn tuple_element_union(&mut self, elems: &[TypeId], flags: &[ElemFlags]) -> TypeId {
-        let mut all: SmallVec<[TypeId; 8]> = SmallVec::new();
-        for (&e, f) in elems.iter().zip(flags) {
-            if f.contains(ElemFlags::VARIADIC) {
-                all.push(self.indexed_access(e, TypeId::NUMBER));
-            } else {
-                all.push(e);
-            }
-        }
-        self.union(&all)
+        let arity = elems.len().min(flags.len());
+        self.element_type_of_slice(&elems[..arity], flags, 0, 0, false)
+            .unwrap_or(TypeId::NEVER)
     }
 
     fn signatures_identical(&mut self, a: SigId, b: SigId) -> bool {
@@ -3057,12 +3244,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `resolveIntersectionTypeMembers`, and `createUnionOrIntersectionProperty` for each name.
-    fn build_intersection_shape(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape {
-        let mut b = Builder::default();
+    fn build_intersection_shape(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape<'s> {
+        let mut b = Builder::new_in(self.arena);
         // The type of a property is resolved lazily: with `this` bound to the whole intersection,
         // it can depend on other properties of the whole. For each name that several members have:
         // the properties, the one in `b` first.
-        let mut lists: Vec<Vec<Prop>> = Vec::new();
+        let mut lists: Vec<Vec<Prop<'s>, &'s Arena>> = Vec::new();
         let (constructors, is_mixin) = self.find_mixins(parts);
         let has_mixins = is_mixin.contains(&true);
         for (at, &written) in parts.iter().enumerate() {
@@ -3091,14 +3278,16 @@ impl<'p> Checker<'p> {
             };
             b.reserve(members.shape().props.len());
             for prop in &members.shape().props {
-                let mut own = prop.clone();
+                let mut own = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut own, members.mapper);
                 match b.position(prop.name) {
                     // The same property reached through two paths is added once.
                     Some(i) => {
                         if lists[i].is_empty() {
                             if b.shape.props[i] != own {
-                                lists[i] = vec![b.shape.props[i].clone(), own];
+                                lists[i].reserve_exact(2);
+                                lists[i].push(b.shape.props[i].clone_in(self.arena));
+                                lists[i].push(own);
                             }
                         } else if !lists[i].contains(&own) {
                             lists[i].push(own);
@@ -3106,7 +3295,7 @@ impl<'p> Checker<'p> {
                     }
                     None => {
                         b.add_new(own);
-                        lists.push(Vec::new());
+                        lists.push(Vec::new_in(self.arena));
                     }
                 }
             }
@@ -3239,7 +3428,7 @@ impl<'p> Checker<'p> {
         } else {
             owner
         };
-        let mut shape = Shape::default();
+        let mut shape = Shape::new_in(self.arena);
         // A type that is not an object type has nothing to copy.
         if let Some(members) = self.members(owner) {
             for prop in &members.shape().props {
@@ -3260,7 +3449,7 @@ impl<'p> Checker<'p> {
                 shape.props.push(Prop {
                     name: prop.name,
                     flags,
-                    source: Self::copy_of(ty, &[prop], false),
+                    source: Self::copy_of(ty, &[prop], false, self.arena),
                     mapper: MapperId::IDENTITY,
                 });
             }
@@ -3333,7 +3522,64 @@ impl<'p> Checker<'p> {
 
     /// `getSpreadType`: `{ ...left, ...right }`
     pub fn spread(&mut self, left: TypeId, right: TypeId) -> TypeId {
-        self.spread_ranked(left, right, &mut 0)
+        self.get_spread_type(left, right, false)
+    }
+
+    /// `readonly`: in a const context. The caller marks the properties of the result.
+    pub(super) fn get_spread_type(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+        readonly: bool,
+    ) -> TypeId {
+        self.spread_ranked(left, right, readonly, &mut 0)
+    }
+
+    /// `getSpreadSymbol(prop, readonly)`: the source and the mapper of the symbol it returns for
+    /// `prop`, a property of a type whose members have the mapper `mapper`, and the flags that
+    /// `type_of_prop` needs with that source.
+    /// Where it returns `prop` itself, the type of a declared symbol or a mapped symbol is left
+    /// unresolved, since it may be the one that is being resolved:
+    /// `class C { x = f({ ...new C() }) }`. `get_widened_type` and `regular_type_of_object_literal`
+    /// resolve it, where tsgo calls `getTypeOfSymbol` for every property.
+    /// `owner_is_generic`: `has_type_variables` of the type that has `prop`.
+    /// `resolves`: the caller calls `getTypeOfSymbol` for the result.
+    pub(super) fn get_spread_symbol(
+        &mut self,
+        prop: &Prop,
+        mapper: MapperId,
+        owner_is_generic: bool,
+        readonly: bool,
+        resolves: bool,
+    ) -> (PropSource<'s>, MapperId, PropFlags) {
+        let copy = |ty, has_value_declaration| {
+            let source = Self::copy_of(ty, &[prop], has_value_declaration, self.arena);
+            (source, MapperId::IDENTITY, PropFlags::empty())
+        };
+        if prop.flags.contains(PropFlags::WRITE_ONLY) {
+            return copy(TypeId::UNDEFINED, false);
+        }
+        let is_readonly = self.is_readonly_symbol(prop);
+        if !resolves
+            && is_readonly == readonly
+            && matches!(prop.source, PropSource::Symbol(_) | PropSource::Mapped(..))
+        {
+            let composed = self.compose(prop.mapper, mapper);
+            // `Types::object_flags` finds the type variables of such a property in its mapper. The
+            // members of a type literal in a generic declaration have none.
+            let mapping = self.types().mapping(composed);
+            if !owner_is_generic || mapping.iter().any(|it| self.has_type_variables(it.1)) {
+                let read_with =
+                    PropFlags::WITHOUT_OPTIONALITY | PropFlags::WIDEN | PropFlags::REGULAR;
+                return (
+                    prop.source.clone_in(self.arena),
+                    composed,
+                    prop.flags & read_with,
+                );
+            }
+        }
+        let ty = self.type_of_prop(prop, mapper);
+        copy(ty, !is_readonly)
     }
 
     /// The members of the union `ty` in the order `mapType` visits them.
@@ -3352,7 +3598,13 @@ impl<'p> Checker<'p> {
     }
 
     /// `rank`: see `Shape::spread_rank`.
-    fn spread_ranked(&mut self, left: TypeId, right: TypeId, rank: &mut u32) -> TypeId {
+    fn spread_ranked(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+        readonly: bool,
+        rank: &mut u32,
+    ) -> TypeId {
         if self.is_any(left) || self.is_any(right) {
             return if left == TypeId::UNRESOLVED || right == TypeId::UNRESOLVED {
                 TypeId::UNRESOLVED
@@ -3378,7 +3630,7 @@ impl<'p> Checker<'p> {
             self.members_in_map_type_order(left, &mut members);
             let spread: Vec<TypeId> = members
                 .into_iter()
-                .map(|p| self.spread_ranked(p, right, rank))
+                .map(|p| self.spread_ranked(p, right, readonly, rank))
                 .collect();
             return self.union(&spread);
         }
@@ -3391,7 +3643,7 @@ impl<'p> Checker<'p> {
             self.members_in_map_type_order(right, &mut members);
             let spread: Vec<TypeId> = members
                 .into_iter()
-                .map(|p| self.spread_ranked(left, p, rank))
+                .map(|p| self.spread_ranked(left, p, readonly, rank))
                 .collect();
             return self.union(&spread);
         }
@@ -3414,7 +3666,7 @@ impl<'p> Checker<'p> {
                 && self.is_non_generic_object_type(right)
             {
                 let mut parts = others.to_vec();
-                parts.push(self.spread_ranked(last, right, rank));
+                parts.push(self.spread_ranked(last, right, readonly, rank));
                 return self.intersection(&parts);
             }
             return self.intersection(&[left, right]);
@@ -3431,7 +3683,7 @@ impl<'p> Checker<'p> {
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
             return TypeId::UNRESOLVED;
         };
-        let mut b = Builder::default();
+        let mut b = Builder::new_in(self.arena);
         b.reserve(l.shape().props.len() + r.shape().props.len());
         // The result of spreading into a JSX attributes type is still a JSX attributes type
         // (`objectFlags`).
@@ -3452,21 +3704,29 @@ impl<'p> Checker<'p> {
                     .flags
                     .intersects(PropFlags::JSX_CHILDREN | PropFlags::WRITTEN)
         };
+        let left_is_generic = self.has_type_variables(left);
+        let right_is_generic = self.has_type_variables(right);
         for prop in &l.shape().props {
             if !self.is_spreadable_property(prop) {
                 continue;
             }
+            // `skippedPrivateMembers`, and `members[leftProp.Name] != nil` where the property on the
+            // right is not optional: `getSpreadSymbol` is not called for the one on the left.
+            if let Some(later) = r.resolved.prop(prop.name)
+                && (later
+                    .flags
+                    .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
+                    || !later.flags.contains(PropFlags::OPTIONAL)
+                        && self.is_spreadable_property(later))
+            {
+                continue;
+            }
             if left_is_so_far && is_written(prop) {
-                b.add(prop.clone());
+                b.add(prop.clone_in(self.arena));
                 continue;
             }
             // `getSpreadSymbol`: a write-only property reads as `undefined`. It and a readonly
             // property are recreated.
-            let ty = if prop.flags.contains(PropFlags::WRITE_ONLY) {
-                TypeId::UNDEFINED
-            } else {
-                self.type_of_prop(prop, l.mapper)
-            };
             let anew = prop
                 .flags
                 .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
@@ -3480,11 +3740,13 @@ impl<'p> Checker<'p> {
             if !anew && self.is_function_symbol_property(prop) {
                 flags |= PropFlags::METHOD;
             }
+            let (source, mapper, read_with) =
+                self.get_spread_symbol(prop, l.mapper, left_is_generic, readonly, false);
             b.add(Prop {
                 name: prop.name,
-                flags,
-                source: Self::copy_of(ty, &[prop], !anew),
-                mapper: MapperId::IDENTITY,
+                flags: flags | read_with,
+                source,
+                mapper,
             });
         }
         // A copy is writable, whatever it is a copy of.
@@ -3512,18 +3774,19 @@ impl<'p> Checker<'p> {
             let is_write_only = prop.flags.contains(PropFlags::WRITE_ONLY);
             if right_is_written && !is_write_only && is_written(prop) {
                 b.remove(prop.name);
-                b.add_new(prop.clone());
+                b.add_new(prop.clone_in(self.arena));
                 continue;
             }
-            let mut ty = if is_write_only {
-                TypeId::UNDEFINED
-            } else {
-                self.type_of_prop(prop, r.mapper)
-            };
             let (flags, source);
+            let mut mapper = MapperId::IDENTITY;
             if prop.flags.contains(PropFlags::OPTIONAL)
                 && let Some(i) = b.position(prop.name)
             {
+                let mut ty = if is_write_only {
+                    TypeId::UNDEFINED
+                } else {
+                    self.type_of_prop(prop, r.mapper)
+                };
                 let existing = &b.shape.props[i];
                 let left_ty = self.type_of_prop(existing, MapperId::IDENTITY);
                 // It is recreated, and named like the one on the left.
@@ -3541,7 +3804,7 @@ impl<'p> Checker<'p> {
                 } else {
                     self.union_reduced(&[left_ty, present])
                 };
-                source = Self::copy_of(ty, &[&b.shape.props[i], prop], false);
+                source = Self::copy_of(ty, &[&b.shape.props[i], prop], false, self.arena);
             } else {
                 let anew = is_write_only || prop.flags.contains(PropFlags::READONLY);
                 let kept = if anew {
@@ -3554,15 +3817,22 @@ impl<'p> Checker<'p> {
                 } else {
                     PropFlags::empty()
                 };
-                flags =
-                    prop.flags & kept | self.name_flag_of_copy(right, prop, anew) | function_flag;
-                source = Self::copy_of(ty, &[prop], !anew);
+                // `rightType := c.getTypeOfSymbol(rightProp)`, for a property that the left has too.
+                let replaces = (l.resolved.prop(prop.name))
+                    .is_some_and(|earlier| self.is_spreadable_property(earlier));
+                let read_with;
+                (source, mapper, read_with) =
+                    self.get_spread_symbol(prop, r.mapper, right_is_generic, readonly, replaces);
+                flags = prop.flags & kept
+                    | self.name_flag_of_copy(right, prop, anew)
+                    | function_flag
+                    | read_with;
             }
             let copy = Prop {
                 name: prop.name,
                 flags,
                 source,
-                mapper: MapperId::IDENTITY,
+                mapper,
             };
             match b.position(prop.name) {
                 Some(i) if prop.flags.contains(PropFlags::OPTIONAL) => b.shape.props[i] = copy,
@@ -3577,7 +3847,7 @@ impl<'p> Checker<'p> {
         // An index signature applies to the result if it applies to both sides. (An empty left side
         // does not count.)
         let left_is_nothing = left == TypeId::EMPTY_OBJECT;
-        let mut index = Vec::new();
+        let mut index = ArenaVec::new_in(self.arena);
         for info in &r.shape().index {
             let value = self.instantiate(info.value, r.mapper);
             match b.shape.index.iter().find(|i| i.key == info.key) {
@@ -3666,7 +3936,7 @@ impl<'p> Checker<'p> {
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             self.get_widened_type(ty)
         } else if prop.flags.contains(PropFlags::REGULAR) {
-            self.regular_type_of_object_literal(ty)
+            self.regular_type_of_resolved_object_literal(ty)
         } else {
             ty
         };
@@ -3958,43 +4228,21 @@ impl<'p> Checker<'p> {
         target: ExprId,
         value: ExprId,
     ) -> bool {
-        use crate::bind::ClassOwner;
-        if value.is_none() {
+        let hir = self.hir(file);
+        let within = hir.node(value);
+        if value.is_none() || hir.kind(within).is_function_like() {
             return false;
         }
         let Some(reference) = self.reference_of(file, target) else {
             return false;
         };
-        let bound = self.bound(file);
-        let class_expr = |class: ClassId| match bound.class_owner[class.idx()] {
-            ClassOwner::Expr(e) => e,
-            ClassOwner::Stmt(_) => ExprId::NONE,
-        };
         // Lowering numbers expressions in post-order and lowers `target` before `value`, so this range is the subtree of `value`.
         (target.0 + 1..=value.0).map(ExprId).any(|e| {
-            if !self.matches(&reference, e) {
-                return false;
-            }
-            // Walk up to `value`. A class is not function-like: its heritage clause and its property initializers are visited.
-            let mut at = e;
-            while at != value {
-                at = match bound.expr_parent[at.idx()] {
-                    Parent::Expr(parent) => parent,
-                    Parent::Prop(p) => bound.prop_owner[p.idx()],
-                    Parent::PropKey(literal, _) => literal,
-                    Parent::PatKey(_) => ExprId::NONE,
-                    Parent::ClassExtends(class) => class_expr(class),
-                    Parent::MemberInit(member) => match bound.member_owner[member.idx()] {
-                        MemberOwner::Class(class) => class_expr(class),
-                        _ => ExprId::NONE,
-                    },
-                    _ => ExprId::NONE,
-                };
-                if at.is_none() {
-                    return false;
-                }
-            }
-            true
+            self.matches(&reference, e)
+                && within
+                    == hir.find_ancestor(hir.node(e), |n| {
+                        n == within || hir.kind(n).is_function_like()
+                    })
         })
     }
 
@@ -4045,14 +4293,34 @@ impl<'p> Checker<'p> {
         matches!(writable, TypeId::FALSE | TypeId::FRESH_FALSE)
     }
 
-    /// `isReadonlySymbol`: whether a declaration of `prop` is a read-only assignment declaration.
+    /// `isReadonlySymbol`. `PropFlags::READONLY` has all of it but the last line.
+    pub(super) fn is_readonly_symbol(&mut self, prop: &Prop) -> bool {
+        prop.flags.contains(PropFlags::READONLY) || self.has_readonly_assignment_declaration(prop)
+    }
+
+    /// `isReadonlySymbol`: `core.Some(symbol.Declarations, c.isReadonlyAssignmentDeclaration)`. A
+    /// symbol that is derived from others has their declarations, as in `declared_properties`.
     pub(super) fn has_readonly_assignment_declaration(&mut self, prop: &Prop) -> bool {
-        let PropSource::Symbol(sym) = prop.source else {
-            return false;
+        let declared = match &prop.source {
+            &PropSource::Symbol(sym) => {
+                let flags = self.files().flags(sym);
+                if flags.contains(SymFlags::ASSIGNMENT) {
+                    return (self.assignments_of_symbol(sym).iter())
+                        .any(|&e| self.is_readonly_assignment_declaration(sym.file, e));
+                }
+                // `Object.defineProperty(exports, "name", descriptor)`
+                return flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE)
+                    && (self.files().decls_of(sym).iter()).any(|&(file, decl)| {
+                        matches!(decl, Decl::ExportsProperty(e) if self.is_readonly_assignment_declaration(file, e))
+                    });
+            }
+            PropSource::Type(_) | PropSource::Literal(..) => return false,
+            PropSource::Copy(_, declared, _)
+            | PropSource::Intersected(_, declared)
+            | PropSource::ReverseMapped(_, declared) => &declared[..],
+            PropSource::Mapped(..) => prop.declared_by_modifiers_property(),
         };
-        self.files().flags(sym).contains(SymFlags::ASSIGNMENT)
-            && (self.assignments_of_symbol(sym).iter())
-                .any(|&e| self.is_readonly_assignment_declaration(sym.file, e))
+        (declared.iter()).any(|declared| self.has_readonly_assignment_declaration(declared))
     }
 
     /// `getAssignmentDeclarationInitializerType` for `declaration`, the assignment `target = value`, which declares the property
@@ -4432,7 +4700,7 @@ impl<'p> Checker<'p> {
                     .copied()
                     .filter(|&(f, m)| self.hir(f)[m].kind == MemberKind::Method)
                     .collect();
-                let decls: Vec<(FileId, FnId)> = members
+                let decls = members
                     .iter()
                     .enumerate()
                     .filter(|&(i, &(f, m))| {
@@ -4440,8 +4708,8 @@ impl<'p> Checker<'p> {
                             && members[i - 1].0 == f
                             && self.is_implementation_after(f, members[i - 1].1, m))
                     })
-                    .map(|(_, &(f, m))| (f, self.hir(f)[m].func))
-                    .collect();
+                    .map(|(_, &(f, m))| (f, self.hir(f)[m].func));
+                let decls: SmallVec<[(FileId, FnId); 4]> = decls.collect();
                 let scope = self.bound(file).fns[member.func.idx()].scope;
                 let parent = self.bound(file).scopes[scope.idx()].parent;
                 // `getObjectTypeInstantiation` calls `isTypeParameterPossiblyReferenced` on every
@@ -4451,8 +4719,8 @@ impl<'p> Checker<'p> {
                     .map(|&(f, m)| (f, self.hir(f)[m].func))
                     .collect();
                 let mapper = self.identity_mapper_for_fns(file, parent, &declarations);
-                self.intern(TypeData::Fns {
-                    decls: decls.into(),
+                self.intern_key(TypeKey::Fns {
+                    decls: &decls,
                     mapper,
                 })
             }
@@ -4707,24 +4975,7 @@ impl<'p> Checker<'p> {
             }
             _ => return ty,
         };
-        self.wrapper_type(wrapper)
-    }
-
-    /// `global_ref(name, &[])`, kept.
-    fn wrapper_type(&mut self, name: Atom) -> TypeId {
-        if let Some(known) = self.p.wrapper_types.get(&mut self.task, &name) {
-            return known;
-        }
-        let scope = self.begin_scope();
-        let ty = self.global_ref(name, &[]);
-        // It is always stored.
-        match self.end_scope_as(scope, false) {
-            Ok(stored) => self
-                .p
-                .wrapper_types
-                .insert(&mut self.task, name, ty, stored),
-            Err(_) => ty,
-        }
+        self.plain_global_ref(wrapper)
     }
 
     /// `getResolvedBaseConstraint`: the widest type `ty` can be, with no type parameter at the top
@@ -5001,13 +5252,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The property `name` of an object type, an intersection, or the wrapper type of a primitive.
-    pub fn prop_of(&mut self, ty: TypeId, name: Atom) -> Option<(Prop, MapperId)> {
-        self.prop_ref(ty, name)
-            .map(|(prop, mapper)| (prop.clone(), mapper))
-    }
-
-    /// The same, by reference to the stored property.
-    pub fn prop_ref(&mut self, ty: TypeId, name: Atom) -> Option<(&'p Prop, MapperId)> {
+    pub fn prop_ref(&mut self, ty: TypeId, name: Atom) -> Option<(&'p Prop<'p>, MapperId)> {
         let members = self.members(ty)?;
         let prop = members.resolved.prop(name)?;
         if self.is_type_only_member(ty, name) {
@@ -5113,7 +5358,7 @@ impl<'p> Checker<'p> {
     /// `ValueDeclaration`: the source that locates the declaration of `prop`. `None`: it is
     /// synthesized, or it represents properties of the members of an intersection that are declared
     /// in several places (`createUnionOrIntersectionProperty`), not counting synthesized ones.
-    pub(super) fn value_declaration(prop: &Prop) -> Option<&PropSource> {
+    pub(super) fn value_declaration<'a>(prop: &'a Prop<'a>) -> Option<&'a PropSource<'a>> {
         match &prop.source {
             // `addMemberForKeyTypeWorker` links `Declarations` to a mapped property, never a `ValueDeclaration`.
             PropSource::Type(_)
@@ -5139,38 +5384,41 @@ impl<'p> Checker<'p> {
         ty: TypeId,
         of: &[&Prop],
         preserves_value_declaration: bool,
-    ) -> PropSource {
-        let declared = Self::declared_properties(of);
+        arena: &'s Arena,
+    ) -> PropSource<'s> {
+        let declared = Self::declared_properties(of, arena);
         if declared.is_empty() {
             return PropSource::Type(ty);
         }
         let has_value_declaration =
             preserves_value_declaration && Self::value_declaration(of[0]).is_some();
-        PropSource::Copy(ty, declared.into(), has_value_declaration)
+        let declared = ArenaBox::from_iter_in(declared, arena);
+        PropSource::Copy(ty, declared, has_value_declaration)
     }
 
     /// The symbols whose `Declarations` the properties `of` have, concatenated. None of them is
     /// synthesized, a copy, `Intersected` or `Mapped`.
-    pub(super) fn declared_properties(of: &[&Prop]) -> Vec<Prop> {
-        fn add_declared(prop: &Prop, declared: &mut Vec<Prop>) {
+    pub(super) fn declared_properties(of: &[&Prop], arena: &'s Arena) -> SmallVec<[Prop<'s>; 2]> {
+        fn add_declared<'s>(prop: &Prop, arena: &'s Arena, declared: &mut SmallVec<[Prop<'s>; 2]>) {
             match &prop.source {
                 PropSource::Type(_) => {}
                 PropSource::Copy(_, parts, _)
                 | PropSource::Intersected(_, parts)
                 | PropSource::ReverseMapped(_, parts) => {
-                    parts.iter().for_each(|part| add_declared(part, declared));
+                    (parts.iter()).for_each(|part| add_declared(part, arena, declared));
                 }
                 PropSource::Mapped(..) => {
-                    declared.extend_from_slice(prop.declared_by_modifiers_property());
+                    let declaring = prop.declared_by_modifiers_property();
+                    declared.extend(declaring.iter().map(|it| it.clone_in(arena)));
                 }
                 _ => declared.push(Prop {
                     mapper: MapperId::IDENTITY,
-                    ..prop.clone()
+                    ..prop.clone_in(arena)
                 }),
             }
         }
-        let mut declared = Vec::new();
-        of.iter().for_each(|prop| add_declared(prop, &mut declared));
+        let mut declared = SmallVec::new();
+        (of.iter()).for_each(|prop| add_declared(prop, arena, &mut declared));
         declared
     }
 
@@ -5181,14 +5429,15 @@ impl<'p> Checker<'p> {
         written: PropId,
         name: Atom,
         ty: TypeId,
-    ) -> Prop {
+        arena: &'s Arena,
+    ) -> Prop<'s> {
         let mut prop = Prop {
             name,
             flags: PropFlags::empty(),
             source: PropSource::Literal(file, written),
             mapper: MapperId::IDENTITY,
         };
-        prop.source = Self::copy_of(ty, &[&prop], true);
+        prop.source = Self::copy_of(ty, &[&prop], true, arena);
         prop
     }
 
@@ -5209,10 +5458,13 @@ impl<'p> Checker<'p> {
         }
         let scope = self.begin_scope();
         self.never_in_progress.push(ty);
+        self.never_in_progress_from.push(self.stack.len());
         // `isNeverReducedProperty`
-        let is_never =
-            self.has_property_in_several_members(ty) && self.why_never_intersection(ty).is_some();
+        let is_never = self.has_property_in_several_members(ty)
+            && self.may_have_never_reduced_property(ty, false)
+            && self.why_never_intersection(ty).is_some();
         self.never_in_progress.pop();
+        self.never_in_progress_from.pop();
         match self.end_scope_by_counters(scope) {
             Ok(stored) => self
                 .p
@@ -5220,6 +5472,43 @@ impl<'p> Checker<'p> {
                 .insert(&mut self.task, ty, is_never, stored),
             Err(_) => is_never,
         }
+    }
+
+    /// `getReducedType(getApparentType(ty))` for an intersection `ty` whose properties
+    /// `getReducedType(ty)` is examining. `getApparentTypeOfIntersectionType` gives `ty` to its
+    /// classes, interfaces and tuples as the `this` argument and takes the apparent type of the
+    /// other members. If that changes a member the result is another intersection, with an
+    /// `ObjectFlagsIsNeverIntersectionComputed` of its own: its properties are created, which asks
+    /// for the types of those that several members have once more. In any other state they all
+    /// have their types by then, so there is one type here for both.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn reduce_apparent_type_of_intersection_in_progress(&mut self, ty: TypeId) {
+        if self
+            .never_in_progress
+            .iter()
+            .filter(|&&it| it == ty)
+            .count()
+            != 1
+        {
+            return;
+        }
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return;
+        };
+        let is_another_type = parts.iter().any(|&part| {
+            matches!(self.data(part), TypeData::Tuple { .. })
+                || self.type_with_this_argument(part, ty) != part
+                || self.apparent_type(part) != part
+        });
+        if !is_another_type {
+            return;
+        }
+        self.never_in_progress.push(ty);
+        if self.has_property_in_several_members(ty) {
+            self.may_have_never_reduced_property(ty, true);
+        }
+        self.never_in_progress.pop();
     }
 
     /// FOR SPEED: whether two members of the intersection `ty` may have a property with the same
@@ -5248,15 +5537,14 @@ impl<'p> Checker<'p> {
         {
             return false;
         }
-        let mut names: crate::util::FxHashSet<Atom> = Default::default();
-        // The same, in member order: the iteration order of a hash set is not deterministic.
-        let mut in_order: SmallVec<[Atom; 16]> = SmallVec::new();
+        // Those that have properties. FOR SPEED: no set of all the names, each has an index.
+        let mut seen: SmallVec<[Members<'p>; 4]> = SmallVec::new();
         let mut unions: SmallVec<[TypeId; 2]> = SmallVec::new();
         let deferred = parts.iter().filter(|&&part| self.is_deferred(part)).count();
         // Members whose apparent type needs no resolution come first.
         for is_deferred in [false, true] {
             // One member is left, and the others have no property for it to share.
-            if is_deferred && deferred == 1 && names.is_empty() {
+            if is_deferred && deferred == 1 && seen.is_empty() {
                 return false;
             }
             for &part in parts.iter() {
@@ -5266,21 +5554,110 @@ impl<'p> Checker<'p> {
                 let part = self.apparent_type(part);
                 if self.is_union(part) {
                     unions.push(part);
-                } else if let Some(members) = self.members(part) {
-                    for prop in &members.shape().props {
-                        if !names.insert(prop.name) {
-                            return true;
-                        }
-                        in_order.push(prop.name);
+                } else if let Some(members) = self.members(part)
+                    && !members.shape().props.is_empty()
+                {
+                    let count = members.shape().props.len();
+                    let shares_a_name = seen.iter().any(|earlier| {
+                        let (few, many) = match count < earlier.shape().props.len() {
+                            true => (&members, earlier),
+                            false => (earlier, &members),
+                        };
+                        let mut few = few.shape().props.iter();
+                        few.any(|prop| many.resolved.prop(prop.name).is_some())
+                    });
+                    if shares_a_name {
+                        return true;
                     }
+                    seen.push(members);
                 }
             }
         }
         match unions[..] {
             [] => false,
-            [union] => (in_order.iter()).any(|&name| self.union_property(union, name).is_some()),
+            [union] => seen.iter().any(|members| {
+                let mut props = members.shape().props.iter();
+                props.any(|prop| self.union_property(union, prop.name).is_some())
+            }),
             _ => true,
         }
+    }
+
+    /// FOR SPEED: whether `isNeverReducedProperty` may hold for a property of the intersection
+    /// `ty`. Decided from the properties that two members share, taken as
+    /// `build_intersection_shape` takes them, without building the shape: most intersections are
+    /// asked nothing else, and a shape has a copy of every property of every member.
+    ///
+    /// `isDiscriminantWithNeverType` needs a property that some member X has without `?`, with
+    /// `CheckFlagsNonUniformAndLiteral`. If for every other member with that property its type and
+    /// that of X are the same, or neither is a literal type, then no type is a literal type, or
+    /// that of X is one and all are the same. `isConflictingPrivateProperty` needs a property that
+    /// is private in some member.
+    ///
+    /// `getReducedType` creates every property of `ty` first, and
+    /// `createUnionOrIntersectionProperty` resolves the types of all the symbols that it combines,
+    /// in `compareProperties` or in its last loop. One of them may be in resolution:
+    /// ``class C { x? = `${this}` as const }``. So no pair is left out, and the first pair that
+    /// decides does not end the search. Not even where nothing is in progress: the result is stored,
+    /// and a member whose resolution starts later and needs this reduction would read it, where
+    /// tsgo has started that resolution from here and closes the cycle in the reduction of the
+    /// apparent type. `f(null! as C & { x?: 1 }); class C { x? = { a: f(null! as C & { x?: 1 }) } }`
+    ///
+    /// `is_apparent`: for `getApparentType(ty)`, in whose classes `this` is `ty`. In those of `ty`
+    /// itself it is the class (`resolveTypeReferenceMembers`), so `p?: this["z"]` of `C` asks for
+    /// `C["z"]` first and for `ty["z"]` in the reduction of the apparent type.
+    fn may_have_never_reduced_property(&mut self, ty: TypeId, is_apparent: bool) -> bool {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return false;
+        };
+        let mut all: SmallVec<[Members<'p>; 4]> = SmallVec::new();
+        for &written in parts.iter() {
+            let part = self.apparent_type(written);
+            let part = if self.is_union(part) {
+                self.union_as_object(part)
+            } else {
+                part
+            };
+            let members = if self.is_deferred(written) {
+                self.members_with_this(part, written)
+            } else if is_apparent {
+                self.members_with_this(part, ty)
+            } else {
+                self.members(part)
+            };
+            if let Some(members) = members {
+                all.push(members);
+            }
+        }
+        // `isLiteralType`, `isPatternLiteralType`
+        let is_literal = |c: &Self, t: TypeId| {
+            c.is_boolean(t) || c.is_pattern_literal(t) || c.every_type(t, |c, m| c.is_unit(m))
+        };
+        let mut may = false;
+        for (at, &later) in all.iter().enumerate().skip(1) {
+            for prop in &later.shape().props {
+                for &earlier in &all[..at] {
+                    let Some(other) = earlier.resolved.prop(prop.name) else {
+                        continue;
+                    };
+                    let (mut first, mut second) =
+                        (other.clone_in(self.arena), prop.clone_in(self.arena));
+                    self.instantiate_prop(&mut first, earlier.mapper);
+                    self.instantiate_prop(&mut second, later.mapper);
+                    // The same property reached through two paths.
+                    if first == second {
+                        continue;
+                    }
+                    let first = self.type_of_prop(&first, MapperId::IDENTITY);
+                    let second = self.type_of_prop(&second, MapperId::IDENTITY);
+                    may |= (prop.flags | other.flags).contains(PropFlags::PRIVATE)
+                        || !(prop.flags & other.flags).contains(PropFlags::OPTIONAL)
+                            && first != second
+                            && (is_literal(self, first) || is_literal(self, second));
+                }
+            }
+        }
+        may
     }
 
     /// An intersection, or `ObjectFlagsContainsIntersections`.
@@ -5408,7 +5785,7 @@ impl<'p> Checker<'p> {
         &mut self,
         ty: TypeId,
         name: Atom,
-    ) -> Option<(&'p Prop, MapperId)> {
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
         self.get_property_of_type_ex(ty, name, false)
     }
 
@@ -5418,7 +5795,7 @@ impl<'p> Checker<'p> {
         ty: TypeId,
         name: Atom,
         skip_object_function_property_augment: bool,
-    ) -> Option<(&'p Prop, MapperId)> {
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
         let apparent = self.reduced_apparent_type(ty);
         if self.is_union(apparent) {
             // `propertyCacheWithoutFunctionPropertyAugment`: a member that only has it as a
@@ -5447,19 +5824,19 @@ impl<'p> Checker<'p> {
         if skip_object_function_property_augment {
             return Some((members.resolved.prop(name)?, members.mapper));
         }
-        self.property_in(&members, name)
+        self.property_in_type(apparent, &members, name)
     }
 
     /// `getUnionOrIntersectionProperty` for a union.
-    pub(super) fn union_property(&mut self, union: TypeId, name: Atom) -> Option<&'p Prop> {
+    pub(super) fn union_property(&mut self, union: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
         let holder = match self.p.union_properties.get(&mut self.task, &(union, name)) {
             Some(kept) => kept,
             None => {
                 let scope = self.begin_scope();
                 let holder = self.create_union_property(union, name).map(|prop| {
                     self.synth(Shape {
-                        props: vec![prop],
-                        ..Shape::default()
+                        props: vec_from_iter_in([prop], self.arena),
+                        ..Shape::new_in(self.arena)
                     })
                 });
                 if let Ok(stored) = self.end_scope_by_counters(scope) {
@@ -5477,12 +5854,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `createUnionOrIntersectionProperty`, where `isUnion`. `build_intersection_shape` has the other half.
-    fn create_union_property(&mut self, containing_type: TypeId, name: Atom) -> Option<Prop> {
+    fn create_union_property(&mut self, containing_type: TypeId, name: Atom) -> Option<Prop<'s>> {
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         let accessor = PropFlags::ACCESSOR | PropFlags::WRITE_ONLY;
         let is_late_bound = self.atoms().is_symbol_name(name);
         // `singleProp` is the first.
-        let mut prop_set: Vec<Prop> = Vec::new();
+        let mut prop_set: SmallVec<[Prop<'s>; 4]> = SmallVec::new();
         let mut index_types: SmallVec<[TypeId; 4]> = SmallVec::new();
         let (mut flags, mut is_public, mut first_owner) =
             (PropFlags::empty(), false, containing_type);
@@ -5492,7 +5869,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if let Some((prop, mapper)) = self.get_property_of_type(current, name) {
-                let mut prop = prop.clone();
+                let mut prop = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut prop, mapper);
                 // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
                 // not considered.
@@ -5508,16 +5885,19 @@ impl<'p> Checker<'p> {
                         prop_set.push(prop);
                     }
                     Some(single) => {
-                        if prop.flags & accessor != flags & accessor {
+                        // `prop.Flags&SymbolFlagsAccessor`: a getter alone is read-only.
+                        let accessors = |p: &Prop| match p.flags.contains(PropFlags::ACCESSOR) {
+                            true => p.flags & (accessor | PropFlags::READONLY),
+                            false => PropFlags::empty(),
+                        };
+                        if accessors(&prop) != accessors(single) {
                             flags.remove(accessor);
                         }
                         // `isInstantiation`: instantiations of one property that have the same type are one property.
                         let is_same = *single == prop
-                            || single.source == prop.source && {
-                                let single = single.clone();
-                                self.type_of_prop(&single, MapperId::IDENTITY)
-                                    == self.type_of_prop(&prop, MapperId::IDENTITY)
-                            };
+                            || single.source == prop.source
+                                && self.type_of_prop(single, MapperId::IDENTITY)
+                                    == self.type_of_prop(&prop, MapperId::IDENTITY);
                         if !is_same && !prop_set.contains(&prop) {
                             prop_set.push(prop);
                         }
@@ -5552,15 +5932,15 @@ impl<'p> Checker<'p> {
         if prop_set.is_empty()
             || (prop_set.len() > 1 || is_partial)
                 && flags.intersects(access)
-                && !(prop_set.len() > 1 && Self::has_common_declaration(&prop_set))
+                && !(prop_set.len() > 1 && Self::has_common_declaration(&prop_set, self.arena))
         {
             return None;
         }
         if prop_set.len() == 1 && !is_partial {
             return prop_set.pop();
         }
-        let first_type = self.type_of_prop(&prop_set[0].clone(), MapperId::IDENTITY);
-        for prop in &prop_set.clone() {
+        let first_type = self.type_of_prop(&prop_set[0], MapperId::IDENTITY);
+        for prop in &prop_set {
             let t = self.type_of_prop(prop, MapperId::IDENTITY);
             if t != first_type {
                 flags |= PropFlags::HAS_NON_UNIFORM_TYPE;
@@ -5594,16 +5974,16 @@ impl<'p> Checker<'p> {
         Some(Prop {
             name,
             flags,
-            source: PropSource::Intersected(containing_type, prop_set.into()),
+            source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
         })
     }
 
     /// `hasCommonDeclaration`
-    fn has_common_declaration(props: &[Prop]) -> bool {
-        let mut common = Self::declared_properties(&[&props[0]]);
+    fn has_common_declaration(props: &[Prop], arena: &'s Arena) -> bool {
+        let mut common = Self::declared_properties(&[&props[0]], arena);
         for prop in &props[1..] {
-            let other = Self::declared_properties(&[prop]);
+            let other = Self::declared_properties(&[prop], arena);
             common.retain(|declared| other.iter().any(|it| it.source == declared.source));
         }
         !common.is_empty()
@@ -5618,8 +5998,8 @@ impl<'p> Checker<'p> {
         };
         let index = self.union_index_infos(parts);
         let whole = self.synth(Shape {
-            index,
-            ..Shape::default()
+            index: vec_from_iter_in(index, self.arena),
+            ..Shape::new_in(self.arena)
         });
         self.members(whole)
     }
@@ -5752,10 +6132,10 @@ impl<'p> Checker<'p> {
             self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
         }
-        List::Own(signatures)
+        List::Own(signatures.to_vec())
     }
 
-    fn signatures_uncached(&mut self, ty: TypeId, construct: bool) -> Vec<SigId> {
+    fn signatures_uncached(&mut self, ty: TypeId, construct: bool) -> Vec<SigId, &'s Arena> {
         // `getReducedApparentType`: an intersection that reduces to `never` has no signatures.
         let ty = self.reduced_apparent_type(ty);
         // `resolveUnionTypeMembers`: cached per union. Combining the signatures of many members is
@@ -5765,28 +6145,31 @@ impl<'p> Checker<'p> {
                 // `t.Types()` are in the order of `CompareTypes`.
                 let parts = c.parts(ty);
                 Shape {
-                    call: c.signatures_of_union(parts, false),
-                    construct: c.signatures_of_union(parts, true),
-                    ..Shape::default()
+                    call: vec_from_iter_in(c.signatures_of_union(parts, false), c.arena),
+                    construct: vec_from_iter_in(c.signatures_of_union(parts, true), c.arena),
+                    ..Shape::new_in(c.arena)
                 }
             });
             return if construct {
-                resolved.resolved.shape.construct.clone()
+                resolved.resolved.shape.construct.to_vec_in(self.arena)
             } else {
-                resolved.resolved.shape.call.clone()
+                resolved.resolved.shape.call.to_vec_in(self.arena)
             };
         }
         let Some(members) = self.members(ty) else {
-            return Vec::new();
+            return Vec::new_in(self.arena);
         };
         let sigs = if construct {
             &members.shape().construct
         } else {
             &members.shape().call
         };
-        sigs.iter()
-            .map(|&s| self.instantiate_sig(s, members.mapper))
-            .collect()
+        let mut instantiated = Vec::with_capacity_in(sigs.len(), self.arena);
+        instantiated.extend(
+            sigs.iter()
+                .map(|&s| self.instantiate_sig(s, members.mapper)),
+        );
+        instantiated
     }
 
     /// `getUnionSignatures`, over the signatures of each of `parts`.
@@ -5802,11 +6185,11 @@ impl<'p> Checker<'p> {
                         .is_some_and(|args| args.is_empty())
                 {
                     vec![self.types().intern_sig(SigData::Synth {
-                        type_params: Box::new([]),
-                        params: Box::new([]),
+                        type_params: ArenaBox::empty(),
+                        params: ArenaBox::empty(),
                         ret: TypeId::ERROR,
                         this: None,
-                        of: Box::new([]),
+                        of: ArenaBox::empty(),
                         is_union: true,
                     })]
                 } else {
@@ -5937,11 +6320,11 @@ impl<'p> Checker<'p> {
                 let mut of = vec![sig];
                 of.extend(matching.iter().copied().filter(|&m| m != sig));
                 result.push(self.types().intern_sig(SigData::Synth {
-                    type_params: Box::new([]),
-                    params: params.into(),
+                    type_params: ArenaBox::empty(),
+                    params: self.list(&params),
                     ret: TypeId::UNRESOLVED,
                     this,
-                    of: of.into(),
+                    of: self.list(&of),
                     is_union: true,
                 }));
             }
@@ -6324,6 +6707,7 @@ impl<'p> Checker<'p> {
                     combined
                 },
                 optional: !is_rest && i >= least,
+                is_required_rest: is_rest && i < least,
                 rest: is_rest,
                 has_declaration: false,
             });
@@ -6336,6 +6720,7 @@ impl<'p> Checker<'p> {
                 name: known::args,
                 ty: self.array_of(element),
                 optional: false,
+                is_required_rest: false,
                 rest: true,
                 has_declaration: false,
             });
@@ -6388,11 +6773,11 @@ impl<'p> Checker<'p> {
         };
         of.push(right);
         self.types().intern_sig(SigData::Synth {
-            type_params: type_params.into(),
-            params: params.into(),
+            type_params: self.list(&type_params),
+            params: self.list(&params),
             ret: TypeId::UNRESOLVED,
             this,
-            of: of.into(),
+            of: self.list(&of),
             is_union,
         })
     }

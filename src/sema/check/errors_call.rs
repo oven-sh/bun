@@ -42,7 +42,7 @@ impl ArgumentCounts {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_calls(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
@@ -216,12 +216,16 @@ impl Checker<'_> {
             return;
         }
         if !construct_sigs.is_empty() {
-            if let Some((code, class)) = self.inaccessible_constructor(file, e, construct_sigs[0]) {
+            if let Some((modifiers, class)) =
+                self.inaccessible_constructor(file, e, construct_sigs[0])
+            {
                 let node_start = self.start_inside_parentheses(file, e);
                 let end = self.end_inside_parentheses(file, e);
-                {
-                    let declaring = self.declared_type(class);
-                    self.error_at((file, node_start, end), code, &[sink::Arg::Type(declaring)]);
+                let declaring = self.declared_type(class);
+                for (modifier, code) in [(Flags::PRIVATE, 2673), (Flags::PROTECTED, 2674)] {
+                    if modifiers.contains(modifier) {
+                        self.error_at((file, node_start, end), code, &[sink::Arg::Type(declaring)]);
+                    }
                 }
                 return;
             }
@@ -532,31 +536,14 @@ impl Checker<'_> {
 
     /// `resolveCallExpression`, where the callee is `super`.
     fn check_super_call(&mut self, file: FileId, e: ExprId, c: CallId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `checkSuperExpression`: anywhere but directly in the body of a constructor, with no
-        // intervening function, arrow or not, `super` is an error, and nothing else is reported.
-        let mut parent = bound.expr_parent[e.idx()];
-        let func = loop {
-            parent = match parent {
-                Parent::Expr(x) if x.is_some() => bound.expr_parent[x.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(k) => Parent::Stmt(bound.case_stmt[k.idx()]),
-                Parent::FnBody(f) => break f,
-                _ => return,
-            };
-        };
-        if hir[func].kind != FnKind::Constructor {
-            return;
-        }
-        let FnOwner::Member(member) = bound.fns[func.idx()].owner else {
+        let hir = self.hir(file);
+        // `checkSuperExpression`: anywhere but in a constructor, with no intervening function,
+        // arrow or not, `super` is an error, and nothing else is reported.
+        let container = hir.get_super_container(hir.node(e), true);
+        let Some(class) = hir.class_of(hir.parent(container)).some() else {
             return;
         };
-        let MemberOwner::Class(class) = bound.member_owner[member.idx()] else {
-            return;
-        };
-        if hir[class].extends.is_none() {
+        if hir.kind(container) != Kind::Constructor || hir[class].extends.is_none() {
             return;
         }
         self.resolved_signature(file, e);
@@ -646,7 +633,8 @@ impl Checker<'_> {
                 }
     }
 
-    /// Whether `e` is `a.b` or `a["b"]` where `b` is declared with `get` (`invocationErrorDetails`).
+    /// `invocationErrorDetails`: whether `e` is `a.b` or `a["b"]` where `b` has
+    /// `SymbolFlagsGetAccessor`. It is declared with `get` or with `accessor`.
     fn is_get_accessor_access(&mut self, file: FileId, e: ExprId) -> bool {
         let (obj, name) = match self.hir(file)[e].kind {
             ExprKind::Dot { obj, name, .. } => (obj, name),
@@ -661,25 +649,38 @@ impl Checker<'_> {
             _ => return false,
         };
         let receiver = self.type_of_expr(file, obj);
-        let receiver = self.apparent_type(receiver);
-        let Some((prop, _)) = self.prop_ref(receiver, name) else {
-            return false;
-        };
+        let receiver = self.non_null_type(receiver);
+        (self.get_property_of_type(receiver, name))
+            .is_some_and(|(prop, _)| self.has_get_accessor(prop))
+    }
+
+    /// `prop.Flags&SymbolFlagsGetAccessor != 0`
+    fn has_get_accessor(&mut self, prop: &Prop) -> bool {
         match &prop.source {
-            PropSource::Symbol(sym) => (self.members_of_symbol(*sym).iter())
-                .any(|&(f, m)| self.hir(f)[m].kind == MemberKind::Getter),
+            PropSource::Symbol(sym) => {
+                (self.flags_of_property(*sym)).contains(SymFlags::GET_ACCESSOR)
+            }
             PropSource::Literal(f, p) => self.hir(*f)[*p].kind == PropKind::Getter,
+            // `propFlags` of `createUnionOrIntersectionProperty`
+            PropSource::Intersected(..) => {
+                prop.flags & (PropFlags::ACCESSOR | PropFlags::WRITE_ONLY) == PropFlags::ACCESSOR
+            }
+            // It has the flags of the first.
+            PropSource::Copy(_, copied, true) => copied
+                .first()
+                .is_some_and(|first| self.has_get_accessor(first)),
             _ => false,
         }
     }
 
-    /// The same, and the class that declares the constructor.
+    /// `isConstructorAccessible`. `None`: it is. Else the accessibility modifiers of the
+    /// constructor, each of which is an error, and the class that declares it.
     pub(super) fn inaccessible_constructor(
         &mut self,
         file: FileId,
         e: ExprId,
         sig: SigId,
-    ) -> Option<(u32, Sym)> {
+    ) -> Option<(Flags, Sym)> {
         // A cloned signature has the declaration of its original.
         let mut sig = sig;
         let mut steps = 0;
@@ -688,10 +689,12 @@ impl Checker<'_> {
                 SigData::Construct {
                     class, file, func, ..
                 } => break (class, file, func),
-                // `getDefaultConstructSignatures` clones the signatures of the base.
-                SigData::DefaultConstruct { class, base, .. } => {
+                // `getDefaultConstructSignatures` clones the signatures of the base constructor type.
+                // The base types are not asked for: `new a()` in the base expression of `a` is no
+                // 2310.
+                SigData::DefaultConstruct { base, .. } => {
                     steps += 1;
-                    if steps > 64 || self.base_types(class).is_empty() {
+                    if steps > 64 {
                         return None;
                     }
                     sig = base?;
@@ -717,12 +720,7 @@ impl Checker<'_> {
         {
             return None;
         }
-        let code = if modifiers.contains(Flags::PRIVATE) {
-            2673
-        } else {
-            2674
-        };
-        Some((code, class))
+        Some((modifiers, class))
     }
 
     /// `typeHasProtectedAccessibleBase`: whether `class` derives from `target` through first base
@@ -1130,7 +1128,18 @@ impl Checker<'_> {
                     ),
                 };
                 let reported = self.reported.len();
-                self.check_assignable_with_end(file, actual, expected, at, end, inner, 2345);
+                // `inner` is the result of `getEffectiveCheckNode`.
+                let mut diagnostics = Vec::new();
+                self.check_type_assignable_to_and_optionally_elaborate(
+                    actual,
+                    expected,
+                    Some((file, at, end)),
+                    inner.some().map(|inner| (file, inner)),
+                    true,
+                    Some(2345),
+                    Some(&mut diagnostics),
+                );
+                self.reported.extend(diagnostics);
                 let (from, to) = self.error_range_of_expr(file, node);
                 self.maybe_add_missing_await_info((file, from, to), actual, expected, reported);
                 // `checkTypeRelatedToEx`: the target of `import * as ns` would have been

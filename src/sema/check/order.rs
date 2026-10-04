@@ -13,7 +13,7 @@ use crate::bind::{Parent, PatParent};
 use crate::hir::{ExprId, FnId, PatId};
 use crate::program::FileId;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// Whether no query is in progress: the current query is a top-level query.
     #[inline]
     pub(super) fn is_top_level_query(&self) -> bool {

@@ -4,7 +4,7 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use std::ops::ControlFlow::{Break, Continue};
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_use_before_declaration(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
@@ -545,7 +545,7 @@ impl Checker<'_> {
             return false;
         };
         let base = self.apparent_type(base);
-        matches!(self.prop_of(base, name), Some((property, _)) if Self::value_declaration(&property).is_some())
+        matches!(self.prop_ref(base, name), Some((property, _)) if Self::value_declaration(property).is_some())
     }
 
     /// `GetImmediatelyInvokedFunctionExpression(f) != nil`
@@ -553,40 +553,6 @@ impl Checker<'_> {
         self.bound(file)
             .get_immediately_invoked_function_expression(self.hir(file), f)
             .is_some()
-    }
-
-    /// The parent of the node `parent` refers to, including patterns and `extends` clauses. `None`:
-    /// not tracked.
-    #[inline]
-    pub(super) fn outward(&self, file: FileId, parent: Parent) -> Parent {
-        match parent {
-            Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::ClassExtends(_)
-            | Parent::Decorator(..) => self.outward_from_pattern_or_class(file, parent),
-            _ => self.parent_of(file, parent),
-        }
-    }
-
-    fn outward_from_pattern_or_class(&self, file: FileId, parent: Parent) -> Parent {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let of_pattern = |mut pat: PatId| loop {
-            match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                PatParent::Var(d) => return Parent::VarInit(d),
-                PatParent::Param(p) => return Parent::ParamDefault(p),
-                PatParent::None => return Parent::None,
-            }
-        };
-        match parent {
-            Parent::PatPropDefault(p) => of_pattern(hir[p].value),
-            Parent::PatElemDefault(p) => of_pattern(hir[p].pat),
-            Parent::ClassExtends(c) | Parent::Decorator(c, _) => match bound.class_owner[c.idx()] {
-                ClassOwner::Expr(x) => Parent::Expr(x),
-                ClassOwner::Stmt(s) => Parent::Stmt(s),
-            },
-            _ => self.parent_of(file, parent),
-        }
     }
 }
 

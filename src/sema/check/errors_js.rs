@@ -32,7 +32,7 @@ pub(super) const GRAMMAR_ERRORS: [u32; 164] = [
     18041, 18057, 18058, 18059, 18060, 18061,
 ];
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `IsCheckJSEnabledForFile`
     pub(super) fn is_check_js(&self, file: FileId) -> bool {
         self.hir(file)
@@ -61,7 +61,7 @@ impl Checker<'_> {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkGrammarSourceFile`: 1046. At the top level of a declaration file, a value declaration
     /// must have `declare` or `export`. Only the first that does not is reported.
     pub(super) fn check_declare_modifiers(&mut self, file: FileId) {

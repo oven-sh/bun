@@ -16,14 +16,14 @@
 
 use super::sink::Reported;
 use super::{Program, Query};
-use crate::atom::Interner;
-use crate::local::{Buffer, FileLocalTables};
+use crate::atom::Intern;
+use crate::local::{Buffer, FileLocalTables, SlotNumber};
 use crate::program::{FileId, Sym};
+use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
 use crate::util::{InParallel, for_each_mut};
 use std::cell::UnsafeCell;
-use std::sync::Arc;
 
 /// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs
 /// create one.
@@ -42,11 +42,15 @@ impl Stored {
 pub struct Open;
 
 /// One per `Checker`.
-pub struct Task {
+pub struct Task<'s> {
+    /// Of the thread that runs the task: for the records that the task creates.
+    arena: &'s Arena,
     /// The step, and the index of the task in it. `None`: the task is outside the plan.
     place: Option<(u32, u32)>,
     /// See `Task::begin`.
     is_read_later: bool,
+    /// The `Buffered` tables of which `finish` passes nothing to the barrier: a bit set, by slot.
+    withheld: u128,
     /// The file that the task is visiting.
     pub file: Option<FileId>,
     /// Nonzero: the task is one checker of a `checkerPool` of this size. Its index in the step is
@@ -59,29 +63,38 @@ pub struct Task {
     /// How many queries about a source file of another component the task has evaluated, by `FOREIGN_EVALUATION_KINDS`.
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
-    pub(super) order_dependent_variances: Vec<OrderDependent>,
+    pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// See `Finished::leads_into_cycles`.
+    pub(super) leads_into_cycles: Vec<LeadsIntoCycle<'s>>,
+    /// See `Finished::limits_reached`.
+    pub(super) limits_reached: Vec<LimitReached>,
     /// The types, signatures, mappers and component lists that the task has created.
-    pub(crate) own: OwnStore,
+    pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
-    buffer: UnsafeCell<Buffer>,
+    buffer: UnsafeCell<Buffer<'s>>,
     file_local: UnsafeCell<FileLocalTables>,
 }
 
-impl Task {
+impl<'s> Task<'s> {
     /// A task outside the plan. It reads the published state, and what it writes is dropped with it.
-    pub(super) fn new() -> Task {
+    /// `arena`: of the calling thread, which runs the task.
+    pub(super) fn new_in(arena: &'s Arena) -> Task<'s> {
         Task {
+            arena,
             place: None,
             is_read_later: true,
+            withheld: 0,
             file: None,
             checker_count: 0,
             diagnostics: Vec::new(),
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
-            own: OwnStore::default(),
-            buffer: UnsafeCell::default(),
-            file_local: UnsafeCell::default(),
+            leads_into_cycles: Vec::new(),
+            limits_reached: Vec::new(),
+            own: OwnStore::new_in(arena),
+            buffer: UnsafeCell::new(Buffer::new()),
+            file_local: UnsafeCell::new(FileLocalTables::new()),
         }
     }
 
@@ -96,6 +109,7 @@ impl Task {
             "created before `begin`: the id would dangle"
         );
         self.drop_everything();
+        self.own.set_is_read_later(is_read_later);
         (self.place, self.is_read_later) = (Some((step, index)), is_read_later);
     }
 
@@ -123,13 +137,33 @@ impl Task {
         self.file_local.get_mut().begin_file(file.0);
     }
 
+    /// The entries keyed by the nodes of `file` are stored densely from now on, as after
+    /// `begin_file`. The task does not visit `file`: see `Checker::check_statements_ahead`.
+    pub(super) fn store_densely(&mut self, file: FileId) {
+        self.file_local.get_mut().begin_file(file.0);
+        self.buffer.get_mut().begin_file(file.0, true);
+    }
+
+    /// `finish` passes no entry of `TABLES_OF_RECORDS` to the barrier.
+    pub(super) fn withhold_tables_of_records(&mut self) {
+        for (slot, name) in table_names().into_iter().enumerate() {
+            if TABLES_OF_RECORDS.contains(&name) {
+                self.withheld |= 1 << slot;
+            }
+        }
+        debug_assert_eq!(self.withheld.count_ones() as usize, TABLES_OF_RECORDS.len());
+    }
+
     fn drop_everything(&mut self) {
         (self.place, self.is_read_later, self.file) = (None, true, None);
+        self.withheld = 0;
         self.checker_count = 0;
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
-        self.own = OwnStore::default();
+        self.leads_into_cycles.clear();
+        self.limits_reached.clear();
+        self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
     }
@@ -137,10 +171,10 @@ impl Task {
     /// The task-local parts of the `Buffered` tables.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn buffer(&self) -> &mut Buffer {
+    pub(crate) fn buffer(&self) -> &mut Buffer<'s> {
         // SAFETY: the task is not `Sync`, and no two of these references are live at the same time:
         // `crate::table` uses the reference for one call into `crate::local`, which calls nothing
-        // outside itself. References returned by a kept table point into a `Chunked`, whose
+        // outside itself. References returned by an indirect table point into a `LocalVec`, whose
         // elements do not move until `finish`, `begin` or the drop.
         unsafe { &mut *self.buffer.get() }
     }
@@ -149,8 +183,7 @@ impl Task {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn file_local(&self) -> &mut FileLocalTables {
-        // SAFETY: as in `buffer`. The reference that `FileLocalTables::kept` returns points into a
-        // separate allocation, which does not move until the task ends or begins another file.
+        // SAFETY: as in `buffer`.
         unsafe { &mut *self.file_local.get() }
     }
 
@@ -160,18 +193,18 @@ impl Task {
     /// `diagnostics`: from `Checker::take_diagnostics`.
     pub(super) fn finish(
         &mut self,
-        program: &Program,
+        program: &Program<'s>,
         diagnostics: Vec<(Option<Query>, Reported)>,
-    ) -> Finished {
+    ) -> Finished<'s> {
         self.finish_tables(&tables_of(program), diagnostics)
     }
 
     /// `tables`: by slot.
     fn finish_tables(
         &mut self,
-        tables: &[&dyn Publish],
+        tables: &[&dyn Publish<'s>],
         diagnostics: Vec<(Option<Query>, Reported)>,
-    ) -> Finished {
+    ) -> Finished<'s> {
         let (step, index) = self
             .place
             .expect("a task outside the plan goes to no barrier");
@@ -182,7 +215,11 @@ impl Task {
         // Entries that nothing reads later are not inspected. They are dropped below.
         if self.is_read_later {
             for table in tables {
-                published.push(table.finish(buffer.half_mut(table.slot()), &mut finishing));
+                if (self.withheld >> table.slot()) & 1 != 0 {
+                    published.push(None);
+                    continue;
+                }
+                published.push(table.finish(buffer, &mut finishing));
             }
         }
         let buffered = (published.iter().flatten())
@@ -192,6 +229,8 @@ impl Task {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
+        let leads_into_cycles = std::mem::take(&mut self.leads_into_cycles);
+        let limits_reached = std::mem::take(&mut self.limits_reached);
         self.drop_everything();
         Finished {
             step,
@@ -200,6 +239,8 @@ impl Task {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
+            leads_into_cycles,
+            limits_reached,
             own,
             link: Link::default(),
             tables: published,
@@ -209,7 +250,7 @@ impl Task {
 }
 
 /// The result a task passes to the barrier.
-pub struct Finished {
+pub struct Finished<'s> {
     pub step: u32,
     pub index: u32,
     /// `Some(q)`: the diagnostic belongs to the query `q`. `None`: it belongs to the task.
@@ -217,18 +258,22 @@ pub struct Finished {
     pub closed_a_cycle: bool,
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
-    pub(super) order_dependent_variances: Vec<OrderDependent>,
+    pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// See `EntryOrder`.
+    pub(super) leads_into_cycles: Vec<LeadsIntoCycle<'s>>,
+    /// See `EntryOrder`.
+    pub(super) limits_reached: Vec<LimitReached>,
     /// The task-local records that the entries mention, in creation order.
-    pub own: OwnRecords,
+    pub own: OwnRecords<'s>,
     /// `Program::link` fills it in, `publish` follows it.
     pub link: Link,
     /// By slot.
-    tables: Vec<Option<Entries>>,
+    tables: Vec<Option<Entries<'s>>>,
     /// The number of entries in `tables`.
     buffered: u64,
 }
 
-impl Finished {
+impl Finished<'_> {
     /// Whether `Program::validate` can find the task invalid.
     pub fn can_be_invalid(&self) -> bool {
         let mut measured = self.order_dependent_variances.iter();
@@ -236,11 +281,41 @@ impl Finished {
     }
 }
 
+/// The task has stored the variances of `sym`, which is in no cycle of several symbols. To measure them it has entered such a cycle
+/// at `member`, or has read what is stored for `member` before that of any other member.
+#[derive(Copy, Clone)]
+pub struct LeadsIntoCycle<'s> {
+    pub(super) sym: Sym,
+    pub(super) member: Sym,
+    pub(super) variances: &'s [u8],
+}
+
+/// The task has reported that an instantiation limit was reached (2589), and has stored the error type.
+#[derive(Copy, Clone)]
+pub struct LimitReached {
+    /// The file that the task was visiting.
+    pub(super) file: FileId,
+    /// The first file in program order among `file` and the checked files whose syntax a query in progress names.
+    pub(super) first: FileId,
+}
+
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on
 /// the entry point into the cycle. The masks record how the task used them: one bit per type parameter, the last bit for the 32nd on.
-pub struct OrderDependent {
+pub struct OrderDependent<'s> {
     pub(super) sym: Sym,
-    pub(super) variances: Arc<[u8]>,
+    /// If `sym` is in a cycle of several symbols: the member at which the cycle was entered.
+    pub(super) root: Option<Sym>,
+    /// The rank of the file that the task that measured it was visiting.
+    pub(super) rank: u32,
+    /// `Program::rank_of_first_dependent`
+    pub(super) from: u32,
+    /// An earlier step has measured and published it: see `EntryOrder`. The task only notes `first_use`.
+    pub(super) is_provisional: bool,
+    /// The member of the cycle that a request for the variances of `sym` touches first if nothing is stored. `sym`, if it is one.
+    pub(super) enters: Sym,
+    /// Of the members of its cycle the task used this one first, while it visited the file of this rank.
+    pub(super) first_use: Option<u32>,
+    pub(super) variances: &'s [u8],
     /// Two different type arguments were compared under this variance and are related.
     pub(super) compared: u32,
     /// Two type arguments were compared under this variance and are not related, so the comparison of the type argument lists fails
@@ -252,7 +327,7 @@ pub struct OrderDependent {
     pub(super) inferred: u32,
 }
 
-impl OrderDependent {
+impl OrderDependent<'_> {
     /// Whether a result of the task can differ under the variances `serial`.
     pub(super) fn conflicts_with(&self, serial: &[u8]) -> bool {
         // `VarianceFlagsVarianceMask`: invariant, covariant, contravariant. `VarianceFlagsAllowsStructuralFallback`.
@@ -286,6 +361,38 @@ pub struct Published {
     pub by_table: Vec<(u64, u64)>,
 }
 
+/// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
+/// about a declared type parameter or flag a type. An entry of one of these is evaluated inside an evaluation that `relations` or a
+/// table keyed by a node or a symbol records, so a task that finds those entries does not ask for these.
+const TABLES_OF_RECORDS: [&str; 26] = [
+    "shapes",
+    "members",
+    "sig_params",
+    "sig_type_params",
+    "call_signatures",
+    "construct_signatures",
+    "candidate_orders",
+    "resolved_type_arguments",
+    "key_properties",
+    "instantiations",
+    "composed",
+    "distributed_intersections",
+    "mapped_prop_types",
+    "reverse_mapped_cache",
+    "intersected_props",
+    "union_properties",
+    "conditionals",
+    "resolved_return_types",
+    "awaited_types",
+    "optional_properties",
+    "never_intersections",
+    "mapped_targets",
+    "inferred_constraints",
+    "constraints",
+    "plain_global_refs",
+    "equivalent_base_types",
+];
+
 /// The names of the `Buffered` fields of `Program`, by slot.
 pub fn table_names() -> Vec<&'static str> {
     macro_rules! each {
@@ -295,9 +402,9 @@ pub fn table_names() -> Vec<&'static str> {
 }
 
 /// The `Buffered` tables of `program`. The slot of a table is its index here: `number_tables`.
-fn tables_of(program: &Program) -> Vec<&dyn Publish> {
+fn tables_of<'a, 's>(program: &'a Program<'s>) -> Vec<&'a dyn Publish<'s>> {
     macro_rules! each {
-        ($($field:ident)*) => { vec![$(&program.$field as &dyn Publish),*] };
+        ($($field:ident)*) => { vec![$(&program.$field as &dyn Publish<'s>),*] };
     }
     super::buffered_fields!(each)
 }
@@ -309,7 +416,8 @@ pub(super) fn number_tables(program: &mut Program) {
         ($($field:ident)*) => {{
             let mut slot = 0;
             $(
-                program.$field.set_slot(slot);
+                // SAFETY: every table of the list gets another number.
+                program.$field.set_slot(unsafe { SlotNumber::new(slot) });
                 slot += 1;
             )*
             let _ = slot;
@@ -321,19 +429,19 @@ pub(super) fn number_tables(program: &mut Program) {
 }
 
 /// The entries of all tasks for one table, or for one part of it.
-struct Stage<'a> {
-    table: &'a dyn Publish,
+struct Stage<'a, 's> {
+    table: &'a dyn Publish<'s>,
     part: usize,
     /// In task order.
-    shares: Vec<Share<'a>>,
+    shares: Vec<Share<'a, 's>>,
     /// Set afterwards: the number of entries that were stored.
     published: u64,
 }
 
 /// The work of one thread: it applies a table or a part of one, then the tables whose values hold
 /// its handles.
-struct Chain<'a> {
-    stages: Vec<Stage<'a>>,
+struct Chain<'a, 's> {
+    stages: Vec<Stage<'a, 's>>,
     len: u64,
     applied: Applied<'a>,
 }
@@ -346,13 +454,13 @@ struct Chain<'a> {
 /// 2. Apply, parallel over tables and parts of tables: one thread applies all tasks' entries of one
 ///    table or part, in task order, and the first entry for a key wins. Two threads never touch one
 ///    key, so the outcome does not depend on timing.
-pub fn publish(
-    program: &Program,
-    finished: &mut [Finished],
+pub fn publish<'s>(
+    program: &Program<'s>,
+    finished: &mut [Finished<'s>],
     in_parallel: InParallel<'_>,
     with_digest: bool,
 ) -> Published {
-    let atoms = with_digest.then_some(&program.files.atoms);
+    let atoms = with_digest.then_some(&program.files.atoms as &dyn Intern);
     publish_tables(&tables_of(program), finished, in_parallel, atoms)
 }
 
@@ -361,13 +469,13 @@ const FEW_ENTRIES: u64 = 4096;
 
 /// `tables`: indexed by slot. `atoms`: `Some` if the digest is requested, which treats an atom as
 /// its text.
-fn publish_tables(
-    tables: &[&dyn Publish],
-    finished: &mut [Finished],
+fn publish_tables<'s>(
+    tables: &[&dyn Publish<'s>],
+    finished: &mut [Finished<'s>],
     in_parallel: InParallel<'_>,
-    atoms: Option<&Interner>,
+    atoms: Option<&dyn Intern>,
 ) -> Published {
-    let mut followed: Vec<(usize, Entries)> = Vec::new();
+    let mut followed: Vec<(usize, Entries<'s>)> = Vec::new();
     for (task, finished) in finished.iter_mut().enumerate() {
         followed.extend((finished.tables.drain(..).flatten()).map(|entries| (task, entries)));
     }
@@ -392,7 +500,7 @@ fn publish_tables(
     }
     {
         // The largest first, so that no thread begins it when the others are nearly done.
-        let mut by_size: Vec<&mut (usize, Entries)> = followed.iter_mut().collect();
+        let mut by_size: Vec<&mut (usize, Entries<'s>)> = followed.iter_mut().collect();
         by_size.sort_by_key(|it| std::cmp::Reverse(it.1.len));
         let links: Vec<&Link> = finished.iter().map(|it| &it.link).collect();
         for_each_mut(&mut by_size, in_parallel, &|(task, entries)| {
@@ -401,7 +509,7 @@ fn publish_tables(
     }
 
     // `followed` is in task order, so the shares of every stage are.
-    let mut stages: Vec<Vec<Stage<'_>>> = (tables.iter())
+    let mut stages: Vec<Vec<Stage<'_, 's>>> = (tables.iter())
         .map(|&table| {
             let stage = |part| Stage {
                 table,
@@ -426,7 +534,7 @@ fn publish_tables(
             }
         }
     }
-    let mut chains: Vec<Chain<'_>> = Vec::new();
+    let mut chains: Vec<Chain<'_, 's>> = Vec::new();
     // By slot: the chain that the table is in.
     let mut chain_of: Vec<usize> = Vec::new();
     for (table, stages) in tables.iter().zip(stages) {

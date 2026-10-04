@@ -483,12 +483,12 @@ impl<'a> Parser<'a> {
     #[cold]
     pub(crate) fn parse_for_sema(
         mut self,
-        atoms: &'a bun_sema::atom::Interner,
+        atoms: &'a dyn bun_sema::atom::Intern,
         is_declaration_file: bool,
         is_json: bool,
         await_is_a_name: bool,
         parsing: &core::cell::Cell<core::time::Duration>,
-    ) -> (bun_sema::hir::File, bool) {
+    ) -> (bun_sema::hir::FileBuilder, bool) {
         type Pi<'a> = P<'a, true, false, true>;
         let scratch_lexer = |this: &Self| {
             js_lexer::Lexer::init_without_reading(
@@ -497,7 +497,7 @@ impl<'a> Parser<'a> {
                 this.bump,
             )
         };
-        let failed = || bun_sema::hir::File {
+        let failed = || bun_sema::hir::FileBuilder {
             kind: if is_declaration_file {
                 bun_sema::hir::FileKind::Declaration
             } else {
@@ -583,7 +583,7 @@ impl<'a> Parser<'a> {
                 bstr::BStr::new(&msg.data.text)
             );
             let source = self.source.contents();
-            match crate::sema::diagnostic(&msg.data, &msg.notes, source, has_jsx) {
+            match crate::sema::diagnostic(msg, source, has_jsx) {
                 // `checkJSDecoratorSyntax` reports these two as JS diagnostics, which parse errors do not suppress.
                 Some(Some(diagnostic)) if is_js && matches!(diagnostic.code, 1206 | 8038) => {
                     logged.push(Diagnostic {
@@ -604,7 +604,7 @@ impl<'a> Parser<'a> {
                 let stmts = stmts.as_slice();
                 let mut file =
                     crate::sema::lower::Lower::run(p, syntax, stmts, is_declaration_file);
-                file.comment_directives = comment_directives.into();
+                file.comment_directives = comment_directives;
                 crate::sema::comments::process_pragmas_into_fields(
                     &p.lexer,
                     leading_comments,
@@ -613,7 +613,7 @@ impl<'a> Parser<'a> {
                 );
                 file
             }
-            Err(error) => bun_sema::hir::File {
+            Err(error) => bun_sema::hir::FileBuilder {
                 ran_out_of_stack: matches!(error, crate::Error::StackOverflow),
                 ..failed()
             },

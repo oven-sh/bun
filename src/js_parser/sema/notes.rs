@@ -101,8 +101,8 @@ macro_rules! rows {
             pub(crate) fn copy(
                 &self,
                 end: &Rows,
-                from: &bun_sema::hir::File,
-                to: &mut bun_sema::hir::File,
+                from: &bun_sema::hir::FileBuilder,
+                to: &mut bun_sema::hir::FileBuilder,
             ) -> Rows {
                 Rows {
                     $($list: {
@@ -500,7 +500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && let Some(syntax) = &mut self.type_syntax
             && !modifiers.is_empty()
         {
-            syntax.notes.ranges.push(modifiers.parts());
+            syntax.notes.ranges.push([modifiers.start, modifiers.len]);
             let payload = syntax.notes.ranges.len() as u32 - 1;
             syntax.notes.add(at, Mark::Modifiers, payload);
         }

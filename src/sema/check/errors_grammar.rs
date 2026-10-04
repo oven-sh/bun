@@ -10,7 +10,7 @@ use crate::bind::Parent;
 use crate::resolve::ModuleKind;
 use bun_core::strings;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `GetIncludeProcessorDiagnostics`
     pub(super) fn include_processor_diagnostics(&mut self, file: FileId) {
         for &(start, code) in &self.files().module(file).missing_references {

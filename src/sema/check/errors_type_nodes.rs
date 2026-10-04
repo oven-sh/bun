@@ -68,8 +68,9 @@ fn end_of_type_arguments(text: &[u8], pos: usize) -> Option<usize> {
     }
 }
 
-/// The start in the source of the type `node`, which is a whole element or argument: parentheses
-/// around a type are not stored.
+/// The start in the source of the type `node`. Neither the parentheses around a type nor a `|` or a
+/// `&` before its only member are stored. Only for a type that follows a token that is none of
+/// these: a whole element or argument, a return type, a constraint, a default.
 pub(super) fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text: &[u8] = &hir.text;
     let mut at = hir[node].pos as usize;
@@ -209,7 +210,7 @@ fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_x_typenodes(&mut self, file: FileId) {
         let hir = self.hir(file);
         // The text of the default library is not stored.
@@ -242,7 +243,7 @@ impl Checker<'_> {
                 if elem.optional && self.p.files.options.strict_null_checks {
                     ty = self.union(&[ty, TypeId::NULL]);
                 }
-                if !self.can_be_spread_in_a_tuple(ty) {
+                if !self.is_array_like(ty) {
                     let start = start_of_tuple_element(hir, elem);
                     self.error_at((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
                     break;
@@ -275,29 +276,13 @@ impl Checker<'_> {
         }
     }
 
-    /// `isArrayLikeType`
-    fn can_be_spread_in_a_tuple(&mut self, ty: TypeId) -> bool {
-        if self.is_array(ty) {
-            return true;
-        }
-        let list = self.readonly_array_of(TypeId::ANY);
-        !ty.is_undefined() && !ty.is_null() && self.is_assignable(ty, list)
-    }
-
     /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`: 2322.
     pub(super) fn check_template_literal_type(&mut self, file: FileId, types: IdList<TypeNodeId>) {
         let hir = self.hir(file);
         if hir.text.is_empty() {
             return;
         }
-        let constraint = self.union(&[
-            TypeId::STRING,
-            TypeId::NUMBER,
-            TypeId::BOOLEAN,
-            TypeId::BIGINT,
-            TypeId::NULL,
-            TypeId::UNDEFINED,
-        ]);
+        let constraint = self.template_constraint_type();
         for placeholder in hir.ids(types) {
             let ty = self.type_from_node(file, placeholder);
             let start = start_of_type(hir, placeholder);
@@ -502,30 +487,12 @@ impl Checker<'_> {
         } else if !self
             .parts(keys)
             .iter()
-            .all(|&t| self.can_be_the_key_of_an_index_signature(t))
+            .all(|&t| self.is_valid_index_key_type(t))
             || keys.is_never()
         {
             self.error_at(self.place_of_token(file, name), 1268, &[]);
         } else if member.ty.is_none() {
             self.error_at((file, member.start, member.loc.end), 1021, &[]);
-        }
-    }
-
-    /// `isValidIndexKeyType`
-    fn can_be_the_key_of_an_index_signature(&mut self, ty: TypeId) -> bool {
-        if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL)
-            || self.is_pattern_literal(ty)
-        {
-            return true;
-        }
-        match self.data(ty) {
-            TypeData::Intersection(parts) => {
-                !self.is_generic(ty)
-                    && parts
-                        .iter()
-                        .any(|&t| self.can_be_the_key_of_an_index_signature(t))
-            }
-            _ => false,
         }
     }
 
@@ -781,7 +748,7 @@ impl Checker<'_> {
             // `getConstituentProperty`
             for &part in self.parts(apparent) {
                 let part = self.apparent_type(part);
-                if let Some((prop, _)) = self.prop_of(part, name) {
+                if let Some((prop, _)) = self.prop_ref(part, name) {
                     if prop
                         .flags
                         .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)

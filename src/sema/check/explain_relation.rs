@@ -74,7 +74,7 @@ impl Relater {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `reportError`
     pub(super) fn report_error(&mut self, r: &mut Relater, mut code: u32, args: &[Arg<'_>]) {
         let mut args = self.stringify_args(args);
@@ -230,7 +230,7 @@ impl RelationDiagnostic {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `checkTypeAssignableTo`
     pub(super) fn check_type_assignable_to(
         &mut self,
@@ -286,10 +286,19 @@ impl<'p> Checker<'p> {
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
+        let is_outermost = self.begin_comparison(error_node);
+        // `isRelatedToEx` calls `getNormalizedType` before any rule that `isTypeRelatedTo` begins
+        // with, and `getReducedType` asks for the types of properties.
+        if source != target {
+            self.reduced(source);
+            self.reduced(target);
+        }
         let is_related = self.try_is_type_related_to(source, target, relation, true);
         let (is_related, diagnostic) = match (is_related, error_node) {
-            (Ok(true), _) => return true,
-            (_, None) => return false,
+            (Ok(true), _) | (_, None) => {
+                self.end_comparison(is_outermost);
+                return is_related == Ok(true);
+            }
             (Err(code), Some(at)) => {
                 let args = [Arg::Type(source), Arg::Type(target)];
                 (false, Some(self.new_diagnostic(at, code, &args)))
@@ -306,6 +315,7 @@ impl<'p> Checker<'p> {
         if let Some(diagnostic) = diagnostic {
             self.report_diagnostic(diagnostic, diagnostic_output);
         }
+        self.end_comparison(is_outermost);
         is_related
     }
 
@@ -364,7 +374,7 @@ impl<'p> Checker<'p> {
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
-        r.caches_failures = true;
+        let is_outermost = self.begin_comparison(Some(error_node).filter(|at| at.2 != 0));
         // These two are never a `headMessage`: they are the defaults `reportRelationError` reports
         // without one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
@@ -406,6 +416,7 @@ impl<'p> Checker<'p> {
             lines,
             related: r.related_info,
         });
+        self.end_comparison(is_outermost);
         (result.holds(), diagnostic)
     }
 
@@ -469,7 +480,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── names ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getParameterNameAtPosition`. An unlabeled element of a rest parameter is named after the
     /// parameter and its index (`getTupleElementLabel`).
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
@@ -581,11 +592,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getPropertiesOfType`: for a union, the properties that all its members have.
-    pub(super) fn properties_of_type(&mut self, ty: TypeId) -> Vec<Prop> {
+    pub(super) fn properties_of_type(&mut self, ty: TypeId) -> &'p [Prop<'p>] {
         let ty = self.reduced_apparent_type_as_object(ty);
         match self.members(ty) {
-            Some(members) => members.shape().props.clone(),
-            None => Vec::new(),
+            Some(members) => &members.shape().props,
+            None => &[],
         }
     }
 
@@ -619,7 +630,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── one comparison ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `t.alias != nil`
     pub(super) fn has_alias(&mut self, t: TypeId) -> bool {
         self.alias_for_display(t).is_some()
@@ -658,8 +669,8 @@ impl<'p> Checker<'p> {
             };
             // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
             // final only if it was computed from the cached base types.
-            let cached = self.p.base_types.get(&mut self.task, &target);
-            (base, cached.as_deref() == Some(&bases[..]))
+            let cached = self.p.base_types.get_ref(&mut self.task, &target);
+            (base, cached.map(|it| &it[..]) == Some(&bases[..]))
         };
         match self.end_scope_as(scope, !is_final) {
             Ok(stored) => (self.p.equivalent_base_types).insert(&mut self.task, ty, base, stored),
@@ -718,7 +729,7 @@ impl<'p> Checker<'p> {
             && let Some((code, prop)) = self.why_never_intersection(original_target)
         {
             let intersection = self.type_to_string_without_reduction(original_target);
-            self.report_error(r, code, &[Arg::Bytes(&intersection), Arg::Prop(&prop)]);
+            self.report_error(r, code, &[Arg::Bytes(&intersection), Arg::Prop(prop)]);
         }
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
@@ -804,19 +815,21 @@ impl<'p> Checker<'p> {
 
     /// The property that makes the intersection `ty` uninhabited, and which of 18031 and 18032
     /// reports it.
-    pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, Prop)> {
+    pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, &'p Prop<'p>)> {
         let members = self.members(ty)?;
         // `isDiscriminantWithNeverType`
         for prop in &members.shape().props {
             let PropSource::Intersected(_, parts) = &prop.source else {
                 continue;
             };
-            if prop.flags.contains(PropFlags::OPTIONAL)
-                || !self.type_of_prop(prop, members.mapper).is_never()
-            {
+            if prop.flags.contains(PropFlags::OPTIONAL) {
                 continue;
             }
-            let mut list = Vec::with_capacity(parts.len());
+            // `CheckFlagsNonUniformAndLiteral` without `CheckFlagsHasNeverType`, which
+            // `createUnionOrIntersectionProperty` sets from the types of the constituents'
+            // properties, is tested before `getTypeOfSymbol(prop)`. FOR SPEED too: few properties
+            // that two members share get that far, and the type of each is a new intersection.
+            let mut list: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
             for part in parts.iter() {
                 list.push(self.type_of_prop(part, MapperId::IDENTITY));
             }
@@ -827,8 +840,9 @@ impl<'p> Checker<'p> {
                         || self.is_pattern_literal(t)
                         || self.every_type(t, |c, m| c.is_unit(m))
                 })
+                && self.type_of_prop(prop, members.mapper).is_never()
             {
-                return Some((18031, prop.clone()));
+                return Some((18031, prop));
             }
         }
         // `isConflictingPrivateProperty`
@@ -841,7 +855,7 @@ impl<'p> Checker<'p> {
                     && prop.flags.contains(PropFlags::PRIVATE)
                     && Self::value_declaration(prop).is_none()
             })
-            .map(|prop| (18032, prop.clone()))
+            .map(|prop| (18032, prop))
     }
 
     /// `typeCouldHaveTopLevelSingletonTypes`
@@ -1034,7 +1048,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── recursive types ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `indexSignaturesRelatedTo` for `source`, the apparent type of `object`. It comes from no
     /// declaration, so it is not known to have no other properties.
     pub(super) fn report_index_signature_missing_in_object(
@@ -1065,7 +1079,7 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── properties ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `reportUnmatchedProperty`. `unmatched`: `getUnmatchedProperties`, of which there is at least one.
     pub(super) fn report_unmatched_property(
         &mut self,

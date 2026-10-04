@@ -43,7 +43,7 @@ fn unwrap_unary_tuples(
     (check, extends)
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_assignments(&mut self, file: FileId) {
         let hir = self.hir(file);
         let bound = self.bound(file);
@@ -100,7 +100,20 @@ impl Checker<'_> {
             self.check_initializer(file, e, target, at);
         }
         let by_kind = self.exprs_by_kind(file);
-        for &assignment in by_kind.of(ExprTag::Assign) {
+        self.check_assignments_among(file, by_kind.of(ExprTag::Assign), None);
+    }
+
+    /// `checkAssignmentOperator` for those of `assignments` that are `target = value`: the
+    /// comparison. `check_plain_assignment` has the reference check.
+    /// `right_type`: `checkExpression(right)`, where the caller has it.
+    pub(super) fn check_assignments_among(
+        &mut self,
+        file: FileId,
+        assignments: &[ExprId],
+        right_type: Option<TypeId>,
+    ) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for &assignment in assignments {
             let i = assignment.idx();
             let ExprKind::Assign {
                 op: None,
@@ -113,21 +126,9 @@ impl Checker<'_> {
             if bound.is_unchecked(i) {
                 continue;
             }
-            // `checkReferenceExpression`: an assertion on a reference is a reference too.
-            let mut reference = target;
-            while let ExprKind::NonNull(inner)
-            | ExprKind::As { expr: inner, .. }
-            | ExprKind::Satisfies { expr: inner, .. }
-            | ExprKind::AsConst(inner) = hir[reference].kind
-            {
-                reference = inner;
-            }
-            match hir[reference].kind {
-                ExprKind::Ident(_) => {}
-                // For `a?.b = x` only the invalid target is reported.
-                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }
-                    if chain == Chain::No => {}
-                _ => continue,
+            // `checkReferenceExpression`: only the invalid target is reported.
+            if super::errors_operators::why_no_reference(hir, target, 2364, 2779).is_some() {
+                continue;
             }
             // `[a = 1] = x`: a default, not an assignment.
             if self.is_definite_assignment_target(file, ExprId(i as u32)) {
@@ -145,7 +146,10 @@ impl Checker<'_> {
             if self.is_error_type(left) {
                 continue;
             }
-            let source = self.type_of_expr(file, value);
+            let source = match right_type {
+                Some(right_type) => right_type,
+                None => self.type_of_expr(file, value),
+            };
             // `checkAssignmentOperator`: `undefined` assigned to a CommonJS export with more than one declaration is not checked. The
             // declarations counted are those of the symbol the left side resolves to.
             if source.is_undefined()
@@ -155,7 +159,7 @@ impl Checker<'_> {
             {
                 let object = self.type_of_expr(file, obj);
                 let object = self.apparent_type(object);
-                if let Some((prop, _)) = self.prop_of(object, name)
+                if let Some((prop, _)) = self.prop_ref(object, name)
                     && let PropSource::Symbol(sym) = prop.source
                     && self.files().decls(sym).len() > 1
                 {
@@ -325,7 +329,45 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let strict = self.p.files.options.strict_null_checks;
         let member = &hir[m];
-        if member.kind != MemberKind::Property || member.ty.is_none() || member.init.is_none() {
+        if member.kind != MemberKind::Property || member.init.is_none() {
+            return;
+        }
+        // `bindClassLikeDeclaration`: a static `prototype` is a declaration of the `prototype`
+        // symbol of the class, whose type is `getTypeOfPrototypeProperty` whatever the annotation.
+        if member.flags.contains(Flags::STATIC)
+            && !member.flags.contains(Flags::ACCESSOR)
+            && member.key == PropKey::Name(known::prototype)
+            && let crate::bind::MemberOwner::Class(c) = self.bound(file).member_owner[m.idx()]
+        {
+            let symbol = self.symbol_of_member(file, m);
+            let own = Some((file, crate::bind::Decl::Member(m)));
+            let class = self.class_sym(file, c);
+            let constructor = self.type_of_symbol(class);
+            if self.files().value_declaration(symbol) == own
+                && let Some(target) = self.type_of_property(constructor, known::prototype)
+            {
+                let at = (file, member.name_pos, self.end_of_member_name(file, m));
+                self.check_initializer(file, member.init, target, at);
+            }
+            return;
+        }
+        // The initializer of `symbol.ValueDeclaration` is compared with `getTypeOfSymbol`, which is
+        // `getTypeOfAccessors` for a property that shares its symbol with accessors.
+        if self.bound(file).member_symbol[m.idx()].is_some() {
+            let symbol = self.symbol_of_member(file, m);
+            let flags = self.files().flags(symbol);
+            let own = Some((file, crate::bind::Decl::Member(m)));
+            if flags.contains(SymFlags::PROPERTY)
+                && flags.intersects(SymFlags::ACCESSOR)
+                && self.files().value_declaration(symbol) == own
+            {
+                let target = self.type_of_symbol(symbol);
+                let at = (file, member.name_pos, self.end_of_member_name(file, m));
+                self.check_initializer(file, member.init, target, at);
+                return;
+            }
+        }
+        if member.ty.is_none() {
             return;
         }
         let declared = self.type_from_node(file, member.ty);
@@ -600,7 +642,7 @@ impl Checker<'_> {
                 continue;
             };
             // `getPropertyOfType`: the properties common to all objects are included.
-            if !name.is_some_and(|name| self.property_of_type(&members, name).is_some()) {
+            if !name.is_some_and(|name| self.property_in(&members, name).is_some()) {
                 let end = self.end_of_prop_name(file, p);
                 self.error_at(
                     (file, prop.pos, end),
@@ -688,8 +730,38 @@ impl Checker<'_> {
         }
     }
 
+    /// FOR SPEED: `check_type_reference_or_import` has run for `node` since `check_file` began, has
+    /// reported nothing, and has read nothing provisional. A type node in an expression is checked
+    /// by `look_at_type_node` and again by the walk.
+    #[inline]
+    fn is_type_reference_checked(&self, file: FileId, node: TypeNodeId) -> bool {
+        let (of, bits) = &self.checked_type_references;
+        *of == Some(file)
+            && (bits.get(node.idx() / 64)).is_some_and(|word| word >> (node.idx() % 64) & 1 != 0)
+    }
+
+    fn note_type_reference_checked(&mut self, file: FileId, node: TypeNodeId) {
+        if self.task.file != Some(file) {
+            return;
+        }
+        let (of, bits) = &mut self.checked_type_references;
+        if *of != Some(file) {
+            *of = Some(file);
+            bits.clear();
+        }
+        let at = node.idx() / 64;
+        if bits.len() <= at {
+            bits.resize(at + 1, 0);
+        }
+        bits[at] |= 1 << (node.idx() % 64);
+    }
+
     /// `checkTypeReferenceOrImport`
     pub(super) fn check_type_reference_or_import(&mut self, file: FileId, node: TypeNodeId) {
+        if self.is_type_reference_checked(file, node) {
+            return;
+        }
+        let before = (self.reported.len(), self.taints, self.non_cacheable_mark());
         let hir = self.hir(file);
         let referenced = self.type_from_node(file, node);
         // `getTypeParametersForTypeReferenceOrImport`
@@ -723,6 +795,11 @@ impl Checker<'_> {
         {
             let type_parameters = self.type_params_of_symbol(sym);
             self.check_type_argument_constraints(file, args, &type_parameters);
+        }
+        if before == (self.reported.len(), self.taints, self.non_cacheable_mark())
+            && self.serialization_level == 0
+        {
+            self.note_type_reference_checked(file, node);
         }
     }
 
@@ -940,7 +1017,7 @@ impl Checker<'_> {
 
     /// `getTypeFromTypeNode` of a tuple element: `getTypeFromOptionalTypeNode`, `getTypeFromRestTypeNode`,
     /// `getTypeFromNamedTupleTypeNode`.
-    fn type_from_tuple_element(&mut self, file: FileId, elem: TupleElem) -> TypeId {
+    pub(super) fn type_from_tuple_element(&mut self, file: FileId, elem: TupleElem) -> TypeId {
         if elem.rest {
             let element = array_element_type_node(self.hir(file), elem.ty).unwrap_or(elem.ty);
             return self.type_from_node(file, element);
@@ -1206,9 +1283,35 @@ impl Checker<'_> {
         expr: Option<(FileId, ExprId)>,
         is_effective: bool,
         head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        let is_outermost = self.begin_comparison(error_node);
+        let is_assignable = self.check_type_assignable_to_and_optionally_elaborate_worker(
+            source,
+            target,
+            error_node,
+            expr,
+            is_effective,
+            head_message,
+            diagnostic_output,
+        );
+        self.end_comparison(is_outermost);
+        is_assignable
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_type_assignable_to_and_optionally_elaborate_worker(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        error_node: Option<Place>,
+        expr: Option<(FileId, ExprId)>,
+        is_effective: bool,
+        head_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        let is_related = self.try_is_type_related_to(source, target, Relation::Assignable, false);
+        let relation = Relation::Assignable;
+        let is_related = self.try_is_type_related_to(source, target, relation, false);
         match is_related {
             Ok(true) => return true,
             Ok(false) if error_node.is_none() => return false,
@@ -1541,7 +1644,7 @@ impl Checker<'_> {
                 // `checkSpreadExpression`
                 ExprKind::Spread(inner) => {
                     let spread = self.type_of_expr(file, inner);
-                    self.iterated_type(spread, false)
+                    self.iterated_type_of_spread(spread)
                 }
                 _ => {
                     let mode = CheckMode::empty();
@@ -1570,9 +1673,8 @@ impl Checker<'_> {
         if self.is_exact_optional_property_mismatch(actual, expected) {
             diags.push(self.new_diagnostic(prop, 2412, &[Arg::Type(actual), Arg::Type(expected)]));
         } else {
-            let apparent = self.apparent_type(target);
             let target_is_optional = self
-                .prop_of(apparent, name)
+                .get_property_of_type(target, name)
                 .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
             let expected = self.remove_missing_type(expected, target_is_optional);
             let output = Some(&mut diags);
@@ -1610,7 +1712,7 @@ impl Checker<'_> {
         {
             return false;
         }
-        for prop in &self.properties_of_type(target) {
+        for prop in self.properties_of_type(target) {
             if let Some(of_source) = self.type_of_property_of_type(source, prop.name)
                 && let Some(of_target) = self.type_of_property_of_type(target, prop.name)
                 && self.is_exact_optional_property_mismatch(of_source, of_target)

@@ -11,13 +11,13 @@ bun check
 
 ```txt
 src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
-Found 1 error in 1 file, checked 2 files [14ms]
+Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
 `bun check` exits with code `1` when it finds an error and `0` when it finds none. It never writes a file.
 
 ```txt
-✓ No type errors in 2 files [14ms]
+✓ No type errors in 2 files [14.00ms]
 ```
 
 ## Install TypeScript's library files
@@ -111,7 +111,7 @@ bun test --check
 
 ```txt
 src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
-Found 1 error in 1 file, checked 2 files [14ms]
+Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
 With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs.
@@ -123,6 +123,29 @@ bun run --check dev
 A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
 
 For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import.
+
+`bun build --check` runs the check once the bundler has read every file, and before it writes anything. The type checker gets the files of the bundle from the bundler, so they are read from disk once.
+
+### `Bun.build`
+
+Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like any other build error. Each one is a `BuildMessage` whose message starts with TypeScript's error code.
+
+```ts build.ts icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./out",
+  check: true,
+  throw: false,
+});
+
+for (const log of result.logs) {
+  console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+}
+```
+
+```txt
+/app/src/index.ts:3: TS2322: Type 'string' is not assignable to type 'number'.
+```
 
 ## Output
 
@@ -141,7 +164,7 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 note: The expected type comes from property 'id' which is declared here on type 'User'
    at src/user.ts:2:3
 
-Found 1 error in 1 file, checked 2 files [14ms]
+Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
 When the output is piped, `bun check` prints one line per error in the format of `tsc --pretty false`. Problem matchers and scripts written for `tsc` keep working. Use `--pretty` or `--no-pretty` to choose a format yourself.

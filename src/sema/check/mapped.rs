@@ -24,7 +24,7 @@ pub(super) enum AccessNode {
     Other,
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
         let mapping = self.types().mapping(mapper);
@@ -63,8 +63,28 @@ impl<'p> Checker<'p> {
                 let declared = self.type_from_node(file, mapped.name_ty);
                 let param = self.type_param(file, mapped.param);
                 let with_keys = self.mapper_with_pair(mapper, param, constraint);
-                let name = self.instantiate(declared, with_keys);
-                self.is_generic(name)
+                // The name may contain `ty`: `{ [K in keyof C as C[K] & string]: 1 }` as a member of
+                // `C`. `isGenericMappedType` has no guard and caches nothing. Every level
+                // instantiates the name with a mapper of its own, and does nothing else, until
+                // `instantiationCount` is at its limit. The native stack does not last that long.
+                // A recursion that ends, as in `PartialOnUndefinedDeep` of type-fest, is left alone.
+                // After that the unions and intersections in the name have
+                // `ObjectFlagsIsGenericTypeComputed`.
+                if self.generic_mapped_types_cut_short.contains(&ty) {
+                    return false;
+                }
+                let is_in_progress = self.generic_mapped_types_in_progress.contains(&ty);
+                self.generic_mapped_types_in_progress.push(ty);
+                let name = if is_in_progress && self.is_half_of_stack_in_use() {
+                    self.generic_mapped_types_cut_short.push(ty);
+                    self.instantiation_count = 5_000_000;
+                    self.instantiation_too_deep()
+                } else {
+                    self.instantiate(declared, with_keys)
+                };
+                let is_generic = self.is_generic(name);
+                self.generic_mapped_types_in_progress.pop();
+                is_generic
             }
             // `isGenericStringLikeType`: an object type that tags a placeholder, as in
             // `${string & Tag<T>}`, may contain type variables.
@@ -256,7 +276,7 @@ impl<'p> Checker<'p> {
             && matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
             || self.alias_symbol_of_type(ty).is_some();
         if has_origin && self.is_union(keys) {
-            self.with_origin(keys, UnionOrigin::Keyof(ty))
+            self.with_origin(keys, OriginKey::Keyof(ty))
         } else {
             keys
         }
@@ -1063,16 +1083,16 @@ impl<'p> Checker<'p> {
 
     /// `getUnionIndexInfos`: the index signatures of the first member that all the others have too, for the same keys. A tuple
     /// has that of an array of all its elements.
-    pub(super) fn union_index_infos(&mut self, parts: &[TypeId]) -> Vec<IndexInfo> {
+    pub(super) fn union_index_infos(&mut self, parts: &[TypeId]) -> SmallVec<[IndexInfo; 2]> {
         let mut all = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
             let Some(members) = self.members(apparent) else {
-                return Vec::new();
+                return SmallVec::new();
             };
             all.push(members);
         }
-        let mut infos = Vec::new();
+        let mut infos = SmallVec::new();
         let Some(first) = all.first() else {
             return infos;
         };
@@ -2140,7 +2160,7 @@ impl<'p> Checker<'p> {
     /// `getPropertiesOfUnionOrIntersectionType`, and the index signatures common to all members.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
         let parts = self.parts(ty);
-        let mut shape = Shape::default();
+        let mut shape = Shape::new_in(self.arena);
         let mut checked: Vec<Atom> = Vec::new();
         for &part in parts {
             // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
@@ -2158,7 +2178,7 @@ impl<'p> Checker<'p> {
                     checked.push(prop.name);
                     shape.props.extend(
                         self.get_property_of_type(ty, prop.name)
-                            .map(|it| it.0.clone()),
+                            .map(|it| it.0.clone_in(self.arena)),
                     );
                 }
             }
@@ -2168,7 +2188,7 @@ impl<'p> Checker<'p> {
                 break;
             }
         }
-        shape.index = self.union_index_infos(parts);
+        shape.index.extend(self.union_index_infos(parts));
         self.synth(shape)
     }
 
@@ -2189,9 +2209,7 @@ impl<'p> Checker<'p> {
         let modifiers_ty = match source {
             Some((source, _)) => {
                 let ty = self.instantiate(source, mapper);
-                let ty = self.reduced(ty);
-                let ty = self.apparent_type(ty);
-                Some(self.reduced(ty))
+                Some(self.reduced_apparent_type(ty))
             }
             None => None,
         };
@@ -2305,11 +2323,13 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(q) {
-            return if self.found_cycle {
-                TypeId::ERROR
-            } else {
-                TypeId::UNRESOLVED
-            };
+            if !self.found_cycle {
+                return TypeId::UNRESOLVED;
+            }
+            // `mappedType.containsError = true`
+            let stored = self.cycle_result();
+            (self.p.mapped_types_with_errors).insert(&mut self.task, of, (), stored);
+            return TypeId::ERROR;
         }
         let mapped = self.mapped_decl(file, node);
         let template = if mapped.ty.is_some() {
@@ -2326,7 +2346,6 @@ impl<'p> Checker<'p> {
         );
         let left = self.leave(q);
         if self.left_a_cycle {
-            self.circular_mapped_property(of, prop.name);
             let stored = self.cycle_result();
             let kept = (self.p.mapped_prop_types).insert(
                 &mut self.task,
@@ -2334,6 +2353,9 @@ impl<'p> Checker<'p> {
                 TypeId::ERROR,
                 stored,
             );
+            // After `links.resolvedType = c.errorType`: the message prints `of`, which has this
+            // property.
+            self.circular_mapped_property(of, prop.name);
             return if is_copy { TypeId::ERROR } else { kept };
         }
         match left {
@@ -2354,11 +2376,11 @@ impl<'p> Checker<'p> {
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
-    ) -> Shape {
+    ) -> Shape<'s> {
         let mapped = self.mapped_decl(file, node);
         let param = self.type_param(file, mapped.param);
         let constraint = self.mapped_constraint(file, node, mapper);
-        let mut shape = Shape::default();
+        let mut shape = Shape::new_in(self.arena);
         let (keys, modifiers) = self.mapped_key_types(file, node, mapper, constraint);
         let template_declared = if mapped.ty.is_some() {
             self.type_from_node(file, mapped.ty)
@@ -2464,11 +2486,11 @@ impl<'p> Checker<'p> {
                             // `prop.Declarations = modifiersProp.Declarations`
                             let declared = match source_prop {
                                 Some(modifiers_prop) if links_declarations => {
-                                    Self::declared_properties(&[modifiers_prop])
+                                    Self::declared_properties(&[modifiers_prop], self.arena)
                                 }
-                                _ => Vec::new(),
+                                _ => SmallVec::new(),
                             };
-                            let declared = (!declared.is_empty()).then(|| declared.into());
+                            let declared = (!declared.is_empty()).then(|| self.list_of(declared));
                             // The type is resolved on demand (`type_of_mapped_prop`): the template under `with_key`.
                             shape.props.push(Prop {
                                 name,
@@ -2639,10 +2661,9 @@ impl<'p> Checker<'p> {
                 return only;
             }
         }
-        let texts: Vec<Atom> = new_texts.iter().map(|t| self.atoms().intern(t)).collect();
         self.intern(TypeData::Template {
-            texts: texts.into(),
-            types: new_types.into(),
+            texts: self.list_of(new_texts.iter().map(|t| self.atoms().intern(t))),
+            types: self.list(&new_types),
         })
     }
 
@@ -2731,6 +2752,7 @@ impl<'p> Checker<'p> {
                 | Intrinsic::Auto
                 | Intrinsic::IntrinsicMarker
                 | Intrinsic::Wildcard
+                | Intrinsic::NonInferrableAny
                 | Intrinsic::String,
             )
             | TypeData::UnresolvedName { .. }

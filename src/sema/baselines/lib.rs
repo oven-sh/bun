@@ -9,6 +9,7 @@ use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
 use bun_sema::resolve::{Host, Options, join, to_file_name_lower_case};
+use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -128,6 +129,45 @@ impl Bundle {
             .range::<[u8], _>((std::ops::Bound::Included(dir), std::ops::Bound::Unbounded))
             .map_while(move |(path, _)| path.strip_prefix(dir))
             .filter_map(|rest| rest.strip_prefix(b"/"))
+    }
+}
+
+/// Owns a `Bundle` and the bytes it points into. `Host::read` lends the contents of a file for
+/// `'static`, so the two are borrowed for `'static`, and freed here.
+struct OwnedBundle {
+    bundle: *mut Bundle,
+    bytes: *mut [u8],
+}
+
+impl OwnedBundle {
+    /// `None` if the file cannot be read or is malformed.
+    fn read(path: &str) -> Option<OwnedBundle> {
+        let bytes = Box::into_raw(std::fs::read(path).ok()?.into_boxed_slice());
+        // SAFETY: `bytes` comes from `Box::into_raw`. It is freed below, or in `drop` after `bundle`.
+        let Some(bundle) = Bundle::parse(unsafe { &*bytes }) else {
+            // SAFETY: as above, and nothing refers to it.
+            drop(unsafe { Box::from_raw(bytes) });
+            return None;
+        };
+        let bundle = Box::into_raw(Box::new(bundle));
+        Some(OwnedBundle { bundle, bytes })
+    }
+
+    /// # Safety
+    /// Neither the reference nor a slice that was read through it is used once `self` is dropped.
+    unsafe fn get(&self) -> &'static Bundle {
+        // SAFETY: `bundle` comes from `Box::into_raw` and is freed in `drop`.
+        unsafe { &*self.bundle }
+    }
+}
+
+impl Drop for OwnedBundle {
+    fn drop(&mut self) {
+        // SAFETY: both come from `Box::into_raw`. By the contract of `get` nothing refers to them.
+        unsafe {
+            drop(Box::from_raw(self.bundle));
+            drop(Box::from_raw(self.bytes));
+        }
     }
 }
 
@@ -310,19 +350,26 @@ impl Host for Virtual {
     fn is_case_sensitive(&self) -> bool {
         self.is_case_sensitive
     }
-    fn parse(
+    fn parse<'s>(
         &self,
+        arena: &'s bun_sema::session::Arena,
         path: &[u8],
         text: &[u8],
-        atoms: &bun_sema::atom::Interner,
+        atoms: &bun_sema::atom::Interner<'s>,
         options: &Options,
-    ) -> bun_sema::hir::File {
-        self.disk.parse(path, text, atoms, options)
+    ) -> bun_sema::hir::File<'s> {
+        self.disk.parse(arena, path, text, atoms, options)
+    }
+    fn parse_package_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
+        self.disk.parse_package_json(arena, text)
     }
     // One thread of the pool, as in `bun check --threads 1`: it has the same stack as in
     // production, and knows its stack limit.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.parallel(count, work);
+    }
+    fn loaded(&self) {
+        self.disk.loaded();
     }
 }
 
@@ -1168,8 +1215,12 @@ fn run_one(
             );
         }
         let config_path = absolute(&units[at].name, &config_cwd);
-        let project =
-            config::load_as_typescript_does(&only_units, config_path.as_bytes(), Vec::new());
+        let project = config::load_as_typescript_does(
+            &only_units,
+            &Session::new(),
+            config_path.as_bytes(),
+            Vec::new(),
+        );
         named_by_config = Some(project.files);
         config_unit = Some(units.remove(at));
     }
@@ -1254,7 +1305,8 @@ fn run_one(
             Some(unit) => {
                 let mut over = reported.clone();
                 defaults(&mut over);
-                config::load_as_typescript_does(&host, absolute(&unit.name, &cwd).as_bytes(), over)
+                let path = absolute(&unit.name, &cwd);
+                config::load_as_typescript_does(&host, &Session::new(), path.as_bytes(), over)
             }
             None => {
                 let mut compiler = reported.clone();
@@ -1284,7 +1336,7 @@ fn run_one(
     let sections: Mutex<Sections> = Mutex::new(Vec::new());
     // One line per location: unit, line, offset, source text without line breaks, type.
     // `unit_text`: the text of the unit at `path`, when the unit is not `file` itself.
-    let write_unit = |checker: &mut bun_sema::check::Checker<'_>,
+    let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
                       file: bun_sema::program::FileId,
                       path: &str,
                       unit_text: Option<&[u8]>| {
@@ -1358,7 +1410,7 @@ fn run_one(
         let at = section_of(&mut sections);
         sections[at].2.push_str(&lines);
     };
-    let write_types = |checker: &mut bun_sema::check::Checker<'_>,
+    let write_types = |checker: &mut bun_sema::check::Checker<'_, '_>,
                        file: bun_sema::program::FileId| {
         {
             let mut sections = sections.lock().unwrap();
@@ -1368,7 +1420,7 @@ fn run_one(
             }
         }
         let files = &checker.p.files;
-        let path = text(&files.modules[file.idx()].path);
+        let path = text(files.modules[file.idx()].path);
         // `GetSourceFile` of a path in `redirectFilesByPath` returns the retained copy of the
         // package: the harness walks it once more, alongside the text of that unit.
         let mut copies: Vec<String> = Vec::new();
@@ -1400,12 +1452,12 @@ fn run_one(
     };
     // `DoJSEmitBaseline`: `//// [name]`, followed by the emitted text of the file. The harness
     // requests `\r\n`.
-    let write_dts = |checker: &mut bun_sema::check::Checker<'_>,
+    let write_dts = |checker: &mut bun_sema::check::Checker<'_, '_>,
                      file: bun_sema::program::FileId| {
         if !checker.p.files.options.emits_declarations {
             return;
         }
-        let path = checker.p.files.modules[file.idx()].path.clone();
+        let path = checker.p.files.modules[file.idx()].path.to_vec();
         let options = &checker.p.files.options;
         let output_dir = [&options.declaration_dir, &options.out_dir]
             .into_iter()
@@ -1453,7 +1505,7 @@ fn run_one(
             }
         }
         // In the order of the program.
-        let order = &checker.p.files.order;
+        let order = checker.p.files.order;
         let place = order
             .iter()
             .position(|&it| it == file)
@@ -1812,11 +1864,11 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     };
     let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
     let (symbols_out, dts_out) = (flag("symbols-out"), flag("dts-out"));
+    // Declared before whatever reads from it, so it is dropped after.
     let bundle = match flag("bundle") {
         None => None,
-        // Both last as long as the process.
-        Some(path) => match (std::fs::read(&path).ok()).and_then(|b| Bundle::parse(b.leak())) {
-            Some(bundle) => Some(&*Box::leak(Box::new(bundle))),
+        Some(path) => match OwnedBundle::read(&path) {
+            Some(bundle) => Some(bundle),
             None => {
                 eprintln!("cannot read {path}");
                 return false;
@@ -1824,7 +1876,9 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         },
     };
     let setup = Setup {
-        bundle,
+        // SAFETY: `setup` and the outcomes are dropped before `bundle`, and the threads of `run`
+        // are scoped.
+        bundle: bundle.as_ref().map(|bundle| unsafe { bundle.get() }),
         lib_dir: &lib_dir,
         test_lib: &test_lib,
         only: only.as_deref(),

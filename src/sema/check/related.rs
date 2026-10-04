@@ -10,7 +10,7 @@ use crate::types::{Prop, PropSource};
 /// A file and a span in it.
 pub(super) type Place = (FileId, u32, u32);
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// From `start` in `file` to the end of the name, number or string that starts there.
     pub(super) fn place_of_token(&self, file: FileId, start: u32) -> Place {
         (file, start, self.end_of_token_at(file, start))

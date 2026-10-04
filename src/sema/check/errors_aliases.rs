@@ -18,8 +18,12 @@ use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
 use crate::program::TypeOnlyDeclaration;
-use crate::resolve::{ModuleKind, is_declaration_file_name, join, path_is_relative};
+use crate::resolve::{
+    ModuleKind, has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
+    try_extract_ts_extension,
+};
 use crate::verify::relative_from_file;
+use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -109,7 +113,7 @@ impl Directives {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_x_aliases(&mut self, file: FileId) {
         let hir = self.hir(file);
         // `SkipTypeChecking`: a declaration file is checked like any other file. The default library has no text and is not checked.
@@ -126,7 +130,7 @@ impl Checker<'_> {
     /// `getSourceFileFromReference`: 1006
     fn aliases_self_references(&mut self, file: FileId) {
         let files = self.files();
-        let path = &files.module(file).path[..];
+        let path = files.module(file).path;
         for &(kind, value, start, _) in &self.hir(file).references {
             if kind == ReferenceKind::Path
                 && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
@@ -317,13 +321,15 @@ impl Checker<'_> {
 
     // ───────────────────────────── alias declarations ─────────────────────────────
 
-    /// `node.Symbol` for the alias declarations in `file`.
-    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> FxHashMap<Decl, Sym> {
-        let mut symbols = FxHashMap::default();
+    /// `node.Symbol` for the alias declarations in `file`, in the order of the symbols.
+    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> ArrayHashMap<Decl, Sym> {
+        let mut symbols = ArrayHashMap::new();
         for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
             if symbol.flags.contains(SymFlags::ALIAS) {
                 let sym = self.files().sym(file, SymbolId(i as u32));
-                symbols.extend(symbol.decls.iter().map(|&decl| (decl, sym)));
+                for &decl in symbol.decls.iter() {
+                    symbols.insert(decl, sym);
+                }
             }
         }
         symbols
@@ -331,7 +337,7 @@ impl Checker<'_> {
 
     /// `getVerbatimModuleSyntaxErrorMessage`
     pub(super) fn verbatim_module_syntax_error_message(&self, file: FileId) -> u32 {
-        let path = &self.files().module(file).path;
+        let path = self.files().module(file).path;
         if path.ends_with(b".cts") || path.ends_with(b".cjs") {
             1286
         } else {
@@ -363,7 +369,7 @@ impl Checker<'_> {
     pub(super) fn check_alias_symbol(
         &mut self,
         file: FileId,
-        aliases: &FxHashMap<Decl, Sym>,
+        aliases: &ArrayHashMap<Decl, Sym>,
         decl: Decl,
         is_ambient: bool,
     ) {
@@ -962,7 +968,7 @@ impl Checker<'_> {
             // `AllowImportingTsExtensionsFrom`
             } else if using_ts_extension
                 && !options.allow_importing_ts_extensions
-                && !is_declaration_file_name(&importing.path)
+                && !is_declaration_file_name(importing.path)
             {
                 if site.is_emittable {
                     // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
@@ -988,11 +994,12 @@ impl Checker<'_> {
                 && !site.is_type_only
             {
                 // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
-                let should_rewrite = path_is_relative(text) && strip_ts_extension(text).is_some();
+                let should_rewrite =
+                    path_is_relative(text) && has_ts_implementation_extension(text);
                 let may_be_emitted = target.hir.kind != FileKind::Declaration
-                    && !strings::contains(&target.path, b"/node_modules/");
+                    && !strings::contains(target.path, b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
-                    let path = relative_from_file(&importing.path, &target.path);
+                    let path = relative_from_file(importing.path, target.path);
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension && !should_rewrite && may_be_emitted {
                     // `GetAnyExtensionFromPath`
@@ -1008,7 +1015,7 @@ impl Checker<'_> {
                     let mut redirected = importing.redirected_imports.iter();
                     let path = match redirected.find(|r| (r.0, r.1) == key) {
                         Some(r) => Arg::Atom(r.2),
-                        None => Arg::Bytes(&target.path),
+                        None => Arg::Bytes(target.path),
                     };
                     self.error_at(at, 2306, &[path]);
                 }
@@ -1109,7 +1116,7 @@ impl Checker<'_> {
         at: (FileId, u32, u32),
     ) -> Option<Reported> {
         let importing = self.files().module(file);
-        let path = &importing.path;
+        let path = importing.path;
         let target_extension = if path.ends_with(b".d.ts") {
             return None;
         } else if path.ends_with(b".ts") {
@@ -1150,7 +1157,7 @@ impl Checker<'_> {
         }
     }
 
-    fn aliases_import_call_or_meta_property(&mut self, file: FileId, e: ExprId) {
+    pub(super) fn aliases_import_call_or_meta_property(&mut self, file: FileId, e: ExprId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         if bound.is_unchecked(e.idx()) {
@@ -1346,37 +1353,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
         end += if text[end] == b'\\' { 2 } else { 1 };
     }
     (end < text.len()).then(|| (&text[at + 1..end], end + 1))
-}
-
-/// `path` without its TypeScript extension, if it ends with one.
-fn strip_ts_extension(path: &[u8]) -> Option<&[u8]> {
-    [
-        &b".d.ts"[..],
-        b".d.mts",
-        b".d.cts",
-        b".mts",
-        b".cts",
-        b".ts",
-        b".tsx",
-    ]
-    .into_iter()
-    .find_map(|e| path.strip_suffix(e))
-    .filter(|stem| !stem.is_empty())
-}
-
-/// `TryExtractTSExtension`
-fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
-    [
-        &b".d.ts"[..],
-        b".d.cts",
-        b".d.mts",
-        b".ts",
-        b".tsx",
-        b".mts",
-        b".cts",
-    ]
-    .into_iter()
-    .find(|&e| path.ends_with(e))
 }
 
 /// `getSuggestedImportSource` for a specifier that names a declaration file. `is_esm`: the emitted

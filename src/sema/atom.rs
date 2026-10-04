@@ -3,6 +3,7 @@
 //! task that encounters it (`OwnStore`), and the merge at the barrier publishes it.
 
 use crate::local::LOCAL;
+use crate::session::{ArenaBox, Session};
 use crate::types::OwnStore;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
@@ -43,9 +44,13 @@ impl std::fmt::Debug for Atom {
     }
 }
 
-pub struct Interner {
-    shards: Box<[GrowingPlaces]>,
-    texts: AppendVec<Box<[u8]>>,
+type Texts<'s> = AppendVec<ArenaBox<'s, [u8]>, &'s Session>;
+
+pub struct Interner<'s> {
+    /// A text is in the arena of the thread that first interns it.
+    session: &'s Session,
+    shards: Box<[GrowingPlaces<&'s Session>; SHARDS], &'s Session>,
+    texts: Texts<'s>,
     /// Sequence number of this interner among all that have been created.
     number: u64,
 }
@@ -296,7 +301,7 @@ pub(crate) fn hash_of(text: &[u8]) -> u64 {
 }
 
 thread_local! {
-    static RECENT: std::cell::UnsafeCell<Recent> = const { std::cell::UnsafeCell::new(Recent::EMPTY) };
+    static RECENT: std::cell::RefCell<Recent> = const { std::cell::RefCell::new(Recent::EMPTY) };
 }
 
 /// The calling thread's cache of recently interned atoms. A pool thread outlives a check, so the
@@ -317,8 +322,7 @@ impl RecentAtoms {
 
     /// Installs the cache on the calling thread. Returns the previous one.
     pub fn install(self) -> RecentAtoms {
-        // SAFETY: it is thread-local, and nothing in this scope re-enters it.
-        RECENT.with(|recent| RecentAtoms(std::mem::replace(unsafe { &mut *recent.get() }, self.0)))
+        RecentAtoms(RECENT.replace(self.0))
     }
 }
 
@@ -340,17 +344,36 @@ impl crate::table::Id for Atom {
     }
 }
 
-impl Default for Interner {
-    fn default() -> Self {
-        Self::new()
+/// An `Interner` for those who cannot name the lifetime of its session, in which it is invariant.
+pub trait Intern: Sync {
+    fn intern(&self, text: &[u8]) -> Atom;
+    fn bytes(&self, atom: Atom) -> &[u8];
+    /// See `Interner::number`.
+    fn number(&self) -> u64;
+}
+
+impl Intern for Interner<'_> {
+    #[inline]
+    fn intern(&self, text: &[u8]) -> Atom {
+        Interner::intern(self, text)
+    }
+    #[inline]
+    fn bytes(&self, atom: Atom) -> &[u8] {
+        Interner::bytes(self, atom)
+    }
+    #[inline]
+    fn number(&self) -> u64 {
+        Interner::number(self)
     }
 }
 
-impl Interner {
-    pub fn new() -> Self {
+impl<'s> Interner<'s> {
+    pub fn new_in(session: &'s Session) -> Self {
+        let shards = std::array::from_fn(|_| GrowingPlaces::new_in(session));
         let this = Interner {
-            shards: (0..SHARDS).map(|_| GrowingPlaces::default()).collect(),
-            texts: AppendVec::new(),
+            session,
+            shards: Box::new_in(shards, session),
+            texts: AppendVec::new_in(session),
             number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         };
         for (i, text) in known::TEXTS.iter().enumerate() {
@@ -367,8 +390,12 @@ impl Interner {
     }
 
     /// For the merge at the barrier.
-    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &AppendVec<Box<[u8]>>) {
-        (&self.shards, &self.texts)
+    pub(crate) fn halves(&self) -> (&[GrowingPlaces<&'s Session>], &Texts<'s>) {
+        (&self.shards[..], &self.texts)
+    }
+
+    pub fn session(&self) -> &'s Session {
+        self.session
     }
 
     /// Sequence number of this interner among all that have been created: data cached for one
@@ -384,9 +411,8 @@ impl Interner {
         }
         let (start, end) = short(text);
         let spread = spread_hash(&(start, end));
-        RECENT.with(|recent| {
-            // SAFETY: it is thread-local, and nothing in this scope re-enters it.
-            let recent = unsafe { &mut *recent.get() };
+        RECENT.with_borrow_mut(|recent| {
+            // Nothing in this scope re-enters it.
             if recent.of != self.number {
                 recent.of = self.number;
                 match recent.entries.is_empty() {
@@ -416,7 +442,10 @@ impl Interner {
         Atom(shard.find_or_add(
             spread,
             |i| &**self.texts.get(i) == text,
-            || self.texts.push(Box::from(text)),
+            || {
+                let text = ArenaBox::copy_from_slice_in(text, self.session.arena());
+                self.texts.push(text)
+            },
         ))
     }
 
@@ -470,14 +499,14 @@ fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
 /// The published atoms and the task-local ones, which is everything a task can see.
 /// `Checker::atoms` creates one.
 #[derive(Copy, Clone)]
-pub struct Atoms<'p> {
-    published: &'p Interner,
-    own: &'p OwnStore,
+pub struct Atoms<'p, 's> {
+    published: &'p Interner<'s>,
+    own: &'p OwnStore<'s>,
 }
 
-impl<'p> Atoms<'p> {
+impl<'p, 's> Atoms<'p, 's> {
     #[inline(always)]
-    pub fn new(published: &'p Interner, own: &OwnStore) -> Atoms<'p> {
+    pub fn new(published: &'p Interner<'s>, own: &OwnStore<'s>) -> Atoms<'p, 's> {
         // SAFETY: as in `Types::new`.
         let own = unsafe { &*std::ptr::from_ref(own) };
         Atoms { published, own }
@@ -538,29 +567,10 @@ impl<'p> Atoms<'p> {
 
 /// The number whose decimal notation is `text`.
 pub fn parse_number(text: &[u8]) -> Option<f64> {
-    core::str::from_utf8(text).ok()?.parse().ok()
+    bun_core::fmt::parse_f64(text)
 }
 
 /// `String(n)`, which is the property name of a number.
 pub fn number_to_string(n: f64) -> Vec<u8> {
-    use std::io::Write;
-    let mut text = Vec::new();
-    if n.is_nan() {
-        text.extend_from_slice(b"NaN");
-    } else if n.is_infinite() {
-        text.extend_from_slice(if n > 0.0 { b"Infinity" } else { b"-Infinity" });
-    } else if n == 0.0 {
-        text.push(b'0');
-    } else if n.abs() >= 1e21 || n.abs() < 1e-6 {
-        // Writing to a `Vec` does not fail.
-        let _ = write!(text, "{n:e}");
-        if let Some(e) = bun_core::strings::index_of_char_usize(&text, b'e')
-            && text.get(e + 1) != Some(&b'-')
-        {
-            text.insert(e + 1, b'+');
-        }
-    } else {
-        let _ = write!(text, "{n}");
-    }
-    text
+    bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()
 }

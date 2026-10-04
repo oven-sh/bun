@@ -43,7 +43,7 @@ pub(super) enum Arg<'a> {
     /// `symbolToString`
     Sym(Sym),
     /// `symbolToString` of a property.
-    Prop(&'a Prop),
+    Prop(&'a Prop<'a>),
     /// `signatureToString`
     Sig(SigId),
     Atom(Atom),
@@ -158,18 +158,27 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
         })
 }
 
-pub(super) struct Sink {
-    /// The diagnostics reported in each file.
-    by_file: Box<[Guarded<Vec<Reported>>]>,
+pub(super) struct Sink<'s> {
+    /// The diagnostics reported in each file. A `Reported` owns memory of the regular heap:
+    /// `release`.
+    by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
     /// The queries under which a task has reported. Accessed only at barriers.
-    owners: Guarded<crate::util::FxHashSet<Query>>,
+    owners: Guarded<ArenaHashSet<'s, Query>>,
 }
 
-impl Sink {
-    pub(super) fn new(files: usize) -> Sink {
+impl<'s> Sink<'s> {
+    /// `arena`: that of the thread that runs the barriers, where `owners` grows.
+    pub(super) fn new_in(files: usize, arena: &'s Arena) -> Sink<'s> {
         Sink {
-            by_file: (0..files).map(|_| Guarded::default()).collect(),
-            owners: Guarded::default(),
+            by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
+            owners: Guarded::new(set_in(arena)),
+        }
+    }
+
+    /// See `Program::release`.
+    pub(super) fn release(&mut self) {
+        for reported in &mut self.by_file {
+            *reported.get_mut() = Vec::new();
         }
     }
 }
@@ -202,7 +211,7 @@ fn is_task_independent(q: Query) -> bool {
     }
 }
 
-impl super::Program {
+impl super::Program<'_> {
     /// At the barrier, tasks in plan order. A diagnostic that belongs to a query is reported iff no
     /// earlier task has reported under that query.
     pub(super) fn publish_diagnostics(&self, finished: &mut Finished) {
@@ -239,7 +248,7 @@ impl super::Program {
 
     /// `CompareDiagnostics`
     pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
-        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| &m.path[..]);
+        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| m.path);
         (path(a.file), a.start, a.end, a.code, &a.args)
             .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
             .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
@@ -275,7 +284,7 @@ impl super::Program {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `StringifyArgs`. They are printed eagerly, as in tsgo: printing runs queries.
     pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Args {
         args.iter()

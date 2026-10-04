@@ -12,24 +12,16 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::relative_normalized;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
-use std::time::Duration;
 
 macro_rules! alloc_print {
-    ($($arg:tt)*) => {{
-        let mut out = BString::default();
-        let _ = write!(out, $($arg)*);
-        out
-    }};
+    ($($arg:tt)*) => {
+        BString::from(bun_ast::alloc_print(format_args!($($arg)*)).into_owned())
+    };
 }
 
-/// `write!` for text in Bun's markup (`<red>`, `<d>`, `<r>`), with or without colors.
 macro_rules! pretty {
-    ($out:expr, $color:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
-        let _ = if $color {
-            write!($out, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
-        } else {
-            write!($out, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
-        };
+    ($($arg:tt)*) => {
+        let _ = bun_core::write_pretty!($($arg)*);
     };
 }
 
@@ -90,15 +82,6 @@ fn with_commas(n: usize) -> BString {
     out
 }
 
-fn duration(d: Duration) -> BString {
-    let ms = d.as_secs_f64() * 1000.0;
-    if ms < 1000.0 {
-        alloc_print!("{ms:.0}ms")
-    } else {
-        alloc_print!("{:.2}s", ms / 1000.0)
-    }
-}
-
 fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
     let noun = if n == 1 { one } else { many };
     alloc_print!("{} {}", with_commas(n), noun.as_bstr())
@@ -140,11 +123,6 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
         file: Vec::from(display_path(&d.path, style)).into(),
         line: d.line as i32,
         column: d.column as i32,
-        // A span that continues on the next line is underlined to the end of this line.
-        length: match d.end_line == d.line {
-            true => (d.end_column - d.column) as usize,
-            false => usize::MAX,
-        },
         line_text: Some(strings::replace_owned(&bstr::join("\n", lines), b"\t", b" ").into()),
         ..Default::default()
     });
@@ -154,8 +132,19 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
     }
 }
 
+/// Bun's own diagnostics have no code.
+pub fn metadata_of(d: &Diagnostic) -> bun_ast::Metadata {
+    match d.code {
+        0 => bun_ast::Metadata::Build,
+        code => bun_ast::Metadata::TypeScript {
+            code,
+            kind: bun_ast::TypeScriptKind::Checker,
+        },
+    }
+}
+
 /// `d` as a message of Bun's own log, with the related information as its notes.
-pub fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
+fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
     let related = d.related.iter().take(MAX_RELATED);
     bun_ast::Msg {
         kind: match d.category {
@@ -164,6 +153,7 @@ pub fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
             Category::Suggestion | Category::Message => bun_ast::Kind::Note,
         },
         data: to_data(d, style, true, 3),
+        metadata: metadata_of(d),
         notes: related
             .map(|note| {
                 // A line that is already shown above is not repeated.
@@ -288,12 +278,13 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
 
 /// An attribute value, without the quotes.
 fn attribute(text: &[u8]) -> BString {
-    strings::replace_owned(
-        &strings::replace_owned(text, b"&", b"&amp;"),
-        b"\"",
-        b"&quot;",
-    )
-    .into()
+    let mut out = BString::default();
+    for c in text {
+        out.extend_from_slice(
+            strings::xml_escape_entity(*c).unwrap_or_else(|| std::slice::from_ref(c)),
+        );
+    }
+    out
 }
 
 fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
@@ -616,7 +607,7 @@ fn is_missing_bun_types(report: &Report) -> bool {
     })
 }
 
-/// Warnings, hints, the error count, then a per-file error count for every file.
+/// Warnings, notes, the error count, then a per-file error count for every file.
 pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
     // Diagnostics are sorted by path, so each file's errors are adjacent.
     let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
@@ -634,7 +625,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         pretty!(
             out,
             style.color,
-            "<red>error<r><d>: <r>ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.\n",
+            "<red>error<r><d>:<r> ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.\n",
             relative_path(path, style.cwd)
         );
     }
@@ -643,18 +634,22 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             pretty!(
                 out,
                 style.color,
-                "<blue>hint<r><d>: <r>Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: <cyan>\"types\": [\"bun\"]<r>\n"
+                "<blue>note<r><d>:<r> Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: <cyan>\"types\": [\"bun\"]<r>\n"
             );
         } else {
             pretty!(
                 out,
                 style.color,
-                "<blue>hint<r><d>: <r>Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: <cyan>bun add -d @types/bun<r>\n"
+                "<blue>note<r><d>:<r> Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: <cyan>bun add -d @types/bun<r>\n"
             );
         }
     }
     let errors = report.error_count();
-    let took = alloc_print!(" [{}]", duration(report.load_time + report.check_time));
+    let took = bun_core::output::Elapsed {
+        colors: style.color,
+        ms: (report.load_time + report.check_time).as_secs_f64() * 1000.0,
+    };
+    let took = alloc_print!(" {took}");
     let projects = match report.projects_checked {
         0 => BString::default(),
         n => alloc_print!(" across {}", plural(n, b"project", b"projects")),

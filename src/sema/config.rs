@@ -5,9 +5,10 @@
 use crate::config_options::is_file_path;
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    Host, Options, contains_path, join, known_extension, remove_file_extension,
+    Host, Options, ancestors, contains_path, join, known_extension, remove_file_extension,
     supported_extensions, to_file_name_lower_case,
 };
+use crate::session::Session;
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -39,16 +40,19 @@ impl ConfigError {
         }
     }
 
-    /// `problem`, in the configuration file at `config_path`, which may be absent.
+    /// `problem`, in the configuration file at `config_path`, which may be absent. The syntax tree
+    /// of the file is left in `session`.
     pub fn of_problem(
         host: &dyn Host,
+        session: &Session,
         config_path: &[u8],
         problem: &crate::verify::Problem,
     ) -> ConfigError {
         let at = (!config_path.is_empty())
             .then(|| host.read(config_path))
             .flatten()
-            .and_then(|text| problem.span_in(&TsConfigSourceFile::parse(host, text)?))
+            .and_then(|text| TsConfigSourceFile::parse(host, session, text))
+            .and_then(|file| problem.span_in(&file))
             .map(|(from, to)| (config_path.to_vec(), from, to));
         ConfigError {
             code: problem.code,
@@ -122,20 +126,9 @@ const CONFIG_DIR_TEMPLATE: &[u8] = b"${configDir}";
 /// `findConfigFile`: the `tsconfig.json` in `dir` or in its nearest ancestor directory. A
 /// `jsconfig.json` is used if the same directory has no `tsconfig.json`.
 pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
-    let mut dir = dir;
-    loop {
-        for name in [b"tsconfig.json", b"jsconfig.json"] {
-            let candidate = join(dir, name);
-            if host.is_file(&candidate) {
-                return Some(candidate);
-            }
-        }
-        let parent = dirname::<Posix>(dir);
-        if parent == dir || parent.is_empty() {
-            return None;
-        }
-        dir = parent;
-    }
+    ancestors(dir)
+        .flat_map(|dir| [b"tsconfig.json", b"jsconfig.json"].map(|name| join(dir, name)))
+        .find(|candidate| host.is_file(candidate))
 }
 
 /// One configuration file with its extended configuration files merged in.
@@ -194,9 +187,10 @@ fn merge_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: Vec<(Vec<u8
     }
 }
 
-/// `parseConfig`
+/// `parseConfig`. The syntax trees of the files are left in `session`.
 fn parse_config(
     host: &dyn Host,
+    session: &Session,
     path: &[u8],
     stack: &mut Vec<Vec<u8>>,
     errors: &mut Vec<ConfigError>,
@@ -209,7 +203,7 @@ fn parse_config(
         return None;
     }
     let text = host.read(path);
-    let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, text)) else {
+    let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, session, text)) else {
         errors.push(ConfigError::new(5083, &[path]));
         return None;
     };
@@ -346,7 +340,7 @@ fn parse_config(
     let mut inherited = Raw::default();
     for (i, name) in &extends {
         let reported = errors.len();
-        let Some(extended_path) = extends_config_path(host, name, base, errors) else {
+        let Some(extended_path) = extends_config_path(host, session, name, base, errors) else {
             // `CreateDiagnosticForNodeInSourceFileOrCompilerDiagnostic`, at `valueExpression`.
             let value =
                 value_of(b"extends").map(|value| file.elements(value).nth(*i).unwrap_or(value));
@@ -355,8 +349,15 @@ fn parse_config(
             }
             continue;
         };
-        let Some(extended) = parse_config(host, &extended_path, stack, errors, as_typescript_does)
-        else {
+        let extended = parse_config(
+            host,
+            session,
+            &extended_path,
+            stack,
+            errors,
+            as_typescript_does,
+        );
+        let Some(extended) = extended else {
             continue;
         };
         // A property the extending file does not specify itself takes the value from the last of
@@ -410,6 +411,7 @@ fn parse_config(
 /// `getExtendsConfigPath`
 fn extends_config_path(
     host: &dyn Host,
+    session: &Session,
     extended: &[u8],
     base: &[u8],
     errors: &mut Vec<ConfigError>,
@@ -430,7 +432,8 @@ fn extends_config_path(
         errors.push(ConfigError::new(18051, &[b"extends"]));
         return None;
     }
-    let found = crate::resolve::resolve_config(host, &extended, &join(base, b"tsconfig.json"));
+    let containing_file = join(base, b"tsconfig.json");
+    let found = crate::resolve::resolve_config(host, session, &extended, &containing_file);
     if found.is_none() {
         errors.push(ConfigError::new(6053, &[&extended]));
     }
@@ -489,17 +492,20 @@ fn validate_specs(
 }
 
 /// The same, with `over` applied after everything in the configuration file: the options a command
-/// line adds to it, which may depend on whether the file has `references`.
+/// line adds to it, which may depend on whether the file has `references`. The result owns its
+/// memory: `session` only holds what is of no use afterwards.
 pub fn load_overriding(
     host: &dyn Host,
+    session: &Session,
     path: &[u8],
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
 ) -> Project {
     let mut errors = Vec::new();
-    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors, false).unwrap_or_default();
+    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors, false);
+    let mut raw = raw.unwrap_or_default();
     let has_references = raw.references.as_ref().is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, over(has_references));
-    project_from_raw(host, path, dirname::<Posix>(path), raw, errors)
+    project_from_raw(host, session, path, dirname::<Posix>(path), raw, errors)
 }
 
 /// The same, following TypeScript 7 only: an option that only older versions accepted is as invalid
@@ -507,13 +513,15 @@ pub fn load_overriding(
 #[cfg(feature = "baselines")]
 pub fn load_as_typescript_does(
     host: &dyn Host,
+    session: &Session,
     path: &[u8],
     over: Vec<(Vec<u8>, Json)>,
 ) -> Project {
     let mut errors = Vec::new();
-    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors, true).unwrap_or_default();
+    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors, true);
+    let mut raw = raw.unwrap_or_default();
     merge_compiler_options(&mut raw.compiler, over);
-    project_from_raw(host, path, dirname::<Posix>(path), raw, errors)
+    project_from_raw(host, session, path, dirname::<Posix>(path), raw, errors)
 }
 
 /// The project consisting of `files` only, or of everything under `dir` if `files` is empty, with
@@ -527,12 +535,13 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
         files: (!files.is_empty()).then_some(files),
         ..Raw::default()
     };
-    project_from_raw(host, b"", dir, raw, Vec::new())
+    project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new())
 }
 
 /// `parseJsonConfigFileContentWorker`
 fn project_from_raw(
     host: &dyn Host,
+    session: &Session,
     config_path: &[u8],
     base: &[u8],
     mut raw: Raw,
@@ -580,7 +589,7 @@ fn project_from_raw(
         options
             .problems
             .iter()
-            .map(|problem| ConfigError::of_problem(host, config_path, problem)),
+            .map(|problem| ConfigError::of_problem(host, session, config_path, problem)),
     );
     let has_no_references = raw.references.as_ref().is_none_or(Vec::is_empty);
     // Errors outside `compilerOptions`.
@@ -630,7 +639,7 @@ fn project_from_raw(
     ));
     errors.extend(problems.iter().map(|problem| ConfigError {
         is_about_options: false,
-        ..ConfigError::of_problem(host, config_path, problem)
+        ..ConfigError::of_problem(host, session, config_path, problem)
     }));
     let literal = substitute_all(raw.files.take().unwrap_or_default());
     options.file_specs = literal.iter().map(|name| join(base, name)).collect();
@@ -678,35 +687,8 @@ fn extension_group(file: &[u8], extensions: &[&[&'static [u8]]]) -> Vec<&'static
         .collect()
 }
 
-/// An insertion-ordered map, like `collections.OrderedMap`.
-#[derive(Default)]
-struct OrderedFiles {
-    index: crate::util::FxHashMap<Vec<u8>, usize>,
-    files: Vec<Option<Vec<u8>>>,
-}
-
-impl OrderedFiles {
-    fn has(&self, key: &[u8]) -> bool {
-        self.index.contains_key(key)
-    }
-    fn set(&mut self, key: Vec<u8>, file: Vec<u8>) {
-        match self.index.get(&key) {
-            Some(&i) => self.files[i] = Some(file),
-            None => {
-                self.index.insert(key, self.files.len());
-                self.files.push(Some(file));
-            }
-        }
-    }
-    fn delete(&mut self, key: &[u8]) {
-        if let Some(i) = self.index.remove(key) {
-            self.files[i] = None;
-        }
-    }
-    fn values(self) -> impl Iterator<Item = Vec<u8>> {
-        self.files.into_iter().flatten()
-    }
-}
+/// `collections.OrderedMap`
+type OrderedFiles = bun_collections::ArrayHashMap<Vec<u8>, Vec<u8>>;
 
 /// `getMatchedIncludeSpec`: the first of `specs` (source text, substituted text) that the file at
 /// `path` matches, as its source text.
@@ -748,7 +730,7 @@ fn file_names_from_specs(
     let mut wildcard_json_files = OrderedFiles::default();
     for name in literal {
         let file = join(base, name);
-        literal_files.set(key(&file), file);
+        literal_files.insert(key(&file), file);
     }
     if !include.is_empty() {
         let mut extensions: Vec<&[u8]> = supported.iter().flat_map(|g| g.iter().copied()).collect();
@@ -769,8 +751,9 @@ fn file_names_from_specs(
                 });
                 if patterns.iter().any(|p| p.matches(&file, b"")) {
                     let key = key(&file);
-                    if !literal_files.has(&key) && !wildcard_json_files.has(&key) {
-                        wildcard_json_files.set(key, file);
+                    if !literal_files.contains_key(&key) && !wildcard_json_files.contains_key(&key)
+                    {
+                        wildcard_json_files.insert(key, file);
                     }
                 }
                 continue;
@@ -783,7 +766,7 @@ fn file_names_from_specs(
                     break;
                 }
                 let other = key(&change_extension(&file, extension));
-                if literal_files.has(&other) || wildcard_files.has(&other) {
+                if literal_files.contains_key(&other) || wildcard_files.contains_key(&other) {
                     // A declaration file has always been loaded alongside its JavaScript.
                     if extension == b".d.ts" && (file.ends_with(b".js") || file.ends_with(b".jsx"))
                     {
@@ -801,18 +784,17 @@ fn file_names_from_specs(
                 if file.ends_with(extension) {
                     break;
                 }
-                wildcard_files.delete(&key(&change_extension(&file, extension)));
+                wildcard_files.ordered_remove(&key(&change_extension(&file, extension)));
             }
             let key = key(&file);
-            if !literal_files.has(&key) && !wildcard_files.has(&key) {
-                wildcard_files.set(key, file);
+            if !literal_files.contains_key(&key) && !wildcard_files.contains_key(&key) {
+                wildcard_files.insert(key, file);
             }
         }
     }
-    literal_files
-        .values()
-        .chain(wildcard_files.values())
-        .chain(wildcard_json_files.values())
+    [literal_files, wildcard_files, wildcard_json_files]
+        .into_iter()
+        .flat_map(|files| files.into_entries().1)
         .collect()
 }
 

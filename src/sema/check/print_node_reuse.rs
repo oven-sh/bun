@@ -11,7 +11,7 @@ use super::*;
 
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
 
-impl<'p> Printer<'_, 'p> {
+impl<'p> Printer<'_, 'p, '_> {
     /// `b.ctx.enclosingDeclaration != nil`: whether the type of a declaration is derived from its
     /// syntax.
     fn reuses_nodes(&self) -> bool {
@@ -397,7 +397,7 @@ impl<'p> Printer<'_, 'p> {
 // ───────────────────────────── types derived from the syntax (`pseudotypenodebuilder.go`)
 // ─────────────────────────────
 
-impl<'p> Printer<'_, 'p> {
+impl<'p> Printer<'_, 'p, '_> {
     /// `pseudoTypeToNodeWithCheckerFallback`
     fn pseudo_type_to_node_with_checker_fallback(
         &mut self,
@@ -824,7 +824,7 @@ fn emit_postfix_type_operand(operand: Node) -> Vec<u8> {
     }
 }
 
-impl<'p> Printer<'_, 'p> {
+impl<'p> Printer<'_, 'p, '_> {
     /// `tryReuseExistingNodeHelper`, except for the length. `visit`: the visitor, applied to the
     /// node.
     fn try_reuse_existing_node_helper<T>(
@@ -947,9 +947,10 @@ impl<'p> Printer<'_, 'p> {
         for part in hir.texts(name) {
             resolved = resolved
                 .and_then(|container| files.resolve_alias(container))
-                .and_then(|container| files.namespace_member(container, part));
+                .and_then(|container| files.namespace_member(files.canonical(container), part));
         }
         let resolved = resolved.and_then(|symbol| files.resolve_alias(symbol));
+        let resolved = resolved.map(|symbol| files.canonical(symbol));
         let meaning = if is_typeof {
             SymFlags::VALUE
         } else {
@@ -1091,15 +1092,17 @@ impl<'p> Printer<'_, 'p> {
                 let of = self.visit_existing_type_node(file, of, 0)?;
                 Node::new(cat!(b"readonly ", of.emit(POSTFIX)), TYPE_OPERATOR)
             }
-            // nodecopy.go copies a `JSDocNullableType` as a union with `null` and unwraps a `JSDocNonNullableType`.
-            TypeNodeKind::JSDoc {
-                ty, is_nullable, ..
-            } => {
+            // nodecopy.go
+            TypeNodeKind::JSDoc { ty, kind, .. } => {
                 let of = self.visit_existing_type_node(file, ty, pos)?;
-                if !is_nullable {
-                    return Some(of);
+                match kind {
+                    JSDocTypeKind::Nullable => Node::union(vec![of, Node::simple(b"null")]),
+                    JSDocTypeKind::NonNullable => return Some(of),
+                    JSDocTypeKind::Optional => Node::union(vec![of, Node::simple(b"undefined")]),
+                    JSDocTypeKind::Variadic => {
+                        Node::new(cat!(emit_postfix_type_operand(of), b"[]"), POSTFIX)
+                    }
                 }
-                Node::union(vec![of, Node::simple(b"null")])
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut parts = Vec::with_capacity(elems.len());
@@ -1824,7 +1827,7 @@ impl<'p> Printer<'_, 'p> {
         if !self.c.is_symbol_accessible_at(symbol, meaning, false, at) {
             return None;
         }
-        let resolved = files.resolve_alias(symbol).unwrap_or(symbol);
+        let resolved = files.canonical(files.resolve_alias(symbol).unwrap_or(symbol));
         Some(self.symbol_to_type_node(resolved, is_type_of, type_arguments))
     }
 
@@ -1856,7 +1859,8 @@ impl<'p> Printer<'_, 'p> {
         let Some(found) = files.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
             return true;
         };
-        if files.resolve_alias_as(found, SymFlags::TYPE) != Some(target) {
+        let named = files.resolve_alias_as(found, SymFlags::TYPE);
+        if named.map(|named| files.canonical(named)) != Some(target) {
             return true;
         }
         let type_parameters = self.c.all_type_params_of_symbol(target);

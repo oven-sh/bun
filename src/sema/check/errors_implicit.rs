@@ -5,7 +5,7 @@
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent};
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkSignatureDeclaration` (7013 7020), `checkFunctionOrMethodDeclaration` (7010 7011 7012), `getTypeOfAccessors` (7032 7033)
     pub(super) fn check_signature_implicitly_any(&mut self, file: FileId, func: FnId) {
         if !self.p.files.options.no_implicit_any {
@@ -42,7 +42,10 @@ impl Checker<'_> {
             };
             if is_the_one_to_be_told {
                 let end = self.end_of_name_at(file, start);
-                let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
+                let name = match owner {
+                    FnOwner::Member(m) => Arg::Sym(self.symbol_of_member(file, m)),
+                    _ => Arg::Bytes(&hir.text[start as usize..end as usize]),
+                };
                 self.error_at((file, start, end), code, &[name]);
             }
             return;

@@ -695,6 +695,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
+                if p.is_tolerant() && p.lexer.token == T::TPrivateIdentifier {
+                    let name = p.skip_private_identifier_after_dot()?;
+                    if p.preserves_type_syntax() {
+                        p.type_syntax_mut().name_stack.push(name);
+                    }
+                    continue;
+                }
                 p.push_entity_name();
                 let dot_name = E::Str::new(p.lexer.identifier);
                 let dot_name_loc = p.lexer.loc();

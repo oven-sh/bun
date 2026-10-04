@@ -20,10 +20,10 @@ pub(super) enum NewAlias<'a> {
     Given(Sym, &'a [TypeId]),
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `UnionType.origin`
     #[inline]
-    pub(super) fn origin(&self, ty: TypeId) -> &'p UnionOrigin {
+    pub(super) fn origin(&self, ty: TypeId) -> &'p UnionOrigin<'p> {
         match self.types().provenance(ty) {
             Some(provenance) => &provenance.origin,
             None => &NO_ORIGIN,
@@ -31,36 +31,61 @@ impl<'p> Checker<'p> {
     }
 
     /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
-    pub(super) fn with_origin(&self, union: TypeId, origin: UnionOrigin) -> TypeId {
-        self.types().intern_with(
-            self.data(union).clone(),
-            Provenance {
+    pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
+        self.types().intern_key_with(
+            TypeKey::Data(self.data(union)),
+            ProvenanceKey {
+                alias: None,
                 origin,
-                ..Provenance::default()
+                is_enum: false,
             },
         )
     }
 
     /// The alias stored in `ty`.
     #[inline]
-    pub(super) fn stored_alias(&self, ty: TypeId) -> Option<&'p (Sym, Box<[TypeId]>)> {
+    pub(super) fn stored_alias(&self, ty: TypeId) -> Option<&'p (Sym, ArenaBox<'p, [TypeId]>)> {
         self.types().provenance(ty)?.alias.as_ref()
     }
 
     /// `ty` with `alias` and `type_arguments` as `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
-        let origin = match self.types().provenance(ty) {
-            Some(provenance) => provenance.origin.clone(),
-            None => UnionOrigin::None,
-        };
-        self.types().intern_with(
-            self.data(ty).clone(),
-            Provenance {
-                alias: Some((alias, type_arguments.into())),
-                origin,
+        self.types().intern_key_with(
+            TypeKey::Data(self.data(ty)),
+            ProvenanceKey {
+                alias: Some((alias, type_arguments)),
+                origin: self.origin(ty).into(),
                 is_enum: self.files().flags(alias).intersects(SymFlags::ENUM),
             },
         )
+    }
+
+    /// The end of `getUnionTypeWorker`, given an alias. `created` is the union without one. A named
+    /// union that has every member is the result without an alias, and the `origin` with one.
+    pub(super) fn union_type_with_alias(
+        &self,
+        created: TypeId,
+        alias: Sym,
+        type_arguments: &[TypeId],
+    ) -> TypeId {
+        // `addNamedUnions`
+        let is_named = match self.types().provenance(created) {
+            Some(own) => match own.origin {
+                UnionOrigin::None | UnionOrigin::Union(_) => own.alias.is_some() && !own.is_enum,
+                UnionOrigin::Intersection(_) | UnionOrigin::Keyof(_) => true,
+            },
+            None => false,
+        };
+        if !is_named {
+            return self.with_alias(created, alias, type_arguments);
+        }
+        let origin = [created];
+        let provenance = ProvenanceKey {
+            alias: Some((alias, type_arguments)),
+            origin: OriginKey::Union(&origin),
+            is_enum: false,
+        };
+        (self.types()).intern_key_with(TypeKey::Data(self.data(created)), provenance)
     }
 
     /// `t.alias`. A type identified by its type node has the alias whose body is that node, with
@@ -209,7 +234,7 @@ impl<'p> Checker<'p> {
         }
         let scope = self.bound(file).type_scope[node.idx()];
         match self.alias_for_type_node(file, scope, node) {
-            Some((alias, type_arguments)) => self.with_alias(ty, alias, &type_arguments),
+            Some((alias, type_arguments)) => self.union_type_with_alias(ty, alias, &type_arguments),
             None => ty,
         }
     }
@@ -221,6 +246,15 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
+        if !self.has_type_variables(ty)
+            && !self.stored_alias(ty).is_some_and(|own| {
+                own.1
+                    .iter()
+                    .any(|&argument| self.has_type_variables(argument))
+            })
+        {
+            return ty;
+        }
         if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, Some(alias));
         }

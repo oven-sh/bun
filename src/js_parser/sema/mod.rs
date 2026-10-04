@@ -3,9 +3,21 @@
 //!
 //! The parser has two modes for type syntax. By default it skips types. When [`TypeSyntax`] is
 //! present, the same code also builds syntax-only `crate::sema::ts_syntax` nodes for them (see
-//! [`keep`]). The JavaScript AST is identical in both modes.
+//! [`keep`]).
 //! After the parse pass, where ordinary builds start the visit pass, [`lower`] walks the statements
 //! and clones them and the type syntax ([`clone_types`]) into the type checker's HIR.
+//!
+//! The AST of that mode is the input of [`lower`] alone. The visit pass cannot go on from it:
+//! - a `Loc` may be the index of a note instead of a position ([`notes`]),
+//! - no symbol is declared (`P::declare_symbol`), and the scopes of a namespace are discarded,
+//! - an import or an export is an `S::TypeScript` that refers to the saved syntax, without an
+//!   import record (`P::process_import_statement`, `keep_import`, `keep_export`),
+//! - what an ordinary build drops stays in it: ambient and overload declarations, abstract and
+//!   `declare` members, empty statements, and directives as expression statements,
+//! - errors are recovered from as TypeScript does (`P::is_tolerant`), which changes some nodes of
+//!   valid code too.
+//!
+//! So `bun build --check` parses a file twice: once for the bundle and once for the type checker.
 //!
 //! In JavaScript the types are in JSDoc comments. Before the lowering pass, [`jsdoc`] parses the
 //! tags of the comments the lexer recorded, and has the parser parse the types in them. During the
@@ -25,7 +37,7 @@ pub(crate) mod reparse;
 pub(crate) mod ts_syntax;
 
 use crate::sema::ts_syntax as ts;
-use bun_ast::{Expr, Loc};
+use bun_ast::{Expr, Loc, Metadata, TypeScriptKind};
 use bun_sema::hir::{Diagnostic, DiagnosticKind};
 
 /// The kind of a note: information the parser records about a node that `bun_ast` has no field for
@@ -200,10 +212,15 @@ impl Mark {
     }
 }
 
-/// The TypeScript error code for the parser error `text`, after which the parser continued as if
+/// The TypeScript error code for the parser error `msg`, after which the parser continued as if
 /// there were no error.
 /// `0`: the checker detects the error itself. `None`: the AST is unreliable.
-pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
+pub(crate) fn early_error(msg: &bun_ast::Msg, at: &[u8]) -> Option<(u32, i32)> {
+    // `Lexer::ts_error`, `ts_grammar_error`, `P::ts_checker_error`
+    if let Metadata::TypeScript { code, .. } = msg.metadata {
+        return Some((code, 0));
+    }
+    let text = &msg.data.text[..];
     // TypeScript reports at the keyword, the parser after it.
     if text == b"\"await\" can only be used inside an \"async\" function" {
         return Some((1308, -6));
@@ -229,22 +246,23 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
 /// Converts a logged error and its notes to the diagnostic TypeScript reports. `Some(None)`: no diagnostic, because the checker
 /// detects the error itself. `None`: an unrecognized error, so the AST is unreliable. `has_jsx`: `LanguageVariantJSX`.
 pub(crate) fn diagnostic(
-    data: &bun_ast::Data,
-    notes: &[bun_ast::Data],
+    msg: &bun_ast::Msg,
     source: &[u8],
     has_jsx: bool,
 ) -> Option<Option<Diagnostic>> {
-    let location = data.location.as_ref()?;
-    let (text, mut len) = (&data.text[..], location.length);
+    let location = msg.data.location.as_ref()?;
+    let (text, mut len) = (&msg.data.text[..], location.length);
     let at = source.get(location.offset..).unwrap_or_default();
-    let (code, delta) = early_error(text, at)?;
-    let kind = match text {
+    let (code, delta) = early_error(msg, at)?;
+    let kind = match msg.metadata {
         _ if code == 0 => return Some(None),
-        // 1368: `checkMethodDeclaration` reports it with a plain `c.error`.
-        [b'T', b'C', ..] => DiagnosticKind::Checker,
+        Metadata::TypeScript { kind, .. } => match kind {
+            TypeScriptKind::Parse => DiagnosticKind::Parse,
+            TypeScriptKind::Grammar => DiagnosticKind::Grammar,
+            TypeScriptKind::Checker => DiagnosticKind::Checker,
+        },
+        // `checkMethodDeclaration` reports it with a plain `c.error`.
         _ if code == 1368 => DiagnosticKind::Checker,
-        [b'T', b'G', ..] => DiagnosticKind::Grammar,
-        [b'T', b'S', ..] => DiagnosticKind::Parse,
         // `Lexer::expected` and `Lexer::unexpected`
         _ if matches!(code, 1003 | 1005 | 1109) => DiagnosticKind::Parse,
         // `createIdentifierWithDiagnostic`, at a reserved word.
@@ -258,8 +276,29 @@ pub(crate) fn diagnostic(
         [b'>', b'>' | b'=', ..] if !matches!(code, 1005 | 1185) => len = len.min(1),
         _ => {}
     }
-    let mut related: Vec<Diagnostic> = (notes.iter())
-        .filter_map(|note| diagnostic(note, &[], source, has_jsx)?)
+    // `Lexer::add_related_info`. TypeScript attaches one message to each of these errors.
+    let related_code = match code {
+        1005 => 1007,
+        8038 => 1486,
+        _ => 0,
+    };
+    let mut related: Vec<Diagnostic> = (msg.notes.iter())
+        .filter(|_| related_code != 0)
+        .filter_map(|note| {
+            let at = note.location.as_ref()?;
+            let end = match at.length {
+                0 => Diagnostic::NO_LENGTH,
+                len => (at.offset + len) as u32,
+            };
+            Some(Diagnostic {
+                kind: DiagnosticKind::Parse,
+                start: at.offset as u32,
+                end,
+                code: related_code,
+                args: arguments(&note.text),
+                related: Vec::new(),
+            })
+        })
         .collect();
     // `parseTypedefTag` adds this related info without a location.
     if code == 8033 {
@@ -274,14 +313,27 @@ pub(crate) fn diagnostic(
             _ => 0,
         },
         code,
-        args: error_arguments(data, code, source).unwrap_or_default(),
+        args: error_arguments(msg, code, source).unwrap_or_default(),
         related,
     }))
 }
 
-/// The message arguments of the logged error `reported`, which has `code`.
-fn error_arguments(reported: &bun_ast::Data, code: u32, source: &[u8]) -> Option<Box<[Box<[u8]>]>> {
-    let text = &reported.text[..];
+/// `Lexer::ts_error_about`: a NUL separates two arguments, and a NUL alone is one empty argument.
+fn arguments(text: &[u8]) -> Box<[Box<[u8]>]> {
+    if text.is_empty() {
+        return Box::default();
+    }
+    if text == b"\0" {
+        return Box::new([Box::default()]);
+    }
+    bun_core::strings::split(text, b"\0")
+        .map(Box::from)
+        .collect()
+}
+
+/// The message arguments of the logged error `msg`, which has `code`.
+fn error_arguments(msg: &bun_ast::Msg, code: u32, source: &[u8]) -> Option<Box<[Box<[u8]>]>> {
+    let (reported, text) = (&msg.data, &msg.data.text[..]);
     // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `checkGrammarObjectLiteralExpression`: these name the token they are
     // reported at.
     if matches!(code, 1042 | 1359 | 1389 | 1390) {
@@ -289,43 +341,21 @@ fn error_arguments(reported: &bun_ast::Data, code: u32, source: &[u8]) -> Option
         let token = source.get(at.offset..at.offset + at.length)?;
         return Some(Box::new([token.into()]));
     }
-    // `Lexer::ts_error_about`
-    let reported = (text.starts_with(b"TS") || text.starts_with(b"TG"))
-        .then(|| bun_core::strings::index_of_char_usize(text, b' '))
-        .flatten();
-    let token = match reported {
-        Some(space) => &text[space + 1..],
-        // `Lexer::expected_string`: `Expected ";" but found "x"`
-        None => {
-            let rest = text.strip_prefix(b"Expected ")?;
-            let end = bun_core::strings::index_of(rest, b" but found ")?;
-            let token = &rest[..end];
-            token
-                .strip_prefix(b"\"")
-                .and_then(|token| token.strip_suffix(b"\""))
-                .unwrap_or(token)
-        }
-    };
-    // `Lexer::ts_error_about`: a NUL separates two arguments.
-    Some(
-        bun_core::strings::split(token, b"\0")
-            .map(Box::from)
-            .collect(),
-    )
+    if let Metadata::TypeScript { .. } = msg.metadata {
+        return Some(arguments(text));
+    }
+    // `Lexer::expected_string`: `Expected ";" but found "x"`
+    let rest = text.strip_prefix(b"Expected ")?;
+    let end = bun_core::strings::index_of(rest, b" but found ")?;
+    let token = &rest[..end];
+    let token = token
+        .strip_prefix(b"\"")
+        .and_then(|token| token.strip_suffix(b"\""))
+        .unwrap_or(token);
+    Some(Box::new([token.into()]))
 }
 
 fn early_error_in_place(text: &[u8]) -> Option<u32> {
-    // `Lexer::ts_error` (TS), `ts_grammar_error` (TG), `ts_checker_error` (TC): the error was
-    // logged as a TypeScript code in the first place.
-    if let Some(code) = text
-        .strip_prefix(b"TS")
-        .or_else(|| text.strip_prefix(b"TG"))
-        .or_else(|| text.strip_prefix(b"TC"))
-    {
-        // `Lexer::ts_error_about` appends the message arguments.
-        let digits = code.iter().take_while(|b| b.is_ascii_digit()).count();
-        return std::str::from_utf8(&code[..digits]).ok()?.parse().ok();
-    }
     let (starts, ends) = (|s: &[u8]| text.starts_with(s), |s: &[u8]| text.ends_with(s));
     Some(
         if ends(b" has already been declared")
@@ -432,25 +462,20 @@ impl ThreadCaches {
     }
 }
 
-/// The type checker's input for the TypeScript file `text` at `path`.
-pub fn summarize(
+/// The type checker's input for the TypeScript file `text` at `path`. Its lists are in `arena`,
+/// which is the arena that the calling thread has in the session of `atoms`.
+pub fn summarize<'s>(
+    arena: &'s bun_alloc::Arena,
     path: &[u8],
     text: &[u8],
-    atoms: &bun_sema::atom::Interner,
+    atoms: &bun_sema::atom::Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
-) -> (bun_sema::hir::File, core::time::Duration) {
+) -> (bun_sema::hir::File<'s>, core::time::Duration) {
     // How long `parse_stmts_up_to` took. The rest is lowering.
     let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
-    // `GetDeclarationFileExtension`
-    let base = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |i| i + 1)..];
-    let is_declaration_file = base.ends_with(b".d.ts")
-        || base.ends_with(b".d.mts")
-        || base.ends_with(b".d.cts")
-        || base.ends_with(b".ts") && bun_core::strings::contains(base, b".d.");
-    let is_js = [&b".js"[..], b".jsx", b".mjs", b".cjs"]
-        .iter()
-        .any(|e| path.ends_with(e));
+    let is_declaration_file = bun_sema::resolve::is_declaration_file_name(path);
+    let is_js = bun_sema::resolve::is_javascript(path);
     let is_json = path.ends_with(b".json");
     // `getLanguageVariant`: JSX is enabled in all JavaScript files.
     let loader = if is_js || path.ends_with(b".tsx") {
@@ -460,49 +485,50 @@ pub fn summarize(
     };
     // Parses the file once. Also returns whether it must be parsed again with `await` as an
     // identifier at the top level.
-    let parse = |await_is_a_name: bool, arena: &bun_alloc::Arena| -> (bun_sema::hir::File, bool) {
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-        let source = bun_ast::Source::init_path_string(path, text);
-        let mut options = crate::ParserOptions::init(Default::default(), loader);
-        options.features.no_macros = true;
-        options.features.top_level_await = true;
-        options.features.standard_decorators = !experimental_decorators;
-        options.suppress_warnings_about_weird_code = true;
-        options.tolerant = true;
-        let define = crate::Define::default();
-        let mut log = bun_ast::Log::init();
-        let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)
-        {
-            Ok(parser) => parser.parse_for_sema(
-                atoms,
-                is_declaration_file,
-                is_json,
-                await_is_a_name,
-                &parsing,
-            ),
-            Err(_) => (
-                bun_sema::hir::File {
-                    has_errors: true,
-                    ..Default::default()
-                },
-                false,
-            ),
+    let parse =
+        |await_is_a_name: bool, arena: &bun_alloc::Arena| -> (bun_sema::hir::FileBuilder, bool) {
+            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+            let _ast_scope = ast_memory_allocator.enter();
+            let source = bun_ast::Source::init_path_string(path, text);
+            let mut options = crate::ParserOptions::init(Default::default(), loader);
+            options.features.no_macros = true;
+            options.features.top_level_await = true;
+            options.features.standard_decorators = !experimental_decorators;
+            options.suppress_warnings_about_weird_code = true;
+            options.tolerant = true;
+            let define = crate::Define::default();
+            let mut log = bun_ast::Log::init();
+            let (file, awaited) =
+                match crate::Parser::init(options, &mut log, &source, &define, arena) {
+                    Ok(parser) => parser.parse_for_sema(
+                        atoms,
+                        is_declaration_file,
+                        is_json,
+                        await_is_a_name,
+                        &parsing,
+                    ),
+                    Err(_) => (
+                        bun_sema::hir::FileBuilder {
+                            has_errors: true,
+                            ..Default::default()
+                        },
+                        false,
+                    ),
+                };
+            // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await] context at its top level.
+            let parse_again = awaited
+                && !await_is_a_name
+                && !every_file_is_a_module
+                && !file.has_module_syntax
+                && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                    .iter()
+                    .any(|e| path.ends_with(e))
+                && !file
+                    .exprs
+                    .iter()
+                    .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
+            (file, parse_again)
         };
-        // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await] context at its top level.
-        let parse_again = awaited
-            && !await_is_a_name
-            && !every_file_is_a_module
-            && !file.has_module_syntax
-            && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
-                .iter()
-                .any(|e| path.ends_with(e))
-            && !file
-                .exprs
-                .iter()
-                .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
-        (file, parse_again)
-    };
     // What a file leaves in the arena is garbage. The arena is reset after this much source, not
     // after every file.
     const SOURCE_AT_MOST: usize = 256 << 10;
@@ -525,14 +551,11 @@ pub fn summarize(
         file.kind = bun_sema::hir::FileKind::Json;
         file.has_module_syntax = true;
     }
-    file.shrink_to_fit();
+    // A very large file would leave its capacity to every later file.
+    let mut file = builder::into_arena(file, text.len() < 4 << 20, arena, atoms.session());
     file.finish_nodes();
     if is_json {
         bun_sema::json::validate_json(&mut file, text);
-    }
-    // A very large file would leave its capacity to every later file.
-    if text.len() < 4 << 20 {
-        builder::recycle(&mut file);
     }
     (file, parsing.get())
 }
@@ -677,8 +700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[inline(never)]
     pub(crate) fn ts_checker_error(&mut self, r: bun_ast::Range, code: u32) {
         if self.is_tolerant() && !self.lexer.is_log_disabled {
-            self.log()
-                .add_range_error_fmt(Some(self.source), r, format_args!("TC{code}"));
+            (self.lexer).log_ts_error(TypeScriptKind::Checker, r, code, None);
         }
     }
 

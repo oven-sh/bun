@@ -72,20 +72,6 @@ fn await_after_for(text: &[u8], at: u32) -> Option<u32> {
     is_word_at(text, next, b"await").then_some(next as u32)
 }
 
-/// Position of the `;` that is the entire `then` statement of the `if` at `at`. An empty statement
-/// may have no recorded position.
-fn empty_then_statement(text: &[u8], at: u32) -> Option<u32> {
-    if !is_word_at(text, at as usize, b"if") {
-        return None;
-    }
-    let open = skip_trivia(text, at as usize + 2);
-    if text.get(open) != Some(&b'(') {
-        return None;
-    }
-    let next = skip_trivia(text, end_of_brackets(text, open)?);
-    (text.get(next) == Some(&b';')).then_some(next as u32)
-}
-
 /// How the parser treats an `await` that is not known to be a keyword, based on the token that
 /// follows it.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -159,7 +145,7 @@ enum AwaitPlace {
 // `nodeLinks.hasReportedStatementInAmbientContext`, next to those of errors_collisions.rs
 const HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT: u8 = 4;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     // ───────────────────────────── statements ─────────────────────────────
 
     /// `checkGrammarStatementInAmbientContext`: 1036, once in each block.
@@ -305,12 +291,18 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let (text, written) = (&hir.text[..], hir[then].start);
         let start = if written > hir[s].start && text.get(written as usize) == Some(&b';') {
-            Some(written)
+            written as usize
+        } else if let StmtKind::If { test, .. } = hir[s].kind
+            && let close = skip_trivia(text, self.end_of_expr(file, test) as usize)
+            && text.get(close) == Some(&b')')
+        {
+            // An empty statement may have no recorded position.
+            skip_trivia(text, close + 1)
         } else {
-            empty_then_statement(text, hir[s].start)
+            return;
         };
-        if let Some(start) = start {
-            self.error_at((file, start, 0), 1313, &[]);
+        if text.get(start) == Some(&b';') {
+            self.error_at((file, start as u32, 0), 1313, &[]);
         }
     }
 
@@ -657,12 +649,13 @@ impl Checker<'_> {
                     // `parseSourceFileWorker`: a declaration file is not reparsed.
                     let is_parsed_again = self.is_effective_external_module(file)
                         && hir.kind != FileKind::Declaration;
-                    self.parsed_again_for_await = Some(if is_parsed_again {
+                    let statements = if is_parsed_again {
                         let index = self.exprs_by_kind(file);
                         self.statements_parsed_again_for_await(file, &index)
                     } else {
                         Vec::new()
-                    });
+                    };
+                    self.parsed_again_for_await = Some(statements);
                 }
                 let parsed_again = self.parsed_again_for_await.as_deref().unwrap_or_default();
                 matches!(hir.data(statement), NodeData::Stmt(s) if parsed_again.binary_search(&s).is_ok())

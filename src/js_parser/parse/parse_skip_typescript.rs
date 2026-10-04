@@ -978,12 +978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             // A private name is consumed, and the name is reported as missing after it.
             T::TPrivateIdentifier => {
-                let after = bun_ast::Range {
-                    loc: bun_ast::usize2loc(self.lexer.end),
-                    len: 0,
-                };
-                self.lexer.next()?;
-                self.lexer.ts_error(after, 1003);
+                self.skip_private_identifier_after_dot()?;
             }
             // The token is not consumed.
             _ => self.lexer.expect(T::TIdentifier)?,
@@ -1003,6 +998,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.attach_type_args(reference, has_arguments);
         }
         Ok(())
+    }
+
+    /// `parseRightSideOfDot` without `allowPrivateIdentifiers`, at a private identifier: it is
+    /// consumed, and the name is reported as missing (1003) after it. Returns the missing name.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn skip_private_identifier_after_dot(&mut self) -> Result<Name, Error> {
+        let loc = bun_ast::usize2loc(self.lexer.end);
+        self.lexer.next()?;
+        self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1003);
+        Ok(Name {
+            text: StoreStr::EMPTY,
+            loc,
+        })
     }
 
     /// `parseRightSideOfDot`, at the first token of the line after a dot: two identifiers or
@@ -2017,16 +2026,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         if !self.lexer.is_identifier_or_keyword() {
                             if self.is_tolerant() {
                                 // `parseEntityName`: the name is missing (1003), and the token is
-                                // not consumed.
+                                // not consumed. `parseTypeQuery` goes on to the type arguments.
                                 self.lexer.expect(T::TIdentifier)?;
+                                let mut names = 0;
                                 if KEEP {
                                     let name = Name {
                                         text: StoreStr::EMPTY,
                                         loc: self.lexer.full_start(),
                                     };
-                                    let names = self.type_syntax_mut().name_stack.len();
+                                    names = self.type_syntax_mut().name_stack.len();
                                     self.type_syntax_mut().name_stack.push(name);
-                                    self.emit_typeof_type(names, false, pos);
+                                }
+                                let has_arguments = !self.lexer.has_newline_before
+                                    && self.skip_type_script_type_arguments::<false, false>()?;
+                                if KEEP {
+                                    self.emit_typeof_type(names, has_arguments, pos);
                                 }
                                 break;
                             }
@@ -2059,6 +2073,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     self.type_syntax_mut().name_stack.push(name);
                                 }
                                 break;
+                            }
+                            if self.is_tolerant() && self.lexer.token == T::TPrivateIdentifier {
+                                let name = self.skip_private_identifier_after_dot()?;
+                                if KEEP {
+                                    self.type_syntax_mut().name_stack.push(name);
+                                }
+                                continue;
                             }
                             if !self.lexer.is_identifier_or_keyword()
                                 && self.lexer.token != T::TPrivateIdentifier
@@ -3897,13 +3918,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.lexer.next()?;
         }
         // `checkInterfaceDeclaration`: `IsOptionalChain(heritageElement.Expression)`
-        if is_optional_chain && !self.lexer.is_log_disabled {
+        if is_optional_chain {
             let expression = bun_ast::Range {
                 loc: bun_ast::Loc { start },
                 len: name_end.start - start,
             };
-            self.log()
-                .add_range_error(Some(self.source), expression, b"TC2499");
+            self.ts_checker_error(expression, 2499);
         }
         let reference = if keeps { self.take_reference() } else { None };
         let has_arguments = self.skip_type_script_type_arguments::<false, false>()?;

@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 /// the name, whose own symbol is a different one.
 type Declaration = (FileId, Decl, bool);
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_duplicates(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
@@ -485,21 +485,25 @@ impl Checker<'_> {
     /// ModuleItemList contains any duplicate entries. (TS Exceptions: namespaces, function
     /// overloads, enums, and interfaces)". tsgo reports at every declaration, in any file. Here a
     /// file checks each module it has a declaration of, and keeps only the diagnostics located in
-    /// itself.
+    /// itself. The diagnostics of a file are collected right after its `checkSourceFile`, so it has
+    /// those that a file no later than itself has caused.
     fn check_external_module_exports(&mut self, file: FileId) {
         let (files, bound) = (self.files(), self.bound(file));
         let own = files.module(file).is_module();
         let own = own.then(|| files.file_symbol(file));
         let ambient = bound.ambient_modules.iter();
         let ambient = ambient.map(|module| files.sym(file, module.1));
-        let mut modules: SmallVec<[Sym; 4]> = SmallVec::new();
+        let mut modules: SmallVec<[(Sym, bool); 4]> = SmallVec::new();
         for module in own.into_iter().chain(ambient) {
-            if !modules.contains(&module) && self.are_module_exports_checked(module) {
-                modules.push(module);
+            if !modules.iter().any(|it| it.0 == module) {
+                modules.push((module, self.are_module_exports_checked(module, file)));
             }
         }
-        let exports = modules.iter();
-        for &(id, symbol) in exports.flat_map(|&module| files.exports_of_module(module)) {
+        let exports = modules.iter().flat_map(|&(module, is_checked)| {
+            let exports = files.exports_of_module(module).iter();
+            exports.map(move |export| (export, is_checked))
+        });
+        for (&(id, symbol), is_checked) in exports {
             let (flags, declarations) = (files.flags(symbol), files.decls_of(symbol));
             if declarations.len() < 2 || flags.intersects(SymFlags::NAMESPACE | SymFlags::ENUM) {
                 continue;
@@ -536,6 +540,9 @@ impl Checker<'_> {
             if declarations.iter().all(|it| is_exports_property(self, it)) {
                 continue;
             }
+            if !is_checked && !self.is_export_of_file_checked_before(id, symbol, file) {
+                continue;
+            }
             for it @ &(of, decl) in declarations.iter() {
                 if of == file
                     && is_not_overload(self, &it)
@@ -553,29 +560,61 @@ impl Checker<'_> {
     }
 
     /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for a
-    /// file that is a module, or by `checkExportAssignment`, for the module that contains it.
-    fn are_module_exports_checked(&self, module: Sym) -> bool {
+    /// file that is a module, or by `checkExportAssignment`, for the module that contains it, no
+    /// later than `file` is checked.
+    fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
         let files = self.files();
         let assigned = [known::export_equals, known::default].into_iter();
         let assigned = assigned.filter_map(|name| files.export(module, name));
         std::iter::once(module).chain(assigned).any(|symbol| {
             files.decls_of(symbol).iter().any(|&(of, decl)| {
-                matches!(decl, Decl::File | Decl::ExportExpr(_)) && self.reports_semantic_errors(of)
+                matches!(decl, Decl::File | Decl::ExportExpr(_))
+                    && self.is_checked_no_later_than(of, file)
             })
         })
+    }
+
+    /// Whether `symbol` is the export `id` of a file that is checked before `file`.
+    /// `getExportsOfModule` includes what `export *` adds, so `checkExternalModuleExports` for that
+    /// file reports at the declarations in a module that it re-exports.
+    fn is_export_of_file_checked_before(&self, id: Atom, symbol: Sym, file: FileId) -> bool {
+        let files = self.files();
+        let before = files.rank_of_file(file) as usize;
+        files.order.iter().take(before).any(|&other| {
+            // A file with an `export *` is no leaf, and what a leaf has is freed after its task.
+            !files.module(other).is_leaf
+                && !self.bound(other).export_stars.is_empty()
+                && files.module(other).is_module()
+                && self.is_checked_no_later_than(other, file)
+                && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
+        })
+    }
+
+    /// `getBindAndCheckDiagnosticsWithChecker`: whether the checker of `file` has visited `other`
+    /// when it collects the diagnostics of `file`, so that `file` has what the check of `other`
+    /// reports in it.
+    pub(super) fn is_checked_no_later_than(&self, other: FileId, file: FileId) -> bool {
+        let (files, checker_count) = (self.files(), self.task.checker_count);
+        let (rank, last) = (files.rank_of_file(other), files.rank_of_file(file));
+        rank <= last
+            && rank.checked_rem(checker_count) == last.checked_rem(checker_count)
+            && self.reports_semantic_errors(other)
     }
 
     /// For the members of each class, interface and type literal.
     fn check_duplicate_members(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_declaration_file = hir.kind == FileKind::Declaration;
+        let unchecked = self.unchecked_jsdoc_types(file);
         let classes = hir.classes.iter().map(|class| {
             let is_ambient = class.flags.contains(Flags::AMBIENT) || is_declaration_file;
             (class.members, is_ambient, true)
         });
         let interfaces = (hir.interfaces.iter()).map(|it| (it.members, true, false));
         let literals = hir.types.iter().filter_map(|node| match node.kind {
-            TypeNodeKind::Object(members) => Some((members, true, false)),
+            TypeNodeKind::Object(members) if !unchecked.contain(node.pos) => {
+                Some((members, true, false))
+            }
             _ => None,
         });
         for (members, is_ambient, is_class) in classes.chain(interfaces).chain(literals) {

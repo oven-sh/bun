@@ -11,11 +11,15 @@ path = "lib.rs"
 baselines = []
 
 [dependencies]
+bun_alloc.workspace = true
+bun_collections.workspace = true
 bun_core.workspace = true
 bun_paths.workspace = true
 bun_semver.workspace = true
 bun_threading.workspace = true
 bstr.workspace = true
+hashbrown.workspace = true
+rustc-hash = "2"
 smallvec.workspace = true
 bitflags.workspace = true
 

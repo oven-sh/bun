@@ -15,7 +15,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, ScopeKind};
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_x_enums_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.has_errors || hir.kind == FileKind::Json {
@@ -317,7 +317,7 @@ pub(super) fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {
 
 /// `isBlockScopedNameDeclaredBeforeUse`
 pub(super) fn is_declared_before_use(
-    c: &mut Checker<'_>,
+    c: &mut Checker<'_, '_>,
     declaration: Location,
     usage: Location,
 ) -> bool {

@@ -22,7 +22,7 @@
 //! * `reportFlowControlError`: 2563
 //!
 //! All of TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and
-//! parser/references.go. Only `check_import_attributes` and `check_flow_too_deep` request types.
+//! parser/references.go. Only `check_import_attributes` requests types.
 //!
 //! The HIR of a file stores neither modifiers nor keywords: they are read from the source text,
 //! starting at a position the HIR does have. A declaration file has no text, so checks that depend
@@ -32,6 +32,7 @@ use super::errors_enums_names::resolves_to_umd_global;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
 use crate::resolve::{ModuleKind, is_relative};
+use bun_collections::ArrayHashMap;
 
 /// State that is constant for a whole file.
 struct Cx<'a> {
@@ -52,7 +53,7 @@ struct Cx<'a> {
     /// `getVerbatimModuleSyntaxErrorMessage`
     esm_syntax_code: u32,
     /// `node.Symbol` for the alias declarations.
-    aliases: FxHashMap<Decl, Sym>,
+    aliases: ArrayHashMap<Decl, Sym>,
 }
 
 /// The node whose body a statement list is.
@@ -78,7 +79,7 @@ impl Cx<'_> {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_x_modules(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind == FileKind::Json {
@@ -92,7 +93,7 @@ impl Checker<'_> {
         {
             &hir.specifier_uses
         } else {
-            let mut uses = hir.specifier_uses.clone();
+            let mut uses = hir.specifier_uses.to_vec();
             uses.retain(|u| !u.kind.is_call());
             uses.sort_unstable_by_key(|u| u.pos);
             sorted = uses;
@@ -127,7 +128,7 @@ impl Checker<'_> {
         self.modules_static_blocks(&cx);
         self.modules_import_calls_and_types(&cx);
         // Fast path: a cycle needs an alias that other files can import, or one that refers to another name in this file.
-        let can_be_circular = cx.aliases.keys().any(|d| {
+        let can_be_circular = cx.aliases.keys().iter().any(|d| {
             matches!(
                 d,
                 Decl::ImportEquals(_)
@@ -138,7 +139,7 @@ impl Checker<'_> {
                     | Decl::ExportsProperty(_)
             )
         });
-        for (&decl, &sym) in &cx.aliases {
+        for (&decl, &sym) in cx.aliases.iter() {
             // `checkVariableLikeDeclaration`
             if matches!(decl, Decl::Require(_)) {
                 self.check_alias_symbol(file, &cx.aliases, decl, false);
@@ -162,24 +163,14 @@ impl Checker<'_> {
         if bound.flow_places <= 2000 {
             return;
         }
-        let mut reported = Parent::None;
+        let mut reported = Node::NONE;
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
-            if !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::This)
+            // `check_source_file` has checked every reference that tsgo checks.
+            if self.p.flows_too_deep.get(&mut self.task, &(file, e)).is_none()
                 || bound.is_unchecked(i)
                 // `checkWithStatement` does not check the body.
                 || hir.is_in_with(hir[e].pos)
-            {
-                continue;
-            }
-            // Ensures that the flow of `e` has been walked. The type is cached if an earlier pass
-            // requested it.
-            self.type_of_expr(file, e);
-            if self
-                .p
-                .flows_too_deep
-                .get(&mut self.task, &(file, e))
-                .is_none()
             {
                 continue;
             }
@@ -189,14 +180,18 @@ impl Checker<'_> {
                 continue;
             }
             // `GetRangeOfTokenAtPosition(sourceFile, block.StatementList().Pos())`
-            let start = match block {
-                Parent::File => Some(first_token_start(&hir.text)),
-                Parent::Module(m) => statement_list_start(hir, hir[m].body),
-                Parent::FnBody(f) => match hir[f].body {
-                    FnBody::Block(statements) => statement_list_start(hir, statements),
-                    _ => None,
-                },
-                _ => None,
+            let start = if block == Node::FILE {
+                Some(first_token_start(&hir.text))
+            } else if let NodeData::Stmt(s) = hir.data(block.row())
+                && let StmtKind::Module(m) = hir[s].kind
+            {
+                statement_list_start(hir, hir[m].body)
+            } else if let Some(FnBody::Block(statements)) =
+                (hir.fns.get(hir.function_of(block.row()).idx())).map(|f| f.body)
+            {
+                statement_list_start(hir, statements)
+            } else {
+                None
             };
             if let Some(start) = start {
                 reported = block;
@@ -753,6 +748,46 @@ impl Checker<'_> {
             )
     }
 
+    /// Whether a file that is checked no later than this one has `import { name } from` or
+    /// `export { name } from` the ambient module `around`, with `is_requested(name)`.
+    /// `checkAliasSymbol` resolves such an alias to its end, through the aliases that the module
+    /// exports, and reports what that finds, in whichever file.
+    fn modules_is_imported_by_name(
+        &self,
+        cx: &Cx<'_>,
+        around: Around,
+        is_requested: &dyn Fn(Atom) -> bool,
+    ) -> bool {
+        if !around.is_ambient_module || around.is_augmentation {
+            return false;
+        }
+        let files = self.files();
+        let module = self.bound(cx.file).module_symbol[around.module.idx()];
+        let module = Some(files.sym(cx.file, module));
+        let until = files.rank_of_file(cx.file) as usize;
+        files
+            .order
+            .iter()
+            .take(until.saturating_add(1))
+            .any(|&other| {
+                // The HIR of a leaf is freed after its task. A file that imports from such a module is
+                // no leaf.
+                let is_freed = other != cx.file && files.module(other).is_leaf;
+                if is_freed || !self.is_checked_no_later_than(other, cx.file) {
+                    return false;
+                }
+                let hir = self.hir(other);
+                let is_from_module = |spec: Atom| files.module_of_specifier(other, spec) == module;
+                hir.imports.iter().any(|import| {
+                    import.named.iter().any(|s| is_requested(hir[s].imported))
+                        && is_from_module(import.spec)
+                }) || hir.exports.iter().any(|export| {
+                    export.items.iter().any(|s| is_requested(hir[s].local))
+                        && is_from_module(export.spec)
+                })
+            })
+    }
+
     /// `checkImportDeclaration`
     fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, around: Around) {
         let (hir, files) = (self.hir(cx.file), self.files());
@@ -1041,7 +1076,10 @@ impl Checker<'_> {
                 || export
                     .items
                     .iter()
-                    .any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported));
+                    .any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported))
+                || self.modules_is_imported_by_name(cx, around, &|name| {
+                    export.items.iter().any(|s| hir[s].exported == name)
+                });
             if may_be_used {
                 self.modules_module_is_missing(cx, s, export.spec, around);
             }
@@ -1154,7 +1192,10 @@ impl Checker<'_> {
             }
         } else {
             let may_be_used = around.module.is_none()
-                || alias.is_some() && self.modules_follows_a_dot_somewhere(cx, alias);
+                || alias.is_some() && self.modules_follows_a_dot_somewhere(cx, alias)
+                || self.modules_is_imported_by_name(cx, around, &|name| {
+                    alias.is_none() || name == alias
+                });
             if may_be_used {
                 self.modules_module_is_missing(cx, s, spec, around);
             }
@@ -1415,7 +1456,7 @@ impl Checker<'_> {
         let ExprKind::Object(attributes) = hir[object].kind else {
             return None;
         };
-        let mut props: Vec<Prop> = Vec::with_capacity(attributes.len());
+        let mut props: ArenaVec<Prop> = ArenaVec::with_capacity_in(attributes.len(), self.arena);
         for attribute in attributes.iter() {
             let (name, value) = (hir[attribute].key.name()?, hir[attribute].value);
             let ty = self.type_of_expr(file, value);
@@ -1431,7 +1472,7 @@ impl Checker<'_> {
         }
         Some(self.synth(Shape {
             props,
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         }))
     }
 

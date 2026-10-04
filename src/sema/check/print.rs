@@ -61,12 +61,7 @@ const TYPE_OPERATOR: u8 = 5;
 const POSTFIX: u8 = 6;
 const NON_ARRAY: u8 = 7;
 
-thread_local! {
-    /// `Checker.varianceTypeParameter`: its name.
-    static VARIANCE_TYPE_PARAMETER: std::cell::Cell<Atom> = const { std::cell::Cell::new(Atom::NONE) };
-}
-
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `DeclarationNameToString(GetNonAssignedNameOfDeclaration(e))` for an assignment or a call
     /// that declares a property.
     pub(super) fn name_of_assignment_declaration(
@@ -248,7 +243,7 @@ impl Checker<'_> {
         let files = self.files();
         let decls = files.decls(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return remove_file_extension(&files.module(file).path).to_owned();
+            return remove_file_extension(files.module(file).path).to_owned();
         }
         for &(file, decl) in &decls {
             if let Decl::Module(m) = decl
@@ -364,11 +359,11 @@ impl Checker<'_> {
         let name = parameter
             .and_then(|parameter| self.type_param_name(parameter))
             .unwrap_or(Atom::NONE);
-        VARIANCE_TYPE_PARAMETER.with(|current| current.set(name));
+        self.variance_type_parameter = name;
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `NodeBuilder.SerializeTypeForDeclaration` for a declaration of `file`. `ty`:
     /// `getTypeOfSymbol(symbol)`. `declaration`: none if nothing is reused from its syntax.
     pub(super) fn serialize_type_for_declaration(
@@ -535,7 +530,7 @@ pub(super) enum Written {
 
 /// `typeToStringEx`
 fn type_to_string_with(
-    checker: &mut Checker<'_>,
+    checker: &mut Checker<'_, '_>,
     ty: TypeId,
     enclosing_declaration: Option<Enclosing>,
     flags: u32,
@@ -584,11 +579,11 @@ pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
 /// Printing resolves the types it encounters. A cycle through here is not an error, and the state
 /// of the check in progress is left unchanged.
 fn with_printer<'p, T>(
-    checker: &mut Checker<'p>,
+    checker: &mut Checker<'p, '_>,
     enclosing_declaration: Option<Enclosing>,
     tracker: Option<&mut dyn SymbolTracker<'p>>,
     flags: u32,
-    print: impl FnOnce(&mut Printer<'_, 'p>) -> T,
+    print: impl FnOnce(&mut Printer<'_, 'p, '_>) -> T,
 ) -> T {
     let saved = checker.relation_too_complex;
     let is_barrier = !std::mem::take(&mut checker.printing_closes_cycles);
@@ -794,16 +789,16 @@ pub(super) trait SymbolTracker<'p> {
     /// `TrackSymbol`. Returns whether a diagnostic is reported.
     fn track_symbol(
         &mut self,
-        c: &mut Checker<'p>,
+        c: &mut Checker<'p, '_>,
         symbol: Sym,
         enclosing_declaration: Option<Enclosing>,
         meaning: SymFlags,
     ) -> bool;
-    fn report(&mut self, c: &mut Checker<'p>, report: Report);
+    fn report(&mut self, c: &mut Checker<'p, '_>, report: Report);
     /// `ReportInferenceFallback`, of `node` of `file`.
-    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: hir::Node);
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
     /// `ReportTruncationError`
-    fn report_truncation_error(&mut self, c: &mut Checker<'p>);
+    fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
 }
 
 /// `TrackedSymbolArgs`
@@ -849,8 +844,8 @@ struct OuterScope {
     mapper: MapperId,
 }
 
-struct Printer<'c, 'p> {
-    c: &'c mut Checker<'p>,
+struct Printer<'c, 'p, 's> {
+    c: &'c mut Checker<'p, 's>,
     flags: u32,
     /// The output is what the declaration transformer produces for a node of the file
     /// (`visitDeclarationSubtree`), not what the node builder produces to print a type
@@ -898,8 +893,8 @@ struct Printer<'c, 'p> {
     /// and that a type lookup finds: type parameters, and parameters that share a symbol with a
     /// type parameter. `None`: such a parameter after `instantiateSymbol`.
     fake_scope_type_parameters: Vec<(Vec<u8>, Option<TypeId>)>,
-    /// The locals of the fake scope of the parameters, as a value lookup finds them. `None`: after
-    /// `instantiateSymbol`.
+    /// The locals of the fake scope of the parameters, as a value lookup finds them. `None`: a
+    /// symbol that `instantiateSymbol` created.
     fake_scope_parameters: Vec<(Atom, Option<Sym>)>,
 }
 
@@ -965,8 +960,8 @@ pub(super) fn quoted(text: &[u8], quote: u8, escapes_non_ascii: bool) -> Vec<u8>
 /// true: `prop` itself, if it is declared.
 /// `Checker::declared_properties` without the list.
 pub(super) fn for_each_declared<'a>(
-    prop: &'a Prop,
-    visit: &mut dyn FnMut(&'a Prop) -> bool,
+    prop: &'a Prop<'a>,
+    visit: &mut dyn FnMut(&'a Prop<'a>) -> bool,
 ) -> bool {
     match &prop.source {
         PropSource::Type(_) => false,
@@ -984,7 +979,7 @@ pub(super) fn for_each_declared<'a>(
 }
 
 /// What has `symbol.Declarations[0]`.
-pub(super) fn first_declared(prop: &Prop) -> Option<&Prop> {
+pub(super) fn first_declared<'a>(prop: &'a Prop<'a>) -> Option<&'a Prop<'a>> {
     let mut first = None;
     for_each_declared(prop, &mut |declared| {
         first = Some(declared);
@@ -993,7 +988,7 @@ pub(super) fn first_declared(prop: &Prop) -> Option<&Prop> {
     first
 }
 
-fn string_mapping_name(kind: StringMappingKind) -> &'static [u8] {
+pub(super) fn string_mapping_name(kind: StringMappingKind) -> &'static [u8] {
     match kind {
         StringMappingKind::Uppercase => b"Uppercase",
         StringMappingKind::Lowercase => b"Lowercase",
@@ -1002,7 +997,7 @@ fn string_mapping_name(kind: StringMappingKind) -> &'static [u8] {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// The entity through which `typeof` names a `unique symbol`: the variable declared as one, the
     /// class it is a static property of, the variable annotated with the type literal it is a
     /// property of. `Some(None)`: nothing. `None`: it cannot be determined, or it is a property of
@@ -1039,7 +1034,7 @@ impl Checker<'_> {
     }
 }
 
-impl<'p> Printer<'_, 'p> {
+impl<'p, 's> Printer<'_, 'p, 's> {
     fn text(&self, name: Atom) -> Vec<u8> {
         self.c.atoms().bytes(name).to_vec()
     }
@@ -1204,9 +1199,13 @@ impl<'p> Printer<'_, 'p> {
     /// `...`. Without truncation it is `any` with a comment, and comments are only emitted to a
     /// declaration file.
     fn elision(&self) -> Node {
-        Node::simple(if self.flags & NO_TRUNCATION == 0 {
-            &b"..."[..]
-        } else if self.indent.is_some() {
+        if self.flags & NO_TRUNCATION == 0 {
+            return Node {
+                reference: Some(b"...".to_vec()),
+                ..Node::simple(b"...")
+            };
+        }
+        Node::simple(if self.indent.is_some() {
             &b"/*elided*/ any"[..]
         } else {
             &b"any"[..]
@@ -1254,7 +1253,8 @@ impl<'p> Printer<'_, 'p> {
                     | Intrinsic::Any
                     | Intrinsic::Error
                     | Intrinsic::Auto
-                    | Intrinsic::Wildcard => (b"any", 3),
+                    | Intrinsic::Wildcard
+                    | Intrinsic::NonInferrableAny => (b"any", 3),
                     Intrinsic::IntrinsicMarker => (b"intrinsic", 3),
                     Intrinsic::Unknown => (b"unknown", 0),
                     Intrinsic::Never
@@ -1503,12 +1503,15 @@ impl<'p> Printer<'_, 'p> {
     /// `symbolToTypeNode` of `Uppercase`, `NoInfer` and the like, with one type argument.
     fn intrinsic_alias_to_node(&mut self, name: &[u8], argument: &Node) -> Node {
         self.approximate_length += 2 * (name.len() + 1);
-        Node::simple(cat!(name, b"<", argument.text, b">"))
+        Node {
+            reference: Some(name.to_vec()),
+            ..Node::simple(cat!(name, b"<", argument.text, b">"))
+        }
     }
 
     /// The name of a type parameter that has no symbol.
     fn name_of_marker(&self, marker: Marker) -> Vec<u8> {
-        let parameter = VARIANCE_TYPE_PARAMETER.with(std::cell::Cell::get);
+        let parameter = self.c.variance_type_parameter;
         match marker {
             Marker::SuperForCheck if parameter.is_some() => cat!(b"super-", self.text(parameter)),
             Marker::SubForCheck if parameter.is_some() => cat!(b"sub-", self.text(parameter)),
@@ -1790,7 +1793,7 @@ impl<'p> Printer<'_, 'p> {
             }
             Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
             Some(&(file, Decl::File)) => {
-                return cat! { b"\"", remove_file_extension(&files.module(file).path), b"\"" };
+                return cat! { b"\"", remove_file_extension(files.module(file).path), b"\"" };
             }
             _ => {}
         }
@@ -2147,6 +2150,7 @@ impl<'p> Printer<'_, 'p> {
                 self.c.files().parent_of_symbol(*member).map(of_symbol)
             }
             TypeData::Enum { symbol, .. } => Some(of_symbol(*symbol)),
+            TypeData::StringMapping { kind, .. } => Some((FileId(0), *kind as u32, 6)),
             TypeData::TypeParam(file, parameter, _) => Some((*file, parameter.0, 1)),
             TypeData::Fns { decls, .. } => decls.first().map(|it| (it.0, it.1.0, 2)),
             TypeData::Synth(shape) => shape.symbol_declared_at.map(|it| (it.0, it.1, 3)),
@@ -2530,8 +2534,17 @@ impl<'p> Printer<'_, 'p> {
                     && bound.pat_symbol[pat.idx()].is_some()
                 {
                     let symbol = self.c.files().sym(file, bound.pat_symbol[pat.idx()]);
+                    // `instantiateSymbol` returns the symbol itself if its type cannot contain type
+                    // variables. `bindPattern` adds the symbols of the declarations.
+                    let is_declared_symbol = !is_instantiated || pat != hir[declaration].pat || {
+                        let declared = self.c.type_of_pat(file, pat);
+                        !self.c.types().object_flags(declared).intersects(
+                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+                                | ObjectFlags::HAS_REVERSE_MAPPED,
+                        )
+                    };
                     self.fake_scope_parameters
-                        .push((name, (!is_instantiated).then_some(symbol)));
+                        .push((name, is_declared_symbol.then_some(symbol)));
                 }
             }
             for &type_parameter in type_parameters {
@@ -3406,12 +3419,13 @@ impl<'p> Printer<'_, 'p> {
 
     /// The property `name` of `ty`, for its declarations. `resolveReverseMappedTypeMembers`: a property of a reverse mapped type has those
     /// of the property of the source it is inferred from.
-    fn property_with_declarations(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+    fn property_with_declarations(&mut self, ty: TypeId, name: Atom) -> Option<Prop<'s>> {
         let mut of = ty;
         while let TypeData::ReverseMapped { source, .. } = *self.c.data(of) {
             of = source;
         }
-        self.c.prop_of(of, name).map(|found| found.0)
+        let arena = self.c.arena;
+        (self.c.prop_ref(of, name)).map(|found| found.0.clone_in(arena))
     }
 
     fn place_of_symbol(&self, symbol: Sym) -> Place {
@@ -3425,7 +3439,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// The position of the first declaration of `prop`.
     fn place_of_property(&mut self, prop: &Prop) -> Place {
-        let at = |c: &Checker<'p>, file: FileId, pos: u32| {
+        let at = |c: &Checker<'p, '_>, file: FileId, pos: u32| {
             Place::At(c.place_in_program_order(file, pos))
         };
         let Some(prop) = first_declared(prop) else {
@@ -3447,7 +3461,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// `getNamedMembers` sorts with `compareSymbols`: by the position of the first declaration, and
     /// those without one last, by name.
-    fn ordered_properties(&mut self, props: &[Prop]) -> Vec<Prop> {
+    fn ordered_properties(&mut self, props: &[Prop]) -> Vec<Prop<'s>> {
         let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &Prop)> =
             Vec::with_capacity(props.len());
         for prop in props {
@@ -3467,7 +3481,8 @@ impl<'p> Printer<'_, 'p> {
             });
         }
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
-        keyed.into_iter().map(|entry| entry.1.clone()).collect()
+        let arena = self.c.arena;
+        (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
     }
 
     /// The syntax of the name in the declaration `written` of an object literal property.
@@ -3586,7 +3601,7 @@ impl<'p> Printer<'_, 'p> {
     /// `getPropertyNameNodeForSymbol`
     fn property_name(&mut self, prop: &Prop) -> Vec<u8> {
         let bytes = self.c.atoms().bytes(prop.name);
-        if bytes.first() == Some(&b'#') {
+        if self.c.is_private_identifier_symbol(prop.name) {
             return self.c.written_name(prop.name).to_vec();
         }
         // `getPropertyNameNodeForSymbolFromNameType`: the `nameType` is a `unique symbol`.
@@ -3662,7 +3677,7 @@ impl<'p> Printer<'_, 'p> {
     /// `getNameOfSymbolFromNameType`, using the name alone.
     fn name_from_name_type(&self, name: Atom) -> Vec<u8> {
         let bytes = self.c.atoms().bytes(name);
-        if bytes.first() == Some(&b'#') {
+        if self.c.is_private_identifier_symbol(name) {
             return self.c.written_name(name).to_vec();
         }
         if let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
@@ -3688,7 +3703,11 @@ impl<'p> Printer<'_, 'p> {
                 // A computed name ends where the parser stopped, even if the `]` is missing, and
                 // the name of a JSX attribute is more than one token (`data-\u0061`): `end_of_node`
                 // handles both.
-                let name = self.c.hir(*file).node(*property).with(Part::Name);
+                let first = self
+                    .c
+                    .bound(*file)
+                    .declarations_of_literal_member(*property)[0];
+                let name = self.c.hir(*file).node(first).with(Part::Name);
                 return self.declaration_name_to_string(*file, name);
             }
             PropSource::Symbol(symbol) => {
@@ -3887,9 +3906,7 @@ impl<'p> Printer<'_, 'p> {
             .as_ref()
             .is_some_and(|property| self.should_use_placeholder_for_property(property));
         let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        // `isReadonlySymbol`
-        let is_readonly = prop.flags.contains(PropFlags::READONLY)
-            || self.c.has_readonly_assignment_declaration(prop);
+        let is_readonly = self.c.is_readonly_symbol(prop);
         // `getNonMissingTypeOfSymbol`
         let property_type = if uses_placeholder {
             TypeId::ANY
@@ -4440,6 +4457,8 @@ impl<'p> Printer<'_, 'p> {
             Some(index) => {
                 if let Some(parameter) = parameters.get(index) {
                     text.extend_from_slice(&parameter.name);
+                } else if let Some(name) = self.c.sig_predicate_parameter_name(signature) {
+                    text.extend_from_slice(self.c.atoms().bytes(name));
                 }
             }
             None => text.extend_from_slice(b"this"),

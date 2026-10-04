@@ -2,19 +2,29 @@
 //! the underlying containers.
 
 use super::*;
-use crate::atom::{Atom, Atoms};
+use crate::atom::{Atom, Atoms, Interner};
 use crate::bind::SymbolId;
-use crate::local::{Chunked, Hashed, LOCAL, MaybeLocal, spread_word};
+use crate::local::{Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
+use crate::session::Session;
 use crate::table::{
     Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
 };
-use crate::types::{TypeData, TypeId, TypeStore, Types};
-use crate::util::{AppendVec, GrowingPlaces};
+use crate::types::{
+    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, TypeData, TypeId, TypeKey,
+    TypeStore, Types, UnionOrigin,
+};
+use crate::util::{GrowingPlaces, ShardedMap};
 use bun_sema_standalone as _;
+use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 type Node = (FileId, u32);
+
+fn numbered(number: u32) -> SlotNumber {
+    // SAFETY: a test gives each of its tables another number.
+    unsafe { SlotNumber::new(number) }
+}
 
 /// A value that holds a handle of another table, as `CachedMembers` does.
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -31,49 +41,49 @@ impl Holder {
 }
 
 /// One table of each kind, and the type store that their ids belong to.
-struct Tables {
-    atoms: Interner,
-    types: TypeStore,
-    by_node: ByNode<Node, TypeId, Buffered>,
-    set: ByNode<Node, (), Buffered>,
-    by_id: ById<TypeId, TypeId, Buffered>,
-    shapes: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered>,
-    kept_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered>,
-    members: ByIdIndirect<TypeId, Holder, Buffered>,
-    by_key: ByKey<(TypeId, TypeId), TypeId, Buffered>,
+struct Tables<'s> {
+    atoms: Interner<'s>,
+    types: TypeStore<'s>,
+    by_node: ByNode<Node, TypeId, Buffered, &'s Session>,
+    set: ByNode<Node, (), Buffered, &'s Session>,
+    by_id: ById<TypeId, TypeId, Buffered, &'s Session>,
+    shapes: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered, &'s Session>,
+    kept_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered, &'s Session>,
+    members: ByIdIndirect<TypeId, Holder, Buffered, &'s Session>,
+    by_key: ByKey<(TypeId, TypeId), TypeId, Buffered, &'s Session>,
 }
 
 const A: FileId = FileId(0);
 const B: FileId = FileId(1);
 const C: FileId = FileId(2);
 
-impl Tables {
+impl<'s> Tables<'s> {
     /// Three files of 100 nodes each.
-    fn new() -> Tables {
-        let bases = Bases::new([100, 100, 100].into_iter());
+    fn new(session: &'s Session) -> Tables<'s> {
+        let bases = Bases::new_in([100, 100, 100].into_iter(), &session);
         let mut tables = Tables {
-            atoms: Interner::new(),
-            types: TypeStore::new(),
-            by_node: ByNode::new(&bases),
-            set: ByNode::new(&bases),
-            by_id: ById::default(),
-            shapes: ByIdIndirect::default(),
-            kept_by_node: ByNodeIndirect::new(&bases),
-            members: ByIdIndirect::default(),
-            by_key: ByKey::default(),
+            atoms: Interner::new_in(session),
+            types: TypeStore::new_in(session),
+            by_node: ByNode::new_in(&bases, session),
+            set: ByNode::new_in(&bases, session),
+            by_id: ById::new_in(session),
+            shapes: ByIdIndirect::new_in(session),
+            kept_by_node: ByNodeIndirect::new_in(&bases, session),
+            members: ByIdIndirect::new_in(session),
+            by_key: ByKey::new_in(session),
         };
-        tables.by_node.set_slot(0);
-        tables.set.set_slot(1);
-        tables.by_id.set_slot(2);
-        tables.shapes.set_slot(3);
-        tables.kept_by_node.set_slot(4);
-        tables.members.set_slot(5);
-        tables.by_key.set_slot(6);
+        tables.by_node.set_slot(numbered(0));
+        tables.set.set_slot(numbered(1));
+        tables.by_id.set_slot(numbered(2));
+        tables.shapes.set_slot(numbered(3));
+        tables.kept_by_node.set_slot(numbered(4));
+        tables.members.set_slot(numbered(5));
+        tables.by_key.set_slot(numbered(6));
         (tables.members).hold_handles_of(&mut tables.shapes, Holder::shape_mut);
         tables
     }
 
-    fn all(&self) -> [&dyn Publish; 7] {
+    fn all(&self) -> [&dyn Publish<'s>; 7] {
         [
             &self.by_node,
             &self.set,
@@ -86,12 +96,12 @@ impl Tables {
     }
 
     /// `keyof of`, which no store contains initially.
-    fn keyof(&self, task: &Task, of: TypeId) -> TypeId {
+    fn keyof(&self, task: &Task<'s>, of: TypeId) -> TypeId {
         Types::new(&self.types, &task.own).intern(TypeData::Keyof(of))
     }
 
     /// The `this` type of a class of `file`: a type that references `file`.
-    fn this_of(&self, task: &Task, file: FileId) -> TypeId {
+    fn this_of(&self, task: &Task<'s>, file: FileId) -> TypeId {
         let class = Sym {
             file,
             id: SymbolId(7),
@@ -99,11 +109,11 @@ impl Tables {
         Types::new(&self.types, &task.own).intern(TypeData::ThisParam(class))
     }
 
-    fn finish(&self, task: &mut Task) -> Finished {
+    fn finish(&self, task: &mut Task<'s>) -> Finished<'s> {
         task.finish_tables(&self.all(), Vec::new())
     }
 
-    fn link(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) {
+    fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) {
         let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
         let (links, _) = (self.types).link(&self.atoms, own.collect(), in_parallel, &|_| {});
         for (finished, link) in finished.iter_mut().zip(links) {
@@ -112,7 +122,7 @@ impl Tables {
     }
 
     /// Merge, then publish.
-    fn barrier(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> Published {
+    fn barrier(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> Published {
         self.link(finished, in_parallel);
         publish_tables(&self.all(), finished, in_parallel, Some(&self.atoms))
     }
@@ -145,14 +155,14 @@ fn on_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
 
 const POOLS: [fn(usize, &(dyn Fn(usize) + Sync)); 3] = [forwards, backwards, on_threads];
 
-fn begin(index: u32) -> Task {
-    let mut task = Task::new();
+fn begin(session: &Session, index: u32) -> Task<'_> {
+    let mut task = Task::new_in(session.arena());
     task.begin(0, index, true);
     task
 }
 
-fn begin_in(index: u32, file: FileId) -> Task {
-    let mut task = begin(index);
+fn begin_in(session: &Session, index: u32, file: FileId) -> Task<'_> {
+    let mut task = begin(session, index);
     task.begin_file(file, true);
     task
 }
@@ -178,9 +188,11 @@ fn diagnostic(code: u32) -> Reported {
 // ───────────────────────────── the buffer ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
-    let tables = Tables::new();
-    let (mut first, second) = (begin_in(0, A), begin_in(1, B));
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let (mut first, second) = (begin_in(&session, 0, A), begin_in(&session, 1, B));
     let own = tables.keyof(&first, TypeId::STRING);
     assert!(own.is_local());
     // A node of the task's file, a node of another file, a published id, a task-local id, a key of
@@ -226,7 +238,7 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
     // After the barrier every task sees all of it, under published ids.
     let published = tables.barrier(&mut [tables.finish(&mut first)], &forwards);
     assert_eq!(counts(published), (6, 6, 0));
-    let reader = Task::new();
+    let reader = Task::new_in(session.arena());
     let keyof = tables.keyof(&reader, TypeId::STRING);
     assert!(!keyof.is_local());
     assert_eq!(tables.by_node.get(&reader, &(A, 1)), Some(keyof));
@@ -244,9 +256,11 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
-    let tables = Tables::new();
-    let task = begin_in(0, A);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let task = begin_in(&session, 0, A);
     let own = tables.keyof(&task, TypeId::STRING);
     let (one, two) = (TypeId::STRING, TypeId::NUMBER);
     for key in [(A, 5), (B, 5)] {
@@ -273,9 +287,11 @@ fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_published_entry_stays_what_it_is() {
-    let tables = Tables::new();
-    let mut first = begin_in(0, A);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut first = begin_in(&session, 0, A);
     tables
         .by_node
         .insert(&first, (A, 1), TypeId::STRING, stored());
@@ -286,7 +302,7 @@ fn a_published_entry_stays_what_it_is() {
     tables.barrier(&mut [tables.finish(&mut first)], &forwards);
 
     // `insert` returns the value that `get` returns from then on, and buffers nothing.
-    let mut later = Task::new();
+    let mut later = Task::new_in(session.arena());
     later.begin(1, 0, true);
     let kept = tables
         .by_node
@@ -306,28 +322,35 @@ fn a_published_entry_stays_what_it_is() {
     let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
     assert_eq!(counts(published), (1, 0, 1));
     assert_eq!(
-        tables.by_node.get(&Task::new(), &(A, 1)),
+        tables.by_node.get(&Task::new_in(session.arena()), &(A, 1)),
         Some(TypeId::STRING)
     );
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
-    let tables = Tables::new();
-    let task = Task::new();
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let task = Task::new_in(session.arena());
     assert!(!task.is_planned());
     tables
         .by_node
         .insert(&task, (A, 1), TypeId::STRING, stored());
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId::STRING));
     drop(task);
-    assert_eq!(tables.by_node.get(&Task::new(), &(A, 1)), None);
+    assert_eq!(
+        tables.by_node.get(&Task::new_in(session.arena()), &(A, 1)),
+        None
+    );
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn begin_and_finish_leave_the_task_empty() {
-    let tables = Tables::new();
-    let mut task = begin_in(0, A);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin_in(&session, 0, A);
     assert!(task.is_planned());
     let own = tables.keyof(&task, TypeId::STRING);
     tables.by_node.insert(&task, (A, 1), own, stored());
@@ -351,9 +374,11 @@ fn begin_and_finish_leave_the_task_empty() {
 /// A task that visits the files of a cycle evaluates nodes of a later file while visiting an
 /// earlier one.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
-    let tables = Tables::new();
-    let mut task = begin_in(0, A);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin_in(&session, 0, A);
     let (one, two) = (TypeId::STRING, TypeId::NUMBER);
     tables.by_node.insert(&task, (A, 1), one, stored());
     tables.by_node.insert(&task, (B, 1), one, stored());
@@ -380,15 +405,20 @@ fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     // Each key once: 4 in `by_node`, 1 in `set`, and none loses.
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
     assert_eq!(counts(published), (5, 5, 0));
-    assert_eq!(tables.by_node.get(&Task::new(), &(B, 1)), Some(two));
+    assert_eq!(
+        tables.by_node.get(&Task::new_in(session.arena()), &(B, 1)),
+        Some(two)
+    );
 }
 
 /// A chunk of files that nothing imports: no node of a file is evaluated before the task reaches
 /// it, and the entries can still be looked up afterwards.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_task_that_goes_through_files_that_nothing_imports() {
-    let tables = Tables::new();
-    let mut task = begin(0);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin(&session, 0);
     for file in [A, B, C] {
         task.begin_file(file, false);
         // A hashed entry, before the first entry keyed by a node of the file and after it.
@@ -423,7 +453,9 @@ fn a_task_that_goes_through_files_that_nothing_imports() {
 /// A chunk of many files, checked against a model. Every second file is imported, so its nodes are
 /// also evaluated before the task reaches it.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_task_that_goes_through_many_files_does_what_the_model_says() {
+    let session = Session::new();
     use crate::util::FxHashMap;
     const FILES: u32 = 40;
     const NODES: u32 = 30;
@@ -436,8 +468,8 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
         };
         let bases = Bases::new((0..FILES).map(|_| NODES as usize));
         let mut table = ByNode::<Node, TypeId, Buffered>::new(&bases);
-        table.set_slot(0);
-        let mut task = begin(0);
+        table.set_slot(numbered(0));
+        let mut task = begin(&session, 0);
         let mut model: FxHashMap<Node, TypeId> = FxHashMap::default();
         let mut has_come_to = [false; FILES as usize];
         // Some files are visited a second time.
@@ -486,7 +518,7 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
             counts(published),
             (model.len() as u64, model.len() as u64, 0)
         );
-        let reader = Task::new();
+        let reader = Task::new_in(session.arena());
         for file in 0..FILES {
             for node in 0..NODES {
                 let key = (FileId(file), node);
@@ -497,9 +529,11 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
-    let tables = Tables::new();
-    let task = begin(0);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let task = begin(&session, 0);
     let first = tables.keyof(&task, TypeId::STRING);
     let (handle, kept) = (tables.shapes).insert_ref(&task, first, Box::new([first]), stored());
     assert!(handle.is_local());
@@ -516,13 +550,15 @@ fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
 // ───────────────────────────── the order of publishing ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
+    let session = Session::new();
     for pool in POOLS {
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let values = [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT];
         let mut finished: Vec<Finished> = (values.iter().enumerate())
             .map(|(index, &value)| {
-                let mut task = begin_in(index as u32, FileId(index as u32));
+                let mut task = begin_in(&session, index as u32, FileId(index as u32));
                 // Every task has (C, 9) and the like. Only the last two have (C, 8).
                 tables.by_node.insert(&task, (C, 9), value, stored());
                 tables.by_id.insert(&task, TypeId::ANY, value, stored());
@@ -542,7 +578,7 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
         let by_table = [(5, 2), (0, 0), (3, 1), (3, 1), (3, 1), (0, 0), (3, 1)];
         assert_eq!(published.by_table, by_table);
         assert_eq!(counts(published), (17, 6, 11));
-        let reader = Task::new();
+        let reader = Task::new_in(session.arena());
         assert_eq!(tables.by_node.get(&reader, &(C, 9)), Some(values[0]));
         assert_eq!(tables.by_node.get(&reader, &(C, 8)), Some(values[1]));
         assert_eq!(tables.by_id.get(&reader, &TypeId::ANY), Some(values[0]));
@@ -565,9 +601,11 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
-    let tables = Tables::new();
-    let mut task = Task::new();
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = Task::new_in(session.arena());
     task.begin(0, 0, false);
     task.begin_file(A, true);
     let own = tables.keyof(&task, TypeId::STRING);
@@ -588,16 +626,22 @@ fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
     let published = tables.barrier(&mut finished, &forwards);
     assert_eq!(published.digest, 0);
     assert_eq!(counts(published), (0, 0, 0));
-    assert!(tables.keyof(&Task::new(), TypeId::STRING).is_local());
+    assert!(
+        tables
+            .keyof(&Task::new_in(session.arena()), TypeId::STRING)
+            .is_local()
+    );
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_digest_tells_the_content_of_what_was_stored_and_not_how_the_pool_ran() {
+    let session = Session::new();
     let digest = |pool: InParallel<'_>, value: TypeId, with_digest: bool| {
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let mut finished: Vec<Finished> = (0..3)
             .map(|index| {
-                let mut task = begin_in(index, A);
+                let mut task = begin_in(&session, index, A);
                 let own = tables.keyof(&task, TypeId::STRING);
                 tables.by_node.insert(&task, (A, index), own, stored());
                 tables.set.insert(&task, (B, index), (), stored());
@@ -612,7 +656,7 @@ fn the_digest_tells_the_content_of_what_was_stored_and_not_how_the_pool_ran() {
             })
             .collect();
         tables.link(&mut finished, pool);
-        let atoms = with_digest.then_some(&tables.atoms);
+        let atoms = with_digest.then_some(&tables.atoms as &dyn Intern);
         publish_tables(&tables.all(), &mut finished, pool, atoms).digest
     };
     let expected = digest(&forwards, TypeId::STRING, true);
@@ -626,9 +670,11 @@ fn the_digest_tells_the_content_of_what_was_stored_and_not_how_the_pool_ran() {
 
 /// The parser threads number the atoms in a different order in every run.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_digest_takes_an_atom_as_its_text() {
+    let session = Session::new();
     let digest = |texts: [&[u8]; 3], used: [&[u8]; 2]| {
-        let atoms = Interner::new();
+        let atoms = Interner::new_in(&session);
         for text in texts {
             atoms.intern(text);
         }
@@ -636,10 +682,10 @@ fn the_digest_takes_an_atom_as_its_text() {
         let mut by_id = ById::<Atom, TypeId, Buffered>::default();
         let mut by_key = ByKey::<(TypeId, Atom), TypeId, Buffered>::default();
         let mut kept = ByIdIndirect::<TypeId, Box<[Atom]>, Buffered>::default();
-        by_id.set_slot(0);
-        by_key.set_slot(1);
-        kept.set_slot(2);
-        let mut task = begin(0);
+        by_id.set_slot(numbered(0));
+        by_key.set_slot(numbered(1));
+        kept.set_slot(numbered(2));
+        let mut task = begin(&session, 0);
         // As a key indexed by number, in a composite key, in a value.
         by_id.insert(&task, used[0], TypeId::ANY, stored());
         by_key.insert(&task, (TypeId::ANY, used[1]), TypeId::ANY, stored());
@@ -677,12 +723,14 @@ fn the_digest_takes_an_atom_as_its_text() {
 // ───────────────────────────── link and follow ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
+    let session = Session::new();
     for pool in POOLS {
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let mut finished: Vec<Finished> = (0..2)
             .map(|index| {
-                let mut task = begin(index);
+                let mut task = begin(&session, index);
                 // So that the two tasks have different numbers for `keyof string`.
                 if index == 1 {
                     let other = tables.keyof(&task, TypeId::NUMBER);
@@ -700,7 +748,7 @@ fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
             .collect();
         let published = tables.barrier(&mut finished, &pool);
         assert_eq!(counts(published), (7, 4, 3));
-        let reader = Task::new();
+        let reader = Task::new_in(session.arena());
         let keyof = tables.keyof(&reader, TypeId::STRING);
         let nested = tables.keyof(&reader, keyof);
         let other = tables.keyof(&reader, TypeId::NUMBER);
@@ -716,15 +764,17 @@ fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_atom_that_two_tasks_create_is_one_key_after_the_link() {
-    let tables = Tables::new();
+    let session = Session::new();
+    let tables = Tables::new(&session);
     let mut names = ById::<Atom, TypeId, Buffered>::default();
-    names.set_slot(0);
+    names.set_slot(numbered(0));
     let all: [&dyn Publish; 1] = [&names];
     let values = [TypeId::STRING, TypeId::NUMBER];
     let mut finished: Vec<Finished> = (0..2)
         .map(|index| {
-            let mut task = begin(index);
+            let mut task = begin(&session, index);
             let atoms = Atoms::new(&tables.atoms, &task.own);
             // So that the two tasks have different numbers for the text they share.
             if index == 1 {
@@ -744,32 +794,39 @@ fn an_atom_that_two_tasks_create_is_one_key_after_the_link() {
     assert_eq!(counts(published), (3, 2, 1));
     let atom = tables.atoms.lookup(b"new at check time").unwrap();
     assert!(!atom.is_own());
-    assert_eq!(names.get(&Task::new(), &atom), Some(values[0]));
+    assert_eq!(
+        names.get(&Task::new_in(session.arena()), &atom),
+        Some(values[0])
+    );
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_own_type_without_an_entry_dies_with_its_task() {
-    let tables = Tables::new();
-    let mut task = begin(0);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin(&session, 0);
     let temporary = tables.keyof(&task, TypeId::STRING);
     let kept = tables.keyof(&task, TypeId::NUMBER);
     assert!(temporary.is_local());
     tables.by_id.insert(&task, kept, TypeId::ANY, stored());
     tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    let reader = Task::new();
+    let reader = Task::new_in(session.arena());
     assert!(!tables.keyof(&reader, TypeId::NUMBER).is_local());
     assert!(tables.keyof(&reader, TypeId::STRING).is_local());
 }
 
 /// `shapes` and `members`. A handle is not a value.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_handle_in_a_value_becomes_the_handle_that_has_won() {
+    let session = Session::new();
     for pool in POOLS {
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let values = [TypeId::STRING, TypeId::NUMBER];
         let mut finished: Vec<Finished> = (0..2)
             .map(|index| {
-                let mut task = begin(index);
+                let mut task = begin(&session, index);
                 let shared = tables.keyof(&task, TypeId::STRING);
                 // So that a handle of the higher task is not the number it has in the lower one.
                 if index == 1 {
@@ -788,7 +845,7 @@ fn a_handle_in_a_value_becomes_the_handle_that_has_won() {
             })
             .collect();
         tables.barrier(&mut finished, &pool);
-        let reader = Task::new();
+        let reader = Task::new_in(session.arena());
         let shared = tables.keyof(&reader, TypeId::STRING);
         let winner = tables.shapes.handle(&reader, &shared).unwrap();
         assert!(!winner.is_local());
@@ -807,12 +864,44 @@ fn a_handle_in_a_value_becomes_the_handle_that_has_won() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
+fn a_value_that_owns_memory_of_an_arena_is_followed_and_published() {
+    let session = Session::new();
+    for pool in POOLS {
+        let tables = Tables::new(&session);
+        let mut lists = ByIdIndirect::<TypeId, List<'_, TypeId>, Buffered, _>::new_in(&session);
+        lists.set_slot(numbered(7));
+        let mut all = tables.all().to_vec();
+        all.push(&lists);
+        let mut finished: Vec<Finished<'_>> = (0..2)
+            .map(|index| {
+                let mut task = begin(&session, index);
+                let own = tables.keyof(&task, TypeId::STRING);
+                let value = List::copy_from_slice_in(&[own, TypeId(index)], session.arena());
+                let (_, kept) = lists.insert_ref(&task, TypeId::ANY, value, stored());
+                assert_eq!(**kept, [own, TypeId(index)]);
+                task.finish_tables(&all, Vec::new())
+            })
+            .collect();
+        tables.link(&mut finished, &pool);
+        publish_tables(&all, &mut finished, &pool, None);
+        let reader = Task::new_in(session.arena());
+        let published = tables.keyof(&reader, TypeId::STRING);
+        assert!(!published.is_local());
+        let kept = lists.get_ref(&reader, &TypeId::ANY).unwrap();
+        assert_eq!(**kept, [published, TypeId(0)]);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn a_published_handle_in_a_value_stays() {
-    let tables = Tables::new();
-    let mut first = begin(0);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut first = begin(&session, 0);
     (tables.shapes).insert(&first, TypeId::ANY, Box::new([TypeId::ANY]), stored());
     tables.barrier(&mut [tables.finish(&mut first)], &forwards);
-    let mut second = Task::new();
+    let mut second = Task::new_in(session.arena());
     second.begin(1, 0, true);
     let shape = tables.shapes.handle(&second, &TypeId::ANY).unwrap();
     let held = Holder {
@@ -824,18 +913,22 @@ fn a_published_handle_in_a_value_stays() {
         .insert(&second, TypeId::STRING, held, stored());
     tables.barrier(&mut [tables.finish(&mut second)], &forwards);
     assert_eq!(
-        tables.members.get(&Task::new(), &TypeId::STRING),
+        tables
+            .members
+            .get(&Task::new_in(session.arena()), &TypeId::STRING),
         Some(held)
     );
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
+    let session = Session::new();
     let outcomes = POOLS.map(|pool| {
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let mut finished: Vec<Finished> = (0..3)
             .map(|index| {
-                let mut task = begin(index);
+                let mut task = begin(&session, index);
                 let mut of = TypeId::STRING;
                 // The tasks overlap: 0..2000, 500..2500, 1000..3000 of one chain of types. Enough for the pool to be used.
                 for link in 0..3000 {
@@ -854,7 +947,7 @@ fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
         assert!(published.buffered >= FEW_ENTRIES);
         assert_eq!(counts(published), (6000, 3000, 3000));
         assert_eq!(tables.by_key.footprint().entries, 3000);
-        let (reader, mut of) = (Task::new(), TypeId::STRING);
+        let (reader, mut of) = (Task::new_in(session.arena()), TypeId::STRING);
         (0..3000)
             .map(|_| {
                 let next = tables.keyof(&reader, of);
@@ -877,24 +970,26 @@ fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
 
 /// Against a model: for each key the first entry of the lowest task that has one.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn random_tasks_publish_what_the_model_says() {
+    let session = Session::new();
     use crate::util::FxHashMap;
     const DEPTHS: usize = 200;
     // A type is named by its depth: `string`, `keyof string`, `keyof keyof string`, ..
-    let chain = |tables: &Tables, task: &Task| -> Vec<TypeId> {
+    fn chain<'s>(tables: &Tables<'s>, task: &Task<'s>) -> Vec<TypeId> {
         let mut chain = vec![TypeId::STRING];
         for depth in 1..DEPTHS {
             chain.push(tables.keyof(task, chain[depth - 1]));
         }
         chain
-    };
+    }
     for (seed, pool) in (1..=12u64).zip(POOLS.into_iter().cycle()) {
         let mut state = seed;
         let mut random = |below: usize| {
             state = (state.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
             (state >> 33) as usize % below
         };
-        let tables = Tables::new();
+        let tables = Tables::new(&session);
         let mut by_node: FxHashMap<Node, usize> = FxHashMap::default();
         let mut by_id: FxHashMap<usize, usize> = FxHashMap::default();
         let mut by_key: FxHashMap<(usize, usize), usize> = FxHashMap::default();
@@ -902,7 +997,7 @@ fn random_tasks_publish_what_the_model_says() {
         let mut buffered = 0;
         let mut finished: Vec<Finished> = (0..6)
             .map(|index| {
-                let mut task = begin_in(index, FileId(index % 3));
+                let mut task = begin_in(&session, index, FileId(index % 3));
                 let ids = chain(&tables, &task);
                 for _ in 0..2000 {
                     let (a, b, value) = (random(DEPTHS), random(DEPTHS), random(DEPTHS));
@@ -944,7 +1039,7 @@ fn random_tasks_publish_what_the_model_says() {
         assert!(published.buffered >= FEW_ENTRIES);
         let stored = (by_node.len() + by_id.len() + by_key.len() + shapes.len()) as u64;
         assert_eq!(counts(published), (buffered, stored, buffered - stored));
-        let reader = Task::new();
+        let reader = Task::new_in(session.arena());
         let ids = chain(&tables, &reader);
         for (node, value) in by_node {
             assert_eq!(tables.by_node.get(&reader, &node), Some(ids[value]));
@@ -966,9 +1061,11 @@ fn random_tasks_publish_what_the_model_says() {
 // ───────────────────────────── bound ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn nothing_that_is_bound_is_published() {
-    let tables = Tables::new();
-    let mut task = begin(0);
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin(&session, 0);
     // Nothing imports `A`.
     task.begin_file(A, false);
     let bound = tables.this_of(&task, A);
@@ -1019,7 +1116,7 @@ fn nothing_that_is_bound_is_published() {
     assert_eq!(tables.kept_by_node.footprint().kept, 0);
     assert_eq!(tables.members.footprint().kept, 0);
     assert_eq!(tables.by_key.footprint().entries, 1);
-    let reader = Task::new();
+    let reader = Task::new_in(session.arena());
     let free = tables.keyof(&reader, TypeId::STRING);
     assert!(!free.is_local());
     assert_eq!(tables.by_node.get(&reader, &(B, 3)), Some(free));
@@ -1029,12 +1126,14 @@ fn nothing_that_is_bound_is_published() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
+    let session = Session::new();
     // The second file is not counted.
     let bases = Bases::new([10, 0].into_iter());
     let mut table = ByNode::<Node, TypeId, Buffered>::new(&bases);
-    table.set_slot(0);
-    let mut task = begin(0);
+    table.set_slot(numbered(0));
+    let mut task = begin(&session, 0);
     task.begin_file(B, false);
     assert_eq!(table.get(&task, &(B, 5)), None);
     table.insert(&task, (B, 5), TypeId::STRING, stored());
@@ -1047,6 +1146,7 @@ fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
 // ───────────────────────────── bit storage ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_fields_of_a_shared_cell() {
     let cell = AtomicU32::new(0);
     assert_eq!(cell.put_field_if_empty(4, 3, 2), 2);
@@ -1058,14 +1158,16 @@ fn the_fields_of_a_shared_cell() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn published_values_of_a_bit_share_a_cell() {
-    let tables = Tables::new();
+    let session = Session::new();
+    let tables = Tables::new(&session);
     // 300 nodes, a bit each.
     assert_eq!(tables.set.footprint().allocated, 300usize.div_ceil(32) * 4);
     let in_set = [(A, 0), (A, 31), (A, 32), (A, 99), (B, 0), (C, 99)];
     let mut finished: Vec<Finished> = (0..2)
         .map(|index| {
-            let mut task = begin_in(index, A);
+            let mut task = begin_in(&session, index, A);
             for key in in_set {
                 tables.set.insert(&task, key, (), stored());
             }
@@ -1074,7 +1176,7 @@ fn published_values_of_a_bit_share_a_cell() {
         .collect();
     let published = tables.barrier(&mut finished, &forwards);
     assert_eq!(counts(published), (12, 6, 6));
-    let reader = Task::new();
+    let reader = Task::new_in(session.arena());
     for file in [A, B, C] {
         for index in 0..100 {
             let expected = in_set.contains(&(file, index)).then_some(());
@@ -1084,12 +1186,14 @@ fn published_values_of_a_bit_share_a_cell() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_local_values_of_a_bit_or_two_share_a_word() {
-    let mut set = ByNode::<Node, (), FileLocal>::new(&Bases::none());
-    let mut flags = ByNode::<Node, bool, FileLocal>::new(&Bases::none());
-    set.set_slot(0);
-    flags.set_slot(1);
-    let mut task = Task::new();
+    let session = Session::new();
+    let mut set = ByNode::<Node, (), FileLocal>::new(&Bases::none_in(&Global));
+    let mut flags = ByNode::<Node, bool, FileLocal>::new(&Bases::none_in(&Global));
+    set.set_slot(numbered(0));
+    flags.set_slot(numbered(1));
+    let mut task = Task::new_in(session.arena());
     task.begin_file(FileId(3), true);
     // The nodes of the task's file have dense words. Those of another file have sparse ones.
     for file in [FileId(3), FileId(4)] {
@@ -1118,9 +1222,87 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
     assert_eq!(set.get(&task, &(FileId(3), 63)), None);
 }
 
+/// `TypeKey` is hashed and compared like the equivalent `TypeData`.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let task = begin(&session, 0);
+    let types = Types::new(&tables.types, &task.own);
+    let (arena, members) = (session.arena(), [TypeId::STRING, TypeId::NUMBER]);
+    let list = || List::copy_from_slice_in(&members, arena);
+    let target = Sym {
+        file: A,
+        id: SymbolId(1),
+    };
+    let flags = [ElemFlags::REQUIRED, ElemFlags::OPTIONAL];
+    let decls = [(A, crate::hir::FnId(3))];
+    let mapper = MapperId::IDENTITY;
+    let pairs = [
+        (TypeData::Union(list()), TypeKey::Union(&members)),
+        (
+            TypeData::Intersection(list()),
+            TypeKey::Intersection(&members),
+        ),
+        (
+            TypeData::Ref {
+                target,
+                args: list().into(),
+            },
+            TypeKey::Ref {
+                target,
+                args: &members,
+            },
+        ),
+        (
+            TypeData::Tuple {
+                elems: list().into(),
+                flags: List::copy_from_slice_in(&flags, arena),
+                readonly: true,
+            },
+            TypeKey::Tuple {
+                elems: &members,
+                flags: &flags,
+                readonly: true,
+            },
+        ),
+        (
+            TypeData::Fns {
+                decls: List::copy_from_slice_in(&decls, arena),
+                mapper,
+            },
+            TypeKey::Fns {
+                decls: &decls,
+                mapper,
+            },
+        ),
+    ];
+    for (data, key) in pairs {
+        let id = types.intern(data);
+        assert_eq!(types.intern_key(key), id);
+        assert_eq!(types.intern_key(TypeKey::Data(types.get(id))), id);
+    }
+    // The other way round, with an alias and an origin.
+    let borrowed = ProvenanceKey {
+        alias: Some((target, &members)),
+        origin: OriginKey::Union(&members),
+        is_enum: true,
+    };
+    let id = types.intern_key_with(TypeKey::Union(&members), borrowed);
+    let owned = Provenance {
+        alias: Some((target, list())),
+        origin: UnionOrigin::Union(list()),
+        is_enum: true,
+    };
+    assert_eq!(types.intern_with(TypeData::Union(list()), owned), id);
+    assert_ne!(types.intern_key(TypeKey::Union(&members)), id);
+}
+
 // ───────────────────────────── the containers ─────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn hashed_lists_its_entries_in_insertion_order() {
     let mut hashed = Hashed::<u64, u32>::default();
     // Not in the order of the keys, nor of their hashes.
@@ -1147,6 +1329,7 @@ fn hashed_lists_its_entries_in_insertion_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_nodes_of_many_files_have_different_hashes() {
     let mut tags = crate::util::FxHashSet::default();
     for file in 0..512u64 {
@@ -1159,42 +1342,9 @@ fn the_nodes_of_many_files_have_different_hashes() {
 }
 
 #[test]
-fn chunked_moves_its_elements_out_in_order() {
-    let mut chunked = Chunked::<Box<usize>>::default();
-    for i in 0..3000 {
-        assert_eq!(chunked.push(Box::new(i)), i);
-    }
-    assert_eq!(**chunked.get(2999), 2999);
-    let mut taken = Vec::new();
-    chunked.drain(|index, value| taken.push((index, *value)));
-    assert!(chunked.is_empty());
-    assert!(taken.iter().enumerate().all(|(i, &it)| it == (i, i)));
-    assert_eq!(taken.len(), 3000);
-    assert_eq!(chunked.push(Box::new(1)), 0);
-}
-
-#[test]
-fn a_range_of_an_append_vec_is_filled_at_given_indices() {
-    let vec = AppendVec::<Box<u32>>::new();
-    vec.push(Box::new(0));
-    // Over several chunks.
-    // SAFETY: every index is written below.
-    let first = unsafe { vec.reserve(5000) };
-    assert_eq!((first, vec.len()), (1, 5001));
-    on_threads(4, &|part| {
-        for index in (first..first + 5000).filter(|index| *index as usize % 4 == part) {
-            // SAFETY: reserved above, each index is written by one thread, and no thread reads
-            // before the writers have finished.
-            unsafe { vec.write(index, Box::new(index)) };
-        }
-    });
-    assert!((0..5001).all(|index| **vec.get(index) == index));
-    assert_eq!(vec.push(Box::new(5001)), 5001);
-}
-
-#[test]
+#[cfg_attr(miri, ignore)]
 fn places_are_added_in_one_batch_and_found_without_a_lock() {
-    let places = GrowingPlaces::default();
+    let places = GrowingPlaces::<Global>::default();
     assert_eq!(places.find_frozen(spread_word(1), |_| true), None);
     places.extend(0, std::iter::empty());
     for batch in 0..3u32 {
@@ -1212,6 +1362,24 @@ fn places_are_added_in_one_batch_and_found_without_a_lock() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
+fn threads_fill_and_read_a_sharded_map() {
+    let map = ShardedMap::<u32, Box<u32>>::default();
+    on_threads(4, &|thread| {
+        for i in 0..300 {
+            let key = (i * 7 + thread as u32) % 300;
+            assert_eq!(**map.insert_ref(key, Box::new(key)), key);
+            let other = (key + 11) % 300;
+            if let Some(value) = map.get_ref(&other) {
+                assert_eq!(**value, other);
+            }
+        }
+    });
+    assert_eq!(map.len(), 300);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn for_each_mut_gives_every_item_to_one_call() {
     for pool in POOLS {
         let mut items = vec![0u32; 100];
@@ -1221,6 +1389,7 @@ fn for_each_mut_gives_every_item_to_one_call() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn local_is_bit_30() {
     assert_eq!(LOCAL, 1 << 30);
     assert!(TypeId(LOCAL).is_local() && !TypeId(LOCAL - 1).is_local());

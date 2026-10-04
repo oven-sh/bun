@@ -5,9 +5,13 @@ use core::fmt;
 use bun_alloc::Arena;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
-use bun_ast::{LexerLog, Loc, Log, Range, Source};
+use bun_ast::{LexerLog, Loc, Log, Range, Source, TypeScriptKind};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
+pub(crate) use bun_core::lexer::{
+    char_and_size, end_of_run, is_white_space_single_line, is_whitespace, last_char,
+    peek_unicode_escape, starts_with_line_break,
+};
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use identifier as js_identifier;
@@ -1166,12 +1170,17 @@ impl<'a> Lexer<'a> {
         // errors.
         let last = self.log().msgs.iter().rposition(|msg| {
             msg.kind == bun_ast::Kind::Err
-                && !msg.data.text.starts_with(b"TG")
-                && !msg.data.text.starts_with(b"TC")
+                && !matches!(
+                    msg.metadata,
+                    bun_ast::Metadata::TypeScript {
+                        kind: TypeScriptKind::Grammar | TypeScriptKind::Checker,
+                        ..
+                    }
+                )
         });
         if let Some(last) = last
             && matches!(
-                crate::sema::early_error(&self.log().msgs[last].data.text, b""),
+                crate::sema::early_error(&self.log().msgs[last], b""),
                 Some((1005, _))
             )
         {
@@ -1183,14 +1192,15 @@ impl<'a> Lexer<'a> {
     /// `parseExpectedMatchingBrackets`: attaches the position of the `opening` bracket to log message `index` as related info.
     fn note_opening_bracket(&mut self, index: usize, opening: u8, open: Loc) {
         let text: &'static [u8] = match opening {
-            b'(' => b"TS1007 (\0)",
-            b'[' => b"TS1007 [\0]",
-            _ => b"TS1007 {\0}",
+            b'(' => b"(\0)",
+            b'[' => b"[\0]",
+            _ => b"{\0}",
         };
         self.add_related_info(index, Range { loc: open, len: 0 }, text);
     }
 
-    /// `AddRelatedInfo` for log message `index`: `text`, in the format of `ts_error_about`, with the range `r`.
+    /// `AddRelatedInfo` for log message `index`, with the range `r`. `text`: the arguments, in the format of `ts_error_about`. Which
+    /// message it is follows from the error: see `sema::diagnostic`.
     #[cold]
     #[inline(never)]
     pub(crate) fn add_related_info(&mut self, index: usize, r: Range, text: &'static [u8]) {
@@ -1206,30 +1216,47 @@ impl<'a> Lexer<'a> {
     /// Like any other error it is dropped if the previous error was at the same position, which is
     /// TypeScript's own rule.
     pub(crate) fn ts_error(&mut self, r: Range, code: u32) {
-        self.log_ts_error(false, r, code, None);
+        self.log_ts_error(TypeScriptKind::Parse, r, code, None);
     }
 
     /// `ts_error` for an error whose message takes the argument `what` (`{0}`; a NUL precedes
     /// `{1}`).
     pub(crate) fn ts_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
-        self.log_ts_error(false, r, code, Some(what));
+        self.log_ts_error(TypeScriptKind::Parse, r, code, Some(what));
     }
 
+    /// The text of the message is `what`.
     #[cold]
     #[inline(never)]
-    fn log_ts_error(&mut self, is_grammar_error: bool, r: Range, code: u32, what: Option<&[u8]>) {
+    pub(crate) fn log_ts_error(
+        &mut self,
+        kind: TypeScriptKind,
+        r: Range,
+        code: u32,
+        what: Option<&[u8]>,
+    ) {
         debug_assert!(self.tolerant);
         if self.is_log_disabled {
             self.swallowed += 1;
             return;
         }
-        let blank = if what.is_some() { " " } else { "" };
-        let what = bstr::BStr::new(what.unwrap_or_default());
-        if is_grammar_error {
-            let text = format_args!("TG{code}{blank}{what}");
-            self.log().add_range_error_fmt(Some(self.source), r, text);
+        // One empty argument is not no argument: `JSX element '' has no corresponding closing tag`.
+        let what = if what == Some(b"") {
+            Some(&b"\0"[..])
         } else {
-            let _ = self.add_range_error(r, format_args!("TS{code}{blank}{what}"));
+            what
+        };
+        let what = bstr::BStr::new(what.unwrap_or_default());
+        let logged_before = self.log().msgs.len();
+        if kind == TypeScriptKind::Parse {
+            let _ = self.add_range_error(r, format_args!("{what}"));
+        } else {
+            let text = format_args!("{what}");
+            self.log().add_range_error_fmt(Some(self.source), r, text);
+        }
+        // Dropped if the previous error was at the same position.
+        if let Some(msg) = self.log().msgs.get_mut(logged_before) {
+            msg.metadata = bun_ast::Metadata::TypeScript { code, kind };
         }
     }
 
@@ -1255,12 +1282,12 @@ impl<'a> Lexer<'a> {
     /// Logs an error that TypeScript's checker reports through `grammarErrorOnNode`, not its parser. It is only reported if
     /// the file has no syntax errors, and the rule of one error per position (`parseErrorAtRange`) does not apply to it.
     pub(crate) fn ts_grammar_error(&mut self, r: Range, code: u32) {
-        self.log_ts_error(true, r, code, None);
+        self.log_ts_error(TypeScriptKind::Grammar, r, code, None);
     }
 
     /// The same, for an error whose message takes the argument `what`.
     pub(crate) fn ts_grammar_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
-        self.log_ts_error(true, r, code, Some(what));
+        self.log_ts_error(TypeScriptKind::Grammar, r, code, Some(what));
     }
 
     /// `NodeFlagsJavaScriptFile`. The type checker has JavaScript parsed as TypeScript with JSX. Always false outside tolerant mode.
@@ -1272,10 +1299,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn has_javascript_extension(&self) -> bool {
-        let path = self.source.path.text;
-        [&b".js"[..], b".jsx", b".mjs", b".cjs"]
-            .iter()
-            .any(|extension| path.ends_with(extension))
+        bun_sema::resolve::is_javascript(self.source.path.text)
     }
 
     /// `TokenFullStart`, `nodePos()`: the end of the previous token, before the leading trivia
@@ -1381,7 +1405,7 @@ impl<'a> Lexer<'a> {
             loc: bun_ast::usize2loc(start + at),
             len: len as i32,
         };
-        self.log_ts_error(false, range, code, what);
+        self.log_ts_error(TypeScriptKind::Parse, range, code, what);
         // It decodes those of a template in a second scan (`reScanTemplateToken`), which reaches
         // the end of the source text again and reports the same error for it, so that is the
         // position of the last error.
@@ -2016,7 +2040,7 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
-                    // Consumes the rest of the run at once: an indented line has many of these
+                    // Consumes the remaining white space at once: an indented line has many of these
                     // characters.
                     while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
                         self.current += 1;
@@ -4722,35 +4746,6 @@ impl<'a> Lexer<'a> {
     }
 }
 
-/// `peekUnicodeEscape`: the code point that the escape at `at`, a backslash, decodes to, and its
-/// length in bytes.
-#[cold]
-pub(crate) fn peek_unicode_escape(contents: &[u8], at: usize) -> Option<(CodePoint, usize)> {
-    let t = &contents[at..];
-    if t.get(1) != Some(&b'u') {
-        return None;
-    }
-    let value = |digits: &[u8]| {
-        digits.iter().fold(0u32, |v, &d| {
-            v.saturating_mul(16)
-                .saturating_add(u32::from(hex_digit_value_u32(u32::from(d)).unwrap_or(0)))
-        })
-    };
-    if t.get(2) == Some(&b'{') {
-        let n = t[3..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
-        if n == 0 || t.get(3 + n) != Some(&b'}') {
-            return None;
-        }
-        let v = value(&t[3..3 + n]);
-        (v <= 0x10FFFF).then_some((v as CodePoint, n + 4))
-    } else {
-        let d = t.get(2..6)?;
-        d.iter()
-            .all(u8::is_ascii_hexdigit)
-            .then(|| (value(d) as CodePoint, 6))
-    }
-}
-
 #[inline]
 pub fn is_identifier_start(codepoint: i32) -> bool {
     js_identifier::is_identifier_start(codepoint)
@@ -4758,47 +4753,6 @@ pub fn is_identifier_start(codepoint: i32) -> bool {
 #[inline]
 pub fn is_identifier_continue(codepoint: i32) -> bool {
     js_identifier::is_identifier_part(codepoint)
-}
-
-pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
-    // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
-    matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
-        || strings::is_unicode_space_separator(codepoint as u32)
-}
-
-/// `IsWhiteSpaceSingleLine`: accepts two more code points than ECMAScript's WhiteSpace.
-pub(crate) fn is_white_space_single_line(codepoint: CodePoint) -> bool {
-    is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
-}
-
-/// `charAndSize`: the character at `at` and its length in bytes, 0 at the end.
-#[inline]
-pub(crate) fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
-    match text.get(at) {
-        None => (-1, 0),
-        Some(&first) if first < 0x80 => (first as CodePoint, 1),
-        Some(&first) => {
-            let mut end = at;
-            let c = strings::lexer_step::next_codepoint_multibyte(text, &mut end, first);
-            (c, end.min(text.len()) - at)
-        }
-    }
-}
-
-/// `DecodeLastRuneInString`, and the offset where that character starts.
-pub(crate) fn last_char(text: &[u8]) -> (CodePoint, usize) {
-    let start = text.iter().rposition(|&c| c & 0xC0 != 0x80).unwrap_or(0);
-    (char_and_size(text, start).0, start)
-}
-
-/// End of the run of characters starting at `at` for which `is` returns true.
-pub(crate) fn end_of_run(text: &[u8], mut at: usize, is: impl Fn(CodePoint) -> bool) -> usize {
-    loop {
-        match char_and_size(text, at) {
-            (c, size @ 1..) if is(c) => at += size,
-            _ => return at,
-        }
-    }
 }
 
 /// `EncodeJSStringRune`: UTF-8, with a lone surrogate encoded as the three-byte sequence its code
@@ -4825,13 +4779,6 @@ pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
 /// Start of the escape sequence that the end of `text` truncates.
 fn last_backslash(text: &[u8]) -> usize {
     bun_core::strings::last_index_of_char(text, b'\\').unwrap_or(0)
-}
-
-/// `IsLineBreak` of the first character of `text`.
-pub(crate) fn starts_with_line_break(text: &[u8]) -> bool {
-    matches!(text.first(), Some(b'\n' | b'\r'))
-        || text.starts_with(b"\xE2\x80\xA8")
-        || text.starts_with(b"\xE2\x80\xA9")
 }
 
 /// Number of trailing bytes of `text` that are whitespace or line breaks (`IsWhiteSpaceLike`).

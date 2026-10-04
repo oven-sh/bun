@@ -26,8 +26,146 @@ use smallvec::SmallVec;
 /// are subtracted too.
 const TASK_STACK: usize = 3 << 20;
 
+/// A member of a cycle of variances that a task has measured, and published, although a file that
+/// precedes the task's in program order and can reach the member had not run. Or a symbol outside
+/// the cycle whose published variances were measured through it (`LeadsIntoCycle`).
+pub(super) struct ProvisionalVariances<'s> {
+    pub(super) sym: Sym,
+    pub(super) variances: &'s [u8],
+    /// The member at which the task entered the cycle.
+    pub(super) root: Sym,
+    /// `OrderDependent::enters`
+    pub(super) enters: Sym,
+    /// Of the file that the task was visiting.
+    pub(super) rank: u32,
+}
+
+/// Speculation: where a result depends on which file asks for it first, the plan publishes what
+/// its first task to ask finds, and here is what it takes to tell, after the last step, whether
+/// one checker in program order finds the same (`Program::disputed_order`).
+///
+/// The variances of a cycle are a function of the member at which it is entered.
+///
+/// `instantiateTypeWithAlias` stores the error type of a limit like any other result, so the first
+/// file to reach the limit reports it, and the files after it read the error type.
+pub(super) struct EntryOrder<'s> {
+    pub(super) provisional: ArenaVec<'s, ProvisionalVariances<'s>>,
+    /// For each cycle: the rank of the file that measured it, and its root.
+    entries: ArenaVec<'s, (u32, Sym)>,
+    /// By root. The first file that used a provisional cycle and precedes the one that measured
+    /// it: its rank, and the member it used first.
+    earlier_uses: ArenaHashMap<'s, Sym, (u32, Sym)>,
+    /// Of the valid tasks.
+    limits_reached: ArenaVec<'s, LimitReached>,
+}
+
+/// What the second attempt does before its first step, in this order. See `Program::disputed_order`.
+#[derive(Default)]
+pub struct OrderHints {
+    /// For `Checker::measure_variances`.
+    pub variance_entries: Vec<Sym>,
+    /// Checked by one task, and published. The tasks of the plan leave them out.
+    pub files: Vec<FileId>,
+}
+
+impl<'s> EntryOrder<'s> {
+    /// `arena`: of the thread that calls `Program::validate`.
+    pub(super) fn new_in(arena: &'s Arena) -> EntryOrder<'s> {
+        EntryOrder {
+            provisional: ArenaVec::new_in(arena),
+            entries: ArenaVec::new_in(arena),
+            earlier_uses: map_in(arena),
+            limits_reached: ArenaVec::new_in(arena),
+        }
+    }
+
+    /// `it`: of a valid task. `is_first`: it has set the serial value. `not_run`: see `validate`.
+    fn note(&mut self, it: &OrderDependent<'s>, is_first: bool, not_run: &[u32]) {
+        let Some(root) = it.root else {
+            return;
+        };
+        if it.is_provisional {
+            if let Some(rank) = it.first_use.filter(|&rank| rank < it.rank) {
+                let first = self.earlier_uses.entry(root).or_insert((rank, it.enters));
+                if rank < first.0 {
+                    *first = (rank, it.enters);
+                }
+            }
+        } else if is_first {
+            if !self.entries.iter().any(|entry| entry.1 == root) {
+                self.entries.push((it.rank, root));
+            }
+            let next = not_run.partition_point(|&rank| rank < it.from);
+            if not_run.get(next).is_some_and(|&rank| rank < it.rank) {
+                self.provisional.push(ProvisionalVariances {
+                    sym: it.sym,
+                    variances: it.variances,
+                    root,
+                    enters: it.sym,
+                    rank: it.rank,
+                });
+            }
+        }
+    }
+
+    /// `it`: of a valid task that publishes.
+    fn note_lead(&mut self, it: &LeadsIntoCycle<'s>) {
+        let mut provisional = self.provisional.iter();
+        let Some(member) = provisional.find(|member| member.sym == it.member) else {
+            return;
+        };
+        let (root, rank) = (member.root, member.rank);
+        if !self.provisional.iter().any(|known| known.sym == it.sym) {
+            self.provisional.push(ProvisionalVariances {
+                sym: it.sym,
+                variances: it.variances,
+                root,
+                enters: it.member,
+                rank,
+            });
+        }
+    }
+}
+
+/// For each `FileId` the rank of its first dependent in program order: the first file that can name
+/// one of its declarations or obtain a type that refers to one, through its imports and references,
+/// transitively, or through a file whose declarations need no import. A file depends on itself.
+/// Called before any tree is freed.
+pub(super) fn ranks_of_first_dependents<'s>(files: &Files, arena: &'s Arena) -> &'s [u32] {
+    let needs_no_import = |file: &&FileId| {
+        let module = &files.modules[file.idx()];
+        module.is_lib
+            || module.hir.is_js
+            || !module.hir.has_module_syntax
+            || !module.bound.global_augmentations.is_empty()
+            || !module.bound.ambient_modules.is_empty()
+            || !module.bound.umd_globals.is_empty()
+    };
+    let visible_everywhere = files.order.iter().filter(needs_no_import);
+    let in_program_order = (0u32..).zip(files.order.iter().copied());
+    let first = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
+    let mut reached: Vec<FileId> = Vec::new();
+    for (rank, file) in (visible_everywhere.map(|&file| (0, file))).chain(in_program_order) {
+        if first[file.idx()] != u32::MAX {
+            continue;
+        }
+        first[file.idx()] = rank;
+        reached.push(file);
+        while let Some(file) = reached.pop() {
+            let module = &files.modules[file.idx()];
+            for &imported in module.edges.iter().chain(module.imports.values()) {
+                if first[imported.idx()] == u32::MAX {
+                    first[imported.idx()] = rank;
+                    reached.push(imported);
+                }
+            }
+        }
+    }
+    first
+}
+
 /// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
-impl Program {
+impl<'s> Program<'s> {
     /// Optimistic concurrency control: validation, before link and publish. `getVariancesWorker`
     /// returns an empty list for a symbol whose variances are being computed and caches whatever
     /// results from that, so the variances of mutually recursive types depend on which type of the
@@ -39,33 +177,129 @@ impl Program {
     /// caller aborts an invalid task: it discards the task's output and retries its files, which
     /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
     /// with respect to that symbol. Returns whether each task is invalid.
-    pub fn validate(&self, finished: &[Finished]) -> Vec<bool> {
+    ///
+    /// `not_run`: the ranks of the files of the later steps, in ascending order. `EntryOrder` tells
+    /// at the end whether it mattered that they had not run.
+    pub fn validate(&self, finished: &[Finished<'s>], not_run: &[u32]) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
-        let is_invalid = |finished: &Finished, serial: &FxHashMap<Sym, Arc<[u8]>>| {
-            let mut measured = finished.order_dependent_variances.iter();
-            measured.any(|it| {
-                serial
-                    .get(&it.sym)
-                    .is_some_and(|first| it.conflicts_with(first))
-            })
-        };
+        let mut order = self.entry_order.lock();
         (finished.iter())
             .map(|finished| {
-                if is_invalid(finished, &serial) {
+                let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
+                    serial
+                        .get(&it.sym)
+                        .is_some_and(|first| it.conflicts_with(first))
+                });
+                if is_invalid {
                     return true;
                 }
                 for it in &finished.order_dependent_variances {
-                    serial.entry(it.sym).or_insert_with(|| it.variances.clone());
+                    if it.is_provisional {
+                        order.note(it, false, not_run);
+                        continue;
+                    }
+                    let mut is_first = false;
+                    serial.entry(it.sym).or_insert_with(|| {
+                        is_first = true;
+                        it.variances
+                    });
+                    order.note(it, is_first, not_run);
                 }
+                for it in &finished.leads_into_cycles {
+                    order.note_lead(it);
+                }
+                order
+                    .limits_reached
+                    .extend_from_slice(&finished.limits_reached);
                 false
             })
             .collect()
     }
 
+    /// No file before this one in program order requests the variances of `sym`.
+    pub(super) fn rank_of_first_dependent(&self, sym: Sym) -> u32 {
+        let declarations = self.files.decls(sym).into_iter();
+        let ranks = declarations.map(|(file, _)| self.ranks_of_first_dependents[file.idx()]);
+        ranks.min().unwrap_or(0)
+    }
+
+    /// Validation of the speculation of `EntryOrder`, after the last step. `None`: it holds.
+    /// Otherwise what was published follows from results that one checker in program order does
+    /// not find, so the caller starts over, with the hints.
+    pub fn disputed_order(&self) -> Option<OrderHints> {
+        let order = self.entry_order.lock();
+        let hints = OrderHints {
+            variance_entries: self.disputed_variance_entries(&order),
+            files: self.files_that_reach_limits_first(&order),
+        };
+        let is_disputed = !hints.variance_entries.is_empty() || !hints.files.is_empty();
+        is_disputed.then_some(hints)
+    }
+
+    /// Empty: wherever the plan has entered a cycle of variances, one checker in program order
+    /// enters it at the same member, or finds the same variances. Otherwise the members at which
+    /// that checker enters the cycles, in its order.
+    fn disputed_variance_entries(&self, order: &EntryOrder<'s>) -> Vec<Sym> {
+        let mut elsewhere: Vec<(u32, Sym, Sym)> = (order.earlier_uses.iter())
+            .filter(|(root, first)| **root != first.1)
+            .map(|(&root, &(rank, member))| (rank, member, root))
+            .collect();
+        if elsewhere.is_empty() {
+            return Vec::new();
+        }
+        elsewhere.sort_unstable();
+        let is_disputed =
+            |it: &&ProvisionalVariances| elsewhere.iter().any(|entry| entry.2 == it.root);
+        let disputed: Vec<&ProvisionalVariances> =
+            order.provisional.iter().filter(is_disputed).collect();
+        // In a program of its own: the published relations follow from the variances in question.
+        let afresh = Program::new(self.session, self.files);
+        for (&sym, variances) in self.serial_variances.lock().iter() {
+            if !disputed.iter().any(|it| it.sym == sym) {
+                (afresh.serial_variances.lock()).insert(sym, *variances);
+            }
+        }
+        let mut checker = afresh.checker();
+        checker.begin_stack_budget();
+        for &(_, member, _) in &elsewhere {
+            checker.variances_of(member);
+        }
+        if (disputed.iter()).all(|it| checker.variances_of(it.sym) == it.variances) {
+            return Vec::new();
+        }
+        let first_use = |&(rank, root): &(u32, Sym)| {
+            (order.earlier_uses.get(&root).copied()).unwrap_or((rank, root))
+        };
+        let mut entries: Vec<(u32, Sym)> = order.entries.iter().map(first_use).collect();
+        entries.sort_unstable();
+        entries.into_iter().map(|entry| entry.1).collect()
+    }
+
+    /// Empty: a limit was reached by one file at most, while it evaluated nothing of a checked
+    /// file before it. Otherwise another file may have reached it in place of the first one that
+    /// does in program order, or beside it, in a task that cannot see what the first one stores.
+    /// Then, in program order: for each report the first file that evaluates what was in progress.
+    fn files_that_reach_limits_first(&self, order: &EntryOrder<'s>) -> Vec<FileId> {
+        let reached = &order.limits_reached;
+        let Some(one) = reached.first() else {
+            return Vec::new();
+        };
+        if reached
+            .iter()
+            .all(|it| it.file == one.file && it.first == it.file)
+        {
+            return Vec::new();
+        }
+        let mut files: Vec<FileId> = reached.iter().map(|it| it.first).collect();
+        files.sort_unstable_by_key(|&file| self.files.rank_of_file(file));
+        files.dedup();
+        files
+    }
+
     /// The first half. Of the types, signatures, mappers and component lists that several tasks
     /// have created, the copy of the lowest task is kept. Each task gets its `Link`, through which
     /// `publish` rewrites its keys and values.
-    pub fn link(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> LinkCounts {
+    pub fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> LinkCounts {
         let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
         // For a union whose member order depended on task-local ids. Few steps have one.
         let checker = std::cell::OnceCell::new();
@@ -85,7 +319,7 @@ impl Program {
     /// `with_digest`: `Published::digest` is computed.
     pub fn publish(
         &self,
-        finished: &mut [Finished],
+        finished: &mut [Finished<'s>],
         in_parallel: InParallel<'_>,
         with_digest: bool,
     ) -> Published {
@@ -100,7 +334,7 @@ impl Program {
     }
 }
 
-impl Checker<'_> {
+impl<'s> Checker<'_, 's> {
     /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
         let left = bun_core::StackCheck::init().remaining();
@@ -120,10 +354,23 @@ impl Checker<'_> {
         self.task.begin(step, index, is_read_later);
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
+        self.notes_cycle_entries = false;
+        self.cycle_entries.clear();
+        self.watched_variances.clear();
+        self.watched_variances_filter = 0;
+    }
+
+    /// Called after `begin_task`, in a task of its own, before any file is checked. `entries`:
+    /// `OrderHints::variance_entries`.
+    pub fn measure_variances(&mut self, entries: &[Sym]) {
+        for &sym in entries {
+            self.task.begin_file(sym.file, true);
+            self.variances_of(sym);
+        }
     }
 
     /// Called on the thread of the task, after everything else this checker does.
-    pub fn end_task(&mut self) -> Finished {
+    pub fn end_task(&mut self) -> Finished<'s> {
         let diagnostics = self.take_diagnostics();
         self.task.finish(self.p, diagnostics)
     }
@@ -143,6 +390,7 @@ impl Checker<'_> {
     /// `checkSourceFile`
     pub(super) fn check_source_file(&mut self, file: FileId) {
         self.deferred_nodes.clear();
+        self.deferred_type_parameters.clear();
         self.is_deferred_node.clear();
         let hir = self.hir(file);
         let is_ambient = |flags: Flags| flags.contains(Flags::AMBIENT);
@@ -168,6 +416,56 @@ impl Checker<'_> {
         self.reported_unreachable_nodes.clear();
     }
 
+    /// `checkSourceElement` for the statements of `file`, a declaration file, that begin in the
+    /// range `from..to` of its text (`PlanOptions::split_files`). The only work of its task.
+    ///
+    /// The task does not visit `file`. So every query is evaluated on demand, as a task evaluates
+    /// what it needs of any other file, and what goes to the barrier is what any task may publish
+    /// about `file`: an entry whose evaluation has a side effect that `check_file` reads is not
+    /// stored. The task of `file` runs in the next step and finds the entries.
+    ///
+    /// A diagnostic that belongs to a query goes to the barrier with the entry. One that belongs to
+    /// the task is dropped: `check_file` reports it.
+    ///
+    /// `publishes_everything`: otherwise `Task::withhold_tables_of_records`.
+    ///
+    /// Returns the obstacles to publishing, as a bit set. Each is an event after which a stored
+    /// result can depend on what was evaluated before, so the task of `file`, which begins at the
+    /// first statement, might have stored another one.
+    /// - 1: a query has re-entered itself.
+    /// - 2: an instantiation limit was reached, or the native stack ran low.
+    /// - 4: a comparison was cut short because both types were deeply nested.
+    /// - 8: `check_file` does not check the statements of `file`.
+    pub fn check_statements_ahead(
+        &mut self,
+        file: FileId,
+        (from, to): (u32, u32),
+        publishes_everything: bool,
+    ) -> u8 {
+        if self.expected != Requested::All || !self.reports_semantic_errors(file) {
+            return 8;
+        }
+        self.task.store_densely(file);
+        if !publishes_everything {
+            self.task.withhold_tables_of_records();
+        }
+        self.has_ambient_context = true;
+        let hir = self.hir(file);
+        for s in hir.ids(hir.body) {
+            if (from..to).contains(&hir[s].start) {
+                self.check_source_element(file, s);
+            }
+        }
+        self.reported.clear();
+        self.task.diagnostics.retain(|(owner, _)| owner.is_some());
+        let is_cut_short = self.ran_out_of_stack.replace(false)
+            || self.cuts() != 0
+            || self.instantiation_limit_hits != 0;
+        u8::from(self.task.closed_a_cycle)
+            | u8::from(is_cut_short) << 1
+            | u8::from(self.comparisons_of_deeply_nested_types != 0) << 2
+    }
+
     /// `checkSourceElements`
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {
@@ -191,6 +489,28 @@ impl Checker<'_> {
         if self.task.file != Some(file) {
             (self.p.deferred_nodes).insert(&self.task, (file, e), (), Stored::new());
         } else if !self.is_type_checked && self.is_deferred_node.insert(e) {
+            self.deferred_nodes.push_back(e);
+        }
+    }
+
+    /// `checkNodeDeferred(node)` at the end of `checkTypeParameter`, for the type parameters
+    /// `params` of the class expression `e`: before what the heritage clauses defer, and before the
+    /// class. Only `in` and `out` have a deferred check. A class that another file's check has
+    /// deferred has one entry.
+    fn check_type_parameters_node_deferred(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        params: Span<TypeParamId>,
+    ) {
+        let hir = self.hir(file);
+        if self.task.file == Some(file)
+            && !self.is_type_checked
+            && !self.is_deferred_node.contains(&e)
+            && !self.deferred_type_parameters.iter().any(|it| it.0 == e)
+            && (params.iter()).any(|tp| hir[tp].flags.intersects(Flags::IN | Flags::OUT))
+        {
+            self.deferred_type_parameters.push((e, false));
             self.deferred_nodes.push_back(e);
         }
     }
@@ -231,8 +551,25 @@ impl Checker<'_> {
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
                 self.check_function_body(file, func);
             }
-            // `checkClassExpressionDeferred`
-            ExprKind::Class(class) => self.check_members(file, hir[class].members),
+            // `checkTypeParameterDeferred`, `checkClassExpressionDeferred`
+            ExprKind::Class(class) => {
+                // `None`: the class has one entry, for both.
+                let mut entries = self.deferred_type_parameters.iter_mut();
+                let is_second =
+                    (entries.find(|it| it.0 == e)).map(|it| std::mem::replace(&mut it.1, true));
+                if is_second != Some(true) {
+                    let symbol = self.bound(file).class_symbol[class.idx()];
+                    self.check_type_parameters_deferred(
+                        file,
+                        symbol,
+                        hir[class].type_params,
+                        false,
+                    );
+                }
+                if is_second != Some(false) {
+                    self.check_members(file, hir[class].members)
+                }
+            }
             ExprKind::Jsx(jsx) => self.check_jsx_element_deferred(file, jsx),
             // `checkVoidExpression`
             ExprKind::Unary { operand, .. } => self.check_expression(file, operand),
@@ -447,7 +784,7 @@ impl Checker<'_> {
     }
 
     /// The end of `checkParameter`: 2370.
-    fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (param, f) = (&hir[p], &hir[func]);
         let mut ty = self.type_of_param(file, p);
@@ -696,12 +1033,21 @@ impl Checker<'_> {
     }
 
     /// `checkClassLikeDeclaration`
-    fn check_class_like_declaration(&mut self, file: FileId, class: ClassId) {
+    pub(super) fn check_class_like_declaration(&mut self, file: FileId, class: ClassId) {
         let decl = &self.hir(file)[class];
+        self.check_decorators(file, decl.modifiers);
         self.check_collisions_for_declaration_name(file, class, decl.name);
         self.check_type_parameters(file, decl.type_params);
         let symbol = self.bound(file).class_symbol[class.idx()];
-        self.check_type_parameters_deferred(file, symbol, decl.type_params, false);
+        // A class expression is checked while its holder is being resolved.
+        match self.bound(file).class_owner[class.idx()] {
+            crate::bind::ClassOwner::Stmt(_) => {
+                self.check_type_parameters_deferred(file, symbol, decl.type_params, false)
+            }
+            crate::bind::ClassOwner::Expr(e) => {
+                self.check_type_parameters_node_deferred(file, e, decl.type_params)
+            }
+        }
         if symbol.is_some() {
             let sym = self.files().sym(file, symbol);
             self.declared_type(sym);
@@ -757,7 +1103,20 @@ impl Checker<'_> {
         // `getTypeFromTypeAliasReference`: a reference to the alias in its own declaration starts with `getDeclaredTypeOfTypeAlias`.
         let symbol = self.bound(file).alias_symbol[alias.idx()];
         // tsgo resolves nothing here, so there is no `currentNode` to report a limit at.
-        if symbol.is_some() {
+        // The check of `T=` or `...T` resolves nothing either.
+        let body = self
+            .hir(file)
+            .types
+            .get(decl.ty.idx())
+            .map(|body| body.kind);
+        let is_body_checked = !matches!(
+            body,
+            Some(TypeNodeKind::JSDoc {
+                kind: JSDocTypeKind::Optional | JSDocTypeKind::Variadic,
+                ..
+            })
+        );
+        if symbol.is_some() && is_body_checked {
             let saved = self.current_source_element.take();
             self.declared_type(self.files().sym(file, symbol));
             self.current_source_element = saved;
@@ -824,12 +1183,30 @@ impl Checker<'_> {
             if let PropKey::Computed(key) = member.key {
                 self.check_expression(file, key);
             }
+            // `checkAccessorDeclaration`: `getTypeOfAccessors` comes before the body, whose `return`
+            // asks for the return type of the signature, which is another resolution.
+            if matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
+                && self.bound(file).member_symbol[m.idx()].is_some()
+            {
+                let symbol = self.symbol_of_member(file, m);
+                self.type_of_symbol(symbol);
+            }
             if member.func.is_some() {
                 self.check_function_body(file, member.func);
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, member.func);
             }
             if member.kind == MemberKind::Constructor {
                 self.check_super_call_in_constructor(file, m);
+            }
+            // `checkVariableLikeDeclaration`: `getTypeOfSymbol` comes before
+            // `checkExpressionCached(initializer)`, unless the name is computed.
+            if member.kind == MemberKind::Property
+                && !matches!(member.key, PropKey::Computed(_))
+                && member.ty.is_none()
+                && self.bound(file).member_symbol[m.idx()].is_some()
+            {
+                let symbol = self.symbol_of_member(file, m);
+                self.type_of_symbol(symbol);
             }
             self.check_expression(file, member.init);
             self.check_property_initializer(file, m);
@@ -961,12 +1338,18 @@ impl Checker<'_> {
                 self.check_type_node(file, of);
             }
             TypeNodeKind::UniqueSymbol => self.check_grammar_type_operator_node(file, node),
+            // `checkSourceElementWorker` has no case for these two: nothing below them is checked.
+            TypeNodeKind::JSDoc {
+                kind: JSDocTypeKind::Optional | JSDocTypeKind::Variadic,
+                ..
+            } => {}
             // `checkJSDocType`: `checkJSDocTypeIsInJsFile`
             TypeNodeKind::JSDoc {
                 ty,
-                is_nullable,
+                kind,
                 is_postfix,
             } => {
+                let is_nullable = kind == JSDocTypeKind::Nullable;
                 if !hir.is_js {
                     let mut suggestion = self.type_from_node(file, ty);
                     // `getNullableType`
@@ -1171,7 +1554,6 @@ impl Checker<'_> {
             }
             // `checkClassDeclaration`
             StmtKind::Class(class) => {
-                self.check_decorators(file, hir[s].modifiers);
                 self.check_class_like_declaration(file, class);
                 self.check_members(file, hir[class].members);
             }
@@ -1412,7 +1794,7 @@ impl Checker<'_> {
                     }
                 }
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-                    check_tagged_template(self, file, e, c);
+                    check_tagged_template(self, file, c);
                 }
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),
@@ -1451,11 +1833,8 @@ impl Checker<'_> {
                 }
                 self.check_node_deferred(file, e);
             }
-            // `checkClassExpression`
-            ExprKind::Class(class) => {
-                self.check_class_like_declaration(file, class);
-                self.check_node_deferred(file, e);
-            }
+            // `checkClassExpression`: `type_of_expr` has run `checkClassLikeDeclaration`.
+            ExprKind::Class(_) => self.check_node_deferred(file, e),
             // `checkYieldExpression`: outside a generator the yielded expression is not checked.
             ExprKind::Yield { value, .. } => {
                 // `checkGrammarYieldExpression`
@@ -1501,7 +1880,10 @@ impl Checker<'_> {
                 self.check_erasable_type_assertion(file, e, expr);
                 self.check_expression(file, expr);
                 self.check_type_node(file, ty);
+                // `checkDeferredNode`
+                let saved = self.enter_source_element(CurrentNode::Expr(file, e));
                 self.check_assertion_deferred(file, e, expr, ty);
+                self.current_source_element = saved;
             }
             // `checkSatisfiesExpression`
             ExprKind::Satisfies { expr, ty } => {
@@ -1654,8 +2036,19 @@ impl Checker<'_> {
         };
         self.check_expression(file, component(self, hir[jsx].tag));
         self.check_type_nodes(file, hir[jsx].type_args);
+        let first = hir[jsx].attrs.iter().next();
+        let element = first.map(|p| self.bound(file).prop_owner[p.idx()]);
+        let is_never_checked =
+            element.is_some_and(|e| self.are_jsx_attributes_never_checked(file, e));
         for p in hir[jsx].attrs.iter() {
-            self.check_expression(file, hir[p].value);
+            let value = hir[p].value;
+            if is_never_checked {
+                if value.is_some() {
+                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                }
+                continue;
+            }
+            self.check_expression(file, value);
             if hir[p].kind == PropKind::Spread {
                 self.check_spread(file, self.bound(file).prop_owner[p.idx()], p);
             }

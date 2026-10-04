@@ -10,25 +10,25 @@ use smallvec::SmallVec;
 /// it.
 type Discriminants = SmallVec<[(Atom, TypeId); 8]>;
 
-impl<'p> Checker<'p> {
-    /// The function-like `e` is evaluated in.
+impl<'p, 's> Checker<'p, 's> {
+    /// `getContainingFunctionOrClassStaticBlock`
     #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.enclosing_fn(file, self.bound(file).expr_parent[e.idx()])
     }
 
+    /// The same for a direct child of `parent`.
     pub fn enclosing_fn(&self, file: FileId, mut parent: Parent) -> Option<FnId> {
         let bound = self.bound(file);
         loop {
             parent = match parent {
-                Parent::Expr(e) => bound.expr_parent[e.idx()],
+                // FOR SPEED: most steps are these two.
+                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
                 Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => bound.expr_parent[bound.prop_owner[p.idx()].idx()],
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
-                _ => return None,
+                Parent::None | Parent::File => return None,
+                _ => self.parent_of_node(file, parent),
             };
         }
     }
@@ -248,60 +248,29 @@ impl<'p> Checker<'p> {
         else {
             return false;
         };
-        // `below`: the expression whose parent is `at`.
-        let (mut at, mut below) = (bound.expr_parent[e.idx()], e);
-        loop {
-            let mut inner = match at {
-                Parent::None | Parent::File => return false,
-                Parent::PatPropDefault(p) => hir[p].value,
-                Parent::PatElemDefault(p) => hir[p].pat,
-                // A computed name in a pattern.
-                Parent::PatKey(_) => match hir
-                    .pat_props
-                    .iter()
-                    .find(|p| p.key == PropKey::Computed(below))
-                {
-                    Some(p) => p.value,
-                    None => return false,
-                },
-                // One in an object literal.
-                Parent::PropKey(owner, _) => {
-                    at = Parent::Expr(owner);
-                    continue;
-                }
-                _ => {
-                    if let Parent::Expr(x) = at {
-                        below = x;
-                    }
-                    at = self.parent_of(file, at);
-                    continue;
-                }
-            };
-            loop {
-                match bound.pat_parent[inner.idx()] {
-                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                        if outer == pattern {
-                            // Results derived from it are valid only while the implied type is in
-                            // progress.
-                            self.mark_tainted_by_pattern_from(floor.min(self.stack.len()));
-                            self.note_cycle();
-                            return true;
-                        }
-                        inner = outer;
-                    }
-                    PatParent::Var(d) => {
-                        at = Parent::VarInit(d);
-                        break;
-                    }
-                    PatParent::Param(p) => {
-                        at = Parent::ParamDefault(p);
-                        break;
-                    }
-                    PatParent::None => return false,
-                }
-            }
-            at = self.parent_of(file, at);
+        if hir
+            .find_ancestor(hir.node(e), |n| n == hir.node(pattern))
+            .is_none()
+        {
+            return false;
         }
+        // Results derived from it are valid only while the implied type is in progress, except from
+        // the innermost resolution down: tsgo stores `links.resolvedType` and
+        // `signature.resolvedReturnType` whatever is in progress, and reports what it finds.
+        let floor = floor.min(self.stack.len());
+        let is_stored = |q: &Query| {
+            matches!(
+                q,
+                Query::Pat(..)
+                    | Query::Symbol(_)
+                    | Query::Return(..)
+                    | Query::ReturnAtFirstLook(..)
+            )
+        };
+        let innermost = self.stack[floor..].iter().rposition(is_stored);
+        self.mark_tainted_by_pattern_from(innermost.map_or(floor, |at| floor + at + 1));
+        self.note_cycle();
+        true
     }
 
     /// `getTypeFromBindingPattern`
@@ -402,7 +371,7 @@ impl<'p> Checker<'p> {
             }
             // `getTypeFromObjectBindingPattern`
             PatKind::Object(props) => {
-                let mut shape = Shape::default();
+                let mut shape = Shape::new_in(self.arena);
                 let mut has_computed_names = false;
                 for p in props.iter() {
                     let prop = &hir[p];
@@ -1054,7 +1023,7 @@ impl<'p> Checker<'p> {
         {
             let elems = self.type_arguments(part);
             let fixed = Self::fixed_length(flags);
-            if let Some(rest) = self.tuple_slice_element(elems, flags, fixed, 0) {
+            if let Some(rest) = self.element_type_of_slice(elems, flags, fixed, 0, true) {
                 return Some(rest);
             }
         }
@@ -1303,7 +1272,7 @@ impl<'p> Checker<'p> {
         }
         self.push_omitted_discriminants(context, &written, &mut items);
         (
-            self.discriminate_by_items(context, &items),
+            self.discriminate_by_items(context, &items, Self::is_assignable),
             is_given_for_good,
         )
     }
@@ -1408,7 +1377,7 @@ impl<'p> Checker<'p> {
             written.push(children);
         }
         self.push_omitted_discriminants(context, &written, &mut items);
-        self.discriminate_by_items(context, &items)
+        self.discriminate_by_items(context, &items, Self::is_assignable)
     }
 
     /// `isPossiblyDiscriminantValue`: the kinds of expression whose type does not depend on their
@@ -1517,7 +1486,13 @@ impl<'p> Checker<'p> {
 
     /// `discriminateTypeByDiscriminableItems`. `items`: property names, each with the type of the
     /// value given for it.
-    fn discriminate_by_items(&mut self, context: TypeId, items: &[(Atom, TypeId)]) -> TypeId {
+    /// `is_related_to`: `isRelatedTo` of a `TypeDiscriminator`, as "is not `TernaryFalse`".
+    pub(super) fn discriminate_by_items(
+        &mut self,
+        context: TypeId,
+        items: &[(Atom, TypeId)],
+        mut is_related_to: impl FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> TypeId {
         const OUT: u8 = 0;
         const IN: u8 = 1;
         const MAYBE: u8 = 2;
@@ -1542,11 +1517,9 @@ impl<'p> Checker<'p> {
                 else {
                     continue;
                 };
+                // `Distributed`: `never` is one type, and it is related to every type.
                 if actual.is_never()
-                    || self
-                        .parts(actual)
-                        .iter()
-                        .any(|&s| self.is_assignable(s, expected))
+                    || (self.parts(actual).iter()).any(|&s| is_related_to(self, s, expected))
                 {
                     matched = true;
                 } else {
@@ -1628,8 +1601,14 @@ impl<'p> Checker<'p> {
                 let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
                 self.contextual_element_at(context, index, Some(items.len()), first, last)
             }
-            // An expression spread into an array or an argument list has no contextual type.
-            ExprKind::Spread(_) => None,
+            // An expression spread into an array or an argument list has no contextual type. A
+            // spread child of an element is a `JsxExpression`.
+            ExprKind::Spread(_) => match self.bound(file).expr_parent[parent.idx()] {
+                Parent::Expr(element) if matches!(hir[element].kind, ExprKind::Jsx(_)) => {
+                    self.contextual_type(file, parent, context_flags)
+                }
+                _ => None,
+            },
             ExprKind::Cond { test, .. } => {
                 if test == e {
                     return None;
@@ -2009,7 +1988,7 @@ impl<'p> Checker<'p> {
                     (Some(n), Some(s)) => fixed_end.min(n.saturating_sub(s)),
                     _ => fixed_end,
                 };
-                if let Some(t) = self.tuple_slice_element(elems, flags, from, end_skip) {
+                if let Some(t) = self.element_type_of_slice(elems, flags, from, end_skip, true) {
                     types.push(t);
                 }
                 continue;
@@ -2049,35 +2028,6 @@ impl<'p> Checker<'p> {
         } else {
             Some(self.union_unreduced(&types))
         }
-    }
-
-    /// `getElementTypeOfSliceOfTupleType`, for reading, with no reduction: the possible types of
-    /// the elements starting at `from`, excluding the last `end_skip`.
-    fn tuple_slice_element(
-        &mut self,
-        elems: &[TypeId],
-        flags: &[ElemFlags],
-        from: usize,
-        end_skip: usize,
-    ) -> Option<TypeId> {
-        let end = elems.len().saturating_sub(end_skip);
-        if from >= end {
-            return None;
-        }
-        let mut slice = Parts::with_capacity(end - from);
-        for i in from..end {
-            let element = if flags[i].contains(ElemFlags::VARIADIC) {
-                self.indexed_access(elems[i], TypeId::NUMBER)
-            } else {
-                elems[i]
-            };
-            slice.push(if flags[i].contains(ElemFlags::OPTIONAL) {
-                self.optional_property(element)
-            } else {
-                element
-            });
-        }
-        Some(self.union_unreduced(&slice))
     }
 
     // ───────────────────────────── functions ─────────────────────────────
@@ -2171,11 +2121,11 @@ impl<'p> Checker<'p> {
                     self.sig_this_type(first),
                 );
                 Some(self.types().intern_sig(SigData::Synth {
-                    type_params: type_params.into(),
-                    params: params.into(),
+                    type_params: self.list(&type_params),
+                    params: self.list(&params),
                     ret: TypeId::UNRESOLVED,
                     this,
-                    of: found.into_boxed_slice(),
+                    of: self.list(&found),
                     is_union: true,
                 }))
             }
@@ -2243,6 +2193,17 @@ impl<'p> Checker<'p> {
     /// `isAritySmaller`: `sig`, a contextual signature candidate for `func`, accepts fewer
     /// arguments than `func` has parameters (`required`), and so does not apply.
     fn is_arity_smaller(&mut self, sig: SigId, required: usize) -> bool {
+        // `signatureHasRestParameter`: without one no type of a parameter is requested. In a JSDoc
+        // type that is never checked, requesting one reports what nothing else reports.
+        if let SigData::Decl { file, func, .. } = *self.types().sig(sig) {
+            let hir = self.hir(file);
+            let params = hir[func].params;
+            if matches!(hir[func].body, FnBody::None)
+                && !params.iter().any(|p| hir[p].flags.contains(Flags::REST))
+            {
+                return params.len() < required;
+            }
+        }
         let params = self.sig_params(sig);
         !self.has_effective_rest_parameter(&params) && self.parameter_count(&params) < required
     }
@@ -2257,14 +2218,9 @@ impl<'p> Checker<'p> {
 
     /// `IsNodeDescendantOf`
     fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
-        let mut at = Parent::Expr(e);
-        loop {
-            match at {
-                Parent::Expr(x) if x == ancestor => return true,
-                Parent::None | Parent::File => return false,
-                _ => at = self.parent_of_node(file, at),
-            }
-        }
+        let hir = self.hir(file);
+        let ancestor = hir.node(ancestor);
+        hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()
     }
 
     /// Whether `sig` is the signature `func` declares, not an instantiation of it.

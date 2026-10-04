@@ -42,12 +42,12 @@ fn compares_references(bound: &Bound, mut flow: FlowId, depth: u32) -> bool {
     }
 }
 
-struct Unused<'a> {
-    files: &'a Files,
+struct Unused<'a, 's> {
+    files: &'a Files<'s>,
     file: FileId,
-    hir: &'a hir::File,
-    bound: &'a Bound,
-    atoms: crate::atom::Atoms<'a>,
+    hir: &'a hir::File<'s>,
+    bound: &'a Bound<'s>,
+    atoms: crate::atom::Atoms<'a, 's>,
     /// Indexed by symbol: the meanings it was referenced with.
     referenced: Vec<u8>,
     /// `symbolReferenceLinks` for the private members of classes and the private parameter
@@ -60,13 +60,15 @@ struct Unused<'a> {
     owner_of_scope: Vec<SymbolId>,
     /// The file has a `return` whose expression is never checked: see `is_in_unchecked_return`.
     has_unchecked_returns: bool,
+    /// `Checker::never_checked` after `check_source_file`.
+    never_checked: Vec<(u32, u32)>,
     /// The starts of the parser's and the scanner's errors. Sorted. Empty for a file that parses.
     syntax_errors: Vec<u32>,
     locals: bool,
     parameters: bool,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
         let (locals, parameters) = (options.no_unused_locals, options.no_unused_parameters);
@@ -91,6 +93,7 @@ impl Checker<'_> {
             reads_unknown_members: false,
             owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
             has_unchecked_returns: false,
+            never_checked: self.never_checked.borrow().clone(),
             syntax_errors,
             locals,
             parameters,
@@ -531,8 +534,12 @@ impl Checker<'_> {
         // `const { x } = o`: `checkVariableLikeDeclaration`. The name of every binding element is
         // looked up in the destructured type, even the name of a rest element or of an array
         // pattern element.
+        let unchecked = self.unchecked_jsdoc_types(file);
         for i in 0..hir.pats.len() {
-            if hir.is_in_with(hir.pats[i].pos) || matches!(bound.pat_parent[i], PatParent::None) {
+            if hir.is_in_with(hir.pats[i].pos)
+                || matches!(bound.pat_parent[i], PatParent::None)
+                || unchecked.contain(hir.pats[i].pos)
+            {
                 continue;
             }
             match hir.pats[i].kind {
@@ -976,7 +983,7 @@ fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
     }
 }
 
-impl Unused<'_> {
+impl Unused<'_, '_> {
     // ───────────────────────────── references ─────────────────────────────
 
     fn note_references(&mut self, index: &ExprsByKind) {
@@ -1010,7 +1017,10 @@ impl Unused<'_> {
             let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
                 continue;
             };
-            if bound.is_unchecked_type(i) || hir.is_in_with(hir.types[i].pos) {
+            if bound.is_unchecked_type(i)
+                || hir.is_in_with(hir.types[i].pos)
+                || self.is_never_checked(hir.types[i].pos)
+            {
                 continue;
             }
             let Some(first) = hir.texts(name).next() else {
@@ -1299,6 +1309,12 @@ impl Unused<'_> {
     fn is_unchecked(&self, e: ExprId) -> bool {
         self.hir.is_in_with(self.hir[e].pos)
             || self.has_unchecked_returns && self.is_in_unchecked_return(e)
+            || self.is_never_checked(self.hir[e].pos)
+    }
+
+    fn is_never_checked(&self, pos: u32) -> bool {
+        let mut never_checked = self.never_checked.iter();
+        never_checked.any(|&(from, to)| (from..to).contains(&pos))
     }
 
     /// Whether `e` is in the expression of a `return` that is outside a function or directly in a class static block.
@@ -1561,11 +1577,12 @@ impl Unused<'_> {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkUnusedIdentifiers`. The nodes `registerForUnusedIdentifiersCheck` collects there are
     /// iterated by kind here.
-    fn check_unused_identifiers(&mut self, u: &Unused<'_>) {
+    fn check_unused_identifiers(&mut self, u: &Unused<'_, '_>) {
         let (hir, bound) = (u.hir, u.bound);
+        let unchecked = self.unchecked_jsdoc_types(u.file);
         for (i, scope) in bound.scopes.iter().enumerate() {
             let checks_locals = match scope.kind {
                 // `checkSourceFile`: `IsExternalOrCommonJSModule`
@@ -1587,7 +1604,7 @@ impl Checker<'_> {
                 // Set for function declarations and named function expressions only. A method that several files declare in one
                 // interface is one symbol too, which is not tracked.
                 let symbol = bound.fn_symbol[i];
-                if matches!(bound.fns[i].owner, FnOwner::None) {
+                if matches!(bound.fns[i].owner, FnOwner::None) || unchecked.contain(f.start) {
                     continue;
                 }
                 if symbol.is_none() || u.is_declared_in_one_file(symbol) {
@@ -1613,6 +1630,7 @@ impl Checker<'_> {
             for (i, t) in hir.types.iter().enumerate() {
                 if let TypeNodeKind::Infer(param) = t.kind
                     && hir[param].name != known::empty
+                    && !unchecked.contain(t.pos)
                     && u.is_unreferenced_type_parameter(param)
                 {
                     let at = self.place_of_token(u.file, hir[param].pos);
@@ -1629,7 +1647,7 @@ impl Checker<'_> {
     /// `reportUnused`
     fn report_unused(
         &mut self,
-        u: &Unused<'_>,
+        u: &Unused<'_, '_>,
         location: Node,
         is_parameter: bool,
         at: (FileId, u32, u32),
@@ -1643,7 +1661,7 @@ impl Checker<'_> {
     }
 
     /// `checkUnusedLocalsAndParameters`
-    fn check_unused_locals_and_parameters(&mut self, u: &Unused<'_>, scope: ScopeId) {
+    fn check_unused_locals_and_parameters(&mut self, u: &Unused<'_, '_>, scope: ScopeId) {
         let (hir, bound, file) = (u.hir, u.bound, u.file);
         let mut variable_parents: Vec<Node> = Vec::new();
         let mut import_clauses: Vec<(Node, Node)> = Vec::new();
@@ -1762,7 +1780,7 @@ impl Checker<'_> {
     }
 
     /// `reportUnusedLocal`
-    fn report_unused_local(&mut self, u: &Unused<'_>, node: Node, name: Atom) {
+    fn report_unused_local(&mut self, u: &Unused<'_, '_>, node: Node, name: Atom) {
         let hir = u.hir;
         // `IsTypeDeclaration`: the bindings of `import type` are type declarations. (Not those of
         // `import { type T }`, nor `* as ns`.)
@@ -1787,7 +1805,7 @@ impl Checker<'_> {
     /// `reportUnusedVariableDeclarations`, for one of them. `root`: the variable declaration or
     /// parameter whose name is or contains `pat`, which is the node `reportUnusedVariable` walks up
     /// to.
-    fn report_unused_variable_declaration(&mut self, u: &Unused<'_>, root: Node, pat: PatId) {
+    fn report_unused_variable_declaration(&mut self, u: &Unused<'_, '_>, root: Node, pat: PatId) {
         let (hir, file) = (u.hir, u.file);
         let is_parameter = hir.kind(root) == Kind::Parameter;
         let elements: Vec<PatId> = match hir[pat].kind {
@@ -1816,7 +1834,7 @@ impl Checker<'_> {
     /// `checkUnusedTypeParameters` for the declaration `node`.
     fn check_unused_type_parameters(
         &mut self,
-        u: &Unused<'_>,
+        u: &Unused<'_, '_>,
         node: Node,
         params: Span<TypeParamId>,
     ) {
@@ -1855,7 +1873,7 @@ impl Checker<'_> {
     }
 
     /// `checkUnusedClassMembers`
-    fn check_unused_class_members(&mut self, u: &Unused<'_>) {
+    fn check_unused_class_members(&mut self, u: &Unused<'_, '_>) {
         let (hir, bound, file) = (u.hir, u.bound, u.file);
         for (i, member) in hir.members.iter().enumerate() {
             let m = MemberId(i as u32);

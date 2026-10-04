@@ -1,9 +1,6 @@
-//! End positions of nodes. The HIR only stores start positions, so the end of a node is computed
-//! from its children and the source text, and only for a node an error is reported on.
-//!
-//! The end of a node is the end of its last child, or of its closing token, which is searched for
-//! from the end of the last child. Only syntax that the HIR does not store is skipped token by
-//! token.
+//! End positions. The HIR stores the end of a node. It does not store the end of a name, of a
+//! keyword or of a list of type arguments, nor the parentheses around a type: those are found in
+//! the source text, token by token, and only where an error is reported.
 
 use super::Checker;
 use crate::atom::{Atom, known};
@@ -16,20 +13,15 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use bun_core::lexer;
-use bun_core::strings::{lexer_step, wtf8_byte_sequence_length};
+use bun_core::strings::wtf8_byte_sequence_length;
 
 // ───────────────────────────── the text ─────────────────────────────
 
 /// `IsWhiteSpaceLike` for a non-ASCII character: its length in bytes, 0 if there is none at `at`.
 fn white_space_len(text: &[u8], at: usize) -> usize {
-    let byte = |i: usize| text.get(at + i).copied().unwrap_or(0);
-    match (byte(0), byte(1), byte(2)) {
-        (0xC2, 0x85 | 0xA0, _) => 2,
-        (0xE1, 0x9A, 0x80)
-        | (0xE2, 0x80, 0x80..=0x8B | 0xA8 | 0xA9 | 0xAF)
-        | (0xE2, 0x81, 0x9F)
-        | (0xE3, 0x80, 0x80)
-        | (0xEF, 0xBB, 0xBF) => 3,
+    match lexer::char_and_size(text, at) {
+        (0x2028 | 0x2029, size) => size,
+        (c @ 0x80.., size) if lexer::is_white_space_single_line(c) => size,
         _ => 0,
     }
 }
@@ -247,27 +239,6 @@ pub(super) fn trim_trivia_end(text: &[u8]) -> &[u8] {
     &text[..skip_trivia_back(text, text.len())]
 }
 
-/// `peekUnicodeEscape`: the length of `\\uXXXX` or `\\u{X}` at `at`, and the code point it denotes.
-fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
-    if text.get(at) != Some(&b'\\') || text.get(at + 1) != Some(&b'u') {
-        return None;
-    }
-    let is_braced = text.get(at + 2) == Some(&b'{');
-    let start = at + 2 + usize::from(is_braced);
-    let (len, ch) = text[start.min(text.len())..]
-        .iter()
-        .take_while(|b| b.is_ascii_hexdigit())
-        .take(if is_braced { 8 } else { 4 })
-        .fold((0usize, 0u32), |(len, ch), &b| {
-            (len + 1, ch << 4 | (b as char).to_digit(16).unwrap_or(0))
-        });
-    let is_whole = match is_braced {
-        true => len > 0 && text.get(start + len) == Some(&b'}'),
-        false => len == 4,
-    };
-    is_whole.then_some((start + len + usize::from(is_braced) - at, ch))
-}
-
 /// Start of the token `written` that immediately precedes `at`, ignoring trivia. `None`: a
 /// different token is there.
 pub(crate) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
@@ -308,42 +279,20 @@ pub(super) fn word_before(text: &[u8], end: usize) -> &[u8] {
 }
 
 /// `scanIdentifierParts`
-pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(&b) if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => at += 1,
-            Some(b'\\') => match unicode_escape(text, at) {
-                Some((len, ch)) if lexer::is_identifier_part(ch) => at += len,
-                _ => return at,
-            },
-            Some(&b) if b >= 0x80 => {
-                let mut next = at;
-                let ch = lexer_step::next_codepoint_multibyte(text, &mut next, b);
-                if !lexer::is_identifier_part(ch as u32) {
-                    return at;
-                }
-                at = next;
-            }
-            Some(_) => return at,
-            None => return at.min(text.len()),
-        }
-    }
+pub(super) fn ident_end(text: &[u8], at: usize) -> usize {
+    lexer::scan_identifier_parts(text, at.min(text.len()))
 }
 
 /// `scanIdentifier`: the same from the start of a name, which must satisfy `IsIdentifierStart`.
 pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
-    let first = match (text.get(at), unicode_escape(text, at)) {
-        (_, Some((_, ch))) => ch,
-        (Some(&b), None) if b >= 0x80 => {
-            let mut next = at;
-            lexer_step::next_codepoint_multibyte(text, &mut next, b) as u32
-        }
-        _ => return ident_end(text, at),
+    let first = match text.get(at) {
+        Some(b'\\') => lexer::peek_unicode_escape(text, at).map(|(ch, _)| ch),
+        Some(0x80..) => Some(lexer::char_and_size(text, at).0),
+        _ => None,
     };
-    if lexer::is_identifier_start(first) {
-        ident_end(text, at)
-    } else {
-        at
+    match first {
+        Some(first) if !lexer::is_identifier_start(first as u32) => at,
+        _ => ident_end(text, at),
     }
 }
 
@@ -888,13 +837,13 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
 /// The HIR of a file and its text. Every function returns `node.End()` of the node it is named
 /// after, unless stated otherwise.
 #[derive(Copy, Clone)]
-pub(crate) struct Spans<'a> {
-    pub(crate) hir: &'a File,
+pub(crate) struct Spans<'a, 's> {
+    pub(crate) hir: &'a File<'s>,
     pub(crate) text: &'a [u8],
 }
 
-impl<'a> Spans<'a> {
-    pub(crate) fn of(hir: &'a File) -> Self {
+impl<'a, 's> Spans<'a, 's> {
+    pub(crate) fn of(hir: &'a File<'s>) -> Self {
         Spans {
             hir,
             text: &hir.text,
@@ -1169,8 +1118,8 @@ impl<'a> Spans<'a> {
 
 // ───────────────────────────── for the checker ─────────────────────────────
 
-impl Checker<'_> {
-    fn spans(&self, file: FileId) -> Spans<'_> {
+impl<'s> Checker<'_, 's> {
+    fn spans(&self, file: FileId) -> Spans<'_, 's> {
         Spans::of(self.hir(file))
     }
 
@@ -1576,7 +1525,7 @@ impl Checker<'_> {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `node.End()`
     pub(super) fn end_of_node(&self, file: FileId, node: Node) -> u32 {
         let hir = self.hir(file);

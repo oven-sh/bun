@@ -13,7 +13,7 @@ use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Parent, PatParent};
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkRightHandSideOfForOf`
     pub(super) fn check_right_hand_side_of_for_of(
         &mut self,
@@ -86,7 +86,6 @@ impl Checker<'_> {
         // `undefined` are assignable to `object`.
         let is_object =
             self.flags(right_type) & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE) != 0
-                || !self.p.files.options.strict_null_checks && self.is_only_nullish(right_type)
                 || self.is_assignable(right_type, TypeId::OBJECT);
         if right_type.is_never() || !is_object {
             self.error_at(
@@ -109,7 +108,7 @@ impl Checker<'_> {
                 && !self.is_definite_assignment_target(file, e)
             {
                 let actual = self.type_of_expr(file, inner);
-                if !self.is_only_nullish(actual) && !self.is_spread_of_array_like(file, e, actual) {
+                if !self.is_spread_of_array_like(file, e, actual) {
                     let error_node = self.span_of_parenthesized_expr(file, inner);
                     self.check_iterated(
                         IterationUse::Spread,
@@ -120,10 +119,6 @@ impl Checker<'_> {
                 }
             }
         }
-    }
-
-    fn is_only_nullish(&self, ty: TypeId) -> bool {
-        !ty.is_never() && self.every_type(ty, |_, m| m.is_null() || m.is_undefined())
     }
 
     /// `getIndexTypeOrString`: the string keys of `ty`, or `string` if it has none.
@@ -163,7 +158,7 @@ impl Checker<'_> {
         spread: ExprId,
         actual: TypeId,
     ) -> TypeId {
-        if self.is_only_nullish(actual) || self.is_spread_of_array_like(file, spread, actual) {
+        if self.is_spread_of_array_like(file, spread, actual) {
             return TypeId::NEVER;
         }
         self.iterated_type_or_element_type(IterationUse::Spread, actual, TypeId::UNDEFINED, None)

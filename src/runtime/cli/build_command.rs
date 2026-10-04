@@ -151,7 +151,8 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if ctx.bundler_options.check {
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+            // Nothing is bundled, so nothing but the entry points is read.
             let entry_points: Vec<&[u8]> = this_transpiler
                 .options
                 .entry_points
@@ -161,6 +162,9 @@ impl BuildCommand {
             if !crate::cli::check_command::check_before(&entry_points) {
                 Global::exit(1);
             }
+        } else if ctx.bundler_options.check {
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
         }
 
         this_transpiler.options.source_map =

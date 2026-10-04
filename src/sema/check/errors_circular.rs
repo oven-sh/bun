@@ -46,21 +46,6 @@ fn contains_mapped_type_node(hir: &hir::File, node: TypeNodeId) -> bool {
     }
 }
 
-/// `getConstraintDeclaration`: the start of the constraint `node` in the source. Neither the
-/// parentheses around a type nor a leading `|` or `&` before its only member are stored. A
-/// constraint is preceded by `extends` or `in`, which cannot be confused with any of these.
-fn start_of_constraint(hir: &hir::File, node: TypeNodeId) -> u32 {
-    let text = &hir.text[..];
-    let mut at = (hir[node].pos as usize).min(text.len());
-    loop {
-        let before = text[..at].trim_ascii_end().len();
-        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&') {
-            return at as u32;
-        }
-        at = before - 1;
-    }
-}
-
 /// `getUnionType`, `getIntersectionType`: the keyword that determines the type at `node` regardless
 /// of its other members. In a union `any`, and then `unknown`, absorbs the rest. In an intersection
 /// `never`, and then `any`.
@@ -86,10 +71,11 @@ fn absorbing_keyword(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_circularities(&mut self, file: FileId) {
         self.check_circular_resolutions(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let unchecked = self.unchecked_jsdoc_types(file);
         // `checkClassLikeDeclaration`, `checkInterfaceDeclaration`
         for c in 0..hir.classes.len() {
             if bound.class_symbol[c].is_some() {
@@ -105,7 +91,10 @@ impl Checker<'_> {
         self.check_circular_mapped_properties();
         for p in 0..hir.type_params.len() {
             let constraint = hir.type_params[p].constraint;
-            if constraint.is_none() || bound.type_param_scope[p].is_none() {
+            if constraint.is_none()
+                || bound.type_param_scope[p].is_none()
+                || unchecked.contain(hir[constraint].pos)
+            {
                 continue;
             }
             let own = TypeParamId(p as u32);
@@ -121,7 +110,7 @@ impl Checker<'_> {
                 is_circular = is_circular || !self.has_non_circular_base_constraint(param);
             }
             if is_circular {
-                let start = start_of_constraint(hir, constraint);
+                let start = start_of_type(hir, constraint);
                 let end = self.end_of_type_node_from(file, constraint, start);
                 let name = self.atom_text(hir.type_params[p].name);
                 let related = self.origin_of_circular_constraint(file, own, start, end);
@@ -153,7 +142,7 @@ impl Checker<'_> {
         if param.constraint.is_none() || order(extending.0) > order(file) {
             return;
         }
-        let start = start_of_constraint(hir, param.constraint);
+        let start = start_of_type(hir, param.constraint);
         let end = self.end_of_type_node_from(file, param.constraint, start);
         let mut err = self.new_diagnostic((file, start, end), 2313, &[Arg::Atom(param.name)]);
         if let (of, Decl::Interface(i)) = extending {
@@ -174,10 +163,12 @@ impl Checker<'_> {
     /// `getTypeOfAccessors` report cycles.
     fn check_circular_resolutions(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let unchecked = self.unchecked_jsdoc_types(file);
         for i in 0..hir.pats.len() {
             let pat = PatId(i as u32);
             if !matches!(hir[pat].kind, PatKind::Ident(_))
                 || matches!(bound.pat_parent[i], PatParent::None)
+                || unchecked.contain(hir[pat].pos)
             {
                 continue;
             }
@@ -197,6 +188,7 @@ impl Checker<'_> {
                 hir[member].kind,
                 MemberKind::Property | MemberKind::Getter | MemberKind::Setter
             ) || matches!(bound.member_owner[i], MemberOwner::None)
+                || unchecked.contain(hir[member].start)
             {
                 continue;
             }
@@ -212,7 +204,7 @@ impl Checker<'_> {
         }
         for i in 0..hir.fns.len() {
             let func = FnId(i as u32);
-            if matches!(bound.fns[i].owner, FnOwner::None) {
+            if matches!(bound.fns[i].owner, FnOwner::None) || unchecked.contain(hir[func].start) {
                 continue;
             }
             // An annotated accessor of a class, an interface or a type literal was already
@@ -339,10 +331,10 @@ impl Checker<'_> {
             // A variable of that type that is read during emit creates the type first.
             let created = self.type_from_node(file, node);
             // Under any alias: the keys of the mapped type, which lead into the cycle, are the same.
-            let created = self.intern(self.data(created).clone());
+            let created = self.intern(self.data(created).clone_in(self.arena));
             let variable = if matches!(self.data(created), TypeData::Anon { .. }) {
                 self.first_variable_read_by_emit(file, |c, ty| {
-                    c.intern(c.data(ty).clone()) == created
+                    c.intern(c.data(ty).clone_in(self.arena)) == created
                 })
             } else {
                 None
@@ -352,8 +344,8 @@ impl Checker<'_> {
                 None => (self.hir(file)[node].pos, self.end_of_type_node(file, node)),
             };
             let args = vec![
-                match self.prop_of(mapped, name) {
-                    Some((prop, _)) => self.prop_to_string(&prop),
+                match self.prop_ref(mapped, name) {
+                    Some((prop, _)) => self.prop_to_string(prop),
                     None => self.atom_text(name),
                 },
                 self.type_to_string(mapped),
@@ -653,24 +645,13 @@ impl Checker<'_> {
     /// `type_parameters_of_constraint` finds in each constraint. One that only leads to a cycle is
     /// not in it.
     pub(super) fn is_constraint_circular(&self, file: FileId, own: TypeParamId) -> bool {
-        let hir = self.hir(file);
-        if hir[own].constraint.is_none() {
+        let constraint = self.hir(file)[own].constraint;
+        if constraint.is_none() {
             return false;
         }
-        let (mut seen, mut todo) = (TypeParams::new(), TypeParams::new());
-        self.type_parameters_of_constraint(file, hir[own].constraint, &mut todo);
-        while let Some(next) = todo.pop() {
-            if next == own {
-                return true;
-            }
-            if !seen.contains(&next) {
-                seen.push(next);
-                if hir[next].constraint.is_some() {
-                    self.type_parameters_of_constraint(file, hir[next].constraint, &mut todo);
-                }
-            }
-        }
-        false
+        let mut mentioned = TypeParams::new();
+        self.type_parameters_of_constraint(file, constraint, &mut mentioned);
+        (mentioned.iter()).any(|&from| self.constraint_leads_to(file, from, own))
     }
 
     /// The type parameters a constraint reduces to: itself, the members of a union or an

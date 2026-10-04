@@ -18,7 +18,7 @@ const EXPORT_VALUE: u8 = 1;
 const EXPORT_TYPE: u8 = 2;
 const EXPORT_NAMESPACE: u8 = 4;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// The checks that `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration` and the
     /// callers of `checkExportsOnMergedDeclarations` run on the declarations of `file`.
     pub(super) fn check_overloads(&mut self, file: FileId) {
@@ -209,7 +209,11 @@ impl Checker<'_> {
                 } else {
                     continue;
                 };
-                self.error_at_declaration(overload, code, &[]);
+                if code == 2385 {
+                    self.error_at_declaration(overload, code, &[]);
+                } else {
+                    self.error_at_name_of_declaration(overload, code);
+                }
             }
         }
         // `checkQuestionTokenAgreementBetweenOverloads`
@@ -218,7 +222,7 @@ impl Checker<'_> {
             let canonical_has_question_token = self.is_optional_declaration(canonical);
             for &overload in declarations.iter() {
                 if self.is_optional_declaration(overload) != canonical_has_question_token {
-                    self.error_at_declaration(overload, 2386, &[]);
+                    self.error_at_name_of_declaration(overload, 2386);
                 }
             }
         }
@@ -242,7 +246,10 @@ impl Checker<'_> {
                     let related = self.error_range_of_declaration(file, decl);
                     let related = related
                         .map(|(start, end)| self.new_diagnostic((file, start, end), 2750, &[]));
-                    if let Some(diagnostic) = self.error_at_declaration(declaration, 2394, &[]) {
+                    // `errorNode := signature.declaration`, not its name.
+                    let (file, decl) = declaration;
+                    if let Some((start, end)) = self.error_range_of_declaration(file, decl) {
+                        let diagnostic = self.error_at((file, start, end), 2394, &[]);
                         diagnostic.related_information.extend(related);
                     }
                     break;
@@ -266,6 +273,19 @@ impl Checker<'_> {
             _ => self.error_range_of_declaration(file, decl)?,
         };
         Some(self.error_at((file, start, end), code, args))
+    }
+
+    /// `c.error(ast.GetNameOfDeclaration(declaration), ..)`. A constructor has no name, and an error
+    /// at no node is in no file.
+    fn error_at_name_of_declaration(&mut self, declaration: Declaration, code: u32) {
+        match declaration.1 {
+            Decl::Member(m) if self.hir(declaration.0)[m].kind == MemberKind::Constructor => {
+                self.report_global_error(code, Vec::new());
+            }
+            _ => {
+                self.error_at_declaration(declaration, code, &[]);
+            }
+        }
     }
 
     /// The `FnId` of a function declaration, a method, a method signature or a constructor.
@@ -437,8 +457,15 @@ impl Checker<'_> {
                     hir[f].name.is_some() && hir[next].name == hir[f].name
                 }
                 (Decl::Member(m), Decl::Member(next)) if !is_constructor => {
+                    // "Both are computed property names", or neither is.
+                    let is_computed = |m: MemberId| {
+                        matches!(hir[m].key, PropKey::Computed(_))
+                            || hir[m].flags.contains(Flags::COMPUTED_NAME)
+                    };
                     let name = self.member_name(file, hir[m].key);
-                    name.is_some() && self.member_name(file, hir[next].key) == name
+                    is_computed(m) == is_computed(next)
+                        && name.is_some()
+                        && self.member_name(file, hir[next].key) == name
                 }
                 _ => false,
             };

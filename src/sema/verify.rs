@@ -7,7 +7,10 @@ use crate::config::{
     Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
-use crate::resolve::{JsxEmit, ModuleKind, Options, path_is_relative};
+use crate::resolve::{
+    JsxEmit, ModuleKind, Options, ensure_path_is_non_module_name, is_rooted_disk_path,
+    path_is_relative,
+};
 use crate::util::FxHashSet;
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -20,16 +23,9 @@ fn has_at_most_one_asterisk(text: &[u8]) -> bool {
     bun_core::strings::count_char(text, b'*') <= 1
 }
 
-/// `PathIsAbsolute`: `GetEncodedRootLength(path) != 0`
+/// `PathIsAbsolute`: `GetEncodedRootLength(path) != 0`, which is negative for a URL.
 fn path_is_absolute(path: &[u8]) -> bool {
-    match path {
-        // A POSIX, UNC or untitled (`^/`) root
-        [b'/' | b'\\', ..] | [b'^', b'/', ..] => true,
-        // A DOS volume: `c:`, `c:/` or `c:\`, but not `c:d`
-        [volume, b':'] | [volume, b':', b'/' | b'\\', ..] if volume.is_ascii_alphabetic() => true,
-        // A URL
-        _ => strings::contains(path, b"://"),
-    }
+    is_rooted_disk_path(path) || strings::contains(path, b"://")
 }
 
 /// The elements of a list option as tsoptions parses it. `None` is Go's nil slice: `value` is not an array, or it is a non-empty array
@@ -167,12 +163,7 @@ impl Problem {
 /// `GetRelativePathFromFile` for two absolute paths.
 pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
     let relative = relative_normalized::<Posix, true>(dirname::<Posix>(from), to);
-    // `EnsurePathIsNonModuleName`
-    if relative == b".." || relative.starts_with(b"../") {
-        relative.to_vec()
-    } else {
-        [b"./", relative].concat()
-    }
+    ensure_path_is_non_module_name(relative.to_vec())
 }
 
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or

@@ -74,7 +74,7 @@ pub struct Explained {
     pub related: Vec<RelatedExplained>,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// Whether `GetSuggestionDiagnostics` are reported as well.
     pub(super) fn captures_suggestions(&self) -> bool {
         self.files().options.captures_suggestions

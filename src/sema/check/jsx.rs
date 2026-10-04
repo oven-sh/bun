@@ -27,7 +27,7 @@ pub(super) enum JsxReferenceKind {
     Mixed,
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     fn jsx_symbol(&mut self, file: FileId, name: Atom) -> Option<Sym> {
         let ns = self.jsx_namespace_at(file, false)?;
         let member = self.files().namespace_member(ns, name)?;
@@ -127,11 +127,11 @@ impl<'p> Checker<'p> {
         // `anySignature`
         if element_type == TypeId::STRING {
             let has_no_parameters = self.types().intern_sig(SigData::Synth {
-                type_params: Box::new([]),
-                params: Box::new([]),
+                type_params: ArenaBox::empty(),
+                params: ArenaBox::empty(),
                 ret: TypeId::ANY,
                 this: None,
-                of: Box::new([]),
+                of: ArenaBox::empty(),
                 is_union: true,
             });
             return Some(vec![has_no_parameters]);
@@ -178,19 +178,20 @@ impl<'p> Checker<'p> {
     /// tag that is not a component resolves to.
     pub(super) fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
         let ret = self.jsx_element_type(file);
-        let params = vec![SigParam {
+        let params = [SigParam {
             name: known::props,
             ty: attributes,
             optional: false,
+            is_required_rest: false,
             rest: false,
             has_declaration: false,
         }];
         self.types().intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
             ret,
             this: None,
-            of: Box::new([]),
+            of: ArenaBox::empty(),
             is_union: true,
         })
     }
@@ -206,7 +207,7 @@ impl<'p> Checker<'p> {
     pub(super) fn jsx_intrinsic_attributes(&mut self, file: FileId, name: Atom) -> Option<TypeId> {
         let elements = self.jsx_type(file, known::IntrinsicElements)?;
         // The type from an index signature is used as is, regardless of noUncheckedIndexedAccess.
-        if self.prop_of(elements, name).is_none()
+        if self.prop_ref(elements, name).is_none()
             && let Some(members) = self.members(elements)
             && let Some(value) = self
                 .applicable_index_info_for_name(&members, name)
@@ -245,8 +246,8 @@ impl<'p> Checker<'p> {
         // `getPropertyOfType`: properties that every object has count.
         let object = self.global_ref(known::Object, &[]);
         for holder in [elements, object] {
-            if let Some((prop, mapper)) = self.prop_of(holder, name) {
-                return Ok(Some(self.type_of_prop(&prop, mapper)));
+            if let Some((prop, mapper)) = self.prop_ref(holder, name) {
+                return Ok(Some(self.type_of_prop(prop, mapper)));
             }
         }
         // Otherwise, the string index signature and no other.
@@ -372,7 +373,7 @@ impl<'p> Checker<'p> {
             }
             // `getTypeOfPropertyOfType`: an index signature is not a property.
             let apparent = self.apparent_type(instance);
-            if !self.is_union(apparent) && self.prop_of(apparent, name).is_none() {
+            if !self.is_union(apparent) && self.prop_ref(apparent, name).is_none() {
                 return None;
             }
             results.push(self.type_of_property(instance, name)?);
@@ -511,7 +512,7 @@ impl<'p> Checker<'p> {
         // `emptyJsxObjectType`, onto which everything is spread.
         let empty = self.synth(Shape {
             literal: Literalness::JsxAttributes,
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         });
         let has_spread = jsx.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
         // Next to a spread, the explicit attributes still count as declared here
@@ -526,9 +527,9 @@ impl<'p> Checker<'p> {
         let mut not_spread: Vec<TypeId> = Vec::new();
         let mut pending = Shape {
             literal: run,
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         };
-        let flush = |c: &mut Self, spread: &mut Option<TypeId>, pending: &mut Shape| {
+        let flush = |c: &mut Self, spread: &mut Option<TypeId>, pending: &mut Shape<'s>| {
             if pending.props.is_empty() {
                 return;
             }
@@ -536,7 +537,7 @@ impl<'p> Checker<'p> {
                 pending,
                 Shape {
                     literal: run,
-                    ..Shape::default()
+                    ..Shape::new_in(c.arena)
                 },
             ));
             *spread = Some(if has_spread {
@@ -556,6 +557,11 @@ impl<'p> Checker<'p> {
                 }
                 if self.is_valid_spread_type(ty) {
                     spread = Some(self.spread(spread.unwrap_or(empty), ty));
+                    // `checkSpreadPropOverrides`: `getPropertiesOfType` creates the properties of a
+                    // union, which resolves the type that each member has for them.
+                    if self.p.files.options.strict_null_checks {
+                        self.reduced_apparent_type_as_object(ty);
+                    }
                 } else {
                     not_spread.push(ty);
                 }
@@ -564,33 +570,24 @@ impl<'p> Checker<'p> {
             let Some(name) = self.member_name(file, prop.key) else {
                 continue;
             };
-            pending.props.retain(|x| x.name != name);
             let (source, flags) = self.source_of_literal_member(file, p, name);
-            pending.props.push(Prop {
+            let attribute = Prop {
                 name,
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
-            });
+            };
+            // Attributes of one name are declarations of one symbol, and `compareSymbols` orders
+            // by the first declaration.
+            match pending.props.iter_mut().find(|x| x.name == name) {
+                Some(earlier) => *earlier = attribute,
+                None => pending.props.push(attribute),
+            }
         }
         let children = self.jsx_child_types(file, e);
         if !children.is_empty()
             && let JsxName::Name(name) = children_property_name
         {
-            // It is reported on the attributes as a whole.
-            if let (Some(first), Some(last)) =
-                (jsx.attrs.iter().next(), jsx.attrs.iter().next_back())
-                && jsx.attrs.iter().any(|p| {
-                    hir[p].kind != PropKind::Spread
-                        && self.member_name(file, hir[p].key) == Some(name)
-                })
-            {
-                self.error_at(
-                    (file, hir[first].start, hir[last].end),
-                    2710,
-                    &[Arg::Atom(name)],
-                );
-            }
             let ty = if let [(_, only)] = children[..] {
                 only
             } else {
@@ -663,7 +660,7 @@ impl<'p> Checker<'p> {
             {
                 self.synth(Shape {
                     literal: Literalness::JsxAttributes,
-                    ..(**shape).clone()
+                    ..(**shape).clone_in(self.arena)
                 })
             }
             // A generic type is not spread but intersected with the rest.

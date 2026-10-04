@@ -366,7 +366,29 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `addDeepCloneReparse` for the type of a type expression.
     fn reparse_type(&mut self, expr: TypeExpr) -> TypeNodeId {
+        // `checkSourceElementWorker` has no case for a `JSDocVariadicType` or a `JSDocOptionalType`.
+        if expr.is_variadic || expr.is_optional {
+            return self.reparse_unchecked_type(expr);
+        }
         self.note_checker_errors(expr.pos, expr.end);
+        self.clone_type_expression(expr)
+    }
+
+    /// The same for a type that `checkSourceFile` never reaches: the checker only calls
+    /// `getTypeFromTypeNode` for it.
+    fn reparse_unchecked_type(&mut self, expr: TypeExpr) -> TypeNodeId {
+        let reported = self.b.file.diagnostics.len();
+        let ty = self.clone_type_expression(expr);
+        // The grammar errors that are cloned with the nodes.
+        let diagnostics = &mut self.b.file.diagnostics;
+        if diagnostics.len() > reported {
+            let cloned = diagnostics.split_off(reported).into_iter();
+            diagnostics.extend(cloned.filter(|d| d.kind != DiagnosticKind::Grammar));
+        }
+        ty
+    }
+
+    fn clone_type_expression(&mut self, expr: TypeExpr) -> TypeNodeId {
         let jsdoc = std::rc::Rc::clone(&self.jsdoc);
         let mut ty = self.b.clone_type(&jsdoc.types, expr.ty);
         let file = &mut self.b.file;
@@ -374,15 +396,32 @@ impl<'p, 'a> Lower<'p, 'a> {
             ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), expr.pos, expr.pos);
         }
         let end = file[ty].end;
-        // `getTypeFromTypeNodeWorker`: `...T` is an array of `T`, and `T=` is `T` with `addOptionality`.
+        // `parseJSDocType`
         if expr.is_variadic {
-            ty = file.ty(TypeNodeKind::Array(ty), expr.pos, end);
+            let kind = JSDocTypeKind::Variadic;
+            let is_postfix = false;
+            ty = file.ty(
+                TypeNodeKind::JSDoc {
+                    ty,
+                    kind,
+                    is_postfix,
+                },
+                expr.pos,
+                end,
+            );
         }
         if expr.is_optional {
-            let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
-            let undefined = file.ty(undefined, expr.pos, expr.pos);
-            let members = file.list(&[ty, undefined]);
-            ty = file.ty(TypeNodeKind::Union(members), expr.pos, end);
+            let kind = JSDocTypeKind::Optional;
+            let is_postfix = true;
+            ty = file.ty(
+                TypeNodeKind::JSDoc {
+                    ty,
+                    kind,
+                    is_postfix,
+                },
+                expr.pos,
+                end,
+            );
         }
         ty
     }
@@ -539,6 +578,9 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// `reparseTags`
     fn reparse_tags(&mut self, host: &mut Host, attached: &Attached) {
         let comments = Rc::clone(&self.jsdoc);
+        if let Host::Class(class) = *host {
+            self.check_grammar_augments_tags(class, attached);
+        }
         for (i, &index) in attached.docs.iter().enumerate() {
             self.jsdoc_is_attached[index as usize] = true;
             let doc = &comments.list[index as usize];
@@ -557,7 +599,14 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// The type alias for a `@typedef` or a `@callback`, wrapped in the namespaces of its qualified
     /// name (`wrapInJSDocNamespace`).
-    fn reparse_alias(&mut self, name: &DeclaredName, ty: TypeNodeId, tag: &Tag, doc: &JsDoc) {
+    fn reparse_alias(
+        &mut self,
+        name: &DeclaredName,
+        ty: TypeNodeId,
+        tag: &Tag,
+        host: &Host,
+        doc: &JsDoc,
+    ) {
         let type_params = self.gather_type_parameters(doc, true);
         let mut flags = Flags::REPARSED;
         if !name.namespaces.is_empty() {
@@ -585,6 +634,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 name_pos: namespace.start,
                 flags: if depth > 0 {
                     Flags::REPARSED | Flags::EXPORT
+                } else if matches!(host, Host::ClassMember(_)) {
+                    Flags::REPARSED | Flags::CLASS_ELEMENT
                 } else {
                     Flags::REPARSED
                 },
@@ -601,6 +652,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 end: name.name.end,
             };
         }
+        // `parseListIndex` passes only type aliases and imports on to a list of statements, so the
+        // namespace is a member of the class (`checkGrammarModuleElementContext`).
+        if let (Some(outermost), Host::ClassMember(_)) = (name.namespaces.first(), host) {
+            let start = outermost.start;
+            self.b.file.error(DiagnosticKind::Grammar, start, 0, 1235);
+        }
         self.reparsed.push(statement);
     }
 
@@ -613,13 +670,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
                 self.check_non_identifier_name(typedef.name.name);
                 let ty = self.reparse_tag_type(&typedef.ty);
-                self.reparse_alias(&typedef.name, ty, tag, doc);
+                self.reparse_alias(&typedef.name, ty, tag, host, doc);
             }
             TagKind::Callback(callback) => {
                 let signature = self.reparse_signature(&callback.signature, None, doc, tag);
                 let kind = TypeNodeKind::Fn(signature);
                 let ty = self.b.file.ty(kind, callback.signature.pos, tag.end);
-                self.reparse_alias(&callback.name, ty, tag, doc);
+                self.reparse_alias(&callback.name, ty, tag, host, doc);
             }
             TagKind::Import(import) => {
                 if !import.has_clause {
@@ -869,7 +926,16 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// `reparseHosted`
     fn reparse_hosted(&mut self, tag: &Tag, host: &mut Host, doc: &JsDoc) {
         match &tag.kind {
-            TagKind::Type(ty) => self.reparse_type_tag(*ty, host),
+            TagKind::Type(ty) => {
+                let mut type_tags = doc
+                    .tags
+                    .iter()
+                    .filter(|t| matches!(t.kind, TagKind::Type(_)));
+                let is_last = type_tags
+                    .next_back()
+                    .is_some_and(|last| last.pos == tag.pos);
+                self.reparse_type_tag(*ty, host, is_last);
+            }
             TagKind::Satisfies(ty) => self.reparse_satisfies_tag(*ty, host),
             TagKind::Template(_) => {
                 let func = self.function_like_host(host);
@@ -993,9 +1059,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file[class].implements = all;
                 }
             }
-            TagKind::Augments(class_name, tag_name) => {
+            TagKind::Augments(class_name, _) => {
                 if let Host::Class(class) = *host {
-                    self.reparse_augments_tag(class_name, tag_name.slice(), class);
+                    self.reparse_augments_tag(class_name, class);
                 }
             }
             _ => {}
@@ -1026,9 +1092,40 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.clone_type_list(&jsdoc.types, type_args)
     }
 
+    /// `checkGrammarClassDeclarationHeritageClauses`: the last name of an `@augments` or `@extends`
+    /// tag, in any comment of the class, is the last name of the `extends` clause. It returns at the
+    /// first error.
+    fn check_grammar_augments_tags(&mut self, class: ClassId, attached: &Attached) {
+        let extends = self.b.file[class].extends;
+        if extends.is_none() || self.paren_of(extends).is_some() {
+            return;
+        }
+        // `getIdentifierFromEntityNameExpression`
+        let (ExprKind::Ident(target) | ExprKind::Dot { name: target, .. }) =
+            self.b.file[extends].kind
+        else {
+            return;
+        };
+        let comments = Rc::clone(&self.jsdoc);
+        let docs = attached.docs.iter();
+        for tag in docs.flat_map(|&index| &comments.list[index as usize].tags) {
+            if let TagKind::Augments(class_name, tag_name) = &tag.kind
+                && let Some(&source) = class_name.name.last()
+                && target != self.name_atom(source)
+            {
+                let target = self.b.atoms.bytes(target);
+                let names = [tag_name.slice(), source.text.slice(), target];
+                let at = (source.start, source.end);
+                let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, 8023, &names);
+                self.b.file.diagnostics.push(diagnostic);
+                return;
+            }
+        }
+    }
+
     /// `@augments`, `@extends`: the type arguments are added to the `extends` clause, if it names
     /// the same class.
-    fn reparse_augments_tag(&mut self, class_name: &ClassName, tag_name: &[u8], class: ClassId) {
+    fn reparse_augments_tag(&mut self, class_name: &ClassName, class: ClassId) {
         let Class {
             extends,
             extends_args,
@@ -1056,17 +1153,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                 _ => break false,
             }
         };
-        // `checkGrammarClassDeclarationHeritageClauses`, `getIdentifierFromEntityNameExpression`:
-        // the last names must match.
-        if is_entity_name
-            && let (Some(&target), Some(&source)) = (written.first(), class_name.name.last())
-            && target != self.name_atom(source)
-        {
-            let names = [tag_name, source.text.slice(), self.b.atoms.bytes(target)];
-            let at = (source.start, source.end);
-            let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, 8023, &names);
-            self.b.file.diagnostics.push(diagnostic);
-        }
         // `HasSamePropertyAccessName`
         let is_same = is_entity_name
             && written.len() == class_name.name.len()
@@ -1082,7 +1168,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// `@type`
-    fn reparse_type_tag(&mut self, ty: TypeExpr, host: &mut Host) {
+    fn reparse_type_tag(&mut self, ty: TypeExpr, host: &mut Host, is_last_type_tag: bool) {
         match host {
             Host::VariableStatement(decls) => {
                 if let Some(decl) = decls.iter().find(|&decl| self.b.file[decl].ty.is_none()) {
@@ -1101,7 +1187,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Host::ExportAssignment(stmt) => {
                 let owner = JsDocTypeOwner::Export(*stmt);
                 if self.b.file.jsdoc_types.last().is_none_or(|t| t.0 != owner) {
-                    let ty = self.reparse_type(ty);
+                    let ty = self.reparse_unchecked_type(ty);
                     self.b.file.jsdoc_types.push((owner, ty));
                     return;
                 }
@@ -1126,7 +1212,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Host::Property(prop, prop_ty) => match prop.kind {
                 PropKind::Init | PropKind::Shorthand => {
                     if prop_ty.is_none() {
-                        *prop_ty = self.reparse_type(ty);
+                        *prop_ty = self.reparse_unchecked_type(ty);
                         return;
                     }
                 }
@@ -1150,9 +1236,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             Host::ExpressionStatement(stmt) => {
                 let e = self.statement_expression(*stmt);
                 if e.is_some() && self.is_assignment_declaration(e) {
-                    let owner = JsDocTypeOwner::Assign(e);
-                    if self.b.file.jsdoc_types.last().is_none_or(|t| t.0 != owner) {
-                        let ty = self.reparse_type(ty);
+                    // `SetType` without a test: the last tag replaces the others.
+                    if is_last_type_tag {
+                        let ty = self.reparse_unchecked_type(ty);
+                        let owner = JsDocTypeOwner::Assign(e);
                         self.b.file.jsdoc_types.push((owner, ty));
                     }
                     return;
@@ -1186,7 +1273,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let has_no_typed_params = function.this_ty(&self.b.file).is_none()
             && params.iter().all(|param| self.b.file[param].ty.is_none());
         if type_params.is_empty() && ret.is_none() && has_no_typed_params {
-            let ty = self.reparse_type(ty);
+            let ty = self.reparse_unchecked_type(ty);
             self.b.file.jsdoc_types.push((JsDocTypeOwner::Fn(func), ty));
             self.full_signatures.insert(func.0, ());
         }

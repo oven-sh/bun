@@ -25,9 +25,9 @@ pub(super) struct LateBoundSymbols {
 }
 
 /// `None`: the container has no late-bound member on that side.
-pub(super) type LateBoundMembers = Option<Arc<LateBoundSymbols>>;
+pub(super) type LateBoundMembers = Option<std::rc::Rc<LateBoundSymbols>>;
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// `getSymbolOfDeclaration(declaration).Declarations`
     pub(super) fn declarations_of_member(
         &mut self,
@@ -195,7 +195,7 @@ impl<'p> Checker<'p> {
                     symbol.iter().map(move |&declaration| (declaration, index))
                 })
                 .collect();
-            Arc::new(LateBoundSymbols {
+            std::rc::Rc::new(LateBoundSymbols {
                 declarations,
                 symbol_of,
                 conflicts,

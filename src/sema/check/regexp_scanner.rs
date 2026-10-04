@@ -16,7 +16,7 @@ use crate::resolve::ScriptTarget;
 use bun_core::lexer::{is_identifier_part, is_identifier_start};
 use std::borrow::Cow;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkRegularExpressionLiteral`, `checkGrammarRegularExpressionLiteral`
     pub(super) fn check_grammar_regular_expression_literal(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);

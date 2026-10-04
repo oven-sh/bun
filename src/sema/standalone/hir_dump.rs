@@ -12,7 +12,7 @@
 //!     no: -
 //! ```
 
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Intern, Interner};
 use bun_sema::hir::*;
 
 /// Nothing is printed below this depth: printing a cyclic HIR would otherwise never terminate.
@@ -49,9 +49,9 @@ macro_rules! node {
     }};
 }
 
-struct Dump<'a> {
-    file: &'a File,
-    atoms: &'a Interner,
+struct Dump<'a, 's> {
+    file: &'a File<'s>,
+    atoms: &'a dyn Intern,
     out: String,
     /// Every visited node: its vector and its index.
     seen: std::collections::HashSet<(&'static str, u32)>,
@@ -133,10 +133,8 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         modifiers: _,
         names: _,
         bases: _,
-        parents: _,
-        ambient_or_type_places: _,
+        lazy: _,
         keyword_identifier_positions: _,
-        keyword_identifiers: _,
         fn_nodes: _,
         class_nodes: _,
     } = file;
@@ -302,7 +300,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         Diagnostic {
             start: pos, code, ..
         },
-    ) in jsdoc_param_errors
+    ) in jsdoc_param_errors.iter()
     {
         match file.fns.get(func.idx()) {
             Some(func) => put!(
@@ -438,7 +436,7 @@ pub fn nodes(file: &File) -> String {
     out
 }
 
-impl Dump<'_> {
+impl Dump<'_, '_> {
     fn line(&mut self, depth: usize, label: &str, text: &str) {
         for _ in 0..depth {
             self.out.push_str("  ");
@@ -1677,8 +1675,12 @@ fn type_kind_name(kind: TypeNodeKind) -> &'static str {
         TypeNodeKind::Keyof(_) => "Keyof",
         TypeNodeKind::Readonly(_) => "Readonly",
         TypeNodeKind::UniqueSymbol => "UniqueSymbol",
-        TypeNodeKind::JSDoc { is_nullable, .. } if is_nullable => "JSDocNullable",
-        TypeNodeKind::JSDoc { .. } => "JSDocNonNullable",
+        TypeNodeKind::JSDoc { kind, .. } => match kind {
+            JSDocTypeKind::Nullable => "JSDocNullable",
+            JSDocTypeKind::NonNullable => "JSDocNonNullable",
+            JSDocTypeKind::Optional => "JSDocOptional",
+            JSDocTypeKind::Variadic => "JSDocVariadic",
+        },
         TypeNodeKind::Typeof { .. } => "Typeof",
         TypeNodeKind::Import { .. } => "Import",
         TypeNodeKind::Predicate { .. } => "Predicate",

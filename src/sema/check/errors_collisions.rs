@@ -27,7 +27,7 @@ fn is_reserved_type_name(text: Atom) -> bool {
     )
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkCollisionsForDeclarationName` for a declaration, or for the identifier that names a
     /// variable, a parameter or a binding element. `text`: `name.Text()`. Few names can collide, so
     /// the name is tested first.

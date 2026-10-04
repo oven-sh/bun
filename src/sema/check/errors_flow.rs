@@ -10,21 +10,7 @@
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
-/// The start of the return type `node` in the source. Parentheses around a type and a leading `|` or `&` have no node, so this scans
-/// back over them. A return type follows a `:`, which ends the scan.
-fn start_of_return_type(hir: &hir::File, node: TypeNodeId) -> u32 {
-    let text = &hir.text[..];
-    let mut at = (hir[node].pos as usize).min(text.len());
-    loop {
-        let before = text[..at].trim_ascii_end().len();
-        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&') {
-            return at as u32;
-        }
-        at = before - 1;
-    }
-}
-
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `IsPotentiallyExecutableNode`
     fn is_potentially_executable(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
@@ -143,7 +129,7 @@ impl Checker<'_> {
         }
         let ty = self.type_from_node(file, node);
         if self.contextual_call_signature(file, func, ty).is_none() {
-            let start = start_of_return_type(hir, node);
+            let start = start_of_type(hir, node);
             let end = self.end_of_type_node_from(file, node, start);
             self.error_at((file, start, end), 8030, &[]);
         }
@@ -213,7 +199,7 @@ impl Checker<'_> {
             .ids(bound.fns[func.idx()].returns)
             .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE);
         let start = if error_node.is_some() {
-            start_of_return_type(hir, error_node)
+            start_of_type(hir, error_node)
         } else {
             self.error_range_of_fn(file, func).0
         };
@@ -268,7 +254,7 @@ impl Checker<'_> {
             return;
         }
         let is_async = f.flags.contains(Flags::ASYNC);
-        let start = start_of_return_type(hir, f.ret);
+        let start = start_of_type(hir, f.ret);
         let error_node = (file, start, self.end_of_type_node_from(file, f.ret, start));
         self.check_generator_instantiation_assignability_to_return_type(
             declared,

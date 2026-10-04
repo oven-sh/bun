@@ -3,7 +3,7 @@
 use super::*;
 use crate::bind::PatParent;
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// Whether every query from `stack[i]` up is one TypeScript also makes, regardless of query
     /// order: the type of a variable, or of an element of its pattern, that is inferred from an
     /// initializer (`checkDeclarationInitializer`), the type of an expression, whose operands

@@ -326,7 +326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     {
                         return Self::pfx_misplaced_await(p, name_range, raw, level);
                     }
-                    p.lexer.prev_token_was_await_keyword = true;
+                    p.lexer.prev_token_was_await_keyword = !p.is_tolerant();
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                     // `isUpdateExpression`: `await` does not start one even where it is an
                     // identifier, so `parseUnaryExpressionOrHigher` reports it on the left of `**`.

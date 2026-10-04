@@ -11,7 +11,7 @@ const ALWAYS: u8 = 1;
 const NEVER: u8 = 2;
 const SOMETIMES: u8 = ALWAYS | NEVER;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkNullishCoalesceOperands` for `e`, which is `left ?? right`.
     pub(super) fn check_nullish_coalesce_operands(
         &mut self,
@@ -305,7 +305,15 @@ impl Checker<'_> {
         if self.is_any(object) {
             return;
         }
-        let object = self.non_nullable(object);
+        // `checkNonNullType(getOptionalExpressionType(..))`
+        let object = match hir[operand].kind {
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }
+                if chain == Chain::Start =>
+            {
+                self.non_nullable(object)
+            }
+            _ => self.non_null_type(object),
+        };
         // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and
         // no property is looked up.
         if matches!(hir[operand].kind, ExprKind::Index { .. })
@@ -317,7 +325,7 @@ impl Checker<'_> {
         let Some((prop, mapper)) = self.get_property_of_type(object, name) else {
             return;
         };
-        if self.is_read_only(prop) {
+        if self.is_readonly_symbol(prop) {
             self.error_at((file, start, end), 2704, &[]);
             return;
         }
@@ -330,26 +338,13 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_optional = prop.flags.contains(PropFlags::OPTIONAL)
-            || !self.p.files.options.exact_optional_property_types
-                && self.some_type(ty, |c, m| {
-                    m.is_undefined() || m == TypeId::VOID || c.is_deferred(m)
-                });
+        let is_optional = if self.p.files.options.exact_optional_property_types {
+            prop.flags.contains(PropFlags::OPTIONAL)
+        } else {
+            self.is_possibly_undefined(ty)
+        };
         if !is_optional {
             self.error_at((file, start, end), 2790, &[]);
-        }
-    }
-
-    /// `isReadonlySymbol`: among the exports of a namespace or a module, constants and enum
-    /// members. Not an alias of one.
-    fn is_read_only(&self, prop: &Prop) -> bool {
-        match prop.source {
-            PropSource::Symbol(export) if !self.is_member_symbol(export) => {
-                let flags = self.files().flags(export);
-                flags.contains(SymFlags::ENUM_MEMBER)
-                    || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
-            }
-            _ => prop.flags.contains(PropFlags::READONLY),
         }
     }
 }

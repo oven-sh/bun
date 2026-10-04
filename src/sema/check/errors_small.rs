@@ -7,7 +7,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeKind};
 
-impl Checker<'_> {
+impl<'p> Checker<'p, '_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot be hoisted past a `let` or a
     /// `const` of the same name.
     fn check_vars_not_shadowed(&mut self, file: FileId) {
@@ -270,7 +270,7 @@ impl Checker<'_> {
             ExprKind::Dot { obj, name, .. } => {
                 let of = self.type_of_expr(file, obj);
                 let of = self.apparent_type(of);
-                self.prop_of(of, name).is_some_and(|(prop, _)| matches!(prop.source, PropSource::Symbol(s) if self.files().flags(s).intersects(SymFlags::ENUM)))
+                self.prop_ref(of, name).is_some_and(|(prop, _)| matches!(prop.source, PropSource::Symbol(s) if self.files().flags(s).intersects(SymFlags::ENUM)))
             }
             _ => false,
         }
@@ -370,14 +370,14 @@ impl Checker<'_> {
 
     /// `getSymbolAtLocation` of the name in `a.name`: the declaration source of the property it
     /// resolves to. `None`: unknown.
-    fn property_found(&mut self, file: FileId, e: ExprId) -> Option<PropSource> {
+    fn property_found(&mut self, file: FileId, e: ExprId) -> Option<&'p PropSource<'p>> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
             return None;
         };
         let ty = self.type_of_expr(file, obj);
         let ty = self.non_nullable(ty);
         let ty = self.apparent_type(ty);
-        self.prop_of(ty, name).map(|(prop, _)| prop.source)
+        self.prop_ref(ty, name).map(|(prop, _)| &prop.source)
     }
 
     /// Whether `a.name` and `b.name` resolve to the same property. Unknown counts as the same.
@@ -472,7 +472,7 @@ impl Checker<'_> {
     }
 
     /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698 for the spread
-    /// `p` in `owner`.
+    /// `p` in `owner`. For an assignment target `type_of_object_literal` reports it.
     pub(super) fn check_spread(&mut self, file: FileId, owner: ExprId, p: PropId) {
         let hir = self.hir(file);
         let prop = &hir[p];

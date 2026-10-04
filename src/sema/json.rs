@@ -1,4 +1,5 @@
-//! The contents of a `package.json`, and a `tsconfig.json` as parsed by the one shared parser.
+//! The contents of a `package.json`, from `Host::parse_package_json`, and a `tsconfig.json` as
+//! parsed by the one shared parser.
 
 use crate::atom::Interner;
 use crate::check::spans::Spans;
@@ -7,6 +8,7 @@ use crate::hir::{
     is_parenthesized, start_of,
 };
 use crate::resolve::{Host, Options};
+use crate::session::Session;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -20,24 +22,6 @@ pub enum Json {
 }
 
 impl Json {
-    pub fn parse(text: &[u8]) -> Option<Json> {
-        let mut p = Parser {
-            text,
-            at: 0,
-            depth: 0,
-        };
-        if text.starts_with(b"\xEF\xBB\xBF") {
-            p.at = 3;
-        }
-        let value = p.value()?;
-        p.skip();
-        if p.at == text.len() {
-            Some(value)
-        } else {
-            None
-        }
-    }
-
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
             Json::Object(entries) => entries.iter().find(|e| e.0 == key).map(|e| &e.1),
@@ -74,156 +58,6 @@ impl Json {
     }
 }
 
-struct Parser<'a> {
-    text: &'a [u8],
-    at: usize,
-    depth: u32,
-}
-
-impl Parser<'_> {
-    fn peek(&self) -> Option<u8> {
-        self.text.get(self.at).copied()
-    }
-
-    fn skip(&mut self) {
-        loop {
-            match self.peek() {
-                Some(b' ' | b'\t' | b'\r' | b'\n') => self.at += 1,
-                Some(b'/') if self.text.get(self.at + 1) == Some(&b'/') => {
-                    while !matches!(self.peek(), None | Some(b'\n')) {
-                        self.at += 1;
-                    }
-                }
-                Some(b'/') if self.text.get(self.at + 1) == Some(&b'*') => {
-                    self.at += 2;
-                    while self.at < self.text.len() && !self.text[self.at..].starts_with(b"*/") {
-                        self.at += 1;
-                    }
-                    self.at = (self.at + 2).min(self.text.len());
-                }
-                _ => return,
-            }
-        }
-    }
-
-    fn value(&mut self) -> Option<Json> {
-        self.skip();
-        self.depth += 1;
-        if self.depth > 200 {
-            return None;
-        }
-        let value = match self.peek()? {
-            b'{' => {
-                self.at += 1;
-                let mut entries = Vec::new();
-                loop {
-                    self.skip();
-                    match self.peek()? {
-                        b'}' => {
-                            self.at += 1;
-                            break;
-                        }
-                        b',' => self.at += 1,
-                        _ => {
-                            let key = self.string()?;
-                            self.skip();
-                            if self.peek()? != b':' {
-                                return None;
-                            }
-                            self.at += 1;
-                            entries.push((key, self.value()?));
-                        }
-                    }
-                }
-                Json::Object(entries)
-            }
-            b'[' => {
-                self.at += 1;
-                let mut items = Vec::new();
-                loop {
-                    self.skip();
-                    match self.peek()? {
-                        b']' => {
-                            self.at += 1;
-                            break;
-                        }
-                        b',' => self.at += 1,
-                        _ => items.push(self.value()?),
-                    }
-                }
-                Json::Array(items)
-            }
-            b'"' => Json::String(self.string()?),
-            b't' if self.text[self.at..].starts_with(b"true") => {
-                self.at += 4;
-                Json::Bool(true)
-            }
-            b'f' if self.text[self.at..].starts_with(b"false") => {
-                self.at += 5;
-                Json::Bool(false)
-            }
-            b'n' if self.text[self.at..].starts_with(b"null") => {
-                self.at += 4;
-                Json::Null
-            }
-            _ => {
-                let start = self.at;
-                while matches!(
-                    self.peek(),
-                    Some(b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')
-                ) {
-                    self.at += 1;
-                }
-                Json::Number(
-                    std::str::from_utf8(&self.text[start..self.at])
-                        .ok()?
-                        .parse()
-                        .ok()?,
-                )
-            }
-        };
-        self.depth -= 1;
-        Some(value)
-    }
-
-    fn string(&mut self) -> Option<Vec<u8>> {
-        if self.peek()? != b'"' {
-            return None;
-        }
-        self.at += 1;
-        let mut out = Vec::new();
-        loop {
-            let c = self.peek()?;
-            self.at += 1;
-            match c {
-                b'"' => break,
-                b'\\' => {
-                    let e = self.peek()?;
-                    self.at += 1;
-                    match e {
-                        b'n' => out.push(b'\n'),
-                        b't' => out.push(b'\t'),
-                        b'r' => out.push(b'\r'),
-                        b'b' => out.push(8),
-                        b'f' => out.push(12),
-                        b'u' => {
-                            let hex =
-                                std::str::from_utf8(self.text.get(self.at..self.at + 4)?).ok()?;
-                            self.at += 4;
-                            let c = char::from_u32(u32::from_str_radix(hex, 16).ok()?)
-                                .unwrap_or('\u{FFFD}');
-                            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-                        }
-                        other => out.push(other),
-                    }
-                }
-                _ => out.push(c),
-            }
-        }
-        Some(out)
-    }
-}
-
 /// The expression of the single statement of a JSON file.
 fn root_expression(hir: &File) -> Option<ExprId> {
     hir.ids(hir.body).find_map(|s| match hir[s].kind {
@@ -236,7 +70,7 @@ fn root_expression(hir: &File) -> Option<ExprId> {
 /// `validateJsonValue` are parse diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
     /// `validateJsonValue`, `validateJsonObjectLiteral`
-    fn validate_json_value(spans: Spans<'_>, e: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
+    fn validate_json_value(spans: Spans<'_, '_>, e: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
         let hir = spans.hir;
         let is_double_quoted = |at: u32| spans.text.get(at as usize) == Some(&b'"');
         let start = start_of(hir, e);
@@ -278,25 +112,31 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
     }
     hir.has_parse_diagnostics |= !refused.is_empty();
     hir.diagnostics
+        .to_mut()
         .extend(refused.iter().map(|&(start, code, end)| {
             Diagnostic::new(DiagnosticKind::Parse, (start, end), code, &[])
         }));
 }
 
 /// `TsConfigSourceFile`
-pub struct TsConfigSourceFile {
-    hir: File,
-    atoms: Interner,
+pub struct TsConfigSourceFile<'s> {
+    hir: File<'s>,
+    atoms: Interner<'s>,
     /// `convertConfigFileToObject`: the object that is converted. `None`: the root is not an
     /// object, nor an array that contains one.
     pub root: Option<ExprId>,
 }
 
-impl TsConfigSourceFile {
+impl<'s> TsConfigSourceFile<'s> {
     /// `NewTsconfigSourceFileFromFilePath`. `None`: the parser failed.
-    pub fn parse(host: &dyn Host, text: std::borrow::Cow<'static, [u8]>) -> Option<Self> {
-        let atoms = Interner::new();
-        let mut hir = host.parse(b"/tsconfig.json", &text, &atoms, &Options::default());
+    pub fn parse(
+        host: &dyn Host,
+        session: &'s Session,
+        text: std::borrow::Cow<'static, [u8]>,
+    ) -> Option<Self> {
+        let atoms = Interner::new_in(session);
+        let path = b"/tsconfig.json";
+        let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
         hir.text = text;
         let is_object = |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_));
         let root = root_expression(&hir).filter(|_| !hir.has_errors)?;

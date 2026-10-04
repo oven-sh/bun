@@ -1,12 +1,12 @@
 //! State the lowering pass builds the checker's HIR in: the HIR itself, the file's interned names,
 //! and the parts that are still pending.
 
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{self, *};
 
 pub(crate) struct Builder<'a> {
-    pub(crate) file: hir::File,
-    pub(crate) atoms: &'a Interner,
+    pub(crate) file: hir::FileBuilder,
+    pub(crate) atoms: &'a dyn Intern,
     /// Direct-mapped cache of the short names this thread has interned, indexed by a hash of the
     /// spelling. A collision overwrites the entry.
     seen_names: Box<[std::cell::Cell<SeenName>]>,
@@ -54,14 +54,14 @@ const SEEN_NAMES_LEN: usize = 1 << 14;
 
 thread_local! {
     /// The emptied vectors of the previous file's HIR, reused for their capacity.
-    static RECYCLED: std::cell::RefCell<hir::File> = Default::default();
+    static RECYCLED: std::cell::RefCell<hir::FileBuilder> = Default::default();
     /// `Builder::seen_names` between two files, and the `Interner::number` it belongs to.
     static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
 }
 
 /// `RECYCLED` and `SEEN_NAMES`.
 #[derive(Default)]
-pub(crate) struct Recycled(hir::File, (u64, Box<[std::cell::Cell<SeenName>]>));
+pub(crate) struct Recycled(hir::FileBuilder, (u64, Box<[std::cell::Cell<SeenName>]>));
 
 /// Swaps this thread's recycled buffers.
 pub(crate) fn replace_recycled(room: Recycled) -> Recycled {
@@ -74,13 +74,23 @@ impl Drop for Builder<'_> {
     }
 }
 
-/// Shrinks the finished `file` to fit and recycles its build vectors for this thread's next file.
-pub(crate) fn recycle(file: &mut hir::File) {
-    RECYCLED.with_borrow_mut(|room| file.shrink_to_fit_recycling(room));
+/// The finished `file` with every list at its final size in `arena`. `recycles`: this thread builds
+/// its next file in the vectors of this one.
+pub(crate) fn into_arena<'s>(
+    file: hir::FileBuilder,
+    recycles: bool,
+    arena: &'s bun_alloc::Arena,
+    session: &'s bun_sema::session::Session,
+) -> hir::File<'s> {
+    let (file, emptied) = file.into_arena(arena, session);
+    if recycles {
+        RECYCLED.set(emptied);
+    }
+    file
 }
 
 impl<'a> Builder<'a> {
-    pub(crate) fn new(is_js: bool, atoms: &'a Interner) -> Self {
+    pub(crate) fn new(is_js: bool, atoms: &'a dyn Intern) -> Self {
         let (of, mut seen_names) = SEEN_NAMES.take();
         if seen_names.is_empty() {
             let none = std::cell::Cell::new(SeenName::NONE);

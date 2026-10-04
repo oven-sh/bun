@@ -15,7 +15,7 @@ use crate::sema::ts_syntax::{
     StatementData, StatementId, TupleElement, TypeAlias, TypeId, TypeParam, TypeParams, Types,
 };
 use bun_ast::{Expr, Loc, StoreStr};
-use bun_sema::hir::{DiagnosticKind, PatKind, TypeNode, TypeNodeKind};
+use bun_sema::hir::{DiagnosticKind, JSDocTypeKind, PatKind, TypeNode, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::lexer::{PropertyModifierKeyword, T};
@@ -594,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         match types.get(syntax.last_type.idx())?.kind {
             TypeNodeKind::JSDoc {
                 ty,
-                is_nullable: true,
+                kind: JSDocTypeKind::Nullable,
                 is_postfix: true,
             } => {
                 types.truncate(syntax.last_type.idx());
@@ -609,9 +609,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn emit_jsdoc_type(&mut self, is_nullable: bool, is_postfix: bool, pos: u32) {
         let ty = self.last_type();
         if ty.is_some() {
+            let kind = match is_nullable {
+                true => JSDocTypeKind::Nullable,
+                false => JSDocTypeKind::NonNullable,
+            };
             let kind = TypeNodeKind::JSDoc {
                 ty,
-                is_nullable,
+                kind,
                 is_postfix,
             };
             self.emit_type(kind, pos);

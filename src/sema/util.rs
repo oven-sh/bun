@@ -1,74 +1,19 @@
 //! Small containers shared by the rest of the crate.
 
+pub mod memory;
+
+pub use memory::{AppendVec, LocalVec};
+
 use bun_threading::Guarded;
-use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use memory::Newest;
+use std::alloc::{Allocator, Global};
+use std::hash::Hasher;
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The multiply-rotate hash rustc uses: keys here are small integers and short tuples of them.
-#[derive(Default, Clone, Copy)]
-pub struct FxHasher {
-    hash: u64,
-}
-
-const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
-
-impl FxHasher {
-    #[inline]
-    fn add(&mut self, word: u64) {
-        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(SEED);
-    }
-}
-
-impl Hasher for FxHasher {
-    #[inline]
-    fn write(&mut self, mut bytes: &[u8]) {
-        while bytes.len() >= 8 {
-            self.add(u64::from_le_bytes(bytes[..8].try_into().unwrap()));
-            bytes = &bytes[8..];
-        }
-        if bytes.len() >= 4 {
-            self.add(u64::from(u32::from_le_bytes(
-                bytes[..4].try_into().unwrap(),
-            )));
-            bytes = &bytes[4..];
-        }
-        for &b in bytes {
-            self.add(u64::from(b));
-        }
-    }
-    #[inline]
-    fn write_u8(&mut self, i: u8) {
-        self.add(u64::from(i));
-    }
-    #[inline]
-    fn write_u16(&mut self, i: u16) {
-        self.add(u64::from(i));
-    }
-    #[inline]
-    fn write_u32(&mut self, i: u32) {
-        self.add(u64::from(i));
-    }
-    #[inline]
-    fn write_u64(&mut self, i: u64) {
-        self.add(i);
-    }
-    #[inline]
-    fn write_usize(&mut self, i: usize) {
-        self.add(i as u64);
-    }
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-}
-
-pub type FxBuild = BuildHasherDefault<FxHasher>;
-/// The keys are small ids. `disallowed_types` targets `RandomState`: the hasher here is Fx, as in
-/// `bun_collections::AutoContext`.
-#[allow(clippy::disallowed_types)]
-pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
-#[allow(clippy::disallowed_types)]
-pub type FxHashSet<K> = std::collections::HashSet<K, FxBuild>;
+/// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
+/// tuples of them. Nothing may depend on the order in which a map or a set iterates.
+pub use rustc_hash::{FxBuildHasher as FxBuild, FxHashMap, FxHashSet, FxHasher};
 
 #[inline]
 pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
@@ -226,184 +171,9 @@ pub fn for_each_mut<T: Send>(
     in_parallel: InParallel<'_>,
     work: &(dyn Fn(&mut T) + Sync),
 ) {
-    struct Items<T>(*mut T);
-    // SAFETY: the threads access disjoint items, which are `Send`.
-    unsafe impl<T: Send> Sync for Items<T> {}
-    impl<T> Items<T> {
-        /// # Safety
-        /// `i` is in bounds, and no other reference to the item is in use.
-        #[allow(clippy::mut_from_ref)]
-        unsafe fn item(&self, i: usize) -> &mut T {
-            // SAFETY: guaranteed by the caller.
-            unsafe { &mut *self.0.add(i) }
-        }
-    }
-    let all = Items(items.as_mut_ptr());
-    // SAFETY: `in_parallel` passes every `i` below the length to exactly one call, so no two calls
-    // share an item, and `items` is borrowed until all have returned.
-    in_parallel(items.len(), &|i| work(unsafe { all.item(i) }));
-}
-
-const FIRST_CHUNK_BITS: u32 = 10;
-/// One for each number of leading zeros a `u32` can have.
-const CHUNKS: usize = 33;
-
-/// An append-only vector whose elements never move, with lock-free reads and appends.
-///
-/// Each chunk is twice as long as the previous one. The base pointer stored for a chunk is the
-/// address it would start at if it also held the preceding elements, so that an element is
-/// addressed without computing its offset within the chunk: see `locate`.
-pub struct AppendVec<T> {
-    chunks: [AtomicPtr<T>; CHUNKS],
-    len: AtomicU32,
-}
-
-// SAFETY: elements are only exposed by shared reference, and an index is only returned once its
-// slot is written.
-unsafe impl<T: Send + Sync> Sync for AppendVec<T> {}
-// SAFETY: owns its elements.
-unsafe impl<T: Send> Send for AppendVec<T> {}
-
-/// The chunk of `index`, and its offset from the chunk's stored base pointer.
-#[inline]
-fn locate(index: u32) -> (usize, usize) {
-    let n = index.wrapping_add(1 << FIRST_CHUNK_BITS);
-    (n.leading_zeros() as usize, n as usize)
-}
-
-/// Also the offset of the chunk from its stored base pointer.
-#[inline]
-fn chunk_len(chunk: usize) -> usize {
-    1usize << (31 - chunk)
-}
-
-impl<T> Default for AppendVec<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T> AppendVec<T> {
-    pub fn new() -> Self {
-        AppendVec {
-            chunks: [const { AtomicPtr::new(std::ptr::null_mut()) }; CHUNKS],
-            len: AtomicU32::new(0),
-        }
-    }
-
-    /// The number of indices that have been allocated.
-    #[inline]
-    pub fn len(&self) -> u32 {
-        self.len.load(Ordering::Acquire)
-    }
-
-    pub fn push(&self, value: T) -> u32 {
-        self.push_with(|_| value)
-    }
-
-    /// `make` receives the index of the new value. A caller that passes the index to another thread
-    /// must do so with `Release`.
-    pub fn push_with(&self, make: impl FnOnce(u32) -> T) -> u32 {
-        let index = self.len.fetch_add(1, Ordering::Relaxed);
-        let (chunk, offset) = locate(index);
-        let mut base = self.chunks[chunk].load(Ordering::Acquire);
-        if base.is_null() {
-            base = self.install_chunk(chunk);
-        }
-        // SAFETY: `offset` is inside the chunk, the slot is owned by this call alone, and no thread
-        // reads it before the index is returned.
-        unsafe { base.wrapping_add(offset).write(make(index)) };
-        index
-    }
-
-    /// Allocates `count` consecutive indices and returns the first. Their chunks are allocated
-    /// afterwards, so that several threads can `write` to them concurrently.
-    ///
-    /// # Safety
-    /// Every one of the indices must be passed to `write` before the vector is dropped.
-    pub unsafe fn reserve(&self, count: u32) -> u32 {
-        let first = self.len.fetch_add(count, Ordering::Relaxed);
-        if count != 0 {
-            // A later index is in a chunk with fewer leading zeros.
-            for chunk in locate(first + count - 1).0..=locate(first).0 {
-                if self.chunks[chunk].load(Ordering::Acquire).is_null() {
-                    self.install_chunk(chunk);
-                }
-            }
-        }
-        first
-    }
-
-    /// # Safety
-    /// `index` was allocated by `reserve`, this is the only `write` to it, and no thread reads it
-    /// before a barrier.
-    #[inline]
-    pub unsafe fn write(&self, index: u32, value: T) {
-        let (chunk, offset) = locate(index);
-        let base = self.chunks[chunk].load(Ordering::Relaxed);
-        // SAFETY: `reserve` has allocated the chunk, `offset` is inside it, and the slot is owned
-        // by this call alone.
-        unsafe { base.wrapping_add(offset).write(value) };
-    }
-
-    /// Several threads may race here. The first to install its chunk wins.
-    #[cold]
-    fn install_chunk(&self, chunk: usize) -> *mut T {
-        let layout = std::alloc::Layout::array::<T>(chunk_len(chunk)).unwrap();
-        // SAFETY: the layout has a non-zero size for every `T` this crate stores.
-        let fresh = unsafe { std::alloc::alloc(layout) }.cast::<T>();
-        assert!(!fresh.is_null());
-        let base = fresh.wrapping_sub(chunk_len(chunk));
-        // Null marks a chunk that is not allocated.
-        assert!(!base.is_null());
-        match self.chunks[chunk].compare_exchange(
-            std::ptr::null_mut(),
-            base,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => base,
-            Err(installed) => {
-                // SAFETY: allocated above with the same layout, and never published.
-                unsafe { std::alloc::dealloc(fresh.cast::<u8>(), layout) };
-                installed
-            }
-        }
-    }
-
-    #[inline]
-    pub fn get(&self, index: u32) -> &T {
-        let (chunk, offset) = locate(index);
-        // SAFETY: there is a slot for every leading-zero count.
-        let chunk = unsafe { self.chunks.get_unchecked(chunk) };
-        // The thread that pushed had seen the chunk, and the index was passed from it with
-        // `Release` and `Acquire`: no further synchronization is needed.
-        let base = chunk.load(Ordering::Relaxed);
-        // SAFETY: an index comes from `push`, which initialized the slot before returning it.
-        unsafe { &*base.wrapping_add(offset) }
-    }
-}
-
-impl<T> Drop for AppendVec<T> {
-    fn drop(&mut self) {
-        let len = *self.len.get_mut();
-        for (chunk, slot) in self.chunks.iter_mut().enumerate() {
-            let base = *slot.get_mut();
-            if base.is_null() {
-                continue;
-            }
-            let base = base.wrapping_add(chunk_len(chunk));
-            let start = (chunk_len(chunk) - (1 << FIRST_CHUNK_BITS)) as u32;
-            let used = (len.saturating_sub(start) as usize).min(chunk_len(chunk));
-            for i in 0..used {
-                // SAFETY: the first `len` slots are initialized.
-                unsafe { std::ptr::drop_in_place(base.add(i)) };
-            }
-            let layout = std::alloc::Layout::array::<T>(chunk_len(chunk)).unwrap();
-            // SAFETY: allocated in `install_chunk` with the same layout.
-            unsafe { std::alloc::dealloc(base.cast::<u8>(), layout) };
-        }
-    }
+    // `in_parallel` passes every index to exactly one call, so no lock is contended.
+    let items: Vec<Guarded<&mut T>> = items.iter_mut().map(Guarded::new).collect();
+    in_parallel(items.len(), &|i| work(&mut **items[i].lock()));
 }
 
 const MAP_SHARDS: usize = 256;
@@ -415,108 +185,165 @@ fn spread(hash: u64) -> u64 {
     (hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
-/// The slots of an open-addressed table. A slot holds 0, or the tag of a hash in its upper half and
-/// an index plus one in its lower half.
-pub(crate) struct Places {
-    mask: usize,
-    places: Box<[AtomicU64]>,
+/// What differs between the tables that threads share and those of one task.
+pub(crate) trait Placement {
+    /// The number of slots of the first table.
+    const LEAST: usize;
+    /// For the store that fills a slot.
+    const STORE: Ordering;
+    /// The slot at which the search for a tag starts, modulo the number of slots.
+    fn start(tag: u32) -> usize;
 }
 
-impl Places {
-    fn with_capacity(capacity: usize) -> Box<Places> {
-        Box::new(Places {
-            mask: capacity - 1,
-            places: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
-        })
+/// The slots of an open-addressed table that only grows. A slot holds 0, or the tag of a hash in its
+/// upper half and an index plus one in its lower half. A read takes no lock: when the slots fill
+/// up, a bigger table replaces them, and the old tables stay allocated for those who read them.
+pub(crate) struct Places<P, A: Allocator + Clone = Global> {
+    /// Their number is a power of two.
+    slots: Newest<AtomicU64, A>,
+    placement: PhantomData<P>,
+}
+
+impl<P: Placement, A: Allocator + Clone> Places<P, A> {
+    pub(crate) fn new_in(alloc: A) -> Self {
+        Places {
+            slots: Newest::new_in(alloc),
+            placement: PhantomData,
+        }
     }
 
     /// The index of the entry that `is_it` accepts among those with the hash `spread`. `order`:
     /// `Acquire` if another thread may be inserting.
     #[inline]
-    fn find(
+    pub(crate) fn find(
         &self,
         spread: u64,
         order: Ordering,
         mut is_it: impl FnMut(u32) -> bool,
     ) -> Option<u32> {
-        let tag = spread as u32;
-        let mut at = tag as usize & self.mask;
+        let slots = self.slots.get(order);
+        if slots.is_empty() {
+            return None;
+        }
+        // Computed from the length, so that the compiler sees that `at` is in bounds.
+        let (tag, mask) = (spread as u32, slots.len() - 1);
+        let mut at = P::start(tag) & mask;
         loop {
-            // SAFETY: `mask` is the number of slots minus one.
-            let place = unsafe { self.places.get_unchecked(at) }.load(order);
+            let place = slots[at].load(order);
             if place == 0 {
                 return None;
             }
             if (place >> 32) as u32 == tag && is_it(place as u32 - 1) {
                 return Some(place as u32 - 1);
             }
-            at = (at + 1) & self.mask;
+            at = (at + 1) & mask;
         }
-    }
-
-    /// Only the holder of the shard's lock inserts.
-    fn put(&self, spread: u64, index: u32) {
-        self.put_place(u64::from(spread as u32) << 32 | u64::from(index + 1));
     }
 
     /// The content of a slot determines its position, so a table grows without reading the entries
     /// it indexes.
-    fn put_place(&self, place: u64) {
-        let mut at = (place >> 32) as usize & self.mask;
-        while self.places[at].load(Ordering::Relaxed) != 0 {
-            at = (at + 1) & self.mask;
+    #[inline]
+    fn put(slots: &[AtomicU64], place: u64) {
+        let mask = slots.len() - 1;
+        let mut at = P::start((place >> 32) as u32) & mask;
+        while slots[at].load(Ordering::Relaxed) != 0 {
+            at = (at + 1) & mask;
         }
-        self.places[at].store(place, Ordering::Release);
+        slots[at].store(place, P::STORE);
+    }
+
+    /// The slots, of which `more` can be filled with a load factor of at most three quarters.
+    /// `len`: the number of entries. One thread at a time, here and in `add`.
+    #[inline]
+    fn reserve(&self, len: usize, more: usize) -> &[AtomicU64] {
+        let old = self.slots.get(Ordering::Relaxed);
+        if (len + more) * 4 <= old.len() * 3 {
+            return old;
+        }
+        self.grow(old, len + more)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&self, old: &[AtomicU64], len: usize) -> &[AtomicU64] {
+        let needed = (len * 4).div_ceil(3).next_power_of_two();
+        (self.slots).replace(needed.max(old.len() * 2).max(P::LEAST), |bigger| {
+            for place in old {
+                let place = place.load(Ordering::Relaxed);
+                if place != 0 {
+                    Self::put(bigger, place);
+                }
+            }
+        })
+    }
+
+    /// Adds entries that are not present yet: pairs of a hash and an index. `len`: the number of
+    /// entries before. At most one resize for all of them.
+    #[inline]
+    pub(crate) fn add(&self, len: usize, more: usize, added: impl Iterator<Item = (u64, u32)>) {
+        let slots = self.reserve(len, more);
+        let mut put = 0;
+        for (spread, index) in added {
+            Self::put(slots, u64::from(spread as u32) << 32 | u64::from(index + 1));
+            put += 1;
+        }
+        debug_assert_eq!(put, more);
+    }
+
+    /// Frees the tables that bigger ones have replaced.
+    #[inline]
+    pub(crate) fn forget_older(&mut self) {
+        self.slots.forget_older();
+    }
+
+    /// Frees the tables.
+    pub(crate) fn clear(&mut self) {
+        self.slots.clear();
     }
 }
 
-/// One shard of a table that only grows. Reads are lock-free: the slots are reached through a
-/// pointer that is swapped for one to a bigger table when they fill up, and the old tables stay
-/// allocated for concurrent readers.
-pub(crate) struct GrowingPlaces {
-    current: AtomicPtr<Places>,
-    writer: Guarded<Writer>,
+pub(crate) struct Shared;
+
+impl Placement for Shared {
+    const LEAST: usize = 16;
+    const STORE: Ordering = Ordering::Release;
+    #[inline]
+    fn start(tag: u32) -> usize {
+        tag as usize
+    }
 }
 
-#[derive(Default)]
-struct Writer {
-    count: usize,
-    /// All tables ever allocated, the current one last. `GrowingPlaces::current` points into a box,
-    /// and readers of an older table may still be reading it when the list grows.
-    #[expect(clippy::vec_box)]
-    tables: Vec<Box<Places>>,
+/// One shard of a table that only grows and that threads share. Only an insert takes the lock.
+pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global> {
+    places: Places<Shared, A>,
+    /// The number of entries. A thread that inserts holds the lock.
+    len: Guarded<usize>,
 }
 
-impl Default for GrowingPlaces {
+impl<A: Allocator + Clone + Default> Default for GrowingPlaces<A> {
     fn default() -> Self {
-        GrowingPlaces {
-            current: AtomicPtr::new(std::ptr::null_mut()),
-            writer: Guarded::default(),
-        }
+        Self::new_in(A::default())
     }
 }
 
-impl GrowingPlaces {
+impl<A: Allocator + Clone> GrowingPlaces<A> {
+    pub(crate) fn new_in(alloc: A) -> Self {
+        GrowingPlaces {
+            places: Places::new_in(alloc),
+            len: Guarded::new(0),
+        }
+    }
+
     #[inline]
     pub(crate) fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        let current = self.current.load(Ordering::Acquire);
-        if current.is_null() {
-            return None;
-        }
-        // SAFETY: a table lives as long as `self`: `Writer::tables` owns it and never frees one.
-        unsafe { &*current }.find(spread, Ordering::Acquire, is_it)
+        self.places.find(spread, Ordering::Acquire, is_it)
     }
 
     /// `find`, during a step: no thread inserts, and the barrier before the step has ordered the
     /// earlier inserts. Plain loads.
     #[inline]
     pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        let current = self.current.load(Ordering::Relaxed);
-        if current.is_null() {
-            return None;
-        }
-        // SAFETY: as in `find`.
-        unsafe { &*current }.find(spread, Ordering::Relaxed, is_it)
+        self.places.find(spread, Ordering::Relaxed, is_it)
     }
 
     /// Runs at a barrier, on the one thread that fills this shard: adds `count` pairs of a hash and
@@ -526,64 +353,38 @@ impl GrowingPlaces {
         if count == 0 {
             return;
         }
-        let mut writer = self.writer.lock();
-        self.reserve(&mut writer, count);
-        let places = writer.tables.last().unwrap();
-        let mut put = 0;
-        for (spread, index) in added {
-            places.put(spread, index);
-            put += 1;
-        }
-        debug_assert_eq!(put, count);
-        writer.count += count;
+        let mut len = self.len.lock();
+        self.places.add(*len, count, added);
+        *len += count;
     }
 
-    /// Afterwards `more` slots can be filled with a load factor of at most three quarters.
-    fn reserve(&self, writer: &mut Writer, more: usize) {
-        let capacity = writer.tables.last().map_or(0, |t| t.mask + 1);
-        if (writer.count + more) * 4 <= capacity * 3 {
-            return;
-        }
-        let needed = ((writer.count + more) * 4).div_ceil(3);
-        let bigger = Places::with_capacity(needed.next_power_of_two().max(capacity * 2).max(16));
-        if let Some(old) = writer.tables.last() {
-            for place in &old.places {
-                let place = place.load(Ordering::Relaxed);
-                if place != 0 {
-                    bigger.put_place(place);
-                }
-            }
-        }
-        self.current
-            .store(std::ptr::from_ref(&*bigger).cast_mut(), Ordering::Release);
-        writer.tables.push(bigger);
+    /// Runs at a barrier, on the one thread that fills this shard: room for `more` entries, with at
+    /// most one resize. A table that a bigger one replaces stays allocated.
+    pub(crate) fn reserve(&self, more: usize) {
+        let len = self.len.lock();
+        self.places.reserve(*len, more);
     }
 
     /// The entry that `is_it` accepts, or else the one that `make` adds.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
-        mut is_it: impl FnMut(u32) -> bool,
+        is_it: impl FnMut(u32) -> bool,
         make: impl FnOnce() -> u32,
     ) -> u32 {
-        let mut writer = self.writer.lock();
+        let mut len = self.len.lock();
         // Another thread may have inserted it first.
-        if let Some(found) = writer
-            .tables
-            .last()
-            .and_then(|t| t.find(spread, Ordering::Relaxed, &mut is_it))
-        {
+        if let Some(found) = self.places.find(spread, Ordering::Relaxed, is_it) {
             return found;
         }
-        self.reserve(&mut writer, 1);
         let index = make();
-        writer.tables.last().unwrap().put(spread, index);
-        writer.count += 1;
+        (self.places).add(*len, 1, std::iter::once((spread, index)));
+        *len += 1;
         index
     }
 
     fn len(&self) -> usize {
-        self.writer.lock().count
+        *self.len.lock()
     }
 }
 
@@ -599,32 +400,36 @@ pub(crate) fn spread_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
 
 pub(crate) const SHARDS: usize = MAP_SHARDS;
 
-struct MapShard<K, V> {
-    places: GrowingPlaces,
-    entries: AppendVec<(K, V)>,
+struct MapShard<K, V, A: Allocator + Clone> {
+    places: GrowingPlaces<A>,
+    entries: AppendVec<(K, V), A>,
 }
 
 /// A concurrent memo table. Two threads may compute the same entry; they compute the same value. A
 /// lookup is lock-free and writes to no shared memory. Only an insert takes the lock of one shard.
-pub struct ShardedMap<K, V> {
-    shards: Box<[MapShard<K, V>; MAP_SHARDS]>,
+pub struct ShardedMap<K, V, A: Allocator + Clone = Global> {
+    shards: Box<[MapShard<K, V, A>; MAP_SHARDS], A>,
 }
 
-impl<K: std::hash::Hash + Eq, V> Default for ShardedMap<K, V> {
+impl<K, V, A: Allocator + Clone + Default> Default for ShardedMap<K, V, A> {
     fn default() -> Self {
-        let shards: Box<[MapShard<K, V>]> = (0..MAP_SHARDS)
-            .map(|_| MapShard {
-                places: GrowingPlaces::default(),
-                entries: AppendVec::new(),
-            })
-            .collect();
+        Self::new_in(A::default())
+    }
+}
+
+impl<K, V, A: Allocator + Clone> ShardedMap<K, V, A> {
+    pub fn new_in(alloc: A) -> Self {
+        let shard = |_| MapShard {
+            places: GrowingPlaces::new_in(alloc.clone()),
+            entries: AppendVec::new_in(alloc.clone()),
+        };
         ShardedMap {
-            shards: shards.try_into().unwrap_or_else(|_| unreachable!()),
+            shards: Box::new_in(std::array::from_fn(shard), alloc.clone()),
         }
     }
 }
 
-impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
+impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
     pub fn entries(&self) -> usize {
         self.shards.iter().map(|s| s.entries.len() as usize).sum()
     }
@@ -652,6 +457,13 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
             .places
             .find_frozen(spread, |i| shard.entries.get(i).0 == *key)
             .map(|i| &shard.entries.get(i).1)
+    }
+
+    /// Runs at a barrier, on the one thread that fills `shards`: room for `more` entries in each.
+    pub(crate) fn reserve(&self, shards: std::ops::Range<usize>, more: usize) {
+        for shard in &self.shards[shards] {
+            shard.places.reserve(more);
+        }
     }
 
     /// Runs at a barrier, on the one thread that fills the shard of `spread`, which is
@@ -690,7 +502,7 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
     }
 }
 
-impl<K: std::hash::Hash + Eq, V: Clone> ShardedMap<K, V> {
+impl<K: std::hash::Hash + Eq, V: Clone, A: Allocator + Clone> ShardedMap<K, V, A> {
     #[inline]
     pub fn get(&self, key: &K) -> Option<V> {
         let spread = spread_hash(key);

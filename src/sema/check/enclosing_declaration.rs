@@ -54,7 +54,7 @@ fn scope_of_enum_member(bound: &Bound, m: EnumMemberId) -> ScopeId {
     scope.copied().unwrap_or(ScopeId::NONE)
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `IsFunctionLikeDeclaration(enclosingDeclaration)`
     pub(super) fn is_function_like_declaration(&self, at: Enclosing) -> bool {
         at.fake_scope == 0

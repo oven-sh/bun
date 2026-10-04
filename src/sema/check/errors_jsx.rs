@@ -20,7 +20,7 @@ use super::*;
 use crate::bind::ScopeId;
 use crate::resolve::JsxEmit;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_jsx(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.jsx.is_empty() {
@@ -30,7 +30,7 @@ impl Checker<'_> {
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        let path = &self.files().module(file).path;
+        let path = self.files().module(file).path;
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
             .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
@@ -132,7 +132,7 @@ impl Checker<'_> {
                 } else if let Some(spec) = runtime {
                     match self.files().module(file).imported_file(spec) {
                         Some(found) => {
-                            let path = &self.files().module(found).path;
+                            let path = self.files().module(found).path;
                             self.error_at((file, start, end), 2306, &[Arg::Bytes(path)])
                         }
                         None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),
@@ -192,7 +192,10 @@ impl Checker<'_> {
             for child in hir.ids(element.children) {
                 self.check_jsx_expression(file, child);
             }
-            self.check_spread_overrides(file, element.attrs);
+            self.check_explicit_children_attribute(file, j);
+            if !self.are_jsx_attributes_never_checked(file, e) {
+                self.check_spread_overrides(file, element.attrs);
+            }
             self.check_jsx_component(file, e);
             // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each by its own name.
             // A closing name that is not intrinsic is an expression, checked like any other.
@@ -223,6 +226,69 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+
+    /// `createJsxAttributesTypeFromAttributesProperty`: 2710 for `explicitlySpecifyChildrenAttribute`.
+    /// `c.error` reports it, so it is no part of the errors of a candidate, and every path of
+    /// `resolveJsxOpeningLikeElement` checks the attributes of an opening element.
+    fn check_explicit_children_attribute(&mut self, file: FileId, j: JsxId) {
+        let hir = self.hir(file);
+        let jsx = &hir[j];
+        let JsxName::Name(name) = self.jsx_children_property_name(file) else {
+            return;
+        };
+        let (Some(first), Some(last)) = (jsx.attrs.iter().next(), jsx.attrs.iter().next_back())
+        else {
+            return;
+        };
+        // `GetSemanticJsxChildren`
+        let is_nothing = |child: ExprId| matches!(hir[child].kind, ExprKind::Missing);
+        if hir.ids(jsx.children).all(is_nothing) {
+            return;
+        }
+        let mut explicitly_specify_children_attribute = false;
+        for p in jsx.attrs.iter() {
+            if hir[p].kind != PropKind::Spread {
+                explicitly_specify_children_attribute |=
+                    self.member_name(file, hir[p].key) == Some(name);
+                continue;
+            }
+            // `hasSpreadAnyType`
+            let ty = self.type_of_expr(file, hir[p].value);
+            let ty = self.reduced(ty);
+            if self.is_any(ty) {
+                return;
+            }
+        }
+        if explicitly_specify_children_attribute {
+            let attributes = (file, hir[first].start, hir[last].end);
+            self.error_at(attributes, 2710, &[Arg::Atom(name)]);
+        }
+    }
+
+    /// Whether nothing checks the attributes of the element `e`. `chooseOverload` checks them for
+    /// a candidate that takes the type arguments. If there is none,
+    /// `getCandidateForOverloadFailure` defers the node, and `checkDeferredNode` goes on to
+    /// `resolveUntypedCall` for an opening element, but not for a self-closing one.
+    /// `reportCallResolutionErrors` reports at the type arguments only if
+    /// `candidatesForArgumentError` is empty.
+    pub(super) fn are_jsx_attributes_never_checked(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Jsx(j) = hir[e].kind else {
+            return false;
+        };
+        let type_args = hir[j].type_args;
+        let Some(first) = hir.ids(type_args).next() else {
+            return false;
+        };
+        if hir[j].close_pos != u32::MAX {
+            return false;
+        }
+        self.resolved_signature(file, e);
+        let list = hir[first].pos..self.end_of_type_argument_list(file, type_args);
+        (self.p.call_diagnostics)
+            .get_ref(&mut self.task, &(file, e))
+            .is_some_and(|reported| reported.iter().any(|d| list.contains(&d.start)))
     }
 
     /// `checkGrammarJsxElement`. The call to `checkGrammarTypeArguments` is not ported here.
@@ -381,6 +447,7 @@ impl Checker<'_> {
             self.error_at(error_node, 2604, &[text]);
             return unresolved(self, TypeId::ERROR);
         }
+        self.look_at_type_nodes(file, jsx.type_args);
         let type_args = self.types_from_nodes(file, jsx.type_args);
         let node = CallLike::Jsx(j);
         let args = self.effective_call_arguments(file, e, node);
@@ -908,9 +975,8 @@ impl Checker<'_> {
             if !self.elaborate_error(file, inner, false, actual, expected_type, None, None) {
                 // `removeMissingType`
                 let name = self.number_name(i as f64);
-                let apparent = self.apparent_type(arrays);
                 let target_is_optional = self
-                    .prop_of(apparent, name)
+                    .get_property_of_type(arrays, name)
                     .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::OPTIONAL));
                 let expected_type = self.remove_missing_type(expected_type, target_is_optional);
                 self.check_type_assignable_to(actual, expected_type, Some((file, at, end)), None);
@@ -961,7 +1027,7 @@ impl Checker<'_> {
                     for &alternative in self.parts(apparent) {
                         always = always
                             && self
-                                .prop_of(alternative, name)
+                                .prop_ref(alternative, name)
                                 .is_some_and(|(p, _)| !p.flags.contains(PropFlags::OPTIONAL));
                     }
                 }
@@ -1050,7 +1116,7 @@ impl Checker<'_> {
 /// `getJsxNamespace`
 pub(super) fn jsx_namespace(
     files: &Files,
-    atoms: Atoms<'_>,
+    atoms: Atoms<'_, '_>,
     hir: &hir::File,
     is_opening_fragment: bool,
 ) -> Atom {
@@ -1074,7 +1140,7 @@ pub(super) fn jsx_namespace(
 /// `localJsxFactory` is considered, which is the `@jsx` pragma if it parses.
 fn jsx_factory_entity(
     files: &Files,
-    atoms: Atoms<'_>,
+    atoms: Atoms<'_, '_>,
     hir: &hir::File,
     is_local: bool,
 ) -> Vec<Atom> {
@@ -1099,7 +1165,7 @@ fn jsx_factory_entity(
 }
 
 /// `parseIsolatedEntityName`, returned as the identifiers of the name. Empty text is not a name.
-fn parse_isolated_entity_name(atoms: Atoms<'_>, text: &[u8]) -> Option<Vec<Atom>> {
+fn parse_isolated_entity_name(atoms: Atoms<'_, '_>, text: &[u8]) -> Option<Vec<Atom>> {
     crate::verify::is_entity_name(text).then(|| {
         bun_core::strings::split(text, b".")
             .map(|name| atoms.intern(name.trim_ascii()))
@@ -1107,7 +1173,7 @@ fn parse_isolated_entity_name(atoms: Atoms<'_>, text: &[u8]) -> Option<Vec<Atom>
     })
 }
 
-fn text_of(hir: &hir::File, start: u32, end: u32) -> &[u8] {
+fn text_of<'a>(hir: &'a hir::File<'_>, start: u32, end: u32) -> &'a [u8] {
     &hir.text[start as usize..end as usize]
 }
 

@@ -7,9 +7,9 @@
 //! token.
 
 use crate::lexer::{Lexer, starts_with_line_break};
-use bun_sema::atom::Interner;
+use bun_sema::atom::Intern;
 use bun_sema::hir::{
-    CommentDirective, CommentDirectiveKind, DiagnosticKind, File, FileKind, JsxPragmas,
+    CommentDirective, CommentDirectiveKind, DiagnosticKind, FileBuilder, FileKind, JsxPragmas,
     ReferenceKind, ResolutionMode,
 };
 
@@ -92,8 +92,8 @@ impl Lexer<'_> {
 pub(crate) fn process_pragmas_into_fields(
     lexer: &Lexer<'_>,
     leading: usize,
-    atoms: &Interner,
-    file: &mut File,
+    atoms: &dyn Intern,
+    file: &mut FileBuilder,
 ) {
     for range in lexer.all_comments.iter().take(leading) {
         let pos = range.loc.to_usize();
@@ -113,7 +113,7 @@ pub(crate) fn process_pragmas_into_fields(
 
 /// `extractPragmas` for the `//` comment `text` at `comment_pos`, followed by
 /// `processPragmasIntoFields`.
-fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &mut File) {
+fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &dyn Intern, file: &mut FileBuilder) {
     let mut pos = 2;
     let triple_slash = text.get(pos) == Some(&b'/');
     if triple_slash {
@@ -199,7 +199,7 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
 
 /// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
 /// (`GetPragmaFromSourceFile`).
-fn multi_line_pragmas(text: &[u8], atoms: &Interner, pragmas: &mut JsxPragmas) {
+fn multi_line_pragmas(text: &[u8], atoms: &dyn Intern, pragmas: &mut JsxPragmas) {
     let text = text.strip_suffix(b"*/").unwrap_or(text);
     let mut pos = 2;
     // `skipTo`

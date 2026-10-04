@@ -116,6 +116,15 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
+    /// `Vec::reserve_exact` parity.
+    #[inline]
+    pub fn reserve_exact(&mut self, additional: usize) {
+        let need = self.len as usize + additional;
+        if need > self.cap as usize {
+            self.grow_exact(need);
+        }
+    }
+
     #[inline]
     pub fn push(&mut self, value: T) {
         if self.len == self.cap {
@@ -235,6 +244,41 @@ impl<'a, T> BabyVec<'a, T> {
         self.truncate(0);
     }
 
+    /// `Vec::retain` parity — order-preserving.
+    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
+        let mut kept = 0;
+        for i in 0..self.len() {
+            if keep(&self[i]) {
+                self.swap(kept, i);
+                kept += 1;
+            }
+        }
+        self.truncate(kept);
+    }
+
+    /// `Vec::swap_remove` parity.
+    pub fn swap_remove(&mut self, index: usize) -> T {
+        let len = self.len();
+        assert!(
+            index < len,
+            "BabyVec::swap_remove index {index} >= len {len}"
+        );
+        self.swap(index, len - 1);
+        self.pop().unwrap()
+    }
+
+    /// `Vec::resize` parity.
+    pub fn resize(&mut self, new_len: usize, value: T)
+    where
+        T: Clone,
+    {
+        self.truncate(new_len);
+        self.reserve(new_len - self.len());
+        while self.len() < new_len {
+            self.push(value.clone());
+        }
+    }
+
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
@@ -275,6 +319,43 @@ impl<'a, T> BabyVec<'a, T> {
             ptr::copy_nonoverlapping(other.as_ptr(), self.ptr.as_ptr().add(self.len as usize), n);
             self.len += n as u32;
         }
+    }
+
+    /// Resizes the block to the length. An empty vector gives its block back.
+    pub fn shrink_to_fit(&mut self) {
+        if Self::T_IS_ZST || self.cap == self.len {
+            return;
+        }
+        let old_layout = Layout::array::<T>(self.cap as usize).unwrap();
+        if self.len == 0 {
+            // SAFETY: `cap != 0`, so `self.ptr` is a block that `self.alloc` allocated with
+            // `old_layout`. It is not used again: `ptr` dangles and `cap` is 0 from here on.
+            unsafe { (&self.alloc).deallocate(self.ptr.cast::<u8>(), old_layout) };
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return;
+        }
+        let new_layout = Layout::array::<T>(self.len as usize).unwrap();
+        // SAFETY: `self.ptr` is a block that `self.alloc` allocated with `old_layout`, and
+        // `new_layout.size() <= old_layout.size()`.
+        let new_ptr =
+            unsafe { (&self.alloc).shrink(self.ptr.cast::<u8>(), old_layout, new_layout) };
+        self.ptr = new_ptr
+            .unwrap_or_else(|_| crate::out_of_memory())
+            .cast::<T>();
+        self.cap = self.len;
+    }
+
+    /// The elements in a block of their exact size. They are copied only if the allocator moves
+    /// the block to resize it.
+    pub fn into_boxed_slice(mut self) -> Box<[T], &'a MimallocArena> {
+        self.shrink_to_fit();
+        let me = ManuallyDrop::new(self);
+        let elements = ptr::slice_from_raw_parts_mut(me.ptr.as_ptr(), me.len as usize);
+        // SAFETY: `elements` are `len` initialized `T`. After `shrink_to_fit` they fill a block
+        // that `me.alloc` allocated with the layout of `[T; len]`, or there is no block and
+        // `len` is 0 or `T` is zero-sized, for which a box frees nothing. `me` is not dropped.
+        unsafe { Box::from_raw_in(elements, me.alloc) }
     }
 
     #[cold]
@@ -373,6 +454,24 @@ impl<'a, T> IntoIterator for BabyVec<'a, T> {
             cap: me.cap,
             alloc: me.alloc,
         }
+    }
+}
+
+impl<'v, 'a, T> IntoIterator for &'v BabyVec<'a, T> {
+    type Item = &'v T;
+    type IntoIter = slice::Iter<'v, T>;
+    #[inline]
+    fn into_iter(self) -> slice::Iter<'v, T> {
+        self.iter()
+    }
+}
+
+impl<'v, 'a, T> IntoIterator for &'v mut BabyVec<'a, T> {
+    type Item = &'v mut T;
+    type IntoIter = slice::IterMut<'v, T>;
+    #[inline]
+    fn into_iter(self) -> slice::IterMut<'v, T> {
+        self.iter_mut()
     }
 }
 

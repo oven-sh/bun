@@ -516,7 +516,28 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values);
+        self.each_impl(ctx, ByValue(run_fn), values, || {});
+    }
+
+    /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
+    /// after it has returned.
+    pub fn each_while<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: Copy + core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+    }
+
+    /// The most threads that this pool starts.
+    pub fn max_threads(&self) -> usize {
+        self.max_threads as usize
     }
 
     /// Like `each`, but calls `run_fn` with a pointer to the value.
@@ -529,17 +550,22 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values);
+        self.each_impl(ctx, ByPtr(run_fn), values, || {});
     }
 
-    fn each_impl<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
-    where
+    fn each_impl<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
         if values.is_empty() {
-            return;
+            return on_calling_thread();
         }
 
         struct WaitContext<Ctx, V, F> {
@@ -598,7 +624,9 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        group.wait();
+        // Also if `on_calling_thread` unwinds: the tasks point into this frame.
+        scopeguard::defer! { group.wait(); }
+        on_calling_thread();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 

@@ -87,6 +87,8 @@ use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, 
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
+use crate::session::{Arena, ArenaBox, Session};
+use crate::session::{ArenaHashMap, ArenaHashSet, ArenaVec, map_in, set_in, vec_from_iter_in};
 use crate::table::{Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, FileLocal};
 use crate::types::Prop;
 use crate::types::*;
@@ -96,6 +98,7 @@ use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
+use errors_type_nodes::start_of_type;
 pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
 use shape::members_among;
@@ -107,12 +110,12 @@ use spans::start_of_token_before;
 use spans::token_end;
 use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use symbols::AliasTarget;
-use task::{Open, OrderDependent, Stored, Task};
+use task::{LeadsIntoCycle, LimitReached, Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
+pub use check_source_file::OrderHints;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
 
@@ -129,7 +132,8 @@ struct Provisional {
     /// `stack.len()` when the query was pushed.
     height: u32,
     /// What happened while it was computed: `cycles` was incremented (1), `limits` was incremented (2), an incomplete flow-loop type was
-    /// read (4), a query was refused for lack of native stack or query depth (8).
+    /// read (4), a query was refused for lack of native stack or query depth (8), the cycle passes a barrier (16, `is_behind_barrier`),
+    /// a request for members got those in place (32), which (1) does not include, `anySignature` was read (64).
     moved: u8,
     serial: u64,
 }
@@ -149,7 +153,7 @@ macro_rules! buffered_fields {
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
             union_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults conditionals
-            mapped_param_constraints wrapper_types
+            mapped_param_constraints
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
@@ -169,153 +173,165 @@ macro_rules! file_local_fields {
 }
 pub(crate) use file_local_fields;
 
-pub struct Program {
+pub struct Program<'s> {
+    /// The arenas that the program and everything computed from it are in.
+    pub session: &'s Session,
     /// Whether a query of any task has been circular. Written at a barrier, from
     /// `Finished::closed_a_cycle`.
     pub closed_a_cycle: AtomicBool,
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
-    serial_variances: Guarded<FxHashMap<Sym, Arc<[u8]>>>,
+    serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    entry_order: Guarded<check_source_file::EntryOrder<'s>>,
+    /// `check_source_file::ranks_of_first_dependents`
+    ranks_of_first_dependents: &'s [u32],
     /// `autoArrayType`
     auto_array_type: TypeId,
-    pub files: Arc<Files>,
-    pub types: TypeStore,
+    pub files: &'s Files<'s>,
+    pub types: TypeStore<'s>,
 
     /// `links.resolvedType` of an expression (`checkExpressionCached`). Also serves as a memo where
     /// tsgo rechecks an expression.
-    expr_types: ByNode<(FileId, ExprId), TypeId, Buffered>,
-    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, Buffered>,
+    expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
+    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, Buffered, &'s Session>,
     /// The flag, here and in `pat_types`, `declared_types` and `constraints`: the type is the result of a resolution cycle
     /// (`!popTypeResolution()`).
-    fn_return_types: ByNode<(FileId, FnId), (TypeId, bool), Buffered>,
-    pat_types: ByNode<(FileId, PatId), (TypeId, bool), Buffered>,
-    literal_prop_types: ByNode<(FileId, PropId), TypeId, Buffered>,
-    symbol_types: ByNode<Sym, TypeId, Buffered>,
+    fn_return_types: ByNode<(FileId, FnId), (TypeId, bool), Buffered, &'s Session>,
+    pat_types: ByNode<(FileId, PatId), (TypeId, bool), Buffered, &'s Session>,
+    literal_prop_types: ByNode<(FileId, PropId), TypeId, Buffered, &'s Session>,
+    symbol_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
     /// The parameters for which `parameterInitializerContainsUndefined` closed a cycle. Their entry in `pat_types` is older than the cycle.
-    circular_initializers: ByNode<(FileId, PatId), (), Buffered>,
+    circular_initializers: ByNode<(FileId, PatId), (), Buffered, &'s Session>,
     /// The symbols whose type is the result of a resolution cycle.
-    circular_symbols: ByNode<Sym, (), Buffered>,
+    circular_symbols: ByNode<Sym, (), Buffered, &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
-    circular_returns: ByNode<(FileId, FnId), (), Buffered>,
+    circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
     /// The calls that found no signature while index signatures were being computed. The callee may
     /// be the static side of a class whose members were in place and whose signatures were not
     /// (`resolveAnonymousTypeMembers`).
-    calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered>,
+    calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
-    flows_too_deep: ByNode<(FileId, ExprId), (), Buffered>,
+    flows_too_deep: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
     /// `getEffectsSignature`, by call.
-    effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered>,
+    effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
     /// `links.effectsSignature` of the calls `getEffectsSignature` has to resolve: generic or overloaded.
-    resolved_effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered>,
+    resolved_effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
     /// `links.contextFreeType` of an expression (`getContextFreeTypeOfExpression`). `context_free_types` is that of a function.
-    context_free_expr_types: ByNode<(FileId, ExprId), TypeId, Buffered>,
+    context_free_expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
     /// `flowNodeReachable`
-    flow_node_reachable: ByNode<(FileId, crate::bind::FlowId), bool, FileLocal>,
+    flow_node_reachable: ByNode<(FileId, crate::bind::FlowId), bool, FileLocal, &'s Session>,
     /// `sig.resolvedTypePredicate` for a function without a return type annotation.
-    type_predicates_from_body: ByNodeIndirect<(FileId, FnId), Option<decl::Predicate>, Buffered>,
+    type_predicates_from_body:
+        ByNodeIndirect<(FileId, FnId), Option<decl::Predicate>, Buffered, &'s Session>,
     /// `resolvedBaseConstructorType` of each class.
-    base_constructor_types: ByNode<Sym, TypeId, Buffered>,
+    base_constructor_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
     /// `symbolReferenceLinks`: the symbols `Resolve` found when called with `isUse`, where the
     /// caller records that. `check_unused` computes the rest.
-    symbol_reference_links: ByNode<Sym, (), Buffered>,
+    symbol_reference_links: ByNode<Sym, (), Buffered, &'s Session>,
     /// `GetGlobalDiagnostics`: errors that belong to no file. `Cannot find global type 'Array'.`
     /// The code and the message arguments.
     global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<Vec<u8>>)>>,
-    sink: sink::Sink,
+    sink: sink::Sink<'s>,
     /// `MappedType.containsError`
-    mapped_types_with_errors: ById<TypeId, (), Buffered>,
+    mapped_types_with_errors: ById<TypeId, (), Buffered, &'s Session>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
-    initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered>,
+    initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
-    untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered>,
-    declared_types: ByNode<Sym, (TypeId, bool), Buffered>,
-    shapes: ByIdIndirect<TypeId, shape::Resolved, Buffered>,
+    untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
+    declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
+    shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
     /// `intersectionTypes`, for sets that contain a union. The key: the set, `IntersectionFlagsNoConstraintReduction`, and whether the set
     /// is split in halves, which gives the result another `origin`.
-    distributed_intersections: ByKey<(Box<[TypeId]>, bool, bool), (TypeId, bool), Buffered>,
-    sig_params: ByIdIndirect<SigId, Box<[SigParam]>, Buffered>,
-    sig_type_params: ByIdIndirect<SigId, Box<[TypeId]>, Buffered>,
+    distributed_intersections:
+        ByKey<(Box<[TypeId]>, bool, bool), (TypeId, bool), Buffered, &'s Session>,
+    sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, Buffered, &'s Session>,
+    sig_type_params: ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
     /// `Signature.resolvedReturnType` of a signature with a `target`.
-    resolved_return_types: ById<SigId, TypeId, Buffered>,
-    call_signatures: ByIdIndirect<TypeId, Box<[SigId]>, Buffered>,
-    construct_signatures: ByIdIndirect<TypeId, Box<[SigId]>, Buffered>,
+    resolved_return_types: ById<SigId, TypeId, Buffered, &'s Session>,
+    call_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
+    construct_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
     /// Keyed by the first of several signatures: the list they are in, then the same list in the
     /// order `candidates_in_order` produces.
-    candidate_orders: ByIdIndirect<SigId, Box<[SigId]>, Buffered>,
+    candidate_orders: ByIdIndirect<SigId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
     /// The result of `members` for a type, once it is final.
-    members: ByIdIndirect<TypeId, shape::CachedMembers, Buffered>,
+    members: ByIdIndirect<TypeId, shape::CachedMembers, Buffered, &'s Session>,
     /// `TypeReference.resolvedTypeArguments` of a deferred type reference.
-    resolved_type_arguments: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered>,
-    instantiations: ByKey<(TypeId, MapperId), TypeId, Buffered>,
+    resolved_type_arguments: ByIdIndirect<TypeId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
+    instantiations: ByKey<(TypeId, MapperId), TypeId, Buffered, &'s Session>,
     /// `UnionType.keyPropertyName`, `constituentMap`
-    key_properties: ByIdIndirect<TypeId, Option<(Atom, FxHashMap<TypeId, TypeId>)>, Buffered>,
+    key_properties:
+        ByIdIndirect<TypeId, Option<(Atom, FxHashMap<TypeId, TypeId>)>, Buffered, &'s Session>,
     /// `compose`
-    composed: ByKey<(MapperId, MapperId), MapperId, Buffered>,
-    outer_type_params: ByNodeIndirect<(FileId, crate::bind::ScopeId), Arc<[TypeId]>, Buffered>,
+    composed: ByKey<(MapperId, MapperId), MapperId, Buffered, &'s Session>,
+    outer_type_params: ByNodeIndirect<
+        (FileId, crate::bind::ScopeId),
+        ArenaBox<'s, [TypeId]>,
+        Buffered,
+        &'s Session,
+    >,
     /// `type_param`
-    declared_type_params: ByNode<(FileId, TypeParamId), TypeId, Buffered>,
+    declared_type_params: ByNode<(FileId, TypeParamId), TypeId, Buffered, &'s Session>,
     /// `identity_mapper`
-    identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered>,
-    identity_mappers_with_adopted: ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered>,
-    base_types: ByNodeIndirect<Sym, Arc<[TypeId]>, Buffered>,
+    identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
+    identity_mappers_with_adopted:
+        ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
+    base_types: ByNodeIndirect<Sym, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
     /// `links.resolvedSignature`. `Checker::cached_resolved_signature` reads it together with `call_return_types`, `cache_call` writes both.
-    calls: ByNode<(FileId, ExprId), Option<SigId>, Buffered>,
+    calls: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
     /// `ResolvedCall::ret` of the entry of `calls`. A cell has 32 bits.
-    call_return_types: ByNode<(FileId, ExprId), TypeId, Buffered>,
+    call_return_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
     /// `links.deferredNodes` for a file that the task was not checking at the time. See
     /// `check_node_deferred`.
-    deferred_nodes: ByNode<(FileId, ExprId), (), Buffered>,
+    deferred_nodes: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
-    jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal>,
+    jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
     /// The diagnostics `resolveCall` reported for a call at its final resolution, with their
     /// related information.
-    call_diagnostics: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered>,
+    call_diagnostics: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
     /// `assignContextualParameterTypes`. `None`: it was not called.
-    context_checked: ByNode<(FileId, FnId), Option<SigId>, Buffered>,
+    context_checked: ByNode<(FileId, FnId), Option<SigId>, Buffered, &'s Session>,
     /// `contextFreeTypes` for a function.
-    context_free_types: ByNode<(FileId, FnId), TypeId, Buffered>,
+    context_free_types: ByNode<(FileId, FnId), TypeId, Buffered, &'s Session>,
     /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
     /// its resolution was in progress, with their related information.
-    diagnostics_of_re_resolved_calls: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered>,
-    relations: ByKey<relate::Key, u8, Buffered>,
-    variances: ByNodeIndirect<Sym, Arc<[u8]>, Buffered>,
+    diagnostics_of_re_resolved_calls:
+        ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
+    relations: ByKey<relate::Key, u8, Buffered, &'s Session>,
+    variances: ByNodeIndirect<Sym, &'s [u8], Buffered, &'s Session>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first
     /// declaration.
     /// `awaited_no_alias` as a top-level query, once it is final.
-    awaited_types: ById<TypeId, Option<TypeId>, Buffered>,
+    awaited_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
-    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered>,
+    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
     /// `reverseMappedCache`
-    reverse_mapped_cache: ByKey<(TypeId, TypeId, TypeId), Option<TypeId>, Buffered>,
+    reverse_mapped_cache: ByKey<(TypeId, TypeId, TypeId), Option<TypeId>, Buffered, &'s Session>,
     /// See `cached_optional_property`.
-    optional_properties: ById<TypeId, TypeId, Buffered>,
-    intersected_props: ByKey<(TypeId, Atom), TypeId, Buffered>,
+    optional_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
+    intersected_props: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.propertyCache`. A synthetic type holds the property.
-    union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered>,
-    never_intersections: ById<TypeId, bool, Buffered>,
+    union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
+    never_intersections: ById<TypeId, bool, Buffered, &'s Session>,
     /// `getMappedTargetWithSymbol` of a mapped type.
-    mapped_targets: ById<TypeId, TypeId, Buffered>,
-    inferred_constraints: ById<TypeId, Option<TypeId>, Buffered>,
-    constraints: ById<TypeId, (TypeId, bool), Buffered>,
+    mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
+    inferred_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    constraints: ById<TypeId, (TypeId, bool), Buffered, &'s Session>,
     /// `global_ref` of a name, without type arguments.
-    plain_global_refs: ById<Atom, TypeId, Buffered>,
+    plain_global_refs: ById<Atom, TypeId, Buffered, &'s Session>,
     /// `CachedTypeKindEquivalentBaseType`
-    equivalent_base_types: ById<TypeId, Option<TypeId>, Buffered>,
+    equivalent_base_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
     /// `constraint_of_type_param` of a type parameter, once it is final.
-    type_param_constraints: ById<TypeId, Option<TypeId>, Buffered>,
-    enum_values: ByNodeIndirect<(FileId, EnumMemberId), decl::Evaluated, Buffered>,
+    type_param_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    enum_values: ByNodeIndirect<(FileId, EnumMemberId), decl::Evaluated, Buffered, &'s Session>,
     /// `default_of_type_param` of a type parameter, once it is final.
-    type_param_defaults: ById<TypeId, Option<TypeId>, Buffered>,
-    conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId, Buffered>,
+    type_param_defaults: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId, Buffered, &'s Session>,
     /// The constraint of the parameter of each mapped type, if any. See
     /// `constraint_of_mapped_param`.
-    mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>, Buffered>,
-    /// `String`, `Number` and the like, which `apparent_type` uses for the primitives, keyed by
-    /// name.
-    wrapper_types: ById<Atom, TypeId, Buffered>,
+    mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>, Buffered, &'s Session>,
 }
 
 /// No id: the arguments are printed when it is created.
@@ -337,7 +353,7 @@ impl crate::types::Follow for decl::Predicate {
     }
 }
 
-impl Program {
+impl<'s> Program<'s> {
     /// The footprint of the shared part of every table, with the name of the field. It reads every
     /// cell: for `--timing`.
     pub fn table_footprints(&self) -> Vec<(&'static str, crate::table::Footprint)> {
@@ -347,12 +363,12 @@ impl Program {
         buffered_fields!(each)
     }
 
-    pub fn new(files: Arc<Files>) -> Program {
+    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
         // Nothing that mentions a node of a leaf file is published, so the shared part has no
         // capacity for them. `Bases::at` returns `None` for its nodes.
         let bases = |len: fn(&crate::program::Module) -> usize| {
             let count = |m: &crate::program::ModuleCell| if m.is_leaf { 0 } else { len(m) };
-            Bases::new(files.modules.iter().map(count))
+            Bases::new_in(files.modules.iter().map(count), &session)
         };
         let exprs = bases(|m| m.hir.exprs.len());
         let type_nodes = bases(|m| m.hir.types.len());
@@ -364,99 +380,122 @@ impl Program {
         let scopes = bases(|m| m.bound.scopes.len());
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
-        let types = TypeStore::new();
+        let types = TypeStore::new_in(session);
+        let arena = session.arena();
         let auto_array_type =
             types.publish_constant(match files.global_type_of_arity(known::Array, 1) {
                 Some(target) => TypeData::Ref {
                     target,
-                    args: (&[TypeId::AUTO][..]).into(),
+                    args: ArenaBox::copy_from_slice_in(&[TypeId::AUTO], arena).into(),
                 },
                 // It is a marker: without a global `Array` it is still a distinct type.
-                None => TypeData::Synth(Box::new(Shape {
-                    literal: Literalness::AutoArray,
-                    ..Shape::default()
-                })),
+                None => TypeData::Synth(ArenaBox::new_in(
+                    Shape {
+                        literal: Literalness::AutoArray,
+                        ..Shape::new_in(arena)
+                    },
+                    arena,
+                )),
             });
         let mut program = Program {
+            session,
             closed_a_cycle: Default::default(),
-            serial_variances: Guarded::new(FxHashMap::default()),
+            serial_variances: Guarded::new(map_in(session.arena())),
+            entry_order: Guarded::new(check_source_file::EntryOrder::new_in(session.arena())),
+            ranks_of_first_dependents: check_source_file::ranks_of_first_dependents(
+                files,
+                session.arena(),
+            ),
             auto_array_type,
             types,
-            expr_types: ByNode::new(&exprs),
-            type_node_types: ByNode::new(&type_nodes),
-            fn_return_types: ByNode::new(&fns),
-            pat_types: ByNode::new(&pats),
-            literal_prop_types: ByNode::new(&props),
-            symbol_types: ByNode::new(&symbols),
-            circular_initializers: ByNode::new(&pats),
-            circular_symbols: ByNode::new(&symbols),
-            circular_returns: ByNode::new(&fns),
-            calls_before_signatures: ByNode::new(&exprs),
-            flows_too_deep: ByNode::new(&exprs),
-            effects_signatures: ByNode::new(&exprs),
-            resolved_effects_signatures: ByNode::new(&exprs),
-            context_free_expr_types: ByNode::new(&exprs),
+            expr_types: ByNode::new_in(&exprs, session),
+            type_node_types: ByNode::new_in(&type_nodes, session),
+            fn_return_types: ByNode::new_in(&fns, session),
+            pat_types: ByNode::new_in(&pats, session),
+            literal_prop_types: ByNode::new_in(&props, session),
+            symbol_types: ByNode::new_in(&symbols, session),
+            circular_initializers: ByNode::new_in(&pats, session),
+            circular_symbols: ByNode::new_in(&symbols, session),
+            circular_returns: ByNode::new_in(&fns, session),
+            calls_before_signatures: ByNode::new_in(&exprs, session),
+            flows_too_deep: ByNode::new_in(&exprs, session),
+            effects_signatures: ByNode::new_in(&exprs, session),
+            resolved_effects_signatures: ByNode::new_in(&exprs, session),
+            context_free_expr_types: ByNode::new_in(&exprs, session),
             // A `FileLocal` table has no shared array, so it does not look at the bases.
-            flow_node_reachable: ByNode::new(&exprs),
-            type_predicates_from_body: ByNodeIndirect::new(&fns),
-            base_constructor_types: ByNode::new(&symbols),
-            sink: sink::Sink::new(files.modules.len()),
-            symbol_reference_links: ByNode::new(&symbols),
+            flow_node_reachable: ByNode::new_in(&exprs, session),
+            type_predicates_from_body: ByNodeIndirect::new_in(&fns, session),
+            base_constructor_types: ByNode::new_in(&symbols, session),
+            sink: sink::Sink::new_in(files.modules.len(), session.arena()),
+            symbol_reference_links: ByNode::new_in(&symbols, session),
             global_errors: Default::default(),
-            mapped_types_with_errors: Default::default(),
-            initializer_is_undefined: ByNode::new(&params),
-            untyped_signatures_in_js: ByNode::new(&fns),
-            declared_types: ByNode::new(&symbols),
-            shapes: Default::default(),
-            distributed_intersections: Default::default(),
-            sig_params: Default::default(),
-            sig_type_params: Default::default(),
-            resolved_return_types: Default::default(),
-            call_signatures: Default::default(),
-            construct_signatures: Default::default(),
-            candidate_orders: Default::default(),
-            members: Default::default(),
-            resolved_type_arguments: Default::default(),
-            instantiations: Default::default(),
-            key_properties: Default::default(),
-            composed: Default::default(),
-            outer_type_params: ByNodeIndirect::new(&scopes),
-            declared_type_params: ByNode::new(&type_params),
-            identity_mappers: ByNode::new(&scopes),
-            identity_mappers_with_adopted: ByNode::new(&scopes),
-            base_types: ByNodeIndirect::new(&symbols),
-            calls: ByNode::new(&exprs),
-            call_return_types: ByNode::new(&exprs),
-            deferred_nodes: ByNode::new(&exprs),
-            jsx_attributes_types: ByNode::new(&bases(|m| m.hir.jsx.len())),
-            call_diagnostics: ByNodeIndirect::new(&exprs),
-            context_checked: ByNode::new(&fns),
-            context_free_types: ByNode::new(&fns),
-            diagnostics_of_re_resolved_calls: ByNodeIndirect::new(&exprs),
-            relations: Default::default(),
-            variances: ByNodeIndirect::new(&symbols),
-            awaited_types: Default::default(),
-            mapped_prop_types: Default::default(),
-            reverse_mapped_cache: Default::default(),
-            optional_properties: Default::default(),
-            intersected_props: Default::default(),
-            union_properties: Default::default(),
-            never_intersections: Default::default(),
-            mapped_targets: Default::default(),
-            inferred_constraints: Default::default(),
-            constraints: Default::default(),
-            plain_global_refs: Default::default(),
-            equivalent_base_types: Default::default(),
-            type_param_constraints: Default::default(),
-            enum_values: ByNodeIndirect::new(&enum_members),
-            type_param_defaults: Default::default(),
-            conditionals: Default::default(),
-            mapped_param_constraints: ByNode::new(&type_nodes),
-            wrapper_types: Default::default(),
+            mapped_types_with_errors: ById::new_in(session),
+            initializer_is_undefined: ByNode::new_in(&params, session),
+            untyped_signatures_in_js: ByNode::new_in(&fns, session),
+            declared_types: ByNode::new_in(&symbols, session),
+            shapes: ByIdIndirect::new_in(session),
+            distributed_intersections: ByKey::new_in(session),
+            sig_params: ByIdIndirect::new_in(session),
+            sig_type_params: ByIdIndirect::new_in(session),
+            resolved_return_types: ById::new_in(session),
+            call_signatures: ByIdIndirect::new_in(session),
+            construct_signatures: ByIdIndirect::new_in(session),
+            candidate_orders: ByIdIndirect::new_in(session),
+            members: ByIdIndirect::new_in(session),
+            resolved_type_arguments: ByIdIndirect::new_in(session),
+            instantiations: ByKey::new_in(session),
+            key_properties: ByIdIndirect::new_in(session),
+            composed: ByKey::new_in(session),
+            outer_type_params: ByNodeIndirect::new_in(&scopes, session),
+            declared_type_params: ByNode::new_in(&type_params, session),
+            identity_mappers: ByNode::new_in(&scopes, session),
+            identity_mappers_with_adopted: ByNode::new_in(&scopes, session),
+            base_types: ByNodeIndirect::new_in(&symbols, session),
+            calls: ByNode::new_in(&exprs, session),
+            call_return_types: ByNode::new_in(&exprs, session),
+            deferred_nodes: ByNode::new_in(&exprs, session),
+            jsx_attributes_types: ByNode::new_in(&exprs, session),
+            call_diagnostics: ByNodeIndirect::new_in(&exprs, session),
+            context_checked: ByNode::new_in(&fns, session),
+            context_free_types: ByNode::new_in(&fns, session),
+            diagnostics_of_re_resolved_calls: ByNodeIndirect::new_in(&exprs, session),
+            relations: ByKey::new_in(session),
+            variances: ByNodeIndirect::new_in(&symbols, session),
+            awaited_types: ById::new_in(session),
+            mapped_prop_types: ByKey::new_in(session),
+            reverse_mapped_cache: ByKey::new_in(session),
+            optional_properties: ById::new_in(session),
+            intersected_props: ByKey::new_in(session),
+            union_properties: ByKey::new_in(session),
+            never_intersections: ById::new_in(session),
+            mapped_targets: ById::new_in(session),
+            inferred_constraints: ById::new_in(session),
+            constraints: ById::new_in(session),
+            plain_global_refs: ById::new_in(session),
+            equivalent_base_types: ById::new_in(session),
+            type_param_constraints: ById::new_in(session),
+            enum_values: ByNodeIndirect::new_in(&enum_members, session),
+            type_param_defaults: ById::new_in(session),
+            conditionals: ByKey::new_in(session),
+            mapped_param_constraints: ByNode::new_in(&type_nodes, session),
             files,
         };
         task::number_tables(&mut program);
         program
+    }
+
+    /// Frees what the program owns on the regular heap: the diagnostics, and the keys or values of
+    /// two tables with few entries. Everything else is in the arenas of the session and is freed
+    /// with them, so a program that is itself allocated in an arena needs no `Drop`.
+    pub fn release(&mut self) {
+        let session = self.session;
+        let no_nodes = Bases::none_in(&session);
+        self.sink.release();
+        *self.global_errors.get_mut() = Default::default();
+        self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
+        self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
+        self.key_properties = ByIdIndirect::new_in(session);
+        self.distributed_intersections = ByKey::new_in(session);
     }
 
     /// `GetGlobalDiagnostics`: the errors found that belong to no file, once all files have been
@@ -494,12 +533,15 @@ impl Program {
         all.into_iter().collect()
     }
 
-    pub fn checker(&self) -> Checker<'_> {
+    pub fn checker(&self) -> Checker<'_, 's> {
+        let arena = self.session.arena();
         let checker = Checker {
             p: self,
-            task: Task::new(),
+            arena,
+            task: Task::new_in(arena),
             left_frame: None,
-            files: &self.files,
+            files: self.files,
+            variance_type_parameter: Atom::NONE,
             first_jsx: (FileId(u32::MAX), None, None),
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
@@ -511,12 +553,14 @@ impl Program {
             resolution_start: 0,
             eager: Vec::new(),
             loop_values: Vec::new(),
+            non_circular_returns: Vec::new(),
             contextual_binding_patterns: Vec::new(),
-            late_bound_members: FxHashMap::default(),
+            late_bound_members: Default::default(),
+            late_binding_exports: Vec::new(),
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
             serialization_level: 0,
-            flow_type_cache: FxHashMap::default(),
+            flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
             discarded: None,
@@ -528,6 +572,7 @@ impl Program {
             found_cycle: false,
             left_a_cycle: false,
             taints: 0,
+            checked_type_references: (None, Vec::new()),
             taints_before_patterns: 0,
             cycles: 0,
             lowest_taint: usize::MAX,
@@ -538,24 +583,29 @@ impl Program {
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
             mode_of_recheck: CheckMode::empty(),
-            rechecked_exprs: FxHashMap::default(),
-            rechecked_members: FxHashMap::default(),
-            literals_checked_under: FxHashMap::default(),
+            rechecked_exprs: Default::default(),
+            rechecked_members: Default::default(),
+            automatic_assignments: None,
+            literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
+            outermost_comparison: None,
             instantiation_count: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
             unresolved_members: Vec::new(),
             unresolved_members_hits: 0,
+            members_in_place_hits: 0,
+            members_in_place_hit_at: 0,
             lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
             instantiation_limit_hits: 0,
-            instantiations_up_to_a_limit: FxHashMap::default(),
-            relations_cut_short: FxHashMap::default(),
+            comparisons_of_deeply_nested_types: 0,
+            instantiations_up_to_a_limit: Default::default(),
+            relations_cut_short: Default::default(),
             generic_relation_entries_not_published: 0,
-            variances_cut_short: FxHashMap::default(),
+            variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
             reliability: 0,
             in_variance_computation: false,
@@ -563,13 +613,20 @@ impl Program {
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
             variance_cycles: 0,
+            lowest_variance_reentered: usize::MAX,
+            variance_cycle_members: Vec::new(),
+            first_member_touched: None,
+            notes_cycle_entries: false,
+            cycle_entries: FxHashMap::default(),
+            watched_variances: FxHashMap::default(),
+            watched_variances_filter: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
-            order_dependent: FxHashMap::default(),
+            order_dependent: Default::default(),
             order_dependent_filter: 0,
-            simplified: FxHashMap::default(),
+            simplified: Default::default(),
             inherited_names: [0; 4],
-            cond_distributive_memo: FxHashMap::default(),
+            cond_distributive_memo: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
             current_source_element: None,
@@ -577,6 +634,9 @@ impl Program {
             reported: Vec::new(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
+            never_in_progress_from: Vec::new(),
+            generic_mapped_types_in_progress: Vec::new(),
+            generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
             recent_signatures: Box::new(
                 [(TypeId(u32::MAX), &[] as &[SigId]); shape::RECENT_SIGNATURES],
@@ -594,7 +654,7 @@ impl Program {
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
             provisional_shapes: Vec::new(),
-            provisional: FxHashMap::default(),
+            provisional: Default::default(),
             taint_events: Vec::new(),
             cycle_at: 0,
             limit_at: 0,
@@ -614,18 +674,21 @@ impl Program {
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
-            undefined_properties: FxHashMap::default(),
+            undefined_properties: Default::default(),
             widening_contexts: Vec::new(),
-            widened_types: FxHashMap::default(),
+            widened_types: Default::default(),
             iife_resolving: Vec::new(),
+            any_signature_reads: 0,
+            any_signature_read_at: 0,
             flow_loops: Vec::new(),
             reverse_mapped_source_stack: Vec::new(),
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
             flow_memo: Default::default(),
-            discriminated: FxHashMap::default(),
-            contextual_properties: FxHashMap::default(),
+            discriminated: Default::default(),
+            contextual_properties: Default::default(),
             deferred_nodes: Default::default(),
+            deferred_type_parameters: Vec::new(),
             unresolved_identifiers: Vec::new(),
             is_deferred_node: Default::default(),
             deferred_diagnostics: Vec::new(),
@@ -634,6 +697,7 @@ impl Program {
             reported_unreachable_nodes: Vec::new(),
             call_resolution_errors: None,
             is_call_re_resolved: false,
+            untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
             context_checking: Vec::new(),
             context_checked_here: Default::default(),
@@ -857,13 +921,18 @@ pub enum Requested {
     All,
 }
 
-pub struct Checker<'p> {
-    pub p: &'p Program,
+pub struct Checker<'p, 's> {
+    pub p: &'p Program<'s>,
+    /// The arena of the thread that runs the task: for the records that the task creates, which may be
+    /// published. Everything else that a task allocates is on the regular heap.
+    pub arena: &'s Arena,
     /// The task that this checker runs. Every access to a `Buffered` or `FileLocal` table takes it: it owns the write buffer.
-    task: Task,
+    task: Task<'s>,
     /// The tainted frame that `leave` popped last, for `cache_provisionally`.
     left_frame: Option<QueryFrame>,
-    files: &'p Files,
+    files: &'p Files<'s>,
+    /// `varianceTypeParameter`: its name.
+    variance_type_parameter: Atom,
     /// A file that the task has checked, and the first JSX node and the first fragment of it that
     /// `checkExpression` reached.
     first_jsx: (FileId, Option<ExprId>, Option<ExprId>),
@@ -888,6 +957,9 @@ pub struct Checker<'p> {
     contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
     /// `membersAndExportsLinks`, keyed by container and side.
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
+    /// The classes whose static members with computed names `getExportsOfSymbol` is binding, for
+    /// `resolveAnonymousTypeMembers`. See `origin_shape_in_the_meantime`.
+    late_binding_exports: Vec<Sym>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
@@ -908,7 +980,7 @@ pub struct Checker<'p> {
     discarded: Option<sink::Reported>,
     /// `NodeCheckFlagsTypeChecked` on the name of a property access: its 2339 has been created.
     /// `true`: and discarded.
-    non_existent_properties: crate::util::FxHashMap<(FileId, ExprId), bool>,
+    non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
     /// The next `with_printer` is not a barrier for cycle detection: it prints when and what tsgo
     /// prints.
     printing_closes_cycles: bool,
@@ -929,6 +1001,8 @@ pub struct Checker<'p> {
     /// The entries of `eager` that represent the value assigned on the back edge of a loop in
     /// progress. TypeScript requests that value there as well: see `is_cycle_of_initializers`.
     loop_values: Vec<usize>,
+    /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
+    non_circular_returns: Vec<usize>,
     /// The index in `stack` from which a query counts as in progress.
     resolution_start: usize,
     /// Why the last `enter` refused: the query is one of TypeScript's own resolutions and is in
@@ -938,6 +1012,8 @@ pub struct Checker<'p> {
     left_a_cycle: bool,
     /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
     taints: u64,
+    /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
+    checked_type_references: (Option<FileId>, Vec<u64>),
     /// `taints` when the first entry of `contextual_binding_patterns` was pushed. `u64::MAX` if the innermost frame was non-cacheable then.
     taints_before_patterns: u64,
     /// Number of circular queries.
@@ -963,11 +1039,17 @@ pub struct Checker<'p> {
     /// expression, and by member of an object literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// While `array_literal_types_in_automatic_variable` repeats the control flow analysis of a
+    /// reference: the reference, and each value assigned to it with its type.
+    automatic_assignments: Option<((FileId, ExprId), Vec<(ExprId, TypeId)>)>,
     /// `arg_type_under`: the type of a literal argument under a parameter type.
     literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
+    /// The comparison that began while no query and no instantiation was in progress and has not
+    /// ended: its `errorNode`. See `begin_comparison`.
+    outermost_comparison: Option<Option<(FileId, u32, u32)>>,
     /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
     instantiation_count: u32,
     /// The entries most recently read from or written to `Program::instantiations`.
@@ -987,6 +1069,15 @@ pub struct Checker<'p> {
     /// How many times `members` has left out the inherited members. Each time is counted in
     /// `cycles` too.
     unresolved_members_hits: u64,
+    /// How many times a request for members got those that were in place: `unresolved_members_hits`,
+    /// a re-entered query that `has_members_in_place`, and a provisional result that follows from
+    /// either. Each time is counted in `cycles` too, so no other memo stores what follows. tsgo
+    /// marks nothing there. What it assigns once, whatever is in progress, is stored here as well:
+    /// `compose` (`resolveObjectTypeMembers`) and `resolve_type_arguments` (`getTypeArguments`).
+    /// Otherwise n type references that need a member of each other are resolved n! times.
+    members_in_place_hits: u64,
+    /// `work` at the last of them.
+    members_in_place_hit_at: u64,
     /// The lowest index in `unresolved_members` for which it has, since the innermost `compose` in
     /// progress began.
     lowest_unresolved_members_hit: u32,
@@ -996,7 +1087,10 @@ pub struct Checker<'p> {
     limits: u64,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
-    /// The results withheld from `Program::instantiations` for that reason, with the serial number
+    /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
+    /// comparisons in progress and on the order in which the types were created.
+    comparisons_of_deeply_nested_types: u64,
+    /// The results withheld from `Program::instantiations` because `instantiate` returned the error type at a limit, with the serial number
     /// of the activation of the mapper, and whether `limits` moved. While the mapper is active no
     /// path to the limit is taken twice (`activeTypeMappersCaches`). The next caller hits the limit
     /// itself.
@@ -1006,7 +1100,7 @@ pub struct Checker<'p> {
     /// Entries of `relations` under a generic key whose hash included a task-local id. They are not
     /// published: see `relate::Key`.
     pub(super) generic_relation_entries_not_published: u64,
-    variances_cut_short: FxHashMap<Sym, (u64, Arc<[u8]>)>,
+    variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     free_relaters: Vec<relate::Relater>,
     /// What the comparisons in progress found about the reliability of the variance being computed.
     reliability: u8,
@@ -1019,8 +1113,25 @@ pub struct Checker<'p> {
     variances_in_progress: Vec<Sym>,
     /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
     variance_cycles: u32,
+    /// The lowest index in `variances_in_progress` that a symbol above it has re-entered since the
+    /// innermost `variances_worker` call on the stack began. `usize::MAX`: none.
+    lowest_variance_reentered: usize,
+    /// The symbols in cycles of several symbols that were measured since the outermost
+    /// `variances_worker` call on the stack began, each with the root of its cycle once that is measured.
+    variance_cycle_members: Vec<(Sym, Option<Sym>)>,
+    /// The first member of a cycle of several symbols that was entered, or whose stored variances
+    /// were read, since the innermost `variances_worker` call on the stack began.
+    first_member_touched: Option<Sym>,
+    /// See `watch_provisional_variances`.
+    notes_cycle_entries: bool,
+    /// For stored variances: `OrderDependent::enters`. Filled if `notes_cycle_entries`.
+    cycle_entries: FxHashMap<Sym, Sym>,
+    /// The index in `Task::order_dependent_variances` of each provisional record that is still watched.
+    watched_variances: FxHashMap<Sym, u32>,
+    /// A 64-bit Bloom filter for the keys of `cycle_entries` and `watched_variances`.
+    watched_variances_filter: u64,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
-    variances_measured: Vec<(Sym, Arc<[u8]>)>,
+    variances_measured: Vec<(Sym, &'s [u8])>,
     /// After `type_arguments_related_to` returns false: the index of the pair that is not related.
     failed_type_argument: u32,
     /// The index of each symbol in `Task::order_dependent_variances`.
@@ -1048,6 +1159,12 @@ pub struct Checker<'p> {
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
+    pub(super) never_in_progress_from: Vec<usize>,
+    /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
+    generic_mapped_types_in_progress: Vec<TypeId>,
+    /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
+    generic_mapped_types_cut_short: Vec<TypeId>,
     /// The entries most recently found in `Program::members`, in the signature tables and in
     /// `intersected_props`, indexed by the low bits of the key.
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
@@ -1074,7 +1191,7 @@ pub struct Checker<'p> {
     exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
     /// See `provisional_shape`, which returns a reference into the box and pushes the next.
     #[expect(clippy::vec_box)]
-    provisional_shapes: Vec<Box<shape::Resolved>>,
+    provisional_shapes: Vec<Box<shape::Resolved<'s>>>,
     /// Non-cacheable query results, for reuse while the computation that made them non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order. An event is dropped when a later one has a
@@ -1119,7 +1236,7 @@ pub struct Checker<'p> {
     /// by the first caller, with the table of that checker, so the order of its printed properties
     /// can vary with more than one thread. If that is flagged, the table is for what is not cached
     /// there.
-    undefined_properties: FxHashMap<Atom, Prop>,
+    undefined_properties: FxHashMap<Atom, Prop<'s>>,
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
@@ -1127,6 +1244,10 @@ pub struct Checker<'p> {
     /// The calls of immediately invoked function expressions whose arguments are being checked to
     /// type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
+    /// How often `resolved_signature` has returned `anySignature` for a call in `iife_resolving`.
+    any_signature_reads: u32,
+    /// `work` at the last of them.
+    any_signature_read_at: u64,
     /// The loops in progress, for any walk (`flowLoopStack`): the loop, the reference, its declared
     /// and its initial type, the antecedent types collected so far, and the depth of `stack` when
     /// the pass began.
@@ -1147,6 +1268,9 @@ pub struct Checker<'p> {
     /// `deferredNodes` of the file being checked.
     /// `deferredNodes`, an ordered set.
     deferred_nodes: std::collections::VecDeque<ExprId>,
+    /// The class expressions that have two entries in `deferred_nodes`, the first for their type
+    /// parameters, and whether `checkDeferredNodes` has come to the first.
+    deferred_type_parameters: Vec<(ExprId, bool)>,
     /// The identifiers `getResolvedSymbol` could not resolve, until
     /// `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
@@ -1171,6 +1295,10 @@ pub struct Checker<'p> {
     call_resolution_errors: Option<Vec<Reported>>,
     /// The call that `resolve_signature` is resolving was already being resolved.
     is_call_re_resolved: bool,
+    /// The call whose arguments `resolveUntypedCall` is checking, if the call was already being
+    /// resolved and its callee is `any`. See
+    /// `contextually_check_function_expression_or_object_literal_method`.
+    untyped_call_resolved_again: Option<(FileId, ExprId)>,
     /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It
     /// pushes no type resolution, so a cycle through the initializer of one is not its cycle.
     assigned_parameters: Vec<usize>,
@@ -1226,68 +1354,69 @@ pub struct Checker<'p> {
     restart_with: Option<Query>,
 }
 
-/// The current stack pointer of the thread. Read from the register, not the address of a local:
-/// under a sanitizer that detects use after return, locals whose address is taken are not on the
-/// stack at all.
+/// The stack pointer of the thread, less a constant: only the difference of two results is used.
+/// `StackCheck` reads the register, not the address of a local: under a sanitizer that detects use
+/// after return, locals whose address is taken are not on the stack at all.
 #[inline(always)]
 fn stack_pointer() -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let sp: usize;
-        // SAFETY: reading the register has no effect.
-        unsafe {
-            core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags))
-        };
-        sp
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let sp: usize;
-        // SAFETY: reading the register has no effect.
-        unsafe {
-            core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags))
-        };
-        sp
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        let probe = 0u8;
-        (&raw const probe).addr()
-    }
+    // Without a bound, what remains is counted from address 0.
+    bun_core::StackCheck::default().remaining()
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── access ─────────────────────────────
 
     #[inline]
-    pub fn hir(&self, file: FileId) -> &'p hir::File {
+    pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
         self.files.hir(file)
     }
 
     #[inline]
-    pub fn bound(&self, file: FileId) -> &'p Bound {
+    pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
         self.files.bound(file)
     }
 
     #[inline]
-    pub fn data(&self, ty: TypeId) -> &'p TypeData {
+    pub fn data(&self, ty: TypeId) -> &'p TypeData<'p> {
         self.types().get(ty)
     }
 
     /// The published types and the task-local ones: everything the task sees.
     #[inline(always)]
-    pub fn types(&self) -> Types<'p> {
+    pub fn types(&self) -> Types<'p, 's> {
         Types::new(&self.p.types, &self.task.own)
     }
 
     #[inline]
-    pub fn atoms(&self) -> Atoms<'p> {
+    pub fn atoms(&self) -> Atoms<'p, 's> {
         Atoms::new(&self.p.files.atoms, &self.task.own)
     }
 
     #[inline]
-    pub fn intern(&self, data: TypeData) -> TypeId {
+    pub fn intern(&self, data: TypeData<'s>) -> TypeId {
         self.types().intern(data)
+    }
+
+    /// `intern` for a type with lists, which are copied to the arena only if the type is new.
+    #[inline]
+    pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
+        self.types().intern_key(key)
+    }
+
+    /// A copy of `items`, to store in a type, a signature or a value of a table.
+    #[inline]
+    pub fn list<T: Copy>(&self, items: &[T]) -> ArenaBox<'s, [T]> {
+        ArenaBox::copy_from_slice_in(items, self.arena)
+    }
+
+    #[inline]
+    pub fn list_of<T>(&self, items: impl IntoIterator<Item = T>) -> ArenaBox<'s, [T]> {
+        ArenaBox::from_iter_in(items, self.arena)
+    }
+
+    #[inline]
+    pub fn boxed<T>(&self, value: T) -> ArenaBox<'s, T> {
+        ArenaBox::new_in(value, self.arena)
     }
 
     /// `IndexInfo.components`
@@ -1343,7 +1472,7 @@ impl<'p> Checker<'p> {
     }
 
     #[inline]
-    fn files(&self) -> &'p Files {
+    fn files(&self) -> &'p Files<'s> {
         self.files
     }
 
@@ -1382,6 +1511,13 @@ impl<'p> Checker<'p> {
         false
     }
 
+    /// Whether half of the stack that queries may use is in use. For a recursion that
+    /// typescript-go ends at `instantiationCount`, on a stack that grows.
+    #[inline]
+    pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
+        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
+    }
+
     /// Whether a query was refused for lack of stack. Errors may be missing because of it.
     pub fn ran_out_of_stack(&self) -> bool {
         self.ran_out_of_stack.get()
@@ -1416,6 +1552,9 @@ impl<'p> Checker<'p> {
             return self.refuse_as_too_deep(q);
         }
         self.last_enter = EnterOutcome::Entered;
+        if self.stack.is_empty() {
+            self.reset_instantiation_count_if_idle();
+        }
         self.stack.push(q);
         self.in_progress[class as usize] += 1;
         if let Some((file, kind)) = q.syntax()
@@ -1527,8 +1666,8 @@ impl<'p> Checker<'p> {
     /// functions that is n links too long costs n^3. So every query is refused until `stack` is
     /// back at `unwind_to`.
     ///
-    /// The type of a variable and the return type of a function are the same from any height, if
-    /// nothing in progress is a context for them. Then the outermost such frame resolves the
+    /// The type of a variable, the return type of a function and the declared type of a symbol are
+    /// the same from any height, if nothing in progress is a context for them. Then the outermost such frame resolves the
     /// innermost one from its own height, where that has the depth which the frames in between
     /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
     /// cycle that is longer than `MAX_DEPTH` never closes, and is refused again.
@@ -1541,7 +1680,8 @@ impl<'p> Checker<'p> {
             "too deep: {:?}",
             &self.stack[self.stack.len() - 12..]
         );
-        let starts_over = |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..));
+        let starts_over =
+            |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..) | Query::Declared(_));
         let is_without_context = self.flow_loops.is_empty()
             && self.inference_contexts.is_empty()
             && self.eager.is_empty()
@@ -1574,7 +1714,8 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// After the `leave` of a `Query::Symbol` or a `Query::Return`, if `stack.len() == unwind_to`.
+    /// After the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
+    /// `stack.len() == unwind_to`.
     /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
     #[cold]
     #[inline(never)]
@@ -1592,6 +1733,10 @@ impl<'p> Checker<'p> {
             Some(Query::Symbol(sym)) => {
                 self.type_of_symbol(sym);
                 self.p.symbol_types.get(&mut self.task, &sym).is_some()
+            }
+            Some(Query::Declared(sym)) => {
+                self.declared_type(sym);
+                self.p.declared_types.get(&mut self.task, &sym).is_some()
             }
             Some(Query::Return(file, func)) => {
                 self.return_type_of_fn(file, func);
@@ -1616,29 +1761,59 @@ impl<'p> Checker<'p> {
         if self.is_resolution(q) && self.is_resolved_since(i) {
             return false;
         }
+        // `assignParameterType` and `assignBindingElementTypes` push no type resolution, and assign
+        // `links.resolvedType` at their end. A request in the meantime resolves the declaration
+        // itself. Not a request that tsgo may not make (`eager`).
+        if self.assigned_parameters.contains(&i) && !self.eager.iter().any(|&from| from > i) {
+            return false;
+        }
+        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` sets
+        // `NodeCheckFlagsContextChecked` before it assigns the parameter types. The function
+        // expression is checked again, and has its type at once.
+        if let Query::Expr(file, e) = q
+            && let ExprKind::Fn(func) = self.hir(file)[e].kind
+            && self.context_checking.iter().any(|c| c.0 == (file, func))
+        {
+            return false;
+        }
         // `getConditionalTypeInstantiation` has no re-entrancy check and caches its result only when it returns, so the conditional type
         // is evaluated again. The recursion ends at a type resolution that detects a cycle, at members that are already installed, or
         // at an instantiation limit.
         if matches!(q, Query::Cond(..)) {
             return false;
         }
+        // `checkExpression`, `checkPropertyAssignment`, `getTypeFromTypeNode` and, for a declaration
+        // whose name is a pattern, `getTypeForVariableLikeDeclaration` have no re-entrancy guard. The
+        // second visit takes `any` for the return type that is being resolved, or finds the members
+        // in place or the intersection as it is, and closes no cycle.
+        // Or it comes to the `typeToStringEx` call that led here, with no type resolution on the way,
+        // and prints one serialization level higher. That can close a cycle through what the first
+        // call is resolving. At `maxSerializationLevel` the printer returns "?" and resolves nothing.
+        let first_printing = self.printing_floors.iter().find(|&&floor| floor > i);
+        let is_through_printing = first_printing
+            .is_some_and(|&floor| !self.stack[i..floor].iter().any(|&q| self.is_resolution(q)));
+        if matches!(
+            q,
+            Query::Expr(..) | Query::LiteralProp(..) | Query::TypeNode(..) | Query::Pat(..)
+        ) && !self.is_resolution(q)
+            && (is_through_printing && !self.reprinting
+                || self.ends_at_non_circular_return(i)
+                || self.ends_at_declared_members(i)
+                || self.ends_at_reduction_in_progress(i))
+        {
+            return false;
+        }
         self.last_enter = EnterOutcome::Refused;
         // Everything in progress between there and here is computed without the result, so it is
         // provisional.
-        self.mark_tainted_from(i + 1);
+        self.mark_tainted_from(i + usize::from(!self.is_requested_eagerly(i)));
         // TypeScript does not detect an expression that is rechecked while it is being checked: it
         // follows the same path again, and the first resolution on that path is the one that
         // becomes circular.
         // A call that is queried for the contextual type of an argument while it is being resolved
         // is different (`resolvingSignature`): the caller gets no result, and that is not an error.
-        // The same holds for members that are already installed.
-        // Exception: if the first frame above the re-entered expression is a `typeToStringEx` call,
-        // with no type resolution in between, the second pass prints one serialization level
-        // higher, and at `maxSerializationLevel` the printer returns "?" without resolving
-        // anything. That recursion terminates without a cycle.
-        let first_printing = self.printing_floors.iter().find(|&&floor| floor > i);
-        let is_through_printing = first_printing
-            .is_some_and(|&floor| !self.stack[i..floor].iter().any(|&q| self.is_resolution(q)));
+        // The same holds for members that are already installed, and for a path that leads to
+        // `typeToStringEx` first.
         let marked = !self.ends_at_members_in_place(i)
             && (self.is_resolution(q) || !is_through_printing)
             && self.mark_cycle_from(i);
@@ -1647,15 +1822,20 @@ impl<'p> Checker<'p> {
             self.last_enter = EnterOutcome::Runaway;
             bun_core::scoped_log!(SemaCycles, "RUNAWAY {:?}", q);
         }
-        self.note_cycle();
+        if self.has_members_in_place(q) {
+            self.note_members_in_place();
+        } else {
+            self.note_cycle();
+        }
         self.task.closed_a_cycle = true;
         bun_core::scoped_log!(SemaCycles, "cycle: {:?}", &self.stack[i..]);
         // `checkExpression` has no re-entrancy guard. The expression is checked again, up to the
         // resolution on that path that has just become circular, which is `any` there. So the
         // callee of a call that is resolved again has its type, and the arguments their contextual
         // types. See `recheck_in_flow_loop` for a path that ends at a loop that is visible.
+        // `getTypeFromTypeNode` has none either: the node has its type for the next request.
         !(marked
-            && matches!(q, Query::Expr(..))
+            && matches!(q, Query::Expr(..) | Query::TypeNode(..))
             && self.frames[i + 1..].iter().any(|frame| frame.circular))
     }
 
@@ -1680,15 +1860,57 @@ impl<'p> Checker<'p> {
         ))
     }
 
+    /// Whether the first resolution on the path from `stack[i]` is a return type that
+    /// `getNonCircularReturnTypeOfSignature` has requested.
+    fn ends_at_non_circular_return(&self, i: usize) -> bool {
+        !self.non_circular_returns.is_empty()
+            && (self.stack[i..].iter().position(|&q| self.is_resolution(q))).is_some_and(|above| {
+                matches!(
+                    self.stack[i + above],
+                    Query::Return(..) | Query::ReturnOfSignature(_)
+                ) && self.non_circular_returns.contains(&(i + above))
+            })
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
+    /// whose index signatures are being resolved: `resolveDeclaredMembers` sets
+    /// `declaredMembersResolved` first.
+    fn ends_at_declared_members(&self, i: usize) -> bool {
+        if self.declared_index_infos_in_progress.is_empty() {
+            return false;
+        }
+        let mut from_here = self.stack[i..].iter();
+        let resolution = from_here.position(|&q| self.is_resolution(q));
+        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
+        let mut began = self.declared_index_infos_in_progress.iter();
+        began.any(|it| it.0 > i && it.0 <= resolution)
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at an
+    /// intersection whose properties `getReducedType` is examining: it sets
+    /// `ObjectFlagsIsNeverIntersectionComputed` first, and returns the intersection the next time.
+    fn ends_at_reduction_in_progress(&self, i: usize) -> bool {
+        if self.never_in_progress_from.is_empty() {
+            return false;
+        }
+        let mut from_here = self.stack[i..].iter();
+        let resolution = from_here.position(|&q| self.is_resolution(q));
+        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
+        let mut began = self.never_in_progress_from.iter();
+        began.any(|&height| height > i && height <= resolution)
+    }
+
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
     /// that are already installed.
     fn ends_at_members_in_place(&self, i: usize) -> bool {
         let before_first_resolution = self.stack[i..]
             .iter()
             .take_while(|&&q| !self.is_resolution(q));
-        before_first_resolution
-            .into_iter()
-            .any(|&q| self.has_members_in_place(q))
+        before_first_resolution.enumerate().any(|(above, &q)| {
+            // `resolveDeclaredMembers` has them in place while it resolves the index signatures.
+            self.has_members_in_place(q)
+                || (self.declared_index_infos_in_progress.iter()).any(|it| it.0 == i + above + 1)
+        })
     }
 
     /// Whether re-entering `stack[i]` is a recursion that tsgo does not detect. `getTypeFromTypeNode`, `getTypeAliasInstantiation` and
@@ -1710,6 +1932,15 @@ impl<'p> Checker<'p> {
                 .is_some_and(|last| self.instantiation_depth <= last.entry_depth + 1)
     }
 
+    /// Whether the query at `stack[i]` is itself one that TypeScript would not have made there
+    /// (`eager`). What it finds in progress differs from what TypeScript finds where it does make
+    /// the query: the types of the parameters of `a` are computed for `a()` behind the barrier of
+    /// `getResolvedSignature`, and TypeScript asks for one after that call has returned. So a cycle
+    /// that closes at it is not marked, and it has no result either.
+    fn is_requested_eagerly(&self, i: usize) -> bool {
+        self.eager.contains(&i) && !self.loop_values.contains(&i)
+    }
+
     /// `pushTypeResolution` when the query is already in progress at `i`: every resolution from
     /// there up is in the cycle, and resolves to `any`. `false`, and nothing is marked: TypeScript
     /// does not search that far down, or would not have made the query.
@@ -1720,7 +1951,10 @@ impl<'p> Checker<'p> {
         // Every entry of `loop_values` is an entry of `eager` too.
         let barriers = self.eager.iter().filter(|&&from| from > i).count();
         let loop_values = self.loop_values.iter().filter(|&&from| from > i).count();
-        if barriers > loop_values || barriers > 0 && !self.is_cycle_of_initializers(i) {
+        if self.is_requested_eagerly(i)
+            || barriers > loop_values
+            || barriers > 0 && !self.is_cycle_of_initializers(i)
+        {
             return false;
         }
         for j in i..self.stack.len() {
@@ -1808,6 +2042,23 @@ impl<'p> Checker<'p> {
             let stored = self.cycle_result();
             (self.p.mapped_types_with_errors).insert(&mut self.task, mapped, (), stored);
             self.circular_mapped_props.push((node, mapped, name));
+        } else if self.eager.is_empty()
+            && let Some(current) = self.current_node().or(self.current_source_element)
+            && !matches!(current, CurrentNode::TypeNode(..))
+            // `resolveMappedTypeMembers` resolves the constraint `keyof R` first, and
+            // `resolveReverseMappedTypeMembers` the type of every property of the source of `R`. tsgo
+            // finds a cycle through one of those there, with no mapped symbol in progress.
+            && !(self.types().object_flags(mapped)).contains(ObjectFlags::HAS_REVERSE_MAPPED)
+        {
+            // `c.currentNode` is the expression that is being checked or, outside of one, the node
+            // `checkSourceElement` is at.
+            let at = self.place_of_current_node(current);
+            let property = match self.prop_ref(mapped, name) {
+                Some((prop, _)) => Arg::Prop(prop),
+                None => Arg::Atom(name),
+            };
+            let diagnostic = self.new_diagnostic(at, 2615, &[property, Arg::Type(mapped)]);
+            self.add_diagnostic_of(Some(Query::MappedProp(mapped, name)), diagnostic);
         }
     }
 
@@ -1995,6 +2246,44 @@ impl<'p> Checker<'p> {
         TypeId::ERROR
     }
 
+    /// `checkSourceElement`, `checkDeferredNode` and `checkExpressionEx` begin with
+    /// `c.instantiationCount = 0`: the limit of 5,000,000 is for one statement or expression.
+    /// The checks that `check_file` runs after `check_source_file` are parts of those functions.
+    /// They visit the nodes in loops of their own, and nothing marks where the check of a node
+    /// begins. But whatever such a check requests begins while nothing is in progress. `enter`,
+    /// `begin_comparison` and `instantiate` call this, and every instantiation is under one of
+    /// them. Returns whether nothing is in progress.
+    pub(super) fn reset_instantiation_count_if_idle(&mut self) -> bool {
+        let is_idle = self.stack.is_empty()
+            && self.instantiation_depth == 0
+            && self.current_source_element.is_none()
+            && self.outermost_comparison.is_none();
+        if is_idle {
+            self.instantiation_count = 0;
+        }
+        is_idle
+    }
+
+    /// A run of `checkTypeRelatedToEx` begins, or `checkTypeAssignableToAndOptionallyElaborate`,
+    /// which has several. `error_node`: its `errorNode`. Returns whether no query, instantiation
+    /// or comparison is in progress, for `end_comparison`.
+    pub(super) fn begin_comparison(&mut self, error_node: Option<(FileId, u32, u32)>) -> bool {
+        let is_outermost = self.stack.is_empty()
+            && self.instantiation_depth == 0
+            && self.outermost_comparison.is_none();
+        if is_outermost {
+            self.reset_instantiation_count_if_idle();
+            self.outermost_comparison = Some(error_node);
+        }
+        is_outermost
+    }
+
+    pub(super) fn end_comparison(&mut self, is_outermost: bool) {
+        if is_outermost {
+            self.outermost_comparison = None;
+        }
+    }
+
     /// `c.error_at(c.currentNode, ..)`: the computation in progress has reached a limit. Like a
     /// tsgo checker, the task reports it once, at the node it is checking at that moment, and
     /// stores the results of the queries that began at depth 0. What a task sees is a function of
@@ -2003,12 +2292,33 @@ impl<'p> Checker<'p> {
     fn error_at_current_node(&mut self, code: u32) {
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
-        let Some(current) = self.current_node().filter(|_| is_reported) else {
+        // Outside of an expression, `c.currentNode` is the statement or declaration that
+        // `checkSourceElement` is at. The checks after `check_source_file` do not know it. The
+        // `errorNode` of their comparison begins at the same position for an assignment, a
+        // variable declaration and a `return` statement.
+        let at = match self.current_node() {
+            Some(current) => Some(self.place_of_current_node(current)),
+            // A comparison without an `errorNode` that `check_source_file` makes: of a rest
+            // parameter with an array type (2370), of the two types of an assertion.
+            None => self.outermost_comparison.flatten().or_else(|| {
+                let current = self.current_source_element?;
+                Some(self.place_of_current_node(current))
+            }),
+        };
+        let Some(at) = at.filter(|_| is_reported) else {
+            // The result is the error type, to which everything is related, and tsgo reports
+            // 2589. The count is reset as in tsgo, so the file is not reported as clean.
+            if is_reported && self.instantiation_count >= 5_000_000 {
+                self.ran_out_of_stack.set(true);
+            }
             self.note_limit();
             return self.mark_tainted_from(0);
         };
-        let at = self.place_of_current_node(current);
         self.add_diagnostic_of(None, Reported::bare(at, code));
+        // Elsewhere `settled` drops the diagnostic, whichever task reports it.
+        if self.reports_semantic_errors(at.0) {
+            self.note_limit_reached();
+        }
         // A query that began under an instantiation had less depth left than the same query has
         // from depth 0, where a finite type does not reach the limit. tsgo stores its result
         // regardless, and which types that breaks depends on the order in which it checks files.
@@ -2017,9 +2327,23 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`. A limit of
-    /// `error_at_current_node` is not reported at `current_source_element`: the passes resolve types
-    /// at other times than tsgo, where reaching a limit is no evidence that tsgo reaches it.
+    /// One checker in program order has checked every file before the one it visits, so none of
+    /// their syntax is still to be evaluated. A task evaluates it on demand, and then reaches the
+    /// limit in place of that file. See `EntryOrder`.
+    fn note_limit_reached(&mut self) {
+        let Some(file) = self.task.file else {
+            return;
+        };
+        let named = self.stack.iter().filter_map(|q| Some(q.syntax()?.0));
+        let checked = named.filter(|&named| self.reports_semantic_errors(named));
+        let first = checked
+            .chain([file])
+            .min_by_key(|&it| self.files().rank_of_file(it));
+        let first = first.unwrap_or(file);
+        self.task.limits_reached.push(LimitReached { file, first });
+    }
+
+    /// `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`.
     #[cold]
     fn error_about_comparison_at_current_node(&mut self, code: u32, args: &[Arg<'_>]) {
         let current = self.current_node().or(self.current_source_element);
@@ -2265,6 +2589,7 @@ impl<'p> Checker<'p> {
         // An event from the frame's own index up has tainted no caller.
         let from = self.lowest_taint_since(frame.serial);
         let from = (from < self.frames.len()).then_some(from);
+        let is_behind_barrier = !flow && from.is_some_and(|from| self.is_behind_barrier(from));
         let scope = scope.map(|depth| match from {
             Some(from) if !flow => depth.max(from.saturating_sub(1)),
             _ => depth,
@@ -2288,11 +2613,20 @@ impl<'p> Checker<'p> {
                     moved: since(self.cycle_at)
                         | since(self.limit_at) << 1
                         | u8::from(flow) << 2
-                        | since(self.refused_at) << 3,
+                        | since(self.refused_at) << 3
+                        | u8::from(is_behind_barrier) << 4
+                        | since(self.members_in_place_hit_at) << 5
+                        | since(self.any_signature_read_at) << 6,
                     serial: scope.serial,
                 },
             );
         }
+    }
+
+    /// Whether `mark_cycle_from` refuses a cycle whose head is `stack[from - 1]` because of `eager`.
+    fn is_behind_barrier(&self, from: usize) -> bool {
+        let above = |barriers: &[usize]| barriers.iter().filter(|&&at| at >= from).count();
+        above(&self.eager) > above(&self.loop_values)
     }
 
     /// The result `cache_provisionally` stored for `q`, if it is still valid.
@@ -2328,6 +2662,10 @@ impl<'p> Checker<'p> {
         if entry.moved & 4 != 0 && !self.is_flow_loop_visible(depth) {
             return None;
         }
+        // Without the barrier the cycle is marked.
+        if entry.moved & 16 != 0 && !self.is_behind_barrier(entry.from as usize) {
+            return None;
+        }
         // The test of `enter`.
         if entry.from == u32::MAX
             && (self.inference_contexts.is_empty() || !self.is_innermost_tainted())
@@ -2346,8 +2684,14 @@ impl<'p> Checker<'p> {
         if entry.moved & 1 != 0 {
             self.note_cycle();
         }
+        if entry.moved & 32 != 0 {
+            self.note_members_in_place();
+        }
         if entry.moved & 2 != 0 {
             self.note_limit();
+        }
+        if entry.moved & 64 != 0 {
+            self.note_any_signature();
         }
         Some(entry.raw)
     }
@@ -2357,6 +2701,22 @@ impl<'p> Checker<'p> {
     fn note_cycle(&mut self) {
         self.cycles += 1;
         self.cycle_at = self.work;
+    }
+
+    /// Increments `cycles` for a request for members that got those in place. See
+    /// `members_in_place_hits`.
+    #[inline]
+    fn note_members_in_place(&mut self) {
+        self.cycles += 1;
+        self.members_in_place_hits += 1;
+        self.members_in_place_hit_at = self.work;
+    }
+
+    /// Increments `any_signature_reads`.
+    #[inline]
+    fn note_any_signature(&mut self) {
+        self.any_signature_reads += 1;
+        self.any_signature_read_at = self.work;
     }
 
     /// Increments `limits`.
@@ -2435,7 +2795,7 @@ impl<'p> Checker<'p> {
         let name = self.atoms().intern(&path);
         self.intern(TypeData::UnresolvedName {
             name,
-            args: args.into(),
+            args: self.list(args),
         })
     }
 
@@ -2622,15 +2982,7 @@ impl<'p> Checker<'p> {
     }
 
     pub fn is_fresh_literal(&self, ty: TypeId) -> bool {
-        matches!(
-            *self.data(ty),
-            TypeData::StringLit { fresh: true, .. }
-                | TypeData::NumberLit { fresh: true, .. }
-                | TypeData::BigIntLit { fresh: true, .. }
-                | TypeData::BoolLit { fresh: true, .. }
-                | TypeData::EnumLit { fresh: true, .. }
-                | TypeData::Enum { fresh: true, .. }
-        )
+        relate::is_fresh_literal_kind(self.data(ty))
     }
 
     /// The literal type as an annotation would denote it.
@@ -2708,10 +3060,7 @@ impl<'p> Checker<'p> {
     /// itself for one without type parameters).
     pub fn global_ref(&mut self, name: Atom, args: &[TypeId]) -> TypeId {
         match self.global_type_of_arity(name, args.len()) {
-            Some(target) => self.intern(TypeData::Ref {
-                target,
-                args: args.into(),
-            }),
+            Some(target) => self.intern_key(TypeKey::Ref { target, args }),
             None => TypeId::EMPTY_OBJECT,
         }
     }
@@ -2815,9 +3164,9 @@ impl<'p> Checker<'p> {
             .iter()
             .any(|f| f.intersects(ElemFlags::OPTIONAL | ElemFlags::REST | ElemFlags::VARIADIC))
         {
-            return self.intern(TypeData::Tuple {
-                elems: elems.into(),
-                flags: flags.into(),
+            return self.intern_key(TypeKey::Tuple {
+                elems,
+                flags,
                 readonly,
             });
         }
@@ -2873,15 +3222,15 @@ impl<'p> Checker<'p> {
                 self.array_of(*element)
             };
         }
-        self.intern(TypeData::Tuple {
-            elems: types.into(),
-            flags: infos.into(),
+        self.intern_key(TypeKey::Tuple {
+            elems: &types,
+            flags: &infos,
             readonly,
         })
     }
 
-    pub fn synth(&self, shape: Shape) -> TypeId {
-        self.intern(TypeData::Synth(Box::new(shape)))
+    pub fn synth(&self, shape: Shape<'s>) -> TypeId {
+        self.intern(TypeData::Synth(self.boxed(shape)))
     }
 
     /// `T | undefined`, which only strictNullChecks distinguishes from `T`. `addOptionality`

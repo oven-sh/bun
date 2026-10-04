@@ -290,7 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         len: (end - start) as i32,
                     };
                     let index = p.log().msgs.len() - 1;
-                    p.lexer.add_related_info(index, r, b"TS1486");
+                    p.lexer.add_related_info(index, r, b"");
                 }
                 let mut all: Vec<Expr> = first.values.to_vec();
                 all.extend_from_slice(more.slice());

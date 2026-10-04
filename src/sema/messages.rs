@@ -369,6 +369,7 @@ static MESSAGES: &[(u32, Category, &str)] = &[
     (1390, E, "'{0}' is not allowed as a parameter name."),
     (1392, E, "An import alias cannot use 'import type'"),
     (1393, M, "Imported via {0} from file '{1}'"),
+    (1397, M, "Imported via {0} from file '{1}' to import 'jsx' and 'jsxs' factory functions"),
     (1400, M, "Referenced via '{0}' from file '{1}'"),
     (1407, M, "Matched by include pattern '{0}' in '{1}'"),
     (1409, M, "Part of 'files' list in tsconfig.json"),

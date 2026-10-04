@@ -27,28 +27,9 @@ use super::*;
 use crate::bind::{FnOwner, MemberOwner};
 use crate::util::FxHashSet;
 
-// ───────────────────────────── the text ─────────────────────────────
-
-/// The start in the source of the type the HIR has at `pos`. The HIR stores neither the parentheses
-/// around a type nor a `|` or a `&` before its only member. Only for a type that follows a `:`, a
-/// `=`, an `is` or a `<`, which cannot be confused with any of these.
-pub(super) fn start_of_type_in_source(text: &[u8], pos: u32) -> u32 {
-    let mut start = pos as usize;
-    if start > text.len() {
-        return pos;
-    }
-    loop {
-        let before = skip_trivia_back(text, start);
-        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&') {
-            return start as u32;
-        }
-        start = before - 1;
-    }
-}
-
 // ───────────────────────────── the grammar of signatures ─────────────────────────────
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_x_signatures(&mut self, file: FileId) {
         self.check_type_parameter_declarations(file);
         self.check_promise_constructor_exists(file);
@@ -75,7 +56,7 @@ impl Checker<'_> {
             self.resolve_type_node_eagerly(file, decl.default, &mut resolution, 0);
             if decl.default.is_some() {
                 self.resolve_type_parameter_default((file, tp), &mut resolution, 0);
-                let start = start_of_type_in_source(&hir.text, hir[decl.default].pos);
+                let start = start_of_type(hir, decl.default);
                 if resolution.states.get(&(file, tp)) == Some(&DefaultState::Circular) {
                     let end = self.end_of_type_node_from(file, decl.default, start);
                     {
@@ -274,7 +255,13 @@ impl Checker<'_> {
             // diagnostic is formatted.
             self.set_variance_type_parameter(Some(own));
             let at = (file, start, self.end_of_type_param(file, tp));
+            // `checkDeferredNode`: `c.currentNode = node`, `c.instantiationCount = 0`
+            let node = CurrentNode::Node(file, hir.node(tp));
+            let saved = self.current_source_element.replace(node);
+            let instantiation_count = std::mem::take(&mut self.instantiation_count);
             self.check_type_assignable_to(source, target, Some(at), Some(2636));
+            self.instantiation_count = instantiation_count;
+            self.current_source_element = saved;
             self.set_variance_type_parameter(None);
             self.reliability = reliability;
         }
@@ -321,6 +308,9 @@ impl Checker<'_> {
             self.error(file, node, 1228, &[]);
             return;
         };
+        // `getTypePredicateOfSignature` resolves the type before `checkSourceElement` visits its
+        // parts.
+        self.type_from_node(file, ty);
         self.check_type_node(file, ty);
         if param == known::this {
             return;
@@ -362,7 +352,7 @@ impl Checker<'_> {
             self.prepare_fn(file, parent);
         }
         let (narrowed, declared) = (self.type_from_node(file, ty), self.type_of_param(file, p));
-        let start = start_of_type_in_source(text, hir[ty].pos);
+        let start = start_of_type(hir, ty);
         let at = (file, start, self.end_of_type_node_from(file, ty, start));
         let mut diags = Vec::new();
         if !self.check_type_assignable_to_ex(narrowed, declared, Some(at), None, Some(&mut diags)) {
@@ -381,7 +371,7 @@ impl Checker<'_> {
         let is_declaration = matches!(func.kind, FnKind::Decl | FnKind::Expr)
             || func.kind == FnKind::Method && self.is_member_that_may_have_body(file, f);
         if is_declaration && has_body(func) && self.type_from_node(file, func.ret) == TypeId::VOID {
-            let start = start_of_type_in_source(&hir.text, hir[func.ret].pos);
+            let start = start_of_type(hir, func.ret);
             let end = self.end_of_type_node_from(file, func.ret, start);
             self.error_at((file, start, end), 2505, &[]);
         }
@@ -407,7 +397,7 @@ impl Checker<'_> {
         if self.global_type_symbol(known::Promise).is_some()
             && self.is_global_ref(ret, known::Promise).is_none()
         {
-            let start = start_of_type_in_source(&hir.text, hir[func.ret].pos);
+            let start = start_of_type(hir, func.ret);
             let end = self.end_of_type_node_from(file, func.ret, start);
             let awaited = self.awaited_no_alias(ret).unwrap_or(TypeId::VOID);
             self.error_at((file, start, end), 1064, &[Arg::Type(awaited)]);

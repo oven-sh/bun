@@ -238,8 +238,8 @@ pub(super) struct Relater {
     relation_count: i32,
     /// `Checker::cycles` at the start of the check. Once it has changed, no result is cacheable.
     cycles: u64,
-    /// Failures are recorded in `failed` instead of the relation cache: in a reporting run (P2),
-    /// and in the non-reporting run that precedes one where tsgo has no such run
+    /// Failures are recorded in `failed` instead of the relation cache: in the non-reporting run
+    /// that precedes a reporting run where tsgo has no such run
     /// (`check_type_related_to_ex`), which must leave the cache as tsgo's run would find it.
     pub(super) caches_failures: bool,
     failed: FxHashSet<Key>,
@@ -305,7 +305,7 @@ const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
 
 /// `Checker::is_object_type`
 #[inline]
-fn is_object_kind(data: &TypeData) -> bool {
+pub(super) fn is_object_kind(data: &TypeData) -> bool {
     matches!(
         data,
         TypeData::Ref { .. }
@@ -365,6 +365,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
                 | Intrinsic::Auto
                 | Intrinsic::IntrinsicMarker
                 | Intrinsic::Wildcard
+                | Intrinsic::NonInferrableAny
                 | Intrinsic::Unknown
                 | Intrinsic::Never
                 | Intrinsic::SilentNever
@@ -387,7 +388,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
 
 /// `Checker::is_fresh_literal`
 #[inline]
-fn is_fresh_literal_kind(data: &TypeData) -> bool {
+pub(super) fn is_fresh_literal_kind(data: &TypeData) -> bool {
     matches!(
         *data,
         TypeData::StringLit { fresh: true, .. }
@@ -417,7 +418,7 @@ fn is_mapped_kind(data: &TypeData) -> bool {
 
 /// `Checker::is_object_literal_type`
 #[inline]
-fn is_object_literal_kind(data: &TypeData) -> bool {
+pub(super) fn is_object_literal_kind(data: &TypeData) -> bool {
     match data {
         TypeData::Anon {
             origin: Origin::ObjectLiteral(..),
@@ -430,7 +431,7 @@ fn is_object_literal_kind(data: &TypeData) -> bool {
 
 /// `Checker::is_fresh_object_literal_type`
 #[inline]
-fn is_fresh_object_literal_kind(data: &TypeData) -> bool {
+pub(super) fn is_fresh_object_literal_kind(data: &TypeData) -> bool {
     match data {
         TypeData::Anon {
             origin: Origin::ObjectLiteral(.., is_fresh),
@@ -459,7 +460,7 @@ fn is_normalized_kind(data: &TypeData) -> bool {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Assignable)
     }
@@ -531,7 +532,7 @@ impl<'p> Checker<'p> {
 
     /// `TypeId::plain`, with the `TypeData` of the result. `data`: the `TypeData` of `ty`.
     #[inline]
-    fn plain_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
+    fn plain_as(&self, ty: TypeId, data: &'p TypeData<'p>) -> (TypeId, &'p TypeData<'p>) {
         let plain = ty.plain();
         if plain == ty {
             (ty, data)
@@ -543,7 +544,7 @@ impl<'p> Checker<'p> {
     /// A literal type as an annotation would denote it, with the `TypeData` of the result. `data`:
     /// the `TypeData` of `ty`.
     #[inline]
-    fn regular_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
+    fn regular_as(&self, ty: TypeId, data: &'p TypeData<'p>) -> (TypeId, &'p TypeData<'p>) {
         if is_fresh_literal_kind(data) {
             let ty = self.with_freshness(ty, false);
             return (ty, self.data(ty));
@@ -556,9 +557,9 @@ impl<'p> Checker<'p> {
     fn normalized_as(
         &mut self,
         ty: TypeId,
-        data: &'p TypeData,
+        data: &'p TypeData<'p>,
         writing: bool,
-    ) -> (TypeId, &'p TypeData) {
+    ) -> (TypeId, &'p TypeData<'p>) {
         // FOR SPEED: `len(getMembersOfSymbol(t.symbol)) != 0` first. The binder creates the table
         // with the first member (`GetMembers`).
         if is_normalized_kind(data)
@@ -655,7 +656,7 @@ impl<'p> Checker<'p> {
     pub(super) fn any_function_type(&self) -> TypeId {
         self.synth(Shape {
             literal: Literalness::Partial,
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         })
     }
 
@@ -749,6 +750,8 @@ impl<'p> Checker<'p> {
             ty
         } else if self.p.files.options.exact_optional_property_types {
             self.remove_missing_type(ty, true)
+        } else if prop.flags.contains(PropFlags::WITHOUT_OPTIONALITY) {
+            ty
         } else {
             self.cached_optional_property(ty)
         }
@@ -758,7 +761,8 @@ impl<'p> Checker<'p> {
     /// property.
     pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
-        if prop.flags.contains(PropFlags::OPTIONAL) {
+        let optionality = PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
+        if prop.flags & optionality == PropFlags::OPTIONAL {
             self.optional_property(ty)
         } else {
             ty
@@ -766,25 +770,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getPropertyOfType`: includes the properties that every function and every object has.
-    pub(super) fn property_of_type(
-        &mut self,
-        members: &Members,
-        name: Atom,
-    ) -> Option<(Prop, MapperId)> {
-        if let Some(prop) = members.resolved.prop(name) {
-            return Some((prop.clone(), members.mapper));
-        }
-        let mut inherited = self.inherited_of(members.shape());
-        self.inherited_property(&mut inherited, name)
-            .map(|(prop, mapper)| (prop.clone(), mapper))
-    }
-
-    /// `property_of_type`, by reference.
     pub(super) fn property_in(
         &mut self,
         members: &Members<'p>,
         name: Atom,
-    ) -> Option<(&'p Prop, MapperId)> {
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
         if let Some(prop) = members.resolved.prop(name) {
             return Some((prop, members.mapper));
         }
@@ -793,17 +783,18 @@ impl<'p> Checker<'p> {
     }
 
     /// `property_in`, for looking up several names in sequence. `inherited`: `inherited_of` the
-    /// shape of `members`.
+    /// shape of `members`. `ty`: the type that has `members`.
     #[inline]
     pub(super) fn property_among(
         &mut self,
+        ty: TypeId,
         members: &Members<'p>,
         inherited: &mut Inherited<'p>,
         name: Atom,
-    ) -> Option<(&'p Prop, MapperId)> {
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
         match members.resolved.prop(name) {
             Some(prop) => Some((prop, members.mapper)),
-            None => self.inherited_property(inherited, name),
+            None => self.augmented_property(ty, inherited, name),
         }
     }
 
@@ -834,9 +825,64 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `property_in` the members of `ty`.
+    pub(super) fn property_in_type(
+        &mut self,
+        ty: TypeId,
+        members: &Members<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        if let Some(prop) = members.resolved.prop(name) {
+            return Some((prop, members.mapper));
+        }
+        let mut inherited = self.inherited_of(members.shape());
+        self.augmented_property(ty, &mut inherited, name)
+    }
+
+    /// `getPropertyOfType(ty, name)` where `ty` does not have `name` itself. `inherited`:
+    /// `inherited_of` the shape of `ty`.
+    fn augmented_property(
+        &mut self,
+        ty: TypeId,
+        inherited: &mut Inherited<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        let found = self.inherited_property(inherited, name)?;
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return Some(found);
+        };
+        // `createUnionOrIntersectionProperty`: each constituent has the properties of its own
+        // function type and of `Object`. The property is the one that an intersection of the
+        // global types in which they find `name` has.
+        let mut globals: SmallVec<[TypeId; 4]> = SmallVec::new();
+        for &part in parts.iter() {
+            let part = self.reduced_apparent_type_as_object(part);
+            let Some(members) = self.members(part) else {
+                continue;
+            };
+            let of_part = self.inherited_of(members.shape());
+            for &global in &of_part.globals[..of_part.count] {
+                let global = self.plain_global_ref(global);
+                let has_name = |it: Members<'p>| it.resolved.prop(name).is_some();
+                if self.members(global).is_some_and(has_name) {
+                    if !globals.contains(&global) {
+                        globals.push(global);
+                    }
+                    break;
+                }
+            }
+        }
+        if globals.len() < 2 {
+            return Some(found);
+        }
+        let all = self.intersection(&globals);
+        let members = self.members(all)?;
+        Some((members.resolved.prop(name)?, members.mapper))
+    }
+
     /// `global_ref` without type arguments.
     #[inline]
-    fn plain_global_ref(&mut self, name: Atom) -> TypeId {
+    pub(super) fn plain_global_ref(&mut self, name: Atom) -> TypeId {
         if let Some(known) = self.p.plain_global_refs.get(&mut self.task, &name) {
             return known;
         }
@@ -876,7 +922,7 @@ impl<'p> Checker<'p> {
         &mut self,
         from: &mut Inherited<'p>,
         name: Atom,
-    ) -> Option<(&'p Prop, MapperId)> {
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
         if self.inherited_names == [0; 4] {
             self.note_inherited_names();
         }
@@ -997,6 +1043,7 @@ impl<'p> Checker<'p> {
                 return is_related;
             }
         }
+        let is_outermost = self.begin_comparison(None);
         let mut r = self
             .free_relaters
             .pop()
@@ -1030,6 +1077,7 @@ impl<'p> Checker<'p> {
             r.failed.clear();
         }
         self.free_relaters.push(r);
+        self.end_comparison(is_outermost);
         self.relation_too_deep = is_too_deep;
         if is_too_complex {
             // Recorded as failed so that the comparison is not attempted again.
@@ -1075,9 +1123,9 @@ impl<'p> Checker<'p> {
     fn is_simple_type_related_to(
         &mut self,
         s: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         t: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         relation: Relation,
         error_reporter: Option<&mut Relater>,
     ) -> bool {
@@ -2169,7 +2217,16 @@ impl<'p> Checker<'p> {
         let modifiers = self.type_param_modifiers(sym, param) & (Flags::IN | Flags::OUT);
         // `checkTypeParameterDeferred` creates marker types with its own two markers, for a parameter declared `in` or `out` but not both.
         if marker == TypeId::MARKER_SUPER_FOR_CHECK || marker == TypeId::MARKER_SUB_FOR_CHECK {
-            return modifiers == Flags::IN || modifiers == Flags::OUT;
+            if modifiers != Flags::IN && modifiers != Flags::OUT {
+                return false;
+            }
+            let is_created = self.has_type_parameter_deferred_check_started(sym, param);
+            if !is_created {
+                // The answer changes later, so a comparison that depends on it is not stored. tsgo
+                // repeats a failed one, since this check compares with `reportErrors`.
+                self.mark_tainted_by_pattern_from(self.frames.len());
+            }
+            return is_created;
         }
         // `getVariancesWorker` takes the variance of a parameter declared `in` or `out` from the modifiers and creates no marker type.
         if !modifiers.is_empty() {
@@ -2179,6 +2236,84 @@ impl<'p> Checker<'p> {
             || self.p.variances.get(&mut self.task, &sym).is_some()
     }
 
+    /// Whether `checkTypeParameterDeferred` has come to a declaration of the type parameter `param`
+    /// of `sym`: `createMarkerType` adds its two marker types to `markerTypes` there.
+    /// `c.currentNode` is the type parameter that it is at now.
+    fn has_type_parameter_deferred_check_started(&self, sym: Sym, param: TypeId) -> bool {
+        let Some(CurrentNode::Node(current_file, current)) = self.current_source_element else {
+            return true;
+        };
+        let NodeData::TypeParam(current) = self.hir(current_file).data(current) else {
+            return true;
+        };
+        let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
+            return false;
+        };
+        let name = self.hir(of)[id].name;
+        let lists = self.type_parameter_lists(sym);
+        // No marker type of `sym` replaces one of its outer type parameters.
+        if !lists
+            .iter()
+            .any(|&(file, params)| file == of && params.range().contains(&id.idx()))
+        {
+            return false;
+        }
+        // Each checker of `checkerPool` has its own `markerTypes`.
+        let (files, checker_count) = (self.files(), self.task.checker_count);
+        let checker_of = |f: FileId| files.rank_of_file(f).checked_rem(checker_count);
+        let now = self.place_in_deferred_nodes(current_file, current);
+        lists.iter().any(|&(file, params)| {
+            self.reports_semantic_errors(file)
+                && checker_of(file) == checker_of(current_file)
+                && params.iter().any(|tp| {
+                    self.hir(file)[tp].name == name && self.place_in_deferred_nodes(file, tp) <= now
+                })
+        })
+    }
+
+    /// When `checkDeferredNodes` comes to the type parameter `tp` of a class, an interface or a type
+    /// alias: the files in program order, and `links.deferredNodes` of a file in the order of
+    /// `checkNodeDeferred`. A deferred node defers what it contains when it is checked itself,
+    /// so that comes after everything deferred until then.
+    fn place_in_deferred_nodes(&self, file: FileId, tp: TypeParamId) -> (u32, u32, u32) {
+        let hir = self.hir(file);
+        // `checkClassExpression` checks the type parameters of the class at once.
+        let declaration = hir.parent(hir.node(tp));
+        let mut deferred_around = 0;
+        hir.find_ancestor(hir.parent(declaration), |node| {
+            if let NodeData::Expr(e) = hir.data(node)
+                && matches!(
+                    hir[e].kind,
+                    ExprKind::Fn(_)
+                        | ExprKind::Class(_)
+                        | ExprKind::Jsx(_)
+                        | ExprKind::Unary { op: UnOp::Void, .. }
+                )
+            {
+                deferred_around += 1;
+            }
+            false
+        });
+        (
+            self.files().rank_of_file(file),
+            deferred_around,
+            hir[tp].start,
+        )
+    }
+
+    /// The type parameter list of each declaration of the class, interface or type alias `sym`.
+    fn type_parameter_lists(&self, sym: Sym) -> Vec<(FileId, Span<TypeParamId>)> {
+        let declarations = self.files().decls(sym).into_iter();
+        declarations
+            .filter_map(|(file, decl)| match decl {
+                crate::bind::Decl::Class(c) => Some((file, self.hir(file)[c].type_params)),
+                crate::bind::Decl::Interface(i) => Some((file, self.hir(file)[i].type_params)),
+                crate::bind::Decl::Alias(a) => Some((file, self.hir(file)[a].type_params)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// `getTypeParameterModifiers`: the modifiers that any declaration of `sym` has on its type
     /// parameter `param`.
     pub(super) fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
@@ -2186,17 +2321,7 @@ impl<'p> Checker<'p> {
             return Flags::empty();
         };
         let own = &self.hir(of)[id];
-        let lists: Vec<_> = self
-            .files()
-            .decls(sym)
-            .into_iter()
-            .filter_map(|(file, decl)| match decl {
-                crate::bind::Decl::Class(c) => Some((file, self.hir(file)[c].type_params)),
-                crate::bind::Decl::Interface(i) => Some((file, self.hir(file)[i].type_params)),
-                crate::bind::Decl::Alias(a) => Some((file, self.hir(file)[a].type_params)),
-                _ => None,
-            })
-            .collect();
+        let lists = self.type_parameter_lists(sym);
         // An outer type parameter of `sym` has a single declaration.
         if !lists
             .iter()
@@ -2233,29 +2358,30 @@ impl<'p> Checker<'p> {
         {
             self.type_reference(sym, &args)
         } else {
-            self.intern(TypeData::Ref {
+            self.intern_key(TypeKey::Ref {
                 target: sym,
-                args: args.into(),
+                args: &args,
             })
         }
     }
 
     /// `getVariances`, `getAliasVariances`: how instantiations of `sym` relate, given how their
     /// type arguments relate. Empty while the computation is in progress.
-    pub(super) fn variances_of(&mut self, sym: Sym) -> Arc<[u8]> {
+    pub(super) fn variances_of(&mut self, sym: Sym) -> &'s [u8] {
         if let Some(known) = self.p.variances.get(&mut self.task, &sym) {
+            self.note_stored_variances_read(sym);
             return known;
         }
         self.variances_worker(sym)
     }
 
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
-    fn variances_worker(&mut self, sym: Sym) -> Arc<[u8]> {
+    fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
         if Some(sym) == self.global_type_symbol(known::Array)
             || Some(sym) == self.global_type_symbol(known::ReadonlyArray)
         {
             let scope = self.begin_scope();
-            let variances: Arc<[u8]> = Arc::from([COVARIANT]);
+            let variances: &'s [u8] = &[COVARIANT];
             return match self.end_scope_as(scope, false) {
                 Ok(stored) => self
                     .p
@@ -2264,13 +2390,17 @@ impl<'p> Checker<'p> {
                 Err(_) => variances,
             };
         }
-        if self.variances_in_progress.contains(&sym) {
+        if let Some(at) = self.variances_in_progress.iter().rposition(|&it| it == sym) {
             self.variance_cycles += 1;
-            return Arc::from([]);
+            if at + 1 < self.variances_in_progress.len() {
+                self.lowest_variance_reentered = self.lowest_variance_reentered.min(at);
+            }
+            return &[];
         }
         // The value of the first task in serial order, for a task that is retried (`Program::validate`).
-        let serial = self.p.serial_variances.lock().get(&sym).cloned();
+        let serial = self.p.serial_variances.lock().get(&sym).copied();
         if let Some(variances) = serial {
+            self.note_stored_variances_read(sym);
             let scope = self.begin_scope();
             return match self.end_scope_as(scope, false) {
                 Ok(stored) => self
@@ -2288,16 +2418,21 @@ impl<'p> Checker<'p> {
             && let Some((under, known)) = self.variances_cut_short.get(&sym)
             && *under == outermost
         {
-            let known = known.clone();
+            let known = *known;
             self.cut_short_again();
             return known;
         }
+        let depth = self.variances_in_progress.len();
         self.variances_in_progress.push(sym);
+        let reentered_before = std::mem::replace(&mut self.lowest_variance_reentered, usize::MAX);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         let variance_cycles = self.variance_cycles;
         if !was_computing {
+            self.variance_cycle_members.clear();
             self.variances_measured.clear();
         }
+        let members_before = self.variance_cycle_members.len();
+        let touched_before = self.first_member_touched.take();
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
         // forever.
@@ -2360,18 +2495,46 @@ impl<'p> Checker<'p> {
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
-        let variances: Arc<[u8]> = variances.into();
+        // Tarjan's algorithm: `sym` is in a strongly connected component of several symbols if a
+        // symbol above it re-entered it or a symbol below it. It is the root, the member that was
+        // entered first, if nothing below it was re-entered.
+        let reentered = std::mem::replace(&mut self.lowest_variance_reentered, reentered_before);
+        if reentered < depth {
+            self.lowest_variance_reentered = reentered_before.min(reentered);
+        }
+        if reentered <= depth {
+            self.variance_cycle_members.push((sym, None));
+        }
+        if reentered == depth {
+            for member in &mut self.variance_cycle_members[members_before..] {
+                member.1.get_or_insert(sym);
+            }
+        }
+        // The member at which a request for the variances of `sym` enters a cycle, if nothing is stored.
+        let touched = std::mem::replace(&mut self.first_member_touched, touched_before);
+        let enters = if reentered <= depth {
+            Some(sym)
+        } else {
+            touched
+        };
+        if let Some(member) = enters {
+            self.first_member_touched.get_or_insert(member);
+        }
+        // Kept until the check ends, published or not: a few bytes.
+        let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
         let variances = match self.end_scope(scope) {
             Ok(stored) => {
-                self.variances_measured.push((sym, variances.clone()));
+                if let (Some(member), true) = (enters, self.notes_cycle_entries) {
+                    self.note_cycle_entry(sym, member, variances);
+                }
+                self.variances_measured.push((sym, variances));
                 self.p
                     .variances
                     .insert(&mut self.task, sym, variances, stored)
             }
             Err(_) => {
                 if self.cuts() != cuts {
-                    self.variances_cut_short
-                        .insert(sym, (outermost, variances.clone()));
+                    self.variances_cut_short.insert(sym, (outermost, variances));
                 }
                 variances
             }
@@ -2381,9 +2544,16 @@ impl<'p> Checker<'p> {
                 let at = self.task.order_dependent_variances.len() as u32;
                 self.order_dependent.insert(sym, at);
                 self.order_dependent_filter |= Self::order_dependent_bit(sym);
+                let mut members = self.variance_cycle_members.iter();
                 self.task.order_dependent_variances.push(OrderDependent {
                     sym,
                     variances,
+                    root: members.find(|it| it.0 == sym).and_then(|it| it.1),
+                    rank: (self.task.file).map_or(0, |file| self.p.files.rank_of_file(file)),
+                    from: self.p.rank_of_first_dependent(sym),
+                    is_provisional: false,
+                    enters: sym,
+                    first_use: None,
                     compared: 0,
                     failed: 0,
                     void_targets: 0,
@@ -2392,6 +2562,97 @@ impl<'p> Checker<'p> {
             }
         }
         variances
+    }
+
+    /// Called after `begin_task`. `first_rank`: of the first file of the task. `is_read_later`: see `begin_task`.
+    ///
+    /// Of each provisional cycle (`EntryOrder`) that a later file has measured, the task notes where
+    /// it touches it first: had nothing been published, it would have entered the cycle there.
+    ///
+    /// A cache hit on the variances of a symbol outside the cycle that were measured through it
+    /// hides the request for the member at which that measurement touched the cycle first, so it
+    /// counts as that request. A task that publishes notes which of its own lead into a cycle.
+    pub fn watch_provisional_variances(&mut self, first_rank: u32, is_read_later: bool) {
+        self.notes_cycle_entries = is_read_later;
+        let program = self.p;
+        let order = program.entry_order.lock();
+        for it in order.provisional.iter() {
+            if first_rank < it.rank {
+                let at = self.task.order_dependent_variances.len() as u32;
+                self.watched_variances.insert(it.sym, at);
+                self.task.order_dependent_variances.push(OrderDependent {
+                    sym: it.sym,
+                    variances: it.variances,
+                    root: Some(it.root),
+                    rank: it.rank,
+                    from: 0,
+                    is_provisional: true,
+                    enters: it.enters,
+                    first_use: None,
+                    compared: 0,
+                    failed: 0,
+                    void_targets: 0,
+                    inferred: 0,
+                });
+            }
+            if is_read_later {
+                self.cycle_entries.insert(it.sym, it.enters);
+            }
+            if first_rank < it.rank || is_read_later {
+                self.watched_variances_filter |= Self::order_dependent_bit(it.sym);
+            }
+        }
+    }
+
+    /// The task stores the variances of `sym`. A request for them has entered a cycle of several
+    /// symbols at `member`, or has read what is stored for it before that of any other member.
+    fn note_cycle_entry(&mut self, sym: Sym, member: Sym, variances: &'s [u8]) {
+        self.cycle_entries.insert(sym, member);
+        self.watched_variances_filter |= Self::order_dependent_bit(sym);
+        if member != sym {
+            self.task.leads_into_cycles.push(LeadsIntoCycle {
+                sym,
+                member,
+                variances,
+            });
+        }
+    }
+
+    /// A request for the variances of `sym` is answered from what is stored.
+    #[inline]
+    fn note_stored_variances_read(&mut self, sym: Sym) {
+        if self.watched_variances_filter & Self::order_dependent_bit(sym) != 0 {
+            self.note_cycle_touched_through(sym);
+        }
+    }
+
+    #[cold]
+    fn note_cycle_touched_through(&mut self, sym: Sym) {
+        if let Some(&at) = self.watched_variances.get(&sym) {
+            self.note_first_use(at);
+        }
+        if self.in_variance_computation
+            && let Some(&member) = self.cycle_entries.get(&sym)
+        {
+            self.first_member_touched.get_or_insert(member);
+        }
+    }
+
+    /// The first use of a provisional cycle by the task. Nothing else that leads into it is watched any longer.
+    fn note_first_use(&mut self, at: u32) {
+        let visiting = self.task.file;
+        let watched = &mut self.task.order_dependent_variances;
+        watched[at as usize].first_use =
+            Some(visiting.map_or(0, |file| self.p.files.rank_of_file(file)));
+        let root = watched[at as usize].root;
+        self.watched_variances
+            .retain(|_, at| watched[*at as usize].root != root);
+        let keys = self
+            .watched_variances
+            .keys()
+            .chain(self.cycle_entries.keys());
+        self.watched_variances_filter =
+            keys.fold(0, |filter, &sym| filter | Self::order_dependent_bit(sym));
     }
 
     #[inline]
@@ -2457,8 +2718,11 @@ impl<'p> Checker<'p> {
     /// `variances_of`, as a list.
     fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
         match self.p.variances.get_ref(&mut self.task, &sym) {
-            Some(known) => List::Kept(known),
-            None => List::Own(self.variances_worker(sym).to_vec()),
+            Some(known) => {
+                self.note_stored_variances_read(sym);
+                List::Kept(known)
+            }
+            None => List::Kept(self.variances_worker(sym)),
         }
     }
 
@@ -2628,7 +2892,7 @@ impl<'p> Checker<'p> {
                     && self.is_reference_to_global(source, known::Object))
                 && self.is_weak_type(target)
                 && {
-                    let apparent = self.apparent_type(source);
+                    let apparent = self.reduced_apparent_type_as_object(source);
                     self.members(apparent).is_some_and(|m| {
                         let s = m.shape();
                         !(s.props.is_empty() && s.call.is_empty() && s.construct.is_empty())
@@ -2791,19 +3055,13 @@ impl<'p> Checker<'p> {
                 }
                 (PropSource::Literal(..), None) => true,
                 // The synthesized children property is declared in the attributes node, so it is
-                // checked like an explicit attribute. Children alone do not make the attributes
-                // type fresh (`createJsxAttributesTypeFromAttributesProperty`), so an explicit
-                // attribute is required. A property copied by a spread is declared elsewhere.
+                // checked like an explicit attribute. `JSX_CHILDREN` is set only where the
+                // attributes type is fresh. A property copied by a spread is declared elsewhere.
                 // A `Partial` shape holds only properties declared in the literal.
                 (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
                         || prop.flags.contains(PropFlags::WRITTEN)
-                        || is_jsx
-                            && prop.flags.contains(PropFlags::JSX_CHILDREN)
-                            && sm.shape().props.iter().any(|p| {
-                                matches!(p.source, PropSource::Literal(..))
-                                    || p.flags.contains(PropFlags::WRITTEN)
-                            })
+                        || is_jsx && prop.flags.contains(PropFlags::JSX_CHILDREN)
                 }
                 _ => false,
             };
@@ -2819,6 +3077,7 @@ impl<'p> Checker<'p> {
                         if let Some(&PropSource::Literal(file, p)) = Self::value_declaration(prop)
                             && r.error_node.0 == file
                         {
+                            let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
                         }
@@ -2830,6 +3089,7 @@ impl<'p> Checker<'p> {
                     // `prop.ValueDeclaration`
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
+                            let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let (hir, written) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, written.pos, self.end_of_prop_name(file, p));
                             matches!(written.key, PropKey::Name(_))
@@ -2975,7 +3235,7 @@ impl<'p> Checker<'p> {
 
     /// `hasCommonProperties`
     pub(super) fn has_common_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-        let apparent = self.apparent_type(source);
+        let apparent = self.reduced_apparent_type_as_object(source);
         let Some(sm) = self.members(apparent) else {
             return false;
         };
@@ -3003,7 +3263,7 @@ impl<'p> Checker<'p> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        mut is_related_to: impl FnMut(&mut Self, TypeId, TypeId) -> bool,
+        is_related_to: impl FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> Option<TypeId> {
         if !self.is_union(target) || !(self.is_object_type(source) || self.is_intersection(source))
         {
@@ -3022,64 +3282,12 @@ impl<'p> Checker<'p> {
         if telling.is_empty() {
             return None;
         }
-        // `discriminateTypeByDiscriminableItems`
-        let types = self.parts(target);
-        let mut include: SmallVec<[Ternary; 16]> = types
-            .iter()
-            .map(|&t| Ternary::of(!self.has_primitive_flag(t) && !self.reduced(t).is_never()))
-            .collect();
+        let mut items: SmallVec<[(Atom, TypeId); 8]> = SmallVec::new();
         for prop in telling {
-            let actual = self.type_of_prop(prop, sm.mapper);
-            // Non-matching members are removed only if some member matches: a discriminant that
-            // matches nothing excludes nothing.
-            let mut matched = false;
-            for (i, &t) in types.iter().enumerate() {
-                if !include[i].holds() {
-                    continue;
-                }
-                let Some(expected) = self.property_or_index_signature_type(t, prop.name) else {
-                    continue;
-                };
-                // `Distributed`: `never` is one type, and it is related to every type.
-                if actual.is_never()
-                    || (self.parts(actual).iter()).any(|&s| is_related_to(self, s, expected))
-                {
-                    matched = true;
-                } else {
-                    include[i] = Ternary::MAYBE;
-                }
-            }
-            for slot in &mut include {
-                if *slot == Ternary::MAYBE {
-                    *slot = Ternary::of(!matched);
-                }
-            }
+            items.push((prop.name, self.type_of_prop(prop, sm.mapper)));
         }
-        if !include.contains(&Ternary::FALSE) {
-            return None;
-        }
-        let kept: SmallVec<[TypeId; 8]> = types
-            .iter()
-            .zip(&include)
-            .filter(|(_, i)| **i == Ternary::TRUE)
-            .map(|(&t, _)| t)
-            .collect();
-        let filtered = self.union(&kept);
-        (!filtered.is_never()).then_some(filtered)
-    }
-
-    /// `getTypeOfPropertyOrIndexSignatureOfType`
-    fn property_or_index_signature_type(&mut self, t: TypeId, name: Atom) -> Option<TypeId> {
-        let apparent = self.apparent_type(t);
-        let members = self.members(apparent)?;
-        if let Some((prop, mapper)) = self.property_in(&members, name) {
-            return Some(self.type_of_prop_with_missing(prop, mapper));
-        }
-        // The property may not exist.
-        let value = self
-            .applicable_index_info_for_name(&members, name)
-            .map(|info| info.value)?;
-        Some(self.optional_property(value))
+        let discriminated = self.discriminate_by_items(target, &items, is_related_to);
+        (discriminated != target).then_some(discriminated)
     }
 
     // ───────────────────────────── unions and intersections ─────────────────────────────
@@ -3090,9 +3298,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
     ) -> Ternary {
         let target_is_union = matches!(td, TypeData::Union(_));
@@ -3134,6 +3342,9 @@ impl<'p> Checker<'p> {
             // still a JSX attributes type, where a name with a hyphen is always known. Nothing in
             // it is widened: alternatives do not get each other's properties.
             let state = if is_object_literal_kind(sd) {
+                if state & STATE_REGULAR == 0 {
+                    self.resolve_spread_symbols_of_regular_literal(source);
+                }
                 state | STATE_REGULAR
             } else {
                 state
@@ -3604,9 +3815,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
         recursion: u8,
     ) -> Ternary {
@@ -3693,12 +3904,14 @@ impl<'p> Checker<'p> {
         }
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let result = if r.expanding == REC_BOTH {
+            self.comparisons_of_deeply_nested_types += 1;
             Ternary::MAYBE
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
         // With reporting the result can differ (`relate_variances`), so it is not cached.
-        let stored = self.end_scope(scope).ok().filter(|_| !REPORT);
+        let ended = self.end_scope(scope).ok();
+        let stored = ended.filter(|_| !REPORT);
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -3728,7 +3941,7 @@ impl<'p> Checker<'p> {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
-            } else if let Some(stored) = stored
+            } else if let Some(stored) = ended
                 && !is_cut_short
             {
                 self.insert_relation(key, FAILED | propagating, stored);
@@ -3902,7 +4115,7 @@ impl<'p> Checker<'p> {
     /// number of nested ones, provided that type has a symbol. `Id<{ x: .. }>` is then
     /// distinguished by the type literal it is applied to. Returned with its `TypeData`.
     #[inline]
-    fn mapped_target_with_symbol(&mut self, t: TypeId) -> (TypeId, &'p TypeData) {
+    fn mapped_target_with_symbol(&mut self, t: TypeId) -> (TypeId, &'p TypeData<'p>) {
         let data = self.data(t);
         if is_mapped_kind(data) {
             let t = self.target_with_symbol_of_mapped(t);
@@ -4066,9 +4279,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
     ) -> Ternary {
         let saved = REPORT.then(|| r.get_error_state());
@@ -4172,7 +4385,7 @@ impl<'p> Checker<'p> {
             // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
             // `T & U` resolves to where `U` extends `any`.
             if self.members(apparent).is_none() {
-                let none = self.synth(Shape::default());
+                let none = self.synth(Shape::new_in(self.arena));
                 return self.properties_related_to_noting::<REPORT>(
                     r,
                     source,
@@ -4195,7 +4408,7 @@ impl<'p> Checker<'p> {
         }
         // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
         // types, so we only need to check the properties of the first type without index signature".
-        let mut props: Vec<Prop> = Vec::new();
+        let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
         for &current in &members {
             let Some(of_current) = self.members(current) else {
                 continue;
@@ -4204,7 +4417,7 @@ impl<'p> Checker<'p> {
                 if props.iter().all(|it| it.name != prop.name)
                     && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
                 {
-                    let mut combined = combined.clone();
+                    let mut combined = combined.clone_in(self.arena);
                     self.instantiate_prop(&mut combined, mapper);
                     props.push(combined);
                 }
@@ -4215,7 +4428,7 @@ impl<'p> Checker<'p> {
         }
         let properties = self.synth(Shape {
             props,
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         });
         self.properties_related_to_noting::<REPORT>(
             r,
@@ -4295,9 +4508,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
     ) -> Ternary {
         let relation = r.relation;
@@ -4981,9 +5194,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
         shared: &mut WorkerState,
     ) -> Ternary {
@@ -5172,9 +5385,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         state: u8,
         primitive_or_keyword: (bool, bool),
     ) -> Ternary {
@@ -5706,6 +5919,10 @@ impl<'p> Checker<'p> {
         if self.provisional_shapes.len() == provisional {
             *both = Some((sm, tm));
         }
+        // `getPropertyOfType(source, name)`
+        if !self.never_in_progress.is_empty() && !tm.shape().props.is_empty() {
+            self.reduce_apparent_type_of_intersection_in_progress(source);
+        }
         // `anyFunctionType` has no `ObjectFlagsObjectLiteral`.
         let require_optional_properties = r.relation.is_subtype()
             && (!self.is_object_literal_type(source) || self.is_any_function_type(source))
@@ -5737,7 +5954,7 @@ impl<'p> Checker<'p> {
                         if !self.is_static_private_name(tp)
                             && (require_optional_properties
                                 || !tp.flags.contains(PropFlags::OPTIONAL))
-                            && self.property_of_type(&sm, tp.name).is_none()
+                            && self.property_in(&sm, tp.name).is_none()
                         {
                             unmatched.push(tp);
                         }
@@ -5790,7 +6007,9 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
-            let Some((sp, source_mapper)) = self.property_among(&sm, &mut inherited, tp.name)
+            let has_properties = properties.unwrap_or(source);
+            let Some((sp, source_mapper)) =
+                self.property_among(has_properties, &sm, &mut inherited, tp.name)
             else {
                 continue;
             };
@@ -6101,9 +6320,9 @@ impl<'p> Checker<'p> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sd: &'p TypeData,
+        sd: &'p TypeData<'p>,
         target: TypeId,
-        td: &'p TypeData,
+        td: &'p TypeData<'p>,
         construct: bool,
         state: u8,
         both: Option<(Members<'p>, Members<'p>)>,
@@ -6588,7 +6807,10 @@ impl<'p> Checker<'p> {
             }
         }
         let source_type_params = self.sig_type_params(source);
+        let mut source_instantiated_from = None;
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
+            // `instantiateSignature`: `result.target = signature`
+            source_instantiated_from = Some(Some(source));
             source = self.instantiate_sig_in_context(source, target, true, &mut |c, s, t| {
                 c.is_related_to_ex::<false>(r, s, t, REC_BOTH, state) != Ternary::FALSE
             });
@@ -6643,7 +6865,12 @@ impl<'p> Checker<'p> {
         } else {
             None
         };
-        let mut actual_from = (None, None);
+        // `tryGetTypeAtPosition`: a cycle through the type of a parameter is found here.
+        let [sp, tp] = [(source, sp), (target, tp)].map(|(sig, params)| match params {
+            List::Own(_) => self.sig_params_compared_up_to(sig, param_count),
+            stored => stored,
+        });
+        let mut actual_from = (source_instantiated_from, None);
         for i in 0..param_count {
             let (source_type, target_type) = if Some(i) == rest_index {
                 (
@@ -6750,21 +6977,11 @@ impl<'p> Checker<'p> {
         if check_mode & IGNORE_RETURN_TYPES != 0 {
             return result;
         }
-        // A return type whose resolution is in progress is provisionally `any`, and no error is
-        // reported for that.
-        let target_return = if self.is_resolving_return_type(target) {
-            TypeId::ANY
-        } else {
-            self.sig_return(target)
-        };
+        let target_return = self.non_circular_return_type_of_signature(target);
         if target_return == TypeId::VOID || target_return == TypeId::ANY {
             return result;
         }
-        let source_return = if self.is_resolving_return_type(source) {
-            TypeId::ANY
-        } else {
-            self.sig_return(source)
-        };
+        let source_return = self.non_circular_return_type_of_signature(source);
         if let Some(expected) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
                 Some(actual) => {
@@ -6972,7 +7189,8 @@ impl<'p> Checker<'p> {
         // properties. Under the strict subtype relation only a fresh object literal does, so that
         // `{ [x: string]: X }` is a strict subtype of `{}` and not also the reverse.
         if state & STATE_SOURCE == 0
-            && (r.relation != Relation::StrictSubtype || self.is_fresh_object_literal_type(source))
+            && (r.relation != Relation::StrictSubtype
+                || state & STATE_REGULAR == 0 && self.is_fresh_object_literal_type(source))
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {
@@ -7076,7 +7294,7 @@ impl<'p> Checker<'p> {
                 if matches!(
                     shape.literal,
                     Literalness::OfUnknown | Literalness::AutoArray | Literalness::OfLiteralKeyof
-                ) =>
+                ) || Self::is_any_function_shape(shape) =>
             {
                 false
             }

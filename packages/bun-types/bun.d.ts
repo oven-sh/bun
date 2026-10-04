@@ -3504,6 +3504,34 @@ declare module "bun" {
     optimizeImports?: string[];
 
     /**
+     * Type check the entrypoints and everything they import, like `bun check`.
+     * Equivalent to `--check` in the CLI.
+     *
+     * A type error fails the build like any other build error: nothing is
+     * written, and each error is a {@link BuildMessage} whose message starts
+     * with TypeScript's error code.
+     *
+     * The compiler options come from the `tsconfig.json` of the project.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   check: true,
+     *   throw: false,
+     * });
+     * for (const log of result.logs) {
+     *   // TS2322: Type 'string' is not assignable to type 'number'.
+     *   console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+     * }
+     * ```
+     */
+    check?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *

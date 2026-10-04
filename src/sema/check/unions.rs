@@ -6,7 +6,7 @@ use super::*;
 /// `compareNodes`
 type Place = (bool, FileId, u32);
 
-/// The members of a union under construction.
+/// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
 /// The pattern literal types of a union by the text they start with. A string literal only matches
@@ -26,7 +26,7 @@ impl<'p> PatternsByPrefix<'p> {
     const WORTHWHILE: usize = 16;
     const NONE: u32 = u32::MAX;
 
-    fn new(c: &Checker<'p>, patterns: &[TypeId]) -> Self {
+    fn new(c: &Checker<'p, '_>, patterns: &[TypeId]) -> Self {
         let atoms = c.atoms();
         let (mut sorted, mut others) = (Vec::with_capacity(patterns.len()), Vec::new());
         for (at, &pattern) in patterns.iter().enumerate() {
@@ -100,7 +100,7 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     fn add_to_union(&self, out: &mut Flat, ty: TypeId) {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
@@ -111,9 +111,9 @@ impl<'p> Checker<'p> {
                 | Intrinsic::ImplicitNever,
             ) => {}
             // `TypeFlagsAny`: the union is `anyType`.
-            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::IntrinsicMarker) => {
-                out.push(TypeId::ANY)
-            }
+            TypeData::Intrinsic(
+                Intrinsic::Auto | Intrinsic::IntrinsicMarker | Intrinsic::NonInferrableAny,
+            ) => out.push(TypeId::ANY),
             _ => out.push(ty),
         }
     }
@@ -140,6 +140,7 @@ impl<'p> Checker<'p> {
                         a,
                         TypeId::AUTO
                             | TypeId::INTRINSIC_MARKER
+                            | TypeId::NON_INFERRABLE_ANY
                             | TypeId::SILENT_NEVER
                             | TypeId::UNREACHABLE_NEVER
                             | TypeId::IMPLICIT_NEVER
@@ -373,7 +374,7 @@ impl<'p> Checker<'p> {
                 .find(|&ty| matches!(self.data(ty), TypeData::Union(all) if all[..] == *members));
             return match whole {
                 Some(whole) => whole,
-                None => self.intern(TypeData::Union(Box::from(members))),
+                None => self.intern_key(TypeKey::Union(members)),
             };
         }
         // `containsType` tests identity.
@@ -401,15 +402,16 @@ impl<'p> Checker<'p> {
             // `insertType`
             origin.extend_from_slice(&named);
             self.sort_types(&mut origin);
-            UnionOrigin::Union(origin.into())
+            OriginKey::Union(&origin)
         } else {
-            UnionOrigin::None
+            OriginKey::None
         };
-        self.types().intern_with(
-            TypeData::Union(Box::from(members)),
-            Provenance {
+        self.types().intern_key_with(
+            TypeKey::Union(members),
+            ProvenanceKey {
+                alias: None,
                 origin,
-                ..Provenance::default()
+                is_enum: false,
             },
         )
     }
@@ -773,9 +775,10 @@ impl<'p> Checker<'p> {
                     _ => {
                         // The remainder of a denormalized origin, unless a member inside one of its
                         // unions was removed.
-                        let mut new_origin = UnionOrigin::None;
+                        let mut new_origin = OriginKey::None;
+                        let left: Vec<TypeId>;
                         if let UnionOrigin::Union(origin) = self.origin(ty) {
-                            let left: Vec<TypeId> = origin
+                            left = origin
                                 .iter()
                                 .copied()
                                 .filter(|u| self.is_union(*u) || kept.contains(u))
@@ -784,14 +787,15 @@ impl<'p> Checker<'p> {
                                 if let [only] = left[..] {
                                     return only;
                                 }
-                                new_origin = UnionOrigin::Union(left.into());
+                                new_origin = OriginKey::Union(&left);
                             }
                         }
-                        self.types().intern_with(
-                            TypeData::Union(Box::from(&kept[..])),
-                            Provenance {
+                        self.types().intern_key_with(
+                            TypeKey::Union(&kept),
+                            ProvenanceKey {
+                                alias: None,
                                 origin: new_origin,
-                                ..Provenance::default()
+                                is_enum: false,
                             },
                         )
                     }
@@ -940,13 +944,17 @@ impl<'p> Checker<'p> {
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
-                ..
+                mapper,
             } => {
                 // In JavaScript `o.x = 1` gives the `{}` that `o` is initialized with a member.
                 let bound = self.bound(*file);
                 let symbol = bound.expr_symbol[e.idx()];
                 matches!(self.hir(*file)[*e].kind, ExprKind::Object(props) if props.is_empty())
                     && (symbol.is_none() || bound.symbols[symbol.idx()].exports.is_none())
+                    // `instantiateAnonymousType` resolves no members, and `getObjectTypeInstantiation`
+                    // instantiates a literal with all its outer type parameters: `{} & T` with `C`
+                    // for `T` is `{} & C`.
+                    && (self.types().mapping(*mapper).iter()).all(|p| p.0 == p.1)
             }
             _ => false,
         }
@@ -968,7 +976,7 @@ impl<'p> Checker<'p> {
     /// add to it.
     fn add_types_to_intersection(
         &mut self,
-        set: &mut Vec<TypeId>,
+        set: &mut Flat,
         mut includes: u32,
         types: &[TypeId],
     ) -> u32 {
@@ -1043,10 +1051,13 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
+        if let [only] = types {
+            return *only;
+        }
         let created = self.union(types);
         match alias {
             Some((alias, type_arguments)) if self.is_union(created) => {
-                self.with_alias(created, alias, type_arguments)
+                self.union_type_with_alias(created, alias, type_arguments)
             }
             _ => created,
         }
@@ -1059,7 +1070,7 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
         no_constraint_reduction: bool,
     ) -> (TypeId, bool) {
-        let mut set: Vec<TypeId> = Vec::with_capacity(types.len());
+        let mut set = Flat::with_capacity(types.len());
         let includes = self.add_types_to_intersection(&mut set, 0, types);
         if includes & tf::NEVER != 0 {
             let never = if set.contains(&TypeId::SILENT_NEVER) {
@@ -1133,7 +1144,7 @@ impl<'p> Checker<'p> {
             });
         let is_non_nullable = includes & tf::DEFINITELY_NON_NULLABLE != 0 || is_distributed_over;
         // `removeRedundantSupertypes`
-        set.retain(|&t| {
+        set.retain(|&mut t| {
             !(t == TypeId::STRING
                 && includes & (tf::STRING_LITERAL | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) != 0
                 || t == TypeId::NUMBER && includes & tf::NUMBER_LITERAL != 0
@@ -1177,10 +1188,7 @@ impl<'p> Checker<'p> {
             }
         }
         if includes & tf::UNION == 0 {
-            return (
-                self.intern(TypeData::Intersection(set.into_boxed_slice())),
-                true,
-            );
+            return (self.intern_key(TypeKey::Intersection(&set)), true);
         }
         // `intersectionTypes`: the cached result for the same types.
         // `len(typeSet) >= 3 && len(types) > 2`. tsgo omits it from the key, so there the first
@@ -1222,7 +1230,7 @@ impl<'p> Checker<'p> {
     fn distribute_intersection(
         &mut self,
         actual: usize,
-        mut set: Vec<TypeId>,
+        mut set: Flat,
         no_constraint_reduction: bool,
     ) -> (TypeId, bool) {
         if self.intersect_unions_of_primitive_types(&mut set) {
@@ -1272,7 +1280,7 @@ impl<'p> Checker<'p> {
         let size = self.get_cross_product_union_size(&set);
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
-        let mut constituents = set.clone();
+        let mut constituents = set.to_vec();
         for i in 0..size {
             let mut n = i;
             for j in (0..set.len()).rev() {
@@ -1293,10 +1301,7 @@ impl<'p> Checker<'p> {
             && self.constituent_count_of_types(&intersections)
                 > self.constituent_count_of_types(&set)
         {
-            return (
-                self.with_origin(union, UnionOrigin::Intersection(set.into())),
-                true,
-            );
+            return (self.with_origin(union, OriginKey::Intersection(&set)), true);
         }
         (union, self.is_union(union))
     }
@@ -1324,7 +1329,7 @@ impl<'p> Checker<'p> {
 
     /// `extractRedundantTemplateLiterals`: `get${T}` is redundant next to `"getX"`. `false`: the
     /// intersection is empty, as for `get${string}` and `"setX"`.
-    fn extract_redundant_template_literals(&mut self, set: &mut Vec<TypeId>) -> bool {
+    fn extract_redundant_template_literals(&mut self, set: &mut Flat) -> bool {
         let literals: Vec<TypeId> = set
             .iter()
             .copied()
@@ -1379,7 +1384,7 @@ impl<'p> Checker<'p> {
     /// `intersectUnionsOfPrimitiveTypes`: multiple unions of primitives, which is what `keyof (A |
     /// B | C)` produces, are intersected as sets. The common members replace the first union, and
     /// the other unions are removed. `false`: there are fewer than two.
-    fn intersect_unions_of_primitive_types(&mut self, set: &mut Vec<TypeId>) -> bool {
+    fn intersect_unions_of_primitive_types(&mut self, set: &mut Flat) -> bool {
         let unions: Vec<TypeId> = set
             .iter()
             .copied()
@@ -1491,12 +1496,7 @@ impl<'p> Checker<'p> {
             }
             (None, &TypeData::TypeParam(file, tp, _)) => self.hir(file)[tp].name,
             (None, &TypeData::StringMapping { kind, .. }) => {
-                return Some(match kind {
-                    StringMappingKind::Uppercase => &b"Uppercase"[..],
-                    StringMappingKind::Lowercase => &b"Lowercase"[..],
-                    StringMappingKind::Capitalize => &b"Capitalize"[..],
-                    StringMappingKind::Uncapitalize => &b"Uncapitalize"[..],
-                });
+                return Some(super::print::string_mapping_name(kind));
             }
             _ => return None,
         };
@@ -1548,9 +1548,25 @@ impl<'p> Checker<'p> {
             TypeData::Fns { ref decls, .. } => decls
                 .first()
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
-            TypeData::Synth(ref shape) => shape
-                .symbol_declared_at
-                .and_then(|(file, pos, _)| at(file, pos)),
+            TypeData::Synth(ref shape) => match shape.symbol_declared_at {
+                Some((file, pos, _)) => at(file, pos),
+                // `getOrCreateTypeFromSignature`: the symbol has the declaration of the signature.
+                // That of `getInstantiatedTypePart` has none, and comes after those that have one.
+                None if shape.literal == Literalness::No
+                    && shape.instantiation_expression.is_none()
+                    && shape.props.is_empty()
+                    && shape.index.is_empty() =>
+                {
+                    match (&shape.call[..], &shape.construct[..]) {
+                        ([sig], []) | ([], [sig]) => {
+                            let (file, func, _) = self.sig_decl(*sig)?;
+                            at(file, self.hir(file)[func].start)
+                        }
+                        _ => None,
+                    }
+                }
+                None => None,
+            },
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
             TypeData::UniqueSymbol { symbol, .. } => match symbol {
@@ -1611,15 +1627,16 @@ impl<'p> Checker<'p> {
     /// alias sorts before another symbol with its name. In those cases `CompareTypes` falls through
     /// to the structure of the types, and is not a valid ordering.
     fn compare_type_names(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        let (x, y) = (self.alias_of_type(a), self.alias_of_type(b));
-        let symbol = |alias: &Option<(Sym, Vec<TypeId>)>| alias.as_ref().map(|alias| alias.0);
-        some_first(self.type_name(a, symbol(&x)), self.type_name(b, symbol(&y))).then_with(
-            || match (&x, &y) {
-                (Some((s, x)), Some((t, y))) if s == t => self.compare_type_lists(x, y),
-                (Some((s, _)), Some((t, _))) => self.compare_symbols(*s, *t),
-                _ => y.is_some().cmp(&x.is_some()),
-            },
-        )
+        // FOR SPEED: the alias type arguments are computed only for two instantiations of one alias.
+        let (x, y) = (self.alias_symbol_of_type(a), self.alias_symbol_of_type(b));
+        some_first(self.type_name(a, x), self.type_name(b, y)).then_with(|| match (x, y) {
+            (Some(s), Some(t)) if s == t => {
+                let arguments = |ty: TypeId| self.alias_of_type(ty).map_or(Vec::new(), |it| it.1);
+                self.compare_type_lists(&arguments(a), &arguments(b))
+            }
+            (Some(s), Some(t)) => self.compare_symbols(s, t),
+            _ => y.is_some().cmp(&x.is_some()),
+        })
     }
 
     /// `compareTypeMappers` for instantiations of the same declaration: by the types they map the
@@ -1901,12 +1918,80 @@ impl<'p> Checker<'p> {
 
     /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,
     /// this falls back to `creation_order`.
+    #[inline]
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        match (self.data(a), self.data(b)) {
+            // FOR SPEED: the members of `keyof` of a large type, and of a template literal type.
+            // They have the same flags and no name: the text decides, then the freshness.
+            (
+                &TypeData::StringLit { value: x, fresh: f },
+                &TypeData::StringLit { value: y, fresh: g },
+            ) if x != y || f != g => {
+                let atoms = &self.atoms();
+                match atoms.bytes(x).cmp(atoms.bytes(y)).then_with(|| f.cmp(&g)) {
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    order => order,
+                }
+            }
+            // Likewise: the value decides (`cmp.Compare`: NaN first), then the freshness.
+            (
+                &TypeData::NumberLit { bits: x, fresh: f },
+                &TypeData::NumberLit { bits: y, fresh: g },
+            ) if x != y || f != g => {
+                let (x, y) = (f64::from_bits(x), f64::from_bits(y));
+                let by_value = (y.is_nan().cmp(&x.is_nan()))
+                    .then_with(|| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal));
+                match by_value.then_with(|| f.cmp(&g)) {
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    order => order,
+                }
+            }
+            // The members of an enum. They have the same flags, no alias and no name: the
+            // declarations decide.
+            (&TypeData::EnumLit { member: s, .. }, &TypeData::EnumLit { member: t, .. })
+                if s != t =>
+            {
+                match self.compare_symbols(s, t) {
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    order => order,
+                }
+            }
+            (TypeData::Intersection(_), TypeData::Intersection(_)) => {
+                let (s, t) = self.members_that_order_intersections(a, b);
+                self.compare_types_ordered_by(a, b, s, t)
+            }
+            _ => self.compare_types_ordered_by(a, b, a, b),
+        }
+    }
+
+    /// `compareTypeLists` calls `CompareTypes`: of two intersections, the first pair of distinct
+    /// members decides, by the ids if nothing else orders the two.
+    fn members_that_order_intersections(&self, a: TypeId, b: TypeId) -> (TypeId, TypeId) {
+        let (mut s, mut t) = (a, b);
+        while let (TypeData::Intersection(x), TypeData::Intersection(y)) =
+            (self.data(s), self.data(t))
+            && x.len() == y.len()
+            && self.compare_type_names(s, t).is_eq()
+            && let Some((&first, &second)) = x.iter().zip(y.iter()).find(|pair| pair.0 != pair.1)
+        {
+            (s, t) = (first, second);
+        }
+        (s, t)
+    }
+
+    /// `compare_types(a, b)`. `s`, `t`: see `members_that_order_intersections`.
+    fn compare_types_ordered_by(
+        &self,
+        a: TypeId,
+        b: TypeId,
+        s: TypeId,
+        t: TypeId,
+    ) -> std::cmp::Ordering {
         let types = self.types();
         types.take_has_ordered_by_own_id();
         let order = self
-            .compare_types_without_ids(a, b)
-            .then_with(|| types.creation_order(a, b));
+            .compare_types_without_ids(s, t)
+            .then_with(|| types.creation_order(s, t));
         // Here, or further in: `mapping_in_declaration_order`.
         if types.take_has_ordered_by_own_id() {
             types.mark_ordered_by_id(a);
@@ -1960,6 +2045,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn candidates_are_the_patterns_whose_first_text_is_a_prefix() {
         let (texts, values) = (strings(4), strings(6));
         // Every third text is left out, every fifth is there twice, and two patterns have no text.

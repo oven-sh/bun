@@ -844,6 +844,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
+            ..Default::default()
         },
     ) {
         Ok(a) => a,

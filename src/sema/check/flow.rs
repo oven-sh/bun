@@ -12,14 +12,6 @@ use crate::bind::{
 };
 use smallvec::{SmallVec, smallvec};
 
-/// For `(FileId, FlowId)` as the key of a table.
-impl From<FlowId> for u32 {
-    #[inline]
-    fn from(flow: FlowId) -> u32 {
-        flow.0
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Root {
     Symbol(SymbolId),
@@ -129,9 +121,14 @@ impl FlowMemo {
 #[derive(Copy, Clone)]
 enum Crossing {
     No,
+    /// `flowContainer` is nil.
     Yes,
-    /// It is if the variable is no longer assigned after the expression is reached. That is
-    /// evaluated when a walk reaches the start of a function.
+    /// `flowContainer` is this many functions out from that of the reference.
+    Times(u32),
+    /// A constant, read by the expression: up to `declarationContainer`. That is evaluated when a
+    /// walk reaches the start of a function.
+    UpToDeclaration(SymbolId, ExprId),
+    /// The same, if the variable is no longer assigned after the expression is reached.
     PastLastAssignment(SymbolId, ExprId),
 }
 
@@ -205,6 +202,9 @@ struct Walk {
     initial: TypeId,
     start: Start,
     crossing: Crossing,
+    /// How many starts of functions the path to the current flow node has crossed. Each
+    /// antecedent of a label reaches the start of its function on a path of its own.
+    crossed: u32,
     labels: Labels,
     /// The `finally` blocks being traversed backwards: the start of each, and the label whose
     /// antecedents are used instead.
@@ -472,6 +472,7 @@ impl Walk {
             } else {
                 Crossing::No
             },
+            crossed: 0,
             labels: Labels::default(),
             reduced: Vec::new(),
             round_labels: Vec::new(),
@@ -521,7 +522,7 @@ struct Access {
     non_null: bool,
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// The result of `work`, and the permission to store it in a memo table: it is finished, and computing it again would raise none of
     /// the flags that relations, unions and intersections raise for their callers.
     fn run_memoizable<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> (T, Option<Stored>) {
@@ -613,6 +614,7 @@ impl<'p> Checker<'p> {
                 | Intrinsic::Error
                 | Intrinsic::Auto
                 | Intrinsic::IntrinsicMarker
+                | Intrinsic::NonInferrableAny
                 | Intrinsic::Unknown
                 | Intrinsic::Unresolved,
             )
@@ -1570,7 +1572,7 @@ impl<'p> Checker<'p> {
     /// `isReadonlySymbol(getPropertyOfType(object, name))`
     fn is_readonly_property(&mut self, object: TypeId, name: Atom) -> bool {
         self.get_property_of_type(object, name)
-            .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::READONLY))
+            .is_some_and(|(prop, _)| self.is_readonly_symbol(prop))
     }
 
     /// `getNarrowedTypeOfSymbol`. The type of a variable bound by a pattern that destructures a
@@ -1722,17 +1724,84 @@ impl<'p> Checker<'p> {
         self.indexed_access(narrowed, index)
     }
 
-    /// Whether narrowing from outside a function is still valid inside it, evaluated once per walk.
+    /// `container != f.flowContainer` at the start of a function. What depends on the variable is
+    /// evaluated once per walk.
     fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
-        let crosses = match walk.crossing {
-            Crossing::No => false,
-            Crossing::Yes => true,
+        let file = walk.reference.file;
+        let times = match walk.crossing {
+            Crossing::No => return false,
+            Crossing::Yes => return true,
+            Crossing::Times(times) => times,
+            Crossing::UpToDeclaration(symbol, e) => {
+                self.flow_containers_up_to_declaration(file, symbol, e)
+            }
             Crossing::PastLastAssignment(symbol, e) => {
-                self.is_past_last_assignment(walk.reference.file, symbol, e)
+                if self.is_past_last_assignment(file, symbol, e) {
+                    self.flow_containers_up_to_declaration(file, symbol, e)
+                } else {
+                    0
+                }
             }
         };
-        walk.crossing = if crosses { Crossing::Yes } else { Crossing::No };
-        crosses
+        walk.crossing = match times {
+            0 => Crossing::No,
+            u32::MAX => Crossing::Yes,
+            _ => Crossing::Times(times),
+        };
+        if times != u32::MAX && walk.crossed >= times {
+            return false;
+        }
+        walk.crossed += 1;
+        true
+    }
+
+    /// `checkIdentifier`: how many times `flowContainer` moves to the enclosing container, from
+    /// that of `e` until it is `declarationContainer`. `u32::MAX`: no walk can leave
+    /// `declarationContainer`, or a container is not known.
+    fn flow_containers_up_to_declaration(&self, file: FileId, symbol: SymbolId, e: ExprId) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The parent of `f`, if `IsFunctionExpressionOrArrowFunction` or
+        // `IsObjectLiteralOrClassExpressionMethodOrAccessor`. Only these have a start with `outer`.
+        let around = |f: FnId| match (hir[f].kind, bound.fns[f.idx()].owner) {
+            (
+                FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter,
+                FnOwner::Expr(x),
+            ) => Some(bound.expr_parent[x.idx()]),
+            (FnKind::Method | FnKind::Getter | FnKind::Setter, FnOwner::Member(m)) => {
+                match bound.member_owner[m.idx()] {
+                    MemberOwner::Class(c) => match bound.class_owner[c.idx()] {
+                        crate::bind::ClassOwner::Expr(x) => Some(Parent::Expr(x)),
+                        crate::bind::ClassOwner::Stmt(_) => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let declared_in = match self.root_declaration(file, symbol) {
+            PatParent::Param(p) => Parent::ParamDefault(p),
+            PatParent::Var(d) if bound.var_stmt[d.idx()].is_some() => {
+                bound.stmt_parent[bound.var_stmt[d.idx()].idx()]
+            }
+            _ => return u32::MAX,
+        };
+        let declaration_container = self.get_control_flow_container(file, declared_in);
+        if !matches!(declaration_container, Container::Fn(f) if around(f).is_some()) {
+            return u32::MAX;
+        }
+        let mut flow_container = self.get_control_flow_container(file, bound.expr_parent[e.idx()]);
+        let mut times = 0;
+        while flow_container != declaration_container {
+            let parent = match flow_container {
+                Container::Fn(f) => around(f),
+                Container::Other => return u32::MAX,
+                _ => None,
+            };
+            let Some(parent) = parent else { break };
+            times += 1;
+            flow_container = self.get_control_flow_container(file, parent);
+        }
+        times
     }
 
     /// `initialType` without `assumeInitialized`: `undefined` for `autoType` and `autoArrayType`, else `declared | undefined`.
@@ -2730,7 +2799,7 @@ impl<'p> Checker<'p> {
 
     /// `replacePrimitivesWithLiterals`: `string` that compared equal to `"a"` becomes `"a"`.
     fn replace_primitives_with_literals(&mut self, ty: TypeId, literals: TypeId) -> TypeId {
-        fn is_pattern(c: &Checker<'_>, t: TypeId) -> bool {
+        fn is_pattern(c: &Checker<'_, '_>, t: TypeId) -> bool {
             matches!(
                 c.data(t),
                 TypeData::Template { .. } | TypeData::StringMapping { .. }
@@ -4041,7 +4110,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         // A type parameter can only be preserved where one is in scope.
-        let scope = self.scope_of_expr(file, e);
+        let scope = self.enclosing_scope_of_expr(file, e);
         if !self
             .type_params_in_scope(file, scope)
             .iter()
@@ -4106,26 +4175,14 @@ impl<'p> Checker<'p> {
         contains
     }
 
-    /// `FindAncestor(e, IsFunctionOrModuleBlock)`: `Parent::FnBody`, `Parent::Module` or `Parent::File`, and `Parent::None` for an
-    /// expression the binder has not reached.
-    pub(super) fn function_or_module_block_of(&self, file: FileId, e: ExprId) -> Parent {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut block = bound.expr_parent[e.idx()];
-        loop {
-            block = match block {
-                // A static block is not function-like, and an expression body is not a block.
-                Parent::FnBody(f)
-                    if hir[f].kind != FnKind::StaticBlock
-                        && matches!(hir[f].body, FnBody::Block(_)) =>
-                {
-                    return block;
-                }
-                Parent::Module(_) | Parent::File | Parent::None => return block,
-                Parent::Expr(x) if x.is_none() => Parent::None,
-                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
-                _ => self.outward(file, block),
-            };
-        }
+    /// `FindAncestor(e, IsFunctionOrModuleBlock)`
+    pub(super) fn function_or_module_block_of(&self, file: FileId, e: ExprId) -> Node {
+        let hir = self.hir(file);
+        hir.find_ancestor(hir.node(e), |n| match hir.kind(n) {
+            Kind::SourceFile | Kind::ModuleBlock => true,
+            Kind::Block => hir.kind(hir.parent(n)).is_function_like(),
+            _ => false,
+        })
     }
 
     /// `if c.flowAnalysisDisabled { return c.errorType }`, applied for the writer only: during
@@ -4146,7 +4203,7 @@ impl<'p> Checker<'p> {
     /// (`note_test`, as for `is_test_about`), a `switch`, an assignment target, the expression of a
     /// `for in`. Nothing else can change the type of a reference rooted at a name, except an
     /// assertion call: see `FlowMemo::in_call_statements`. Empty: some backward path through the
-    /// graph may be `MAX_FLOW_DEPTH` long, and the walk that detects that reports it.
+    /// graph may take `MAX_FLOW_DEPTH` invocations, and the walk that detects that reports it.
     #[inline(never)]
     fn index_narrowing_subjects(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -4178,11 +4235,31 @@ impl<'p> Checker<'p> {
                 | Flow::Assign { ref before, .. }
                 | Flow::Call { ref before, .. } => std::slice::from_ref(before),
             };
+            // The start of a function and a declaration, other than that of a `for in`, add no
+            // invocation of `getTypeAtFlowNode`: its loop goes on to the antecedent.
+            let invocations = match node {
+                Flow::Start { .. } | Flow::StartInvoked { .. } => 0,
+                Flow::Assign {
+                    target: FlowTarget::Pat(_),
+                    ..
+                } => 0,
+                Flow::Assign {
+                    target: FlowTarget::Var(d),
+                    ..
+                } => {
+                    let stmt = bound.var_stmt[d.idx()];
+                    let is_of_for_in = stmt.is_some()
+                        && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner)
+                            if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
+                    u32::from(is_of_for_in)
+                }
+                _ => 1,
+            };
             (highest[i], lengths[i]) = (i as u32, 1);
             for before in before.iter().filter(|before| before.is_some()) {
                 highest[i] = highest[i].max(before.0).max(highest[before.idx()]);
                 // 0 for the back edge of a loop, which has a higher number.
-                lengths[i] = lengths[i].max(lengths[before.idx()] + 1);
+                lengths[i] = lengths[i].max(lengths[before.idx()] + invocations);
             }
             longest = longest.max(lengths[i]);
             match node {
@@ -4351,7 +4428,16 @@ impl<'p> Checker<'p> {
         // A redeclaration of the name on the backward path leaves `a.b` at its declared type.
         let is_plain = if !reference.path.is_empty() {
             start == Start::Known
-        } else if symbol.flags.contains(SymFlags::ASSIGNED) || self.is_union(declared) {
+        } else if symbol.flags.contains(SymFlags::ASSIGNED) {
+            false
+        } else if memo.declaration_node[s.idx()] == u32::MAX
+            && matches!(symbol.decls[..], [Decl::Var(_)])
+        {
+            // `declare const x: T`: no node declares it. Every path ends at a start, with
+            // `initialType`.
+            start == Start::Known
+                || start == Start::Unsettled && self.assumes_initialized(file, e, declared)
+        } else if self.is_union(declared) {
             false
         } else {
             match symbol.decls[..] {
@@ -4421,7 +4507,7 @@ impl<'p> Checker<'p> {
                 Root::Symbol(s) => {
                     let flags = bound.symbols[s.idx()].flags;
                     if flags.contains(SymFlags::CONST) && declared != self.auto_array_type {
-                        Crossing::Yes
+                        Crossing::UpToDeclaration(s, e)
                     } else if flags.intersects(SymFlags::VARIABLE) {
                         Crossing::PastLastAssignment(s, e)
                     } else {
@@ -4719,6 +4805,47 @@ impl<'p> Checker<'p> {
         self.get_flow_type_of_reference(walk, flow)
     }
 
+    /// `array_literal_types_in` for the identifier `e`. `getTypeAtFlowAssignment`: a reference to a variable of `autoType` has the
+    /// type of the value assigned to it, with its `ObjectFlagsArrayLiteral`. The control flow analysis is repeated to find the values.
+    pub(super) fn array_literal_types_in_automatic_variable(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        all: &mut Vec<TypeId>,
+    ) -> SmallVec<[TypeId; 2]> {
+        // Not through a second variable: in a loop two of them can be assigned to each other.
+        if self.automatic_assignments.is_some() {
+            return SmallVec::new();
+        }
+        let symbol = self.bound(file).expr_symbol[e.idx()];
+        let declared = self.type_of_symbol(self.files().sym(file, symbol));
+        if !self.is_automatic_type(declared) {
+            return SmallVec::new();
+        }
+        self.automatic_assignments = Some(((file, e), Vec::new()));
+        self.flow_type_of(file, e, declared, Start::Unsettled);
+        let assignments = match &mut self.automatic_assignments {
+            Some((_, assignments)) => std::mem::take(assignments),
+            None => Vec::new(),
+        };
+        let (mut of_values, mut found) = (Vec::new(), SmallVec::<[TypeId; 2]>::new());
+        // Assigned on another path without the flag. The union of the two is not the type of an array literal.
+        let mut regular = SmallVec::<[TypeId; 2]>::new();
+        for (value, assigned) in assignments {
+            let from = of_values.len();
+            if (self.array_literal_types_in(file, value, &mut of_values)).contains(&assigned) {
+                found.push(assigned);
+            } else {
+                of_values.truncate(from);
+                regular.push(assigned);
+            }
+        }
+        self.automatic_assignments = None;
+        found.retain(|ty| !regular.contains(ty));
+        all.extend(of_values.into_iter().filter(|ty| !regular.contains(ty)));
+        found
+    }
+
     /// `t == c.autoType || t == c.autoArrayType`
     pub(super) fn is_automatic_type(&self, ty: TypeId) -> bool {
         ty == TypeId::AUTO || ty == self.auto_array_type
@@ -4752,56 +4879,6 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The parent of the node that `parent` represents, crossing function and class boundaries.
-    /// `None` also for parents that are not tracked: the default of a binding element, a computed
-    /// name, the initializer of an enum member, `extends`, a decorator, the body of a namespace,
-    /// and anything in a signature or in a member of an interface or a type literal.
-    #[inline]
-    pub fn parent_of(&self, file: FileId, parent: crate::bind::Parent) -> crate::bind::Parent {
-        use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
-        let bound = self.bound(file);
-        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
-            MemberOwner::Class(c) => match bound.class_owner[c.idx()] {
-                ClassOwner::Expr(e) => Parent::Expr(e),
-                ClassOwner::Stmt(s) => Parent::Stmt(s),
-            },
-            _ => Parent::None,
-        };
-        let of_fn = |f: FnId| match bound.fns[f.idx()].owner {
-            FnOwner::Expr(e) => Parent::Expr(e),
-            FnOwner::Stmt(s) => Parent::Stmt(s),
-            FnOwner::Member(m) => of_member(m),
-            _ => Parent::None,
-        };
-        match parent {
-            Parent::Expr(e) => bound.expr_parent[e.idx()],
-            Parent::Stmt(s) if s.is_none() => Parent::None,
-            Parent::Stmt(s) => bound.stmt_parent[s.idx()],
-            Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-            Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-            Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-            Parent::FnBody(f) => of_fn(f),
-            Parent::ParamDefault(p) => of_fn(bound.param_fn[p.idx()]),
-            Parent::MemberInit(m) => of_member(m),
-            _ => Parent::None,
-        }
-    }
-
-    /// `FindAncestor(e, IsFunctionOrSourceFile)`: the function that contains `e`, even if `e` is in
-    /// the default of a binding element or in a class nested there.
-    fn function_around(&self, file: FileId, e: ExprId) -> Option<FnId> {
-        let bound = self.bound(file);
-        let mut at = bound.expr_parent[e.idx()];
-        loop {
-            match at {
-                Parent::FnBody(f) => return Some(f),
-                Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
-                Parent::None | Parent::File | Parent::Module(_) => return None,
-                _ => at = self.outward(file, at),
-            }
-        }
-    }
-
     /// `isParameterOrMutableLocalVariable(symbol) && isPastLastAssignment(symbol, e)`
     pub(super) fn is_past_last_assignment(
         &mut self,
@@ -4820,55 +4897,49 @@ impl<'p> Checker<'p> {
             return false;
         }
         // `FindAncestor(symbol.ValueDeclaration, IsFunctionOrSourceFile)`
-        let declaring_function = match self.root_declaration(file, symbol) {
-            PatParent::Var(d) => self.enclosing_fn(file, Parent::Stmt(bound.var_stmt[d.idx()])),
-            PatParent::Param(p) => Some(bound.param_fn[p.idx()]),
-            _ => None,
-        };
+        let declaring_function = hir.get_containing_function(hir.node(pat));
         // `markNodeAssignmentsWorker`
         let from = bound.assignments.partition_point(|a| a.0.0 < symbol.0);
         bound.assignments[from..]
             .iter()
             .take_while(|a| a.0 == symbol)
             .all(|&(_, assignment)| {
-                self.function_around(file, assignment) == declaring_function
+                hir.get_containing_function(hir.node(assignment)) == declaring_function
                     && self.extend_assignment_position(file, assignment, hir[pat].pos) < hir[e].pos
             })
     }
 
-    /// `extendAssignmentPosition`
+    /// `extendAssignmentPosition`. Only a statement moves the position, and the first statement
+    /// around the function that declares the variable ends the climb.
     fn extend_assignment_position(&self, file: FileId, node: ExprId, declaration: u32) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let hir = self.hir(file);
         let mut pos = hir[node].pos;
-        let mut at = bound.expr_parent[node.idx()];
-        loop {
-            match at {
-                Parent::None | Parent::File | Parent::FnBody(_) | Parent::Module(_) => return pos,
-                Parent::Stmt(stmt) if stmt.is_some() => {
-                    if hir[stmt].start <= declaration {
-                        return pos;
-                    }
-                    if matches!(
-                        hir[stmt].kind,
-                        StmtKind::Var(_)
-                            | StmtKind::Expr(_)
-                            | StmtKind::If { .. }
-                            | StmtKind::DoWhile { .. }
-                            | StmtKind::While { .. }
-                            | StmtKind::For { .. }
-                            | StmtKind::ForIn { .. }
-                            | StmtKind::ForOf { .. }
-                            | StmtKind::Switch { .. }
-                            | StmtKind::Try { .. }
-                            | StmtKind::Class(_)
-                    ) {
-                        pos = hir[stmt].loc.end;
-                    }
+        let mut at = hir.parent(hir.node(node));
+        while at.is_some() {
+            if let NodeData::Stmt(stmt) = hir.data(at) {
+                if hir[stmt].start <= declaration {
+                    return pos;
                 }
-                _ => {}
+                if matches!(
+                    hir[stmt].kind,
+                    StmtKind::Var(_)
+                        | StmtKind::Expr(_)
+                        | StmtKind::If { .. }
+                        | StmtKind::DoWhile { .. }
+                        | StmtKind::While { .. }
+                        | StmtKind::For { .. }
+                        | StmtKind::ForIn { .. }
+                        | StmtKind::ForOf { .. }
+                        | StmtKind::Switch { .. }
+                        | StmtKind::Try { .. }
+                        | StmtKind::Class(_)
+                ) {
+                    pos = hir[stmt].loc.end;
+                }
             }
-            at = self.outward(file, at);
+            at = hir.parent(at);
         }
+        pos
     }
 
     fn evolving_array(&mut self, element: TypeId) -> TypeId {
@@ -5079,7 +5150,7 @@ impl<'p> Checker<'p> {
         let added = match hir[value].kind {
             ExprKind::Spread(inner) => {
                 let spread = self.context_free_type_of_expression(file, inner);
-                self.iterated_type(spread, false)
+                self.iterated_type_of_spread(spread)
             }
             _ => self.context_free_type_of_expression(file, value),
         };
@@ -5120,7 +5191,7 @@ impl<'p> Checker<'p> {
         // They count as if they had been deferred.
         let mut passed = 0;
         let mut flow = start;
-        let depth = walk.depth;
+        let (depth, crossed) = (walk.depth, walk.crossed);
         let mut incomplete = false;
         let is_shared_in_finally = !walk.reduced.is_empty() && bound.is_shared(start);
         let mut ty = loop {
@@ -5437,7 +5508,7 @@ impl<'p> Checker<'p> {
                 }
             }
         };
-        walk.depth = depth;
+        (walk.depth, walk.crossed) = (depth, crossed);
         if walk.too_deep {
             return FlowType::new(TypeId::ERROR, false);
         }
@@ -5648,6 +5719,11 @@ impl<'p> Checker<'p> {
             }
             let assigned = self.initial_or_assigned_type(walk, target);
             let assigned = self.widen_literal(assigned);
+            if let Some((at, assignments)) = &mut self.automatic_assignments
+                && *at == (file, reference.at)
+            {
+                assignments.push((value, assigned));
+            }
             return Some(if self.is_assignable(assigned, declared) {
                 assigned
             } else {
@@ -5825,7 +5901,7 @@ impl<'p> Checker<'p> {
                             return Some(element);
                         }
                     }
-                    let element = self.iterated_type(ty, false);
+                    let element = self.iterated_type_of_destructuring(ty);
                     // `includeUndefinedInIndexSignature`
                     Some(if self.p.files.options.no_unchecked_indexed_access {
                         self.with_missing(element)
@@ -5843,7 +5919,7 @@ impl<'p> Checker<'p> {
                         return None;
                     }
                     let ty = self.assigned_type(file, list)?;
-                    let element = self.iterated_type(ty, false);
+                    let element = self.iterated_type_of_destructuring(ty);
                     Some(self.array_of(element))
                 }
                 _ => None,
@@ -6019,27 +6095,15 @@ impl<'p> Checker<'p> {
         (self.has_explicit_type(prop)).then(|| self.type_of_prop(prop, mapper))
     }
 
-    /// Whether `getExplicitTypeOfSymbol` returns the type of `prop`: it is a method, or a property
-    /// whose value declaration has a type annotation. Not a getter, even an annotated one.
+    /// Whether `getExplicitTypeOfSymbol` returns the type of `prop`.
     fn has_explicit_type(&mut self, prop: &Prop) -> bool {
         if prop.flags.contains(PropFlags::ACCESSOR) {
             return false;
         }
         match &prop.source {
-            PropSource::Symbol(sym) => match self.files().value_declaration(*sym) {
-                Some((f, Decl::Member(m))) => {
-                    let member = &self.hir(f)[m];
-                    member.kind != MemberKind::Property || member.ty.is_some()
-                }
-                Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].ty.is_some(),
-                // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
-                Some((f, Decl::Expando(first) | Decl::ThisProperty(first))) => {
-                    let h = self.hir(f);
-                    matches!(h[first].kind, ExprKind::Assign { value, .. }
-                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()))
-                }
-                _ => self.explicit_type_of_symbol(*sym).is_some(),
-            },
+            PropSource::Symbol(sym) => self.explicit_type_of_symbol(*sym).is_some(),
+            // `SymbolFlagsMethod`. No other member has a type annotation.
+            PropSource::Literal(f, p) => self.hir(*f)[*p].kind == PropKind::Method,
             // `syntheticOrigin`
             PropSource::Mapped(_, _, Some(origin)) => origin
                 .first()
@@ -6048,17 +6112,55 @@ impl<'p> Checker<'p> {
             PropSource::Copy(_, copied, true) => copied
                 .first()
                 .is_some_and(|first| self.has_explicit_type(first)),
-            // No `ValueDeclaration`, or that of a property assignment.
-            PropSource::Literal(..)
-            | PropSource::Type(_)
-            | PropSource::Intersected(..)
+            PropSource::Intersected(_, parts) => {
+                // `createUnionOrIntersectionProperty`, `isInstantiation`: instantiations of one
+                // property that have the same type are that property.
+                let (single, others) = (&parts[0], &parts[1..]);
+                if others.iter().all(|other| other.source == single.source) {
+                    let ty = self.type_of_prop(single, MapperId::IDENTITY);
+                    if (others.iter())
+                        .all(|other| self.type_of_prop(other, MapperId::IDENTITY) == ty)
+                    {
+                        return self.has_explicit_type(single);
+                    }
+                }
+                // `SymbolFlagsProperty`, even if all are methods.
+                (self.value_declaration_of_prop(prop)).is_some_and(|(f, declaration)| {
+                    self.is_declaration_with_explicit_type_annotation(f, declaration)
+                })
+            }
+            // No `ValueDeclaration`.
+            PropSource::Type(_)
             | PropSource::Mapped(_, _, None)
             | PropSource::Copy(_, _, false)
             | PropSource::ReverseMapped(..) => false,
         }
     }
 
-    /// `getExplicitTypeOfSymbol` for the symbol that a name or a namespace export resolves to.
+    /// `isDeclarationWithExplicitTypeAnnotation`
+    fn is_declaration_with_explicit_type_annotation(&self, f: FileId, declaration: Decl) -> bool {
+        let (hir, bound) = (self.hir(f), self.bound(f));
+        match declaration {
+            Decl::Var(pat) | Decl::Param(pat) => match bound.pat_parent[pat.idx()] {
+                PatParent::Var(d) => hir[d].ty.is_some(),
+                PatParent::Param(p) => hir[p].ty.is_some(),
+                _ => false,
+            },
+            Decl::ParameterProperty(p) => hir[p].ty.is_some(),
+            Decl::Member(m) => hir[m].kind == MemberKind::Property && hir[m].ty.is_some(),
+            // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
+            Decl::Expando(assignment)
+            | Decl::ThisProperty(assignment)
+            | Decl::ModuleExports(assignment)
+            | Decl::ExportsProperty(assignment) => {
+                matches!(hir[assignment].kind, ExprKind::Assign { value, .. }
+                    if !is_parenthesized(hir, value) && matches!(hir[value].kind, ExprKind::Fn(func) if hir[func].ret.is_some()))
+            }
+            _ => false,
+        }
+    }
+
+    /// `getExplicitTypeOfSymbol`. `has_explicit_type` has the properties that have no `Sym`.
     fn explicit_type_of_symbol(&mut self, sym: Sym) -> Option<TypeId> {
         // `for (var a of b) for (var b of a)`
         if self.is_stack_low() {
@@ -6072,52 +6174,43 @@ impl<'p> Checker<'p> {
             return self.explicit_type_of_property(obj, name);
         };
         let flags = self.files().flags(sym);
-        if flags.intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::VALUE_MODULE) {
+        let declares_its_type =
+            SymFlags::FUNCTION | SymFlags::METHOD | SymFlags::CLASS | SymFlags::VALUE_MODULE;
+        if flags.intersects(declares_its_type) {
             return Some(self.type_of_symbol(sym));
         }
-        if !flags.intersects(SymFlags::VARIABLE) {
+        if !flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY) {
             return None;
         }
-        // `ValueDeclaration`: the first value declaration decides. A type with the same name may be
-        // declared before it.
-        let files = self.files();
-        let (f, pat) = files.parts(sym).iter().find_map(|&part| {
-            files
-                .symbol(part)
-                .decls
-                .iter()
-                .find_map(|&decl| match decl {
-                    Decl::Var(pat) | Decl::Param(pat) => Some((part.file, pat)),
-                    _ => None,
-                })
-        })?;
-        let (hir, bound) = (self.hir(f), self.bound(f));
-        match bound.pat_parent[pat.idx()] {
-            // `isDeclarationWithExplicitTypeAnnotation`. The result is the type of the variable: an
-            // optional parameter may be `undefined`.
-            PatParent::Param(p) if hir[p].ty.is_some() => Some(self.type_of_symbol(sym)),
-            PatParent::Var(d) if hir[d].ty.is_some() => Some(self.type_of_symbol(sym)),
-            // The variable of `for (const f of fs)` has the element type of `fs`, as far as
-            // annotations determine the type of `fs`.
-            PatParent::Var(d) => {
-                let stmt = bound.var_stmt[d.idx()];
-                if stmt.is_some()
-                    && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
-                    && let StmtKind::ForOf {
-                        left,
-                        expr,
-                        is_await,
-                        ..
-                    } = hir[owner].kind
-                    && left == stmt
-                {
-                    let iterable = self.explicit_type(f, expr)?;
-                    return Some(self.checked_iterated_type(iterable, is_await));
-                }
-                None
-            }
-            _ => None,
+        let (f, declaration) = self.files().value_declaration(sym)?;
+        // The result is the type of the variable: an optional parameter may be `undefined`.
+        if self.is_declaration_with_explicit_type_annotation(f, declaration) {
+            return Some(self.type_of_symbol(sym));
         }
+        // The variable of `for (const f of fs)` has the element type of `fs`, as far as annotations
+        // determine the type of `fs`.
+        let (hir, bound) = (self.hir(f), self.bound(f));
+        let Decl::Var(pat) = declaration else {
+            return None;
+        };
+        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
+            return None;
+        };
+        let stmt = bound.var_stmt[d.idx()];
+        if stmt.is_some()
+            && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
+            && let StmtKind::ForOf {
+                left,
+                expr,
+                is_await,
+                ..
+            } = hir[owner].kind
+            && left == stmt
+        {
+            let iterable = self.explicit_type(f, expr)?;
+            return Some(self.checked_iterated_type(iterable, is_await));
+        }
+        None
     }
 
     /// `getExplicitThisType`: the declared type of `this`. Nothing is narrowed.

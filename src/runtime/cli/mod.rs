@@ -1309,7 +1309,7 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand => exec_check(),
+            Tag::CheckCommand => exec_check(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1556,8 +1556,11 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_check() -> CmdResult {
-        // CheckCommand parses its own argv (no Context).
+    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+        // CheckCommand parses its own argv. The context holds `install.globalDir` of bunfig,
+        // which is read as `bun install` reads it.
+        let ctx = init(Tag::CheckCommand, log)?;
+        ::bun_bunfig::arguments::load_config(Tag::InstallCommand, None, ctx)?;
         let argv = argv_zslice();
         super::check_command::CheckCommand::exec(&argv[2.min(argv.len())..])
     }
@@ -2188,16 +2191,13 @@ Execute a shell script directly from Bun.
   Pass files or directories to check only those and their imports.
   Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
 
-<b>Flags:<r>
-  <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   Path to a tsconfig.json or its directory
-      <cyan>--pretty<r>           Show source code around each error <d>(default in a terminal)<r>
-      <cyan>--no-pretty<r>        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>
-      <cyan>--all<r>              Show every error <d>(above 50, identical errors are grouped)<r>
-      <cyan>--threads<r> <d>\\<n\\><r>      Number of threads <d>(default: one per CPU core)<r>
-      <cyan>--timing<r>           Print load and check times
-      <cyan>--cwd<r> <d>\\<path\\><r>       Set the working directory
-      <cyan>--strict<r>, <cyan>--target<r> <d>\\<v\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
-  <cyan>-h<r>, <cyan>--help<r>             Print this help menu
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                pretty!(
+                    "
+      <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
 
 <b>Examples:<r>
   <d>Check the current project<r>

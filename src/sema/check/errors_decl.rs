@@ -11,7 +11,7 @@ use super::*;
 use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_declarations(&mut self, file: FileId) {
         self.check_parameter_references(file);
         self.check_merged_declarations(file);
@@ -160,6 +160,7 @@ impl Checker<'_> {
         if hir.text.is_empty() {
             return;
         }
+        let unchecked = self.unchecked_jsdoc_types(file);
         for (i, symbol) in bound.symbols.iter().enumerate() {
             if symbol.decls.len() < 2
                 && !symbol.flags.contains(SymFlags::MERGED)
@@ -173,7 +174,9 @@ impl Checker<'_> {
                     // `bindParameter` declares the property last, so that is the symbol of the node.
                     Decl::Param(pat) => !matches!(bound.pat_parent[pat.idx()], PatParent::Param(p)
                         if bound.symbol_of_declaration(Decl::ParameterProperty(p)).is_some()),
-                    Decl::Member(m) => hir[m].kind == MemberKind::Property,
+                    Decl::Member(m) => {
+                        hir[m].kind == MemberKind::Property && !unchecked.contain(hir[m].start)
+                    }
                     _ => false,
                 };
                 // The local symbol of a module or a namespace also lists the declarations exported
@@ -242,7 +245,13 @@ impl Checker<'_> {
         {
             return;
         }
-        let t = self.get_widened_type_for_variable_like_declaration(value_declaration);
+        // `getTypeOfSymbol`: `getTypeOfAccessors` adds no optionality.
+        let t = if self.files().flags(symbol).intersects(SymFlags::ACCESSOR) {
+            let ty = self.type_of_symbol(symbol);
+            self.convert_auto_to_any(ty)
+        } else {
+            self.get_widened_type_for_variable_like_declaration(value_declaration)
+        };
         let declaration_type = self.get_widened_type_for_variable_like_declaration(node);
         if self.is_error_type(t)
             || self.is_error_type(declaration_type)
@@ -339,9 +348,11 @@ impl Checker<'_> {
     /// a type literal of `file`.
     fn check_index_signatures(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
+        let unchecked = self.unchecked_jsdoc_types(file);
         for (i, symbol) in bound.symbols.iter().enumerate() {
             if symbol.name != known::index_signature
                 || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
+                || matches!(symbol.decls.first(), Some(&Decl::Member(m)) if unchecked.contain(self.hir(file)[m].start))
             {
                 continue;
             }

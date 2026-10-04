@@ -21,7 +21,7 @@ pub(super) struct Written {
     is_parenthesized: bool,
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     fn class_of_decorated(
         &self,
         file: FileId,
@@ -52,22 +52,20 @@ impl<'p> Checker<'p> {
         params: &[(&[u8], TypeId)],
         ret: TypeId,
     ) -> SigId {
-        let params: Vec<SigParam> = params
-            .iter()
-            .map(|&(name, ty)| SigParam {
-                name: self.atoms().intern(name),
-                ty,
-                optional: false,
-                rest: false,
-                has_declaration: false,
-            })
-            .collect();
+        let params = params.iter().map(|&(name, ty)| SigParam {
+            name: self.atoms().intern(name),
+            ty,
+            optional: false,
+            is_required_rest: false,
+            rest: false,
+            has_declaration: false,
+        });
         self.types().intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
+            type_params: ArenaBox::empty(),
+            params: self.list_of(params),
             ret,
             this,
-            of: Box::new([]),
+            of: ArenaBox::empty(),
             is_union: true,
         })
     }
@@ -112,8 +110,8 @@ impl<'p> Checker<'p> {
         let func = self.hir(file)[m].func;
         let around = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
         let mapper = self.identity_mapper_for_fns(file, around, &[(file, func)]);
-        self.intern(TypeData::Fns {
-            decls: Box::new([(file, func)]),
+        self.intern_key(TypeKey::Fns {
+            decls: &[(file, func)],
             mapper,
         })
     }
@@ -312,11 +310,10 @@ impl<'p> Checker<'p> {
                     flags: PropFlags::empty(),
                     source: PropSource::Type(ty),
                     mapper: MapperId::IDENTITY,
-                })
-                .collect();
+                });
                 let overrides = self.synth(Shape {
-                    props,
-                    ..Shape::default()
+                    props: vec_from_iter_in(props, self.arena),
+                    ..Shape::new_in(self.arena)
                 });
                 (target, self.intersection(&[context, overrides]), result)
             }

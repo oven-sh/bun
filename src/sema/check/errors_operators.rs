@@ -13,7 +13,7 @@ use super::*;
 use crate::bind::Parent;
 use crate::resolve::ScriptTarget;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `a = b`. Runs after `check_assignments`, whose diagnostics it replaces.
     pub(super) fn check_x_operators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -52,7 +52,7 @@ impl Checker<'_> {
 
 /// `checkGrammarBindingElement`, for an element with `...`: 2462, 2566, 1186. The parser reports the trailing comma (1013).
 pub(super) fn check_grammar_rest_element(
-    c: &mut Checker<'_>,
+    c: &mut Checker<'_, '_>,
     file: FileId,
     name: PatId,
     is_last: bool,
@@ -73,7 +73,7 @@ pub(super) fn check_grammar_rest_element(
 // ───────────────────────────── source text ─────────────────────────────
 
 /// `GetEmitScriptTarget`: defaults to the latest standard.
-pub(super) fn language_version(c: &Checker<'_>) -> ScriptTarget {
+pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
     match c.p.files.options.target {
         ScriptTarget::None => ScriptTarget::ES2025,
         reported => reported,
@@ -82,7 +82,7 @@ pub(super) fn language_version(c: &Checker<'_>) -> ScriptTarget {
 
 /// The end of `GetErrorRangeForNode` of `e` as it appears in the source. 0 if no caller will read
 /// it.
-fn error_end(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
+fn error_end(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> u32 {
     c.error_end_of(file, e)
 }
 
@@ -99,7 +99,11 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
 }
 
 /// Position of the `=` directly before `value`.
-pub(super) fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Option<u32> {
+pub(super) fn start_of_equals_before(
+    c: &Checker<'_, '_>,
+    file: FileId,
+    value: ExprId,
+) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, value) as usize).min(text.len());
     let end = skip_trivia_back(text, start);
@@ -107,7 +111,11 @@ pub(super) fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprI
 }
 
 /// Position of the `...` directly before `operand`.
-pub(super) fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Option<u32> {
+pub(super) fn start_of_dots_before(
+    c: &Checker<'_, '_>,
+    file: FileId,
+    operand: ExprId,
+) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, operand) as usize).min(text.len());
     let end = skip_trivia_back(text, start);
@@ -127,22 +135,6 @@ pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
 }
 
 // ───────────────────────────── assignment targets ─────────────────────────────
-
-/// `checkReferenceExpression`
-fn check_reference_expression(
-    c: &mut Checker<'_>,
-    file: FileId,
-    e: ExprId,
-    invalid: u32,
-    optional_chain: u32,
-) -> bool {
-    let Some(code) = why_no_reference(c.hir(file), e, invalid, optional_chain) else {
-        return true;
-    };
-
-    c.error(file, c.hir(file).child(e), code, &[]);
-    false
-}
 
 /// `checkReferenceExpression`: which of the two codes is reported for `e`, if it is not a
 /// reference.
@@ -166,20 +158,15 @@ pub(super) fn why_no_reference(
     }
 }
 
-/// `a = b`, as in `checkBinaryLikeExpression`. A pattern is handled by
-/// `checkDestructuringAssignment`.
-fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId) {
+/// `a = b`, as in `checkBinaryLikeExpression`: the reference check of `checkAssignmentOperator`.
+/// `check_assignments` compares the types. A pattern is handled by `checkDestructuringAssignment`.
+fn check_plain_assignment(c: &mut Checker<'_, '_>, file: FileId, target: ExprId) {
     let hir = c.hir(file);
     if !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
         || is_parenthesized(hir, target)
     {
-        check_assignment_operator(c, file, target);
+        c.check_reference_expression(file, target, 2364, 2779);
     }
-}
-
-/// `checkAssignmentOperator`: the reference check. `check_assignments` compares the types.
-fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId) {
-    check_reference_expression(c, file, target, 2364, 2779);
 }
 
 // ───────────────────────────── unary operators ─────────────────────────────
@@ -188,7 +175,7 @@ fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId) 
 
 /// `checkSatisfiesExpression`
 pub(super) fn check_satisfies(
-    c: &mut Checker<'_>,
+    c: &mut Checker<'_, '_>,
     file: FileId,
     node: ExprId,
     expr: ExprId,
@@ -214,7 +201,7 @@ pub(super) fn check_satisfies(
 // ───────────────────────────── templates ─────────────────────────────
 
 /// `checkTemplateExpression` for the substitutions.
-pub(super) fn check_template_spans(c: &mut Checker<'_>, file: FileId, spans: IdList<ExprId>) {
+pub(super) fn check_template_spans(c: &mut Checker<'_, '_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
         if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
@@ -223,26 +210,18 @@ pub(super) fn check_template_spans(c: &mut Checker<'_>, file: FileId, spans: IdL
     }
 }
 
-/// `resolveTaggedTemplateExpression`, the paths that do not reach `resolveCall`.
-pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId, call: CallId) {
-    let hir = c.hir(file);
-    let data = hir[call];
+/// `resolveTaggedTemplateExpression`, the paths that do not reach `resolveCall`. `check_calls`
+/// reports their errors.
+pub(super) fn check_tagged_template(c: &mut Checker<'_, '_>, file: FileId, call: CallId) {
+    let data = c.hir(file)[call];
     let tag = c.type_of_expr(file, data.callee);
     let apparent = c.apparent_type(tag);
     let calls = c.signatures(apparent, false).len();
     let constructs = c.signatures(apparent, true).len();
-    if !c.is_untyped_function_call(tag, apparent, calls, constructs) {
-        if calls != 0 {
-            return;
-        }
-        if matches!(c.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)))
-            && !is_parenthesized(hir, e)
-        {
-            c.error(file, c.hir(file).child(data.callee), 2796, &[]);
-        }
+    // `resolveUntypedCall`, `resolveErrorCall`: the template is checked like an untagged one.
+    if calls == 0 || c.is_untyped_function_call(tag, apparent, calls, constructs) {
+        check_template_spans(c, file, data.args);
     }
-    // `resolveUntypedCall`: the template is checked like an untagged one.
-    check_template_spans(c, file, data.args);
 }
 
 // ───────────────────────────── `instanceof` and `in` ─────────────────────────────
@@ -250,7 +229,7 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId
 /// `checkInstanceOfExpression`, `resolveInstanceofExpression` for `e`, which is `left instanceof
 /// right`: 2358 2359, and 2860 2861 from checking against the signature it resolves to.
 pub(super) fn check_instance_of_expression(
-    c: &mut Checker<'_>,
+    c: &mut Checker<'_, '_>,
     file: FileId,
     e: ExprId,
     left: ExprId,
@@ -299,7 +278,7 @@ pub(super) fn check_instance_of_expression(
 }
 
 /// `hasEmptyObjectIntersection`
-pub(super) fn has_empty_object_intersection(c: &mut Checker<'_>, ty: TypeId) -> bool {
+pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
     for &part in c.parts(ty) {
         // The `{}` that remains of `unknown`, as opposed to one that is declared or that represents
         // instances of unknown shape.
@@ -360,7 +339,7 @@ fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
 
 /// The end of `checkYieldExpression`: 7057, nothing specifies the type `yield` evaluates to, and
 /// that type matters.
-pub(super) fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId) {
+pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprId) {
     if !c.p.files.options.no_implicit_any {
         return;
     }

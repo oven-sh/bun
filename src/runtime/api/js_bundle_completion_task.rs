@@ -1095,6 +1095,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
+        transpiler.options.type_check = config
+            .check
+            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

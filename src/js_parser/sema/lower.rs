@@ -65,7 +65,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         syntax: TypeSyntax<'a>,
         stmts: &[Stmt],
         is_declaration_file: bool,
-    ) -> hir::File {
+    ) -> hir::FileBuilder {
         let end_of_file_full_start = p.lexer.token_full_start as u32;
         // `withJSDoc`: tags are only processed in JavaScript files.
         let (mut syntax, jsdoc) = if syntax.has_jsdoc {
@@ -683,7 +683,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// Those modifiers.
     fn modifier_list_at(&self, loc: ast::Loc) -> Option<ts::Span<ts::Modifier>> {
         let kept = self.note(loc, Mark::Modifiers)?;
-        Some(ts::Span::from_parts(self.noted.range(kept)))
+        let [start, len] = self.noted.range(kept);
+        Some(ts::Span::new(start, len))
     }
 
     /// Assigns the statement `id`, whose AST `loc` is `loc`, the modifiers the parser consumed for
@@ -1302,11 +1303,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .iter()
                     .fold(Flags::empty(), |seen, modifier| seen | modifier.0);
 
-                // The other modifiers have no meaning on a parameter. They are only reported as
-                // errors.
+                // The other modifiers are reported as errors. `abstract` and `static` are still
+                // among the flags of the property (`getDeclarationModifierFlagsFromSymbol`).
                 flags |= seen & PROPERTY_MODIFIERS;
                 if seen.intersects(PROPERTY_MODIFIERS) {
-                    flags |= Flags::PARAMETER_PROPERTY;
+                    flags |= Flags::PARAMETER_PROPERTY | seen & (Flags::ABSTRACT | Flags::STATIC);
                 }
             }
             let pat = self.binding(&arg.binding);

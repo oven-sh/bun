@@ -12,6 +12,7 @@ bun_js_parser.workspace = true
 bun_core.workspace = true
 bun_glob.workspace = true
 bun_ast.workspace = true
+bun_parsers.workspace = true
 bun_paths.workspace = true
 bstr.workspace = true
 bun_threading.workspace = true

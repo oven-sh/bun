@@ -53,64 +53,15 @@ impl<T> Default for Id<T> {
     }
 }
 
+impl<T> From<u32> for Id<T> {
+    #[inline]
+    fn from(index: u32) -> Self {
+        Id(index, PhantomData)
+    }
+}
+
 /// Consecutive nodes in the array that holds `T`.
-pub(crate) struct Span<T> {
-    start: u32,
-    len: u32,
-    marker: PhantomData<fn() -> T>,
-}
-
-impl<T> Span<T> {
-    pub(crate) const EMPTY: Self = Span {
-        start: 0,
-        len: 0,
-        marker: PhantomData,
-    };
-
-    #[inline]
-    pub(crate) const fn len(self) -> usize {
-        self.len as usize
-    }
-
-    #[inline]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    pub(crate) fn iter(self) -> impl ExactSizeIterator<Item = Id<T>> {
-        (self.start..self.start + self.len).map(|index| Id(index, PhantomData))
-    }
-
-    /// Its start and length.
-    #[inline]
-    pub(crate) const fn parts(self) -> [u32; 2] {
-        [self.start, self.len]
-    }
-
-    #[inline]
-    pub(crate) const fn from_parts([start, len]: [u32; 2]) -> Self {
-        Span {
-            start,
-            len,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<T> Copy for Span<T> {}
-impl<T> Clone for Span<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Default for Span<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
+pub(crate) type Span<T> = bun_sema::hir::Span<Id<T>>;
 
 pub(crate) use bun_sema::hir::{
     Flags, FnId as SignatureId, FnKind as SignatureKind, Keyword, MappedModifier, MemberKind,
@@ -492,7 +443,7 @@ macro_rules! define_syntax {
         pub(crate) fn $add(&mut self, nodes: &[$node]) -> Span<$node> {
             let start = self.$array.len() as u32;
             self.$array.extend_from_slice(nodes);
-            Span { start, len: nodes.len() as u32, marker: PhantomData }
+            Span::new(start, nodes.len() as u32)
         }
     };
     ($($array:ident: $node:ty, $add:ident $many:tt;)*) => {
@@ -529,7 +480,7 @@ macro_rules! define_syntax {
                 type Output = [$node];
                 #[inline]
                 fn index(&self, span: Span<$node>) -> &[$node] {
-                    &self.$array[span.start as usize..(span.start + span.len) as usize]
+                    &self.$array[span.range()]
                 }
             }
         )*

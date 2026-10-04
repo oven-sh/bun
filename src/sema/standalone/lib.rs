@@ -6,15 +6,18 @@ pub mod native;
 
 use bun_sema::atom::Interner;
 use bun_sema::hir;
+use bun_sema::session::Arena;
 
 /// Parses `text` with default options. The extension of `path` determines the file kind.
-pub fn parse(
+pub fn parse<'s>(
+    arena: &'s Arena,
     path: &str,
     text: &[u8],
-    atoms: &Interner,
+    atoms: &Interner<'s>,
     experimental_decorators: bool,
-) -> hir::File {
-    bun_js_parser::sema::summarize(path.as_bytes(), text, atoms, experimental_decorators, false).0
+) -> hir::File<'s> {
+    let path = path.as_bytes();
+    bun_js_parser::sema::summarize(arena, path, text, atoms, experimental_decorators, false).0
 }
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads. Their stack size is `BUN_SEMA_STACK_MB`, 256 by default. The threads of

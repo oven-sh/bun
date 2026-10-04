@@ -6,22 +6,10 @@ mod binder;
 
 use crate::atom::{Atom, Interner, known};
 use crate::hir::*;
-use crate::util::{FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec};
+use crate::util::{FxBuild, FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
-macro_rules! define_id {
-    ($($name:ident),*) => {$(
-        #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-        pub struct $name(pub u32);
-        impl $name {
-            pub const NONE: $name = $name(u32::MAX);
-            #[inline] pub fn is_none(self) -> bool { self.0 == u32::MAX }
-            #[inline] pub fn is_some(self) -> bool { self.0 != u32::MAX }
-            #[inline] pub fn idx(self) -> usize { self.0 as usize }
-        }
-        impl Default for $name { fn default() -> Self { Self::NONE } }
-    )*};
-}
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
 bitflags::bitflags! {
@@ -326,11 +314,11 @@ pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
     Some(require_call_argument(hir, e)?.1)
 }
 
-pub struct Symbol {
+pub struct SymbolIn<S: Storage> {
     pub name: Atom,
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
-    pub decls: Decls,
+    pub decls: DeclsIn<S>,
     /// `ValueDeclaration`: an index into `Declarations`, which for a symbol merged by `mergeSymbol`
     /// are the declarations of all its parts. `u32::MAX`: none.
     pub value_declaration: u32,
@@ -345,36 +333,73 @@ pub struct Symbol {
     pub export_symbol: SymbolId,
 }
 
-const _: () = assert!(size_of::<Symbol>() <= 48);
+/// A symbol of a file that has been loaded.
+pub type Symbol<'s> = SymbolIn<InArena<'s>>;
+
+const _: () = assert!(size_of::<Symbol<'static>>() <= 48);
+
+impl SymbolIn<Growable> {
+    fn into_arena(self, arena: &Arena) -> Symbol<'_> {
+        SymbolIn {
+            name: self.name,
+            flags: self.flags,
+            decls: self.decls.into_arena(arena),
+            value_declaration: self.value_declaration,
+            parent: self.parent,
+            exports: self.exports,
+            members: self.members,
+            export_symbol: self.export_symbol,
+        }
+    }
+}
 
 /// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
-#[derive(Clone, Default)]
-pub enum Decls {
+#[derive(Default)]
+pub enum DeclsIn<S: Storage> {
     #[default]
     None,
     One(Decl),
-    #[expect(
-        clippy::box_collection,
-        reason = "one word, not three: with a `Vec` a `Symbol` is 56 bytes, and it is asserted to be 48 at most"
-    )]
-    Many(Box<Vec<Decl>>),
+    Many(S::Few<Decl>),
 }
 
-impl Decls {
+/// Those of a symbol of a file that has been loaded.
+pub type Decls<'s> = DeclsIn<InArena<'s>>;
+
+impl<S: Storage> DeclsIn<S> {
     #[inline]
     pub fn as_slice(&self) -> &[Decl] {
         match self {
-            Decls::None => &[],
-            Decls::One(decl) => std::slice::from_ref(decl),
-            Decls::Many(decls) => &decls[..],
+            DeclsIn::None => &[],
+            DeclsIn::One(decl) => std::slice::from_ref(decl),
+            DeclsIn::Many(decls) => &decls[..],
+        }
+    }
+}
+
+impl DeclsIn<Growable> {
+    fn push(&mut self, decl: Decl) {
+        match self {
+            DeclsIn::None => *self = DeclsIn::One(decl),
+            DeclsIn::One(first) => *self = DeclsIn::Many(vec![*first, decl]),
+            DeclsIn::Many(all) => all.push(decl),
         }
     }
 
-    fn push(&mut self, decl: Decl) {
+    fn into_arena(self, arena: &Arena) -> Decls<'_> {
         match self {
-            Decls::None => *self = Decls::One(decl),
-            Decls::One(first) => *self = Decls::Many(Box::new(vec![*first, decl])),
-            Decls::Many(all) => all.push(decl),
+            DeclsIn::None => DeclsIn::None,
+            DeclsIn::One(decl) => DeclsIn::One(decl),
+            DeclsIn::Many(all) => DeclsIn::Many(few_to_arena(all, arena)),
+        }
+    }
+}
+
+impl<'s> Decls<'s> {
+    pub fn clone_in(&self, arena: &'s Arena) -> Decls<'s> {
+        match self {
+            DeclsIn::None => DeclsIn::None,
+            DeclsIn::One(decl) => DeclsIn::One(*decl),
+            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
         }
     }
 }
@@ -399,7 +424,7 @@ pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: De
     })
 }
 
-impl std::ops::Deref for Decls {
+impl<S: Storage> std::ops::Deref for DeclsIn<S> {
     type Target = [Decl];
     #[inline]
     fn deref(&self) -> &[Decl] {
@@ -407,7 +432,7 @@ impl std::ops::Deref for Decls {
     }
 }
 
-impl<'a> IntoIterator for &'a Decls {
+impl<'a, S: Storage> IntoIterator for &'a DeclsIn<S> {
     type Item = &'a Decl;
     type IntoIter = std::slice::Iter<'a, Decl>;
     #[inline]
@@ -729,47 +754,47 @@ pub struct Redeclaration {
 
 /// Side tables parallel to the vectors of a [`File`].
 #[derive(Default)]
-pub struct Bound {
+pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
-    pub symbols: Vec<Symbol>,
-    pub scopes: Vec<Scope>,
+    pub symbols: S::List<SymbolIn<S>>,
+    pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
-    pub tables: Vec<(u32, u32)>,
-    pub entries: Vec<(Atom, SymbolId)>,
+    pub tables: S::List<(u32, u32)>,
+    pub entries: S::List<(Atom, SymbolId)>,
     /// The index in `entries` of each name of a table with more than `SCANNED` names.
-    pub large_tables: FxHashMap<(TableId, Atom), u32>,
+    pub large_tables: S::Map<(TableId, Atom), u32>,
     /// A Bloom filter with one hash function over the names in the `locals` of the scopes that have
     /// no `symbol` and are not the file scope. Its length is a power of two of words, or zero if
     /// those scopes declare nothing. `scope_to_resolve_from`
-    pub nested_names: Box<[u64]>,
-    pub ids: Vec<u32>,
+    pub nested_names: S::List<u64>,
+    pub ids: S::List<u32>,
 
     /// The file as a module. Its exports are what other files can import.
     pub file_symbol: SymbolId,
     /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol
     /// that contains it.
-    pub export_stars: Few<(SymbolId, StmtId)>,
+    pub export_stars: S::Few<(SymbolId, StmtId)>,
     /// `declare module "name"` at the top level of a file, or directly inside an ambient module at
     /// the top level of a script. The flag is `IsModuleAugmentationExternal`: it augments a module
     /// that is declared elsewhere.
-    pub ambient_modules: Few<(Atom, SymbolId, bool)>,
+    pub ambient_modules: S::Few<(Atom, SymbolId, bool)>,
     /// `declare global { }` at the top level of a module, or directly inside an ambient module at
     /// the top level of a script: symbols whose exports are global.
-    pub global_augmentations: Few<SymbolId>,
-    pub redeclarations: Few<Redeclaration>,
+    pub global_augmentations: S::Few<SymbolId>,
+    pub redeclarations: S::Few<Redeclaration>,
     /// `export as namespace N`
-    pub umd_globals: Few<(Atom, SymbolId)>,
+    pub umd_globals: S::Few<(Atom, SymbolId)>,
     /// `file.Imports()`: the module specifiers in the file that are resolved, in order of first
     /// occurrence.
     /// `collectModuleReferences`
-    pub specifiers: Vec<Atom>,
+    pub specifiers: S::List<Atom>,
     /// `file.ModuleAugmentations`: the names of the modules that a module augments, except those it
     /// imports. Resolved after `specifiers`.
-    pub module_augmentations: Few<Atom>,
+    pub module_augmentations: S::Few<Atom>,
     /// The specifiers of the import and export statements directly inside the ambient modules a
     /// script declares, and the names of the modules augmented there: resolved unless relative.
-    pub ambient_specifiers: Few<Atom>,
+    pub ambient_specifiers: S::Few<Atom>,
     /// `CommonJSModuleIndicator`: the expression that marks the file as a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
     /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
@@ -778,157 +803,140 @@ pub struct Bound {
     /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it.
     /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
     /// not been created: see `symbol_of_expando_initializer`.
-    pub expr_symbol: Vec<SymbolId>,
-    pub expr_parent: Vec<Parent>,
+    pub expr_symbol: S::List<SymbolId>,
+    pub expr_parent: S::List<Parent>,
     /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
     /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
-    pub expr_flow: Vec<FlowId>,
-    pub stmt_parent: Vec<Parent>,
+    pub expr_flow: S::List<FlowId>,
+    pub stmt_parent: S::List<Parent>,
     /// The enclosing scope of a statement.
-    pub stmt_scope: Vec<ScopeId>,
+    pub stmt_scope: S::List<ScopeId>,
     /// The enclosing scope of a type.
-    pub type_scope: Vec<ScopeId>,
+    pub type_scope: S::List<ScopeId>,
     /// `isResolvedByTypeAlias`: between the type node and a type alias there are only nodes that
     /// resolve their parts eagerly.
-    pub type_by_alias: Vec<bool>,
+    pub type_by_alias: S::List<bool>,
     /// The `this` types inside a type literal, where they are invalid. `getThisType`
-    pub this_in_type_literal: FxHashSet<TypeNodeId>,
+    pub this_in_type_literal: S::Set<TypeNodeId>,
     /// `None`: the binder did not reach the node. The parser can leave unreferenced nodes (a
     /// construct dropped during error recovery, an annotation in a parenthesized list that is not
     /// an arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a
     /// pass over a whole vector has to skip them. The same holds for `member_owner`,
     /// `fns[..].owner` and `type_param_scope`.
-    pub pat_parent: Vec<PatParent>,
-    pub pat_symbol: Vec<SymbolId>,
-    pub prop_owner: Vec<ExprId>,
-    pub member_symbol: Vec<SymbolId>,
+    pub pat_parent: S::List<PatParent>,
+    pub pat_symbol: S::List<SymbolId>,
+    pub prop_owner: S::List<ExprId>,
+    pub member_symbol: S::List<SymbolId>,
     /// `node.Symbol` for a parameter property and for a member of an object literal that has
     /// symbols.
-    pub property_symbol: FxHashMap<Decl, SymbolId>,
-    pub member_owner: Vec<MemberOwner>,
+    pub property_symbol: S::Map<Decl, SymbolId>,
+    pub member_owner: S::List<MemberOwner>,
     /// The enclosing scope of the type, the function and the initializer of a member.
-    pub member_scope: Vec<ScopeId>,
-    pub param_fn: Vec<FnId>,
-    pub type_param_symbol: Vec<SymbolId>,
+    pub member_scope: S::List<ScopeId>,
+    pub param_fn: S::List<FnId>,
+    pub type_param_symbol: S::List<SymbolId>,
     /// The scope a type parameter is declared in: that of its class, interface, function, alias..
-    pub type_param_scope: Vec<ScopeId>,
-    pub fns: Vec<FnInfo>,
+    pub type_param_scope: S::List<ScopeId>,
+    pub fns: S::List<FnInfo>,
     /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
     /// resolve to variables of its body.
-    pub requires_scope_change: Vec<bool>,
+    pub requires_scope_change: S::List<bool>,
     /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
     /// that it has not been created: see `symbol_of_expando_initializer`.
-    pub fn_symbol: Vec<SymbolId>,
-    pub class_symbol: Vec<SymbolId>,
-    pub class_owner: Vec<ClassOwner>,
-    pub class_scope: Vec<ScopeId>,
-    pub interface_symbol: Vec<SymbolId>,
+    pub fn_symbol: S::List<SymbolId>,
+    pub class_symbol: S::List<SymbolId>,
+    pub class_owner: S::List<ClassOwner>,
+    pub class_scope: S::List<ScopeId>,
+    pub interface_symbol: S::List<SymbolId>,
     /// The scope that an interface, an enum, a module or a namespace creates. Its enclosing scope
     /// is the parent of that scope.
-    pub interface_scope: Vec<ScopeId>,
-    pub enum_scope: Few<ScopeId>,
-    pub module_scope: Few<ScopeId>,
-    pub alias_symbol: Vec<SymbolId>,
-    pub alias_scope: Vec<ScopeId>,
-    pub enum_symbol: Few<SymbolId>,
-    pub enum_member_symbol: Few<SymbolId>,
-    pub enum_member_owner: Few<EnumId>,
-    pub module_symbol: Few<SymbolId>,
+    pub interface_scope: S::List<ScopeId>,
+    pub enum_scope: S::Few<ScopeId>,
+    pub module_scope: S::Few<ScopeId>,
+    pub alias_symbol: S::List<SymbolId>,
+    pub alias_scope: S::List<ScopeId>,
+    pub enum_symbol: S::Few<SymbolId>,
+    pub enum_member_symbol: S::Few<SymbolId>,
+    pub enum_member_owner: S::Few<EnumId>,
+    pub module_symbol: S::Few<SymbolId>,
     /// `GetModuleInstanceState`, by `ModuleId`.
-    pub module_instance_state: Few<ModuleInstanceState>,
-    pub var_stmt: Vec<StmtId>,
+    pub module_instance_state: S::Few<ModuleInstanceState>,
+    pub var_stmt: S::List<StmtId>,
     /// The identifiers that are assigned to, keyed by the variable they resolve to.
-    pub assignments: Vec<(SymbolId, ExprId)>,
+    pub assignments: S::List<(SymbolId, ExprId)>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
-    pub type_query_operands: Few<ExprId>,
+    pub type_query_operands: S::Few<ExprId>,
     /// The expressions at or under a node that is in tsgo's AST but that `checkSourceFile` never
     /// reaches: an element of an `extends` clause of a class after the first, the `e` of `[e]` in
     /// an enum, the `X` of `for (var of X)`. Sorted.
-    pub unchecked_exprs: Few<ExprId>,
+    pub unchecked_exprs: S::Few<ExprId>,
     /// The type nodes under one of those, and the type arguments of a `super` call. Sorted.
-    pub unchecked_types: Few<TypeNodeId>,
+    pub unchecked_types: S::Few<TypeNodeId>,
     /// The position of each `infer T` whose position implies a constraint on `T`. Ordered by type
     /// parameter.
-    pub infer_positions: Few<(TypeParamId, InferPosition)>,
+    pub infer_positions: S::Few<(TypeParamId, InferPosition)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
-    pub expando_declarations: Few<ExprId>,
-    pub case_stmt: Vec<StmtId>,
+    pub expando_declarations: S::Few<ExprId>,
+    pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
-    pub stmt_flow: Vec<FlowId>,
+    pub stmt_flow: S::List<FlowId>,
     /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
     /// `NONE` otherwise.
-    pub case_fallthrough: Vec<FlowId>,
+    pub case_fallthrough: S::List<FlowId>,
     /// Each `var` declared in a block, from which it is hoisted, and its enclosing scope.
-    pub hoisted_vars: Few<(PatId, ScopeId)>,
+    pub hoisted_vars: S::Few<(PatId, ScopeId)>,
     /// The decorators of nodes that cannot be decorated: no further errors are reported inside
     /// them.
-    pub refused_decorators: Few<ExprId>,
+    pub refused_decorators: S::Few<ExprId>,
     /// The labeled statements that no `break` or `continue` refers to.
-    pub unused_labels: Few<StmtId>,
-    pub import_scope: Vec<ScopeId>,
-    pub import_equals_scope: Few<ScopeId>,
-    pub export_scope: Vec<ScopeId>,
+    pub unused_labels: S::Few<StmtId>,
+    pub import_scope: S::List<ScopeId>,
+    pub import_equals_scope: S::Few<ScopeId>,
+    pub export_scope: S::List<ScopeId>,
     /// The enclosing scope of an expression that creates no scope, for the few that need it.
-    pub expr_scope: FxHashMap<ExprId, ScopeId>,
+    pub expr_scope: S::Map<ExprId, ScopeId>,
     /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost enclosing class that
     /// declares an `#x`.
     /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
-    pub private_class: FxHashMap<ExprId, ClassId>,
+    pub private_class: S::Map<ExprId, ClassId>,
     /// The identifiers that resolve to nothing declared in the file, each with its enclosing scope:
     /// globals, members that another file merges into an enclosing namespace or enum, or errors.
     /// Sorted by expression.
-    pub free_idents: Vec<(ExprId, ScopeId)>,
+    pub free_idents: S::List<(ExprId, ScopeId)>,
     /// The identifiers that resolve only to an import or another alias, each with its enclosing
     /// scope: whether the alias is a value can only be determined with the whole program. Sorted by
     /// expression.
-    pub alias_idents: Vec<(ExprId, ScopeId)>,
+    pub alias_idents: S::List<(ExprId, ScopeId)>,
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
-    pub arguments_objects: Few<ExprId>,
+    pub arguments_objects: S::Few<ExprId>,
     /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName` and are not `withinDeferredContext`:
     /// with its name, and the function whose parameter it is or is part of.
-    pub identifiers_in_parameters: Few<(ExprId, PatId, FnId)>,
+    pub identifiers_in_parameters: S::Few<(ExprId, PatId, FnId)>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
-    pub jsdoc_param_errors: Few<u32>,
+    pub jsdoc_param_errors: S::Few<u32>,
 
-    pub flow: Vec<Flow>,
-    pub flow_edges: Vec<FlowId>,
+    pub flow: S::List<Flow>,
+    pub flow_edges: S::List<FlowId>,
     /// `FlowFlagsShared`, a bit for each node of `flow`: it is the antecedent of more than one
     /// node.
-    pub flow_shared: Vec<u64>,
+    pub flow_shared: S::List<u64>,
     /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
     /// and has a single start node for all the functions without a body.
     pub flow_places: u32,
 }
 
+/// The side tables of a file that has been loaded.
+pub type Bound<'s> = BoundIn<InArena<'s>>;
+/// The side tables of a file that is being bound.
+pub type BoundBuilder = BoundIn<Growable>;
+
 pub const UNREACHABLE: FlowId = FlowId(0);
 
-impl Bound {
-    /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
-    pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
-        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
-            return smallvec::smallvec![p];
-        };
-        let declarations = self.symbols[symbol.idx()].decls.iter();
-        declarations
-            .filter_map(|declaration| match *declaration {
-                Decl::Property(p) => Some(p),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// Whether `m`, which has a name, has a symbol that is not the one its container has under that name.
-    pub fn is_member_in_no_table(&self, m: MemberId) -> bool {
-        let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
-            return false;
-        };
-        let container = &self.symbols[symbol.parent.idx()];
-        symbol.name != known::computed
-            && [container.members, container.exports]
-                .iter()
-                .all(|&table| self.lookup(table, symbol.name) != Some(self.member_symbol[m.idx()]))
-    }
+/// What the binder also calls while it binds.
+impl<S: Storage> BoundIn<S> {
+    /// A table with at most this many names is searched linearly.
+    pub const SCANNED: usize = 8;
 
     /// `GetCombinedModifierFlags`
     pub fn modifier_flags(&self, f: &File, decl: Decl) -> Flags {
@@ -1024,6 +1032,124 @@ impl Bound {
                 _ => return None,
             }
         }
+    }
+
+    /// `IsVariableDeclarationInitializedToRequire` for the name `pat`: the module, and the export
+    /// name if `pat` does not bind the whole module.
+    pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
+        let (d, part) = match self.pat_parent[pat.idx()] {
+            PatParent::Var(d) => (d, None),
+            PatParent::Prop(outer, p) => match (self.pat_parent[outer.idx()], hir[p].key) {
+                (PatParent::Var(d), PropKey::Name(name)) => (d, Some(name)),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let init = hir[d].init;
+        if !hir.is_js
+            || init.is_none()
+            || hir[d].ty.is_some()
+            || hir[d].flags.contains(Flags::EXPORT)
+        {
+            return None;
+        }
+        Some((required_specifier(hir, init)?, part))
+    }
+
+    /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
+    pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
+        let local = &self.symbols[symbol.idx()];
+        if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
+            local.export_symbol
+        } else {
+            symbol
+        }
+    }
+
+    /// In symbol creation order.
+    pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
+        if table.is_none() {
+            return &[];
+        }
+        let (start, len) = self.tables[table.idx()];
+        &self.entries[start as usize..(start + len) as usize]
+    }
+
+    /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional
+    /// type: whether a local with `flags` is visible to a lookup for `meaning` that has just left a
+    /// scope of kind `from`.
+    pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
+        // Among the members of a class or an interface only the type parameters are in scope, as
+        // types: `class C<T> { T = 1 }`.
+        if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
+            return false;
+        }
+        let f = match from {
+            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
+            // The `infer` type parameters of a conditional type are visible only from its true
+            // branch.
+            ScopeKind::Extends => return false,
+            _ => return true,
+        };
+        let mut seen = true;
+        // Among the types only the type parameters are visible outside the body.
+        if (meaning & flags).intersects(SymFlags::TYPE) {
+            seen = flags.contains(SymFlags::TYPE_PARAMETER);
+        }
+        if (meaning & flags).intersects(SymFlags::VARIABLE) {
+            // A parameter redeclared by a `var` still counts as a parameter.
+            let in_body = !flags.contains(SymFlags::PARAMETER);
+            // `useOuterVariableScopeInParameter`
+            if matches!(from, ScopeKind::Param(_))
+                && in_body
+                && !self.requires_scope_change[f.idx()]
+            {
+                seen = false;
+            } else if flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE) {
+                seen = match from {
+                    ScopeKind::Param(_) => true,
+                    ScopeKind::ReturnType(_) => !in_body,
+                    _ => false,
+                };
+            }
+        }
+        seen
+    }
+
+    /// The word index and the bit for `name` in a `nested_names` of `words` words.
+    #[inline]
+    pub(super) fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
+        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+        let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+        ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
+    }
+}
+
+impl Bound<'_> {
+    /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
+    pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
+        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
+            return smallvec::smallvec![p];
+        };
+        let declarations = self.symbols[symbol.idx()].decls.iter();
+        declarations
+            .filter_map(|declaration| match *declaration {
+                Decl::Property(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether `m`, which has a name, has a symbol that is not the one its container has under that name.
+    pub fn is_member_in_no_table(&self, m: MemberId) -> bool {
+        let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
+            return false;
+        };
+        let container = &self.symbols[symbol.parent.idx()];
+        symbol.name != known::computed
+            && [container.members, container.exports]
+                .iter()
+                .all(|&table| self.lookup(table, symbol.name) != Some(self.member_symbol[m.idx()]))
     }
 
     /// `getAssignmentTargetKind`
@@ -1171,28 +1297,6 @@ impl Bound {
         self.arguments_objects.binary_search(&e).is_ok()
     }
 
-    /// `IsVariableDeclarationInitializedToRequire` for the name `pat`: the module, and the export
-    /// name if `pat` does not bind the whole module.
-    pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
-        let (d, part) = match self.pat_parent[pat.idx()] {
-            PatParent::Var(d) => (d, None),
-            PatParent::Prop(outer, p) => match (self.pat_parent[outer.idx()], hir[p].key) {
-                (PatParent::Var(d), PropKey::Name(name)) => (d, Some(name)),
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let init = hir[d].init;
-        if !hir.is_js
-            || init.is_none()
-            || hir[d].ty.is_some()
-            || hir[d].flags.contains(Flags::EXPORT)
-        {
-            return None;
-        }
-        Some((required_specifier(hir, init)?, part))
-    }
-
     /// Whether the binder treated `e` as the declaration of a property of a function, a class or an
     /// object literal (`node.Symbol != nil`). That includes a key that names no property, as in
     /// `f[a + b] = value`.
@@ -1292,19 +1396,6 @@ impl Bound {
         }
     }
 
-    /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
-    pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
-        let local = &self.symbols[symbol.idx()];
-        if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
-            local.export_symbol
-        } else {
-            symbol
-        }
-    }
-
-    /// A table with at most this many names is searched linearly.
-    pub const SCANNED: usize = 8;
-
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {
         let entries = self.table(table);
         if entries.len() <= Self::SCANNED {
@@ -1312,15 +1403,6 @@ impl Bound {
         }
         let place = *self.large_tables.get(&(table, name))?;
         Some(self.entries[place as usize].1)
-    }
-
-    /// In symbol creation order.
-    pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
-        if table.is_none() {
-            return &[];
-        }
-        let (start, len) = self.tables[table.idx()];
-        &self.entries[start as usize..(start + len) as usize]
     }
 
     #[inline]
@@ -1338,55 +1420,6 @@ impl Bound {
 
     pub fn edges(&self, start: u32, len: u32) -> &[FlowId] {
         &self.flow_edges[start as usize..(start + len) as usize]
-    }
-
-    /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional
-    /// type: whether a local with `flags` is visible to a lookup for `meaning` that has just left a
-    /// scope of kind `from`.
-    pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
-        // Among the members of a class or an interface only the type parameters are in scope, as
-        // types: `class C<T> { T = 1 }`.
-        if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
-            return false;
-        }
-        let f = match from {
-            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
-            // The `infer` type parameters of a conditional type are visible only from its true
-            // branch.
-            ScopeKind::Extends => return false,
-            _ => return true,
-        };
-        let mut seen = true;
-        // Among the types only the type parameters are visible outside the body.
-        if (meaning & flags).intersects(SymFlags::TYPE) {
-            seen = flags.contains(SymFlags::TYPE_PARAMETER);
-        }
-        if (meaning & flags).intersects(SymFlags::VARIABLE) {
-            // A parameter redeclared by a `var` still counts as a parameter.
-            let in_body = !flags.contains(SymFlags::PARAMETER);
-            // `useOuterVariableScopeInParameter`
-            if matches!(from, ScopeKind::Param(_))
-                && in_body
-                && !self.requires_scope_change[f.idx()]
-            {
-                seen = false;
-            } else if flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE) {
-                seen = match from {
-                    ScopeKind::Param(_) => true,
-                    ScopeKind::ReturnType(_) => !in_body,
-                    _ => false,
-                };
-            }
-        }
-        seen
-    }
-
-    /// The word index and the bit for `name` in a `nested_names` of `words` words.
-    #[inline]
-    pub(super) fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
-        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
-        let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
-        ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
     }
 
     /// The scope at which `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
@@ -1458,25 +1491,126 @@ impl Bound {
     }
 }
 
-impl Bound {
-    /// `hir::fit`, for a file that is retained. The other lists are allocated at their final size.
-    pub fn fit(&mut self) {
-        macro_rules! each {
-            ($($f:ident),*) => { $(crate::hir::fit(&mut self.$f);)* };
+fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
+    map: FxHashMap<K, V>,
+    arena: &'s Arena,
+) -> ArenaHashMap<'s, K, V> {
+    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild::default(), arena);
+    exact.extend(map);
+    exact
+}
+
+fn set_to_arena<'s, K: Eq + std::hash::Hash>(
+    set: FxHashSet<K>,
+    arena: &'s Arena,
+) -> ArenaHashSet<'s, K> {
+    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild::default(), arena);
+    exact.extend(set);
+    exact
+}
+
+impl BoundBuilder {
+    /// The side tables with every list at its final size in `arena`.
+    pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
+        Bound {
+            ran_out_of_stack: self.ran_out_of_stack,
+            symbols: {
+                let mut exact = ArenaVec::new_in(arena);
+                exact.reserve_exact(self.symbols.len());
+                exact.extend(
+                    self.symbols
+                        .drain(..)
+                        .map(|symbol| symbol.into_arena(arena)),
+                );
+                exact
+            },
+            scopes: move_to_arena(&mut self.scopes, arena),
+            tables: copy_to_arena(&mut self.tables, arena),
+            entries: copy_to_arena(&mut self.entries, arena),
+            large_tables: map_to_arena(self.large_tables, arena),
+            nested_names: copy_to_arena(&mut self.nested_names, arena),
+            ids: copy_to_arena(&mut self.ids, arena),
+            file_symbol: self.file_symbol,
+            export_stars: few_to_arena(self.export_stars, arena),
+            ambient_modules: few_to_arena(self.ambient_modules, arena),
+            global_augmentations: few_to_arena(self.global_augmentations, arena),
+            redeclarations: few_to_arena(self.redeclarations, arena),
+            umd_globals: few_to_arena(self.umd_globals, arena),
+            specifiers: copy_to_arena(&mut self.specifiers, arena),
+            module_augmentations: few_to_arena(self.module_augmentations, arena),
+            ambient_specifiers: few_to_arena(self.ambient_specifiers, arena),
+            commonjs_indicator: self.commonjs_indicator,
+            module_exports_property: self.module_exports_property,
+            expr_symbol: copy_to_arena(&mut self.expr_symbol, arena),
+            expr_parent: copy_to_arena(&mut self.expr_parent, arena),
+            expr_flow: copy_to_arena(&mut self.expr_flow, arena),
+            stmt_parent: copy_to_arena(&mut self.stmt_parent, arena),
+            stmt_scope: copy_to_arena(&mut self.stmt_scope, arena),
+            type_scope: copy_to_arena(&mut self.type_scope, arena),
+            type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
+            this_in_type_literal: set_to_arena(self.this_in_type_literal, arena),
+            pat_parent: copy_to_arena(&mut self.pat_parent, arena),
+            pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
+            prop_owner: copy_to_arena(&mut self.prop_owner, arena),
+            member_symbol: copy_to_arena(&mut self.member_symbol, arena),
+            property_symbol: map_to_arena(self.property_symbol, arena),
+            member_owner: copy_to_arena(&mut self.member_owner, arena),
+            member_scope: copy_to_arena(&mut self.member_scope, arena),
+            param_fn: copy_to_arena(&mut self.param_fn, arena),
+            type_param_symbol: copy_to_arena(&mut self.type_param_symbol, arena),
+            type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
+            fns: copy_to_arena(&mut self.fns, arena),
+            requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
+            fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
+            class_symbol: copy_to_arena(&mut self.class_symbol, arena),
+            class_owner: copy_to_arena(&mut self.class_owner, arena),
+            class_scope: copy_to_arena(&mut self.class_scope, arena),
+            interface_symbol: copy_to_arena(&mut self.interface_symbol, arena),
+            interface_scope: copy_to_arena(&mut self.interface_scope, arena),
+            enum_scope: few_to_arena(self.enum_scope, arena),
+            module_scope: few_to_arena(self.module_scope, arena),
+            alias_symbol: copy_to_arena(&mut self.alias_symbol, arena),
+            alias_scope: copy_to_arena(&mut self.alias_scope, arena),
+            enum_symbol: few_to_arena(self.enum_symbol, arena),
+            enum_member_symbol: few_to_arena(self.enum_member_symbol, arena),
+            enum_member_owner: few_to_arena(self.enum_member_owner, arena),
+            module_symbol: few_to_arena(self.module_symbol, arena),
+            module_instance_state: few_to_arena(self.module_instance_state, arena),
+            var_stmt: copy_to_arena(&mut self.var_stmt, arena),
+            assignments: copy_to_arena(&mut self.assignments, arena),
+            type_query_operands: few_to_arena(self.type_query_operands, arena),
+            unchecked_exprs: few_to_arena(self.unchecked_exprs, arena),
+            unchecked_types: few_to_arena(self.unchecked_types, arena),
+            infer_positions: few_to_arena(self.infer_positions, arena),
+            expando_declarations: few_to_arena(self.expando_declarations, arena),
+            case_stmt: copy_to_arena(&mut self.case_stmt, arena),
+            stmt_flow: copy_to_arena(&mut self.stmt_flow, arena),
+            case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
+            hoisted_vars: few_to_arena(self.hoisted_vars, arena),
+            refused_decorators: few_to_arena(self.refused_decorators, arena),
+            unused_labels: few_to_arena(self.unused_labels, arena),
+            import_scope: copy_to_arena(&mut self.import_scope, arena),
+            import_equals_scope: few_to_arena(self.import_equals_scope, arena),
+            export_scope: copy_to_arena(&mut self.export_scope, arena),
+            expr_scope: map_to_arena(self.expr_scope, arena),
+            private_class: map_to_arena(self.private_class, arena),
+            free_idents: copy_to_arena(&mut self.free_idents, arena),
+            alias_idents: copy_to_arena(&mut self.alias_idents, arena),
+            arguments_objects: few_to_arena(self.arguments_objects, arena),
+            identifiers_in_parameters: few_to_arena(self.identifiers_in_parameters, arena),
+            jsdoc_param_errors: few_to_arena(self.jsdoc_param_errors, arena),
+            flow: copy_to_arena(&mut self.flow, arena),
+            flow_edges: copy_to_arena(&mut self.flow_edges, arena),
+            flow_shared: copy_to_arena(&mut self.flow_shared, arena),
+            flow_places: self.flow_places,
         }
-        each!(
-            symbols,
-            scopes,
-            tables,
-            entries,
-            ids,
-            specifiers,
-            assignments,
-            free_idents,
-            alias_idents,
-            flow,
-            flow_edges
-        );
+    }
+}
+
+impl<'s> Bound<'s> {
+    /// The side tables of a file without nodes.
+    pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
+        BoundBuilder::default().into_arena(arena)
     }
 }
 
@@ -1491,6 +1625,11 @@ pub struct BindOptions {
 }
 
 /// `bindSourceFile`
-pub fn bind(file: &File, options: BindOptions, atoms: &Interner) -> Bound {
-    binder::Binder::run(file, options, atoms)
+pub fn bind<'s>(
+    file: &File,
+    options: BindOptions,
+    atoms: &Interner,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    binder::Binder::run(file, options, atoms).into_arena(arena)
 }

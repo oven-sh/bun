@@ -373,6 +373,10 @@ pub struct ParseOptions<'a> {
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// A `--flag` or `--flag=value` that no param names is a positional, with its dashes, in its
+    /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
+    /// such a flag is skipped.
+    pub unknown_long_flags_are_positional: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -455,6 +459,7 @@ pub fn parse<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
         },
     )?;
     Ok(Args { clap })
@@ -475,6 +480,7 @@ pub fn parse_with_table<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
         },
     )?;
     Ok(Args { clap })

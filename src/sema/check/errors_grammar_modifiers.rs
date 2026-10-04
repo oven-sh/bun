@@ -28,7 +28,7 @@ impl GrammarError {
 
 const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `checkGrammarModifiers`
     pub(super) fn check_grammar_modifiers(&mut self, file: FileId, node: impl ToNode) -> bool {
         // `grammarErrorOnNode`

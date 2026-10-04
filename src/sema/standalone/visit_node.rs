@@ -84,7 +84,7 @@ pub enum VisitedKind {
     TypePredicateParameter(TypeNodeId),
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `typeWriterWalker.visitNode` over `forEachASTNode`.
     pub(super) fn visited_nodes(&self, file: FileId) -> Vec<VisitedNode> {
         let hir = self.hir(file);

@@ -50,7 +50,7 @@ fn js_override_code(code: u32) -> u32 {
     }
 }
 
-impl Checker<'_> {
+impl<'p> Checker<'p, '_> {
     // ───────────────────────────── heritage clauses of a class ─────────────────────────────
 
     /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
@@ -341,7 +341,7 @@ impl Checker<'_> {
         } else {
             self.declared_type(sym)
         };
-        if self.property_of_base(this_type, name).is_none() {
+        if self.get_property_of_type(this_type, name).is_none() {
             return;
         }
         let base_type = if is_static { constructor } else { base };
@@ -349,14 +349,15 @@ impl Checker<'_> {
         let base_prop = if matches!(member.key, PropKey::Private(_)) {
             None
         } else {
-            self.property_of_base(base_type, name)
+            self.get_property_of_type(base_type, name)
+                .map(|found| found.0)
         };
         let Some(base_prop) = base_prop else {
             if has_override {
                 let at = self.place_of_overrider(file, member);
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {
-                        let suggestion = self.prop_to_string(&suggestion);
+                        let suggestion = self.prop_to_string(suggestion);
                         let args = [Arg::Type(base), Arg::Bytes(&suggestion)];
                         self.error_at(at, code(4117), &args);
                     }
@@ -370,7 +371,7 @@ impl Checker<'_> {
         if has_override || self.hir(file)[c].flags.contains(Flags::AMBIENT) {
             return;
         }
-        let Some((true, is_abstract)) = self.declarations_of_base_property(&base_prop) else {
+        let Some((true, is_abstract)) = self.declarations_of_base_property(base_prop) else {
             return;
         };
         let at = self.place_of_overrider(file, member);
@@ -412,7 +413,7 @@ impl Checker<'_> {
         {
             let object = self.type_of_expr(file, obj);
             let apparent = self.apparent_type(object);
-            if let Some((prop, _)) = self.prop_of(apparent, name)
+            if let Some((prop, _)) = self.prop_ref(apparent, name)
                 && let PropSource::Symbol(sym) = prop.source
                 && self.members_of_symbol(sym).iter().any(|&(f, m)| {
                     let member = &self.hir(f)[m];
@@ -426,16 +427,8 @@ impl Checker<'_> {
         Some(self.property_name_of_type(ty).is_some())
     }
 
-    /// `getPropertyOfType`
-    fn property_of_base(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
-        let ty = self.reduced(ty);
-        let apparent = self.apparent_type(ty);
-        let members = self.members(apparent)?;
-        self.property_of_type(&members, name).map(|(prop, _)| prop)
-    }
-
     /// `getSuggestedSymbolForNonexistentClassMember`
-    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
         // `ast.SymbolName`: a private name is compared by its source text.
         let written = self.written_name(name);
         // The name of a symbol-keyed member is compared like any other. In tsgo it is
@@ -465,7 +458,7 @@ impl Checker<'_> {
         };
         // Of two equally close candidates, the first wins.
         let compare = |_, _| std::cmp::Ordering::Equal;
-        get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare).cloned()
+        get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare)
     }
 
     /// Whether `prop` has any declarations, and whether one of them is `abstract`. `None`: its
@@ -473,10 +466,13 @@ impl Checker<'_> {
     fn declarations_of_base_property(&self, prop: &Prop) -> Option<(bool, bool)> {
         match &prop.source {
             PropSource::Symbol(sym) => {
-                let members = members_among(&self.files().decls_of(*sym));
-                let is_abstract =
-                    |&(f, m): &(FileId, MemberId)| self.hir(f)[m].flags.contains(Flags::ABSTRACT);
-                Some((true, members.iter().any(is_abstract)))
+                use crate::bind::Decl;
+                let is_abstract = |&(f, d): &(FileId, Decl)| match d {
+                    Decl::Member(m) => self.hir(f)[m].flags.contains(Flags::ABSTRACT),
+                    Decl::ParameterProperty(p) => self.hir(f)[p].flags.contains(Flags::ABSTRACT),
+                    _ => false,
+                };
+                Some((true, self.files().decls_of(*sym).iter().any(is_abstract)))
             }
             PropSource::Literal(..) => Some((true, false)),
             // `addMemberForKeyTypeWorker`: `prop.Declarations = modifiersProp.Declarations`

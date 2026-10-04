@@ -157,7 +157,7 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `a[k]`, property lookups by binding patterns and indexed access types, and misplaced private
     /// names. Errors in `a.b` are reported where its type is computed (`type_of_property_access`).
     pub(super) fn check_property_accesses(&mut self, file: FileId) {
@@ -429,6 +429,9 @@ impl Checker<'_> {
     pub(super) fn reduced_apparent_type(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
+        if !self.never_in_progress.is_empty() {
+            self.reduce_apparent_type_of_intersection_in_progress(apparent);
+        }
         self.reduced(apparent)
     }
 
@@ -444,30 +447,11 @@ impl Checker<'_> {
 
     /// `getIndexInfosOfType`: the key type of each index signature of `ty`, which is an apparent
     /// type, and whether it is readonly.
-    /// For a union (`getUnionIndexInfos`), those of its first member that all other members have,
-    /// readonly if any of them is.
     pub(super) fn index_signatures_of(&mut self, ty: TypeId) -> SmallVec<[(TypeId, bool); 4]> {
-        let mut infos: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
-        for (at, &part) in self.parts(ty).iter().enumerate() {
-            let part = self.apparent_type(part);
-            let members = self.members(part);
-            let own: &[IndexInfo] = match &members {
-                Some(members) => &members.shape().index,
-                None => &[],
-            };
-            if at == 0 {
-                infos.extend(own.iter().map(|info| (info.key, info.readonly)));
-                continue;
-            }
-            infos.retain(|info| match own.iter().find(|other| other.key == info.0) {
-                Some(other) => {
-                    info.1 |= other.readonly;
-                    true
-                }
-                None => false,
-            });
-        }
-        infos
+        let parts = self.parts(ty);
+        (self.union_index_infos(parts).iter())
+            .map(|info| (info.key, info.readonly))
+            .collect()
     }
 
     /// `getApplicableIndexInfo` among `infos`, or else the string index signature, which is the
@@ -1032,7 +1016,7 @@ impl Checker<'_> {
             return chain;
         };
         let written = self.type_to_string_without_reduction(ty);
-        let args = [Arg::Bytes(&written), Arg::Prop(&prop)];
+        let args = [Arg::Bytes(&written), Arg::Prop(prop)];
         Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 

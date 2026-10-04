@@ -15,11 +15,11 @@ struct Label {
 /// index in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
 
-pub(super) struct Binder<'f> {
-    f: &'f File,
+pub(super) struct Binder<'f, 's> {
+    f: &'f File<'s>,
     options: BindOptions,
-    atoms: &'f Interner,
-    b: Bound,
+    atoms: &'f dyn crate::atom::Intern,
+    b: BoundBuilder,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
     scope: ScopeId,
     /// The enclosing statement lists, innermost last: of the file, of namespaces and of blocks.
@@ -98,9 +98,13 @@ pub(super) struct Binder<'f> {
     stack_check: bun_core::StackCheck,
 }
 
-impl<'f> Binder<'f> {
-    pub(super) fn run(f: &'f File, options: BindOptions, atoms: &'f Interner) -> Bound {
-        let mut b = Bound {
+impl<'f, 's> Binder<'f, 's> {
+    pub(super) fn run(
+        f: &'f File<'s>,
+        options: BindOptions,
+        atoms: &'f dyn crate::atom::Intern,
+    ) -> BoundBuilder {
+        let mut b = BoundBuilder {
             expr_symbol: vec![SymbolId::NONE; f.exprs.len()],
             expr_parent: vec![Parent::None; f.exprs.len()],
             expr_flow: vec![UNREACHABLE; f.exprs.len()],
@@ -139,20 +143,19 @@ impl<'f> Binder<'f> {
             class_scope: vec![ScopeId::NONE; f.classes.len()],
             interface_symbol: vec![SymbolId::NONE; f.interfaces.len()],
             interface_scope: vec![ScopeId::NONE; f.interfaces.len()],
-            enum_scope: vec![ScopeId::NONE; f.enums.len()].into(),
-            module_scope: vec![ScopeId::NONE; f.modules.len()].into(),
+            enum_scope: vec![ScopeId::NONE; f.enums.len()],
+            module_scope: vec![ScopeId::NONE; f.modules.len()],
             alias_symbol: vec![SymbolId::NONE; f.aliases.len()],
             alias_scope: vec![ScopeId::NONE; f.aliases.len()],
-            enum_symbol: vec![SymbolId::NONE; f.enums.len()].into(),
-            enum_member_symbol: vec![SymbolId::NONE; f.enum_members.len()].into(),
-            enum_member_owner: vec![EnumId::NONE; f.enum_members.len()].into(),
-            module_symbol: vec![SymbolId::NONE; f.modules.len()].into(),
-            module_instance_state: vec![ModuleInstanceState::NonInstantiated; f.modules.len()]
-                .into(),
+            enum_symbol: vec![SymbolId::NONE; f.enums.len()],
+            enum_member_symbol: vec![SymbolId::NONE; f.enum_members.len()],
+            enum_member_owner: vec![EnumId::NONE; f.enum_members.len()],
+            module_symbol: vec![SymbolId::NONE; f.modules.len()],
+            module_instance_state: vec![ModuleInstanceState::NonInstantiated; f.modules.len()],
             var_stmt: vec![StmtId::NONE; f.var_decls.len()],
             case_stmt: vec![StmtId::NONE; f.cases.len()],
             import_scope: vec![ScopeId::NONE; f.imports.len()],
-            import_equals_scope: vec![ScopeId::NONE; f.import_equals.len()].into(),
+            import_equals_scope: vec![ScopeId::NONE; f.import_equals.len()],
             export_scope: vec![ScopeId::NONE; f.exports.len()],
             ..Default::default()
         };
@@ -204,7 +207,7 @@ impl<'f> Binder<'f> {
         };
         this.file();
         if this.b.ran_out_of_stack {
-            return Bound {
+            return BoundBuilder {
                 ran_out_of_stack: true,
                 ..Default::default()
             };
@@ -246,10 +249,10 @@ impl<'f> Binder<'f> {
 
     /// `newSymbol`
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> SymbolId {
-        self.b.symbols.push(Symbol {
+        self.b.symbols.push(SymbolIn {
             name,
             flags,
-            decls: Decls::None,
+            decls: DeclsIn::None,
             value_declaration: u32::MAX,
             parent: SymbolId::NONE,
             exports: TableId::NONE,
@@ -289,7 +292,7 @@ impl<'f> Binder<'f> {
     }
 
     /// `SetValueDeclaration(symbol, node)` for the declaration that was just added.
-    fn set_value_declaration(symbol: &mut Symbol) {
+    fn set_value_declaration(symbol: &mut SymbolIn<Growable>) {
         let last = symbol.decls.len() - 1;
         let value_declaration = symbol.decls.get(symbol.value_declaration as usize);
         if takes_over_as_value_declaration(value_declaration.copied(), symbol.decls[last]) {
@@ -1387,13 +1390,13 @@ impl<'f> Binder<'f> {
         self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
-    fn finish(mut self) -> Bound {
+    fn finish(mut self) -> BoundBuilder {
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
         let tables = &self.tables;
         let file = self.f;
         // `Resolve`: the functions that have an `arguments` of their own.
-        let has_arguments = |b: &Bound, f: FnId| match file[f].kind {
+        let has_arguments = |b: &BoundBuilder, f: FnId| match file[f].kind {
             FnKind::Decl | FnKind::Expr | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
                 true
             }
@@ -1404,41 +1407,42 @@ impl<'f> Binder<'f> {
         };
         // `Err`: the arguments object of a function, with the innermost function that contains the
         // name, even if that is an arrow function.
-        let resolve = |b: &Bound, mut scope: ScopeId, name: Atom| -> Result<SymbolId, FnId> {
-            // `lastLocation`: the kind of the scope the search has just left.
-            let mut from = ScopeKind::Block;
-            let mut innermost = FnId::NONE;
-            while scope.is_some() {
-                let s = &b.scopes[scope.idx()];
-                if let ScopeKind::Fn(f) = s.kind
-                    && innermost.is_none()
-                {
-                    innermost = f;
-                }
-                // `Bound::property_with_invalid_initializer`, while the tables are not flattened
-                // yet. `Resolve` eventually returns nil: the name is left to `Files::resolve`,
-                // which reports the reason.
-                if let ScopeKind::PropertyDeclaration(_, constructor)
-                | ScopeKind::PropertyType(_, constructor) = s.kind
-                    && let Some(&local) = tables
-                        [b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()]
-                    .get(&name)
-                    && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
-                {
-                    return Ok(SymbolId::NONE);
-                }
-                if let Some(&symbol) = tables[s.locals.idx()].get(&name)
-                    && b.symbols[symbol.idx()]
-                        .flags
-                        .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
-                    && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
-                {
-                    return Ok(b.export_symbol_of_value_symbol_if_exported(symbol));
-                }
-                // The name `default` does not resolve in the scope that exports it. For an enum and
-                // a namespace merged into one symbol, the enum scope sees only the members and the
-                // namespace scope everything but the members.
-                if s.symbol.is_some()
+        let resolve =
+            |b: &BoundBuilder, mut scope: ScopeId, name: Atom| -> Result<SymbolId, FnId> {
+                // `lastLocation`: the kind of the scope the search has just left.
+                let mut from = ScopeKind::Block;
+                let mut innermost = FnId::NONE;
+                while scope.is_some() {
+                    let s = &b.scopes[scope.idx()];
+                    if let ScopeKind::Fn(f) = s.kind
+                        && innermost.is_none()
+                    {
+                        innermost = f;
+                    }
+                    // `Bound::property_with_invalid_initializer`, while the tables are not flattened
+                    // yet. `Resolve` eventually returns nil: the name is left to `Files::resolve`,
+                    // which reports the reason.
+                    if let ScopeKind::PropertyDeclaration(_, constructor)
+                    | ScopeKind::PropertyType(_, constructor) = s.kind
+                        && let Some(&local) = tables
+                            [b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()]
+                        .get(&name)
+                        && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
+                    {
+                        return Ok(SymbolId::NONE);
+                    }
+                    if let Some(&symbol) = tables[s.locals.idx()].get(&name)
+                        && b.symbols[symbol.idx()]
+                            .flags
+                            .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
+                        && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
+                    {
+                        return Ok(b.export_symbol_of_value_symbol_if_exported(symbol));
+                    }
+                    // The name `default` does not resolve in the scope that exports it. For an enum and
+                    // a namespace merged into one symbol, the enum scope sees only the members and the
+                    // namespace scope everything but the members.
+                    if s.symbol.is_some()
                     && name != known::default
                     && let Some(&symbol) =
                         tables[b.symbols[s.symbol.idx()].exports.idx()].get(&name)
@@ -1452,21 +1456,20 @@ impl<'f> Binder<'f> {
                     && b.symbols[symbol.idx()].flags.intersects(match s.kind {
                         ScopeKind::Enum(_) => SymFlags::ENUM_MEMBER,
                         _ => (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
-                    })
-                {
-                    return Ok(symbol);
+                    }) {
+                        return Ok(symbol);
+                    }
+                    if name == known::arguments
+                        && let ScopeKind::Fn(f) = s.kind
+                        && has_arguments(b, f)
+                    {
+                        return Err(innermost);
+                    }
+                    from = s.kind;
+                    scope = s.parent;
                 }
-                if name == known::arguments
-                    && let ScopeKind::Fn(f) = s.kind
-                    && has_arguments(b, f)
-                {
-                    return Err(innermost);
-                }
-                from = s.kind;
-                scope = s.parent;
-            }
-            Ok(SymbolId::NONE)
-        };
+                Ok(SymbolId::NONE)
+            };
         // `containsArgumentsReference`
         let mut refer_to_arguments = Vec::new();
         for &(expr, scope) in &idents {
@@ -1543,7 +1546,7 @@ impl<'f> Binder<'f> {
                 .extend(table.iter().map(|(&name, &symbol)| (name, symbol)));
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             self.b.tables.push((start as u32, table.len() as u32));
-            if table.len() > Bound::SCANNED {
+            if table.len() > BoundBuilder::SCANNED {
                 let places = (start as u32..).zip(&self.b.entries[start..]);
                 self.b
                     .large_tables
@@ -1557,10 +1560,10 @@ impl<'f> Binder<'f> {
         if count > 0 {
             let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
             for &(name, _) in nested().flat_map(|s| self.b.table(s.locals)) {
-                let (word, bit) = Bound::bit_of_nested_name(filter.len(), name);
+                let (word, bit) = BoundBuilder::bit_of_nested_name(filter.len(), name);
                 filter[word] |= bit;
             }
-            self.b.nested_names = filter.into_boxed_slice();
+            self.b.nested_names = filter;
         }
         // Labels.
         let (mut kept, mut not_cached) = (0, 0);
@@ -2329,6 +2332,10 @@ impl<'f> Binder<'f> {
                     }
                 }
             }
+            // `declareClassMember`: no name resolves to it there.
+            ModuleName::Ident(name) if decl.flags.contains(Flags::CLASS_ELEMENT) => {
+                self.bind_anonymous_declaration(Decl::Module(m), flags, name)
+            }
             ModuleName::Ident(_) | ModuleName::Global => {
                 self.declare_symbol_and_add_to_symbol_table(Decl::Module(m), flags, excludes)
             }
@@ -2870,6 +2877,14 @@ impl<'f> Binder<'f> {
         }
         if f.this_param.is_some() {
             self.b.param_fn[f.this_param.idx()] = id;
+            // `bindParameter` declares it like any other parameter, so a second `this` is a
+            // duplicate identifier. The one of a `@this` tag has no name.
+            let name = self.f[f.this_param].pat;
+            if matches!(self.f[name].kind, PatKind::Ident(_)) {
+                let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::PARAMETER;
+                let excludes = SymFlags::PARAMETER_EXCLUDES;
+                self.declare_symbol_and_add_to_symbol_table(Decl::Param(name), flags, excludes);
+            }
         }
         if this_ty.is_some() {
             self.ty(this_ty);
@@ -3289,7 +3304,14 @@ impl<'f> Binder<'f> {
             } else {
                 MemberId::NONE
             };
-            let outer_member = std::mem::replace(&mut self.cur_member, of_class);
+            // `getControlFlowContainer`: a member of a type literal is in the class property whose
+            // type the literal is part of.
+            let container = if of_class.is_some() {
+                of_class
+            } else {
+                self.cur_member
+            };
+            let outer_member = std::mem::replace(&mut self.cur_member, container);
             let outer_this = std::mem::replace(&mut self.this_member, of_class);
             let is_static = self.is_static(m, owner);
             if is_static {

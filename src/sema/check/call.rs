@@ -107,7 +107,7 @@ enum SigParent {
     Lone(FileId, FnId),
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// Whether the type of `e` depends on parameters that are contextually typed.
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
         if self.is_stack_low() {
@@ -198,7 +198,27 @@ impl<'p> Checker<'p> {
             .insert(&self.task, (file, call), resolved.sig, stored);
     }
 
+    /// `anySignature`, which `getContextuallyTypedParameterType` assigns to
+    /// `links.resolvedSignature` of an immediately invoked function expression while it checks the
+    /// arguments. A type resolution stores what it computes from it:
+    /// `const a = { k: ((p) => p)(a) }` is `{ k: any }`. `checkExpression` of the call stores
+    /// nothing, so the expressions above the innermost resolution are checked again later.
+    #[cold]
+    #[inline(never)]
+    fn any_signature_while_arguments_are_checked(&mut self) -> ResolvedCall {
+        let resolution = self.stack.iter().rposition(|&q| self.is_resolution(q));
+        self.mark_tainted_from(resolution.map_or(0, |at| at + 1));
+        self.note_any_signature();
+        ResolvedCall {
+            sig: None,
+            ret: TypeId::ANY,
+        }
+    }
+
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
+        if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
+            return self.any_signature_while_arguments_are_checked();
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
@@ -340,10 +360,7 @@ impl<'p> Checker<'p> {
                 // `checkIteratedTypeOrElementType`: a type that is not iterable is an error, and
                 // yields `any`. The error is not reported for a type the operand is only assumed to
                 // have.
-                let element = match self.iterated_type_if_any(ty, false) {
-                    Some(element) => element,
-                    None => TypeId::ANY,
-                };
+                let element = self.iterated_type_of_spread(ty);
                 push(Arg::Spread(element, ty, Atom::NONE, a));
             }
         }
@@ -395,11 +412,7 @@ impl<'p> Checker<'p> {
         if hir[c].callee != e {
             return None;
         }
-        // The arguments are checked against `anySignature`: their contextual type is what is being
-        // computed.
-        self.iife_resolving.push((file, parent));
-        let actual = self.iife_param_type_from_args(file, func, index, hir[c].args);
-        self.iife_resolving.pop();
+        let actual = self.iife_param_type_from_args(file, func, index, parent, hir[c].args);
         // `widenTypeForVariableLikeDeclaration`: the function has no contextual signature, so the
         // declared type of the parameter is the widened type of its argument.
         Some(actual.map(|ty| {
@@ -418,11 +431,13 @@ impl<'p> Checker<'p> {
         file: FileId,
         func: FnId,
         index: usize,
+        call: ExprId,
         args: IdList<ExprId>,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         let args = self.effective_args(file, args);
         let own = &hir[hir[func].params.at(index)];
+        // Not under `anySignature`: a request for the call resolves it again.
         if own.flags.contains(Flags::REST) {
             return Some(self.spread_argument_type(
                 file,
@@ -435,7 +450,11 @@ impl<'p> Checker<'p> {
         }
         match args.get(index) {
             Some(&Arg::Expr(a)) => {
+                // `links.resolvedSignature = c.anySignature`: the contextual type of the argument is
+                // what is being computed.
+                self.iife_resolving.push((file, call));
                 let ty = self.type_of_expr(file, a);
+                self.iife_resolving.pop();
                 Some(self.widen_literal(ty))
             }
             Some(&(Arg::Type(ty, ..) | Arg::Spread(ty, ..))) => Some(ty),
@@ -491,7 +510,8 @@ impl<'p> Checker<'p> {
             if actual > params.len() {
                 return rest.is_some();
             }
-            if is_incomplete || params[actual..].iter().all(|p| p.optional || p.rest) {
+            let may_be_omitted = |p: &SigParam| p.optional || p.rest && !p.is_required_rest;
+            if is_incomplete || params[actual..].iter().all(may_be_omitted) {
                 return true;
             }
         }
@@ -552,9 +572,12 @@ impl<'p> Checker<'p> {
                 return if self.is_untyped_function_call(callee, apparent, 0, constructs) {
                     self.resolve_untyped_call(file, exprs)
                 } else {
+                    // `invocationError`
+                    self.resolve_by_printing(apparent);
                     self.resolve_error_call(file, exprs)
                 };
             }
+            self.look_at_type_nodes(file, type_args);
             let type_args = self.types_from_nodes(file, type_args);
             let node = CallLike::Call(c);
             let args = self.effective_call_arguments(file, call, node);
@@ -695,13 +718,17 @@ impl<'p> Checker<'p> {
         }
         // `isUntypedFunctionCall`, and `IsTypeAny(expressionType)` in `resolveNewExpression`.
         if self.is_any(callee) || is_new && self.has_any_flag(apparent) {
+            let again = (is_re_resolved && callee != TypeId::UNRESOLVED).then_some((file, call));
+            let outer = std::mem::replace(&mut self.untyped_call_resolved_again, again);
+            let resolved = self.resolve_untyped_call(file, data.args);
+            self.untyped_call_resolved_again = outer;
             return ResolvedCall {
                 ret: if callee == TypeId::UNRESOLVED {
                     callee
                 } else {
                     TypeId::ANY
                 },
-                ..self.resolve_untyped_call(file, data.args)
+                ..resolved
             };
         }
         let mut sigs = self.signatures(callee, is_new);
@@ -780,8 +807,13 @@ impl<'p> Checker<'p> {
                     let key = (file, call);
                     (self.p.calls_before_signatures).insert(&mut self.task, key, (), Stored::new());
                 }
+                // `invocationError`
+                self.resolve_by_printing(apparent);
                 self.resolve_error_call(file, data.args)
             };
+        }
+        if !matches!(hir[data.callee].kind, ExprKind::Super) {
+            self.look_at_type_nodes(file, data.type_args);
         }
         let type_args = self.types_from_nodes(file, data.type_args);
         let args = self.effective_args(file, data.args);
@@ -879,8 +911,8 @@ impl<'p> Checker<'p> {
             let apparent = self.apparent_type(part);
             for &member in self.parts(apparent) {
                 let members = self.members(member)?;
-                let (prop, mapper) = self.property_of_type(&members, name)?;
-                methods.push(self.type_of_prop(&prop, mapper));
+                let (prop, mapper) = self.property_in(&members, name)?;
+                methods.push(self.type_of_prop(prop, mapper));
             }
         }
         let method = self.union(&methods);
@@ -1257,6 +1289,7 @@ impl<'p> Checker<'p> {
             && self.has_type_variables(this_type)
         {
             let this_argument_type = self.this_argument_type(file, s.this_arg);
+            context.array_literals.clear();
             self.infer(context, this_argument_type, this_type, 0);
         }
         for (i, &arg) in args.iter().enumerate().take(arg_count) {
@@ -1266,14 +1299,20 @@ impl<'p> Checker<'p> {
             if let Some(param_type) = self.param_type_at(&params, i)
                 && self.has_type_variables(param_type)
             {
+                context.array_literals.clear();
                 let arg_type =
                     self.check_argument(file, arg, param_type, Some(context), check_mode);
+                // `createSyntheticExpression`: an element of the tuple that the argument spreads.
+                if !matches!(arg, Arg::Expr(_)) {
+                    self.array_literal_types_in(file, arg.node(), &mut context.array_literals);
+                }
                 self.infer(context, arg_type, param_type, 0);
             }
         }
         if let Some(rest) = rest_type
             && self.has_type_variables(rest)
         {
+            context.array_literals.clear();
             let spread_type =
                 self.spread_argument_type(file, args, arg_count, rest, Some(context), check_mode);
             self.infer(context, spread_type, rest, 0);
@@ -1314,11 +1353,11 @@ impl<'p> Checker<'p> {
             self.sig_this_type(generic),
         );
         self.types().intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
             ret,
             this,
-            of: Box::new([]),
+            of: ArenaBox::empty(),
             is_union: true,
         })
     }
@@ -1405,22 +1444,22 @@ impl<'p> Checker<'p> {
         );
         // `cloneSignature`: it has the same declaration as `returned`.
         let generalized = self.types().intern_sig(SigData::Synth {
-            type_params: inferred_type_params.into(),
-            params: params.into(),
+            type_params: self.list(inferred_type_params),
+            params: self.list(&params),
             ret,
             this,
-            of: Box::new([returned]),
+            of: self.list(&[returned]),
             is_union: true,
         });
         let returned_type = self.sig_return(sig);
         let ret = self.single_signature_type(generalized, construct, returned_type, mapper);
         let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
         self.types().intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
             ret,
             this,
-            of: Box::new([]),
+            of: ArenaBox::empty(),
             is_union: true,
         })
     }
@@ -1522,7 +1561,7 @@ impl<'p> Checker<'p> {
             CallLike::Jsx(j) if hir[j].tag.is_none() => {
                 let empty = self.synth(Shape {
                     literal: Literalness::JsxAttributes,
-                    ..Shape::default()
+                    ..Shape::new_in(self.arena)
                 });
                 smallvec![Arg::Type(empty, Atom::NONE, call)]
             }
@@ -1649,6 +1688,7 @@ impl<'p> Checker<'p> {
                 ty,
                 optional: i >= least,
                 rest: false,
+                is_required_rest: false,
                 has_declaration: source.is_some_and(|p| p.has_declaration),
             });
         }
@@ -1668,6 +1708,7 @@ impl<'p> Checker<'p> {
                 ty: self.array_of(element),
                 optional: false,
                 rest: true,
+                is_required_rest: false,
                 has_declaration: first.has_declaration,
             });
         }
@@ -1684,11 +1725,11 @@ impl<'p> Checker<'p> {
         let ret = self.intersection(&returns);
         // It has the declaration of the first of them.
         self.types().intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
             ret,
             this,
-            of: Box::new([sigs[0]]),
+            of: self.list(&[sigs[0]]),
             is_union: true,
         })
     }
@@ -1766,7 +1807,7 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return ty;
         }
-        match self.data(ty).clone() {
+        match self.data(ty) {
             TypeData::Union(_) => {
                 return self.map_type(ty, |c, m| c.instantiated_type(m, args, node, found));
             }
@@ -1791,8 +1832,8 @@ impl<'p> Checker<'p> {
             return ty;
         }
         // Also returns whether the result is `sigs` (`core.Same`).
-        let actual = |c: &mut Self, sigs: &[SigId]| -> (Vec<SigId>, bool) {
-            let mut out = Vec::new();
+        let actual = |c: &mut Self, sigs: &[SigId]| -> (ArenaVec<'s, SigId>, bool) {
+            let mut out = ArenaVec::new_in(c.arena);
             let mut is_same = true;
             for &sig in sigs {
                 let sig = c.instantiate_sig(sig, members.mapper);
@@ -1828,28 +1869,25 @@ impl<'p> Checker<'p> {
         if is_same_call && is_same_construct {
             return ty;
         }
-        let mut props = Vec::with_capacity(members.shape().props.len());
+        let mut props = ArenaVec::with_capacity_in(members.shape().props.len(), self.arena);
         for prop in &members.shape().props {
-            let mut prop = prop.clone();
+            let mut prop = prop.clone_in(self.arena);
             self.instantiate_prop(&mut prop, members.mapper);
             props.push(prop);
         }
-        let index = members
-            .shape()
-            .index
-            .iter()
-            .map(|i| IndexInfo {
-                value: self.instantiate(i.value, members.mapper),
-                ..*i
-            })
-            .collect();
+        let arena = self.arena;
+        let index = members.shape().index.iter().map(|i| IndexInfo {
+            value: self.instantiate(i.value, members.mapper),
+            ..*i
+        });
+        let index = vec_from_iter_in(index, arena);
         self.synth(Shape {
             props,
             call,
             construct,
             index,
             instantiation_expression: Some(node),
-            ..Shape::default()
+            ..Shape::new_in(self.arena)
         })
     }
 
@@ -1960,7 +1998,7 @@ impl<'p> Checker<'p> {
         if kept.is_none()
             && let Ok(stored) = ended
         {
-            let both: Box<[SigId]> = sigs.iter().chain(&ordered).copied().collect();
+            let both = self.list_of(sigs.iter().chain(&ordered).copied());
             let kept = (p.candidate_orders)
                 .insert_ref(&mut self.task, first, both, stored)
                 .1;
@@ -2329,13 +2367,31 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `resolveCallExpression` up to the test under `CheckModeSkipGenericFunctions`, as
+    /// `getResolvedSignature` calls it: the callee is checked with `resolvingSignature` in place and
+    /// the resolution stack reset. Returns whether the call is deferred.
+    pub(super) fn defers_call_of_generic_function(&mut self, file: FileId, e: ExprId) -> bool {
+        let is_in_progress = self
+            .stack
+            .iter()
+            .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == e));
+        if !self.enter(Query::Call(file, e)) {
+            return false;
+        }
+        let resolution_start = self.resolution_start;
+        if !is_in_progress {
+            self.resolution_start = self.stack.len();
+        }
+        let defers = self.is_call_of_generic_function_returning_function(file, e);
+        self.resolution_start = resolution_start;
+        self.settle_reported_without_entry();
+        let _ = self.leave(Query::Call(file, e));
+        defers
+    }
+
     /// `isGenericFunctionReturningFunction` for some signature of the callee of `e`, if `e` is a
     /// call without type arguments.
-    pub(super) fn is_call_of_generic_function_returning_function(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> bool {
+    fn is_call_of_generic_function_returning_function(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[e].kind else {
             return false;
@@ -2422,6 +2478,7 @@ impl<'p> Checker<'p> {
         );
         let outer = self.begin_recheck();
         let ty = check(self, check_mode);
+        self.note_array_literal_types(file, e, ty);
         self.end_recheck(outer);
         (self.rechecked_exprs, self.rechecked_members) = found_outside;
         self.mode_of_recheck = mode_outside;
@@ -2495,13 +2552,13 @@ impl<'p> Checker<'p> {
     pub(super) fn type_of_signature(&self, sig: SigId, construct: bool) -> TypeId {
         self.synth(if construct {
             Shape {
-                construct: vec![sig],
-                ..Shape::default()
+                construct: vec_from_iter_in([sig], self.arena),
+                ..Shape::new_in(self.arena)
             }
         } else {
             Shape {
-                call: vec![sig],
-                ..Shape::default()
+                call: vec_from_iter_in([sig], self.arena),
+                ..Shape::new_in(self.arena)
             }
         })
     }
@@ -2519,36 +2576,8 @@ impl<'p> Checker<'p> {
         inference.around_source = self
             .sig_decl(expected)
             .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
-        // `applyToParameterTypes`
-        let (sp, tp) = (self.sig_params(expected), self.sig_params(sig));
-        let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
-        let (source_rest, target_rest) =
-            (self.effective_rest_type(&sp), self.effective_rest_type(&tp));
-        let target_non_rest_count = if target_rest.is_some() {
-            target_count - 1
-        } else {
-            target_count
-        };
-        let param_count = if source_rest.is_some() {
-            target_non_rest_count
-        } else {
-            source_count.min(target_non_rest_count)
-        };
-        if let Some(source) = self.sig_this_type(expected)
-            && let Some(target) = self.sig_this_type(sig)
-        {
+        for (source, target) in self.parameter_type_pairs(expected, sig) {
             self.infer(&mut inference, source, target, 0);
-        }
-        for i in 0..param_count {
-            let (source, target) = (
-                self.param_type_at(&sp, i).unwrap_or(TypeId::ANY),
-                self.param_type_at(&tp, i).unwrap_or(TypeId::ANY),
-            );
-            self.infer(&mut inference, source, target, 0);
-        }
-        if let Some(target_rest) = target_rest {
-            let rest = self.rest_type_at_position(&sp, param_count, false);
-            self.infer(&mut inference, rest, target_rest, 0);
         }
         if with_result {
             // `applyToReturnTypes`: the type of one type predicate is paired with the type of the
@@ -2869,9 +2898,20 @@ impl<'p> Checker<'p> {
         };
         let params = self.sig_params(sig);
         // `getTypeAtPosition`: where there is no parameter the contextual type is `any`.
-        let param = self
-            .context_of_arg_at(&params, index, Some(count))
-            .unwrap_or(TypeId::ANY);
+        let param = match (
+            self.context_of_arg_at(&params, index, Some(count)),
+            params.last(),
+        ) {
+            (Some(param), _) => param,
+            // `getIndexedAccessTypeEx(.., AccessFlagsContextual)`: past the end of a rest parameter
+            // of tuple type, `getTypeOfPropertyOfContextualType` finds the number index signature.
+            (None, Some(last)) if last.rest => {
+                let name = self.number_name((index + 1).saturating_sub(params.len()) as f64);
+                self.contextual_property(last.ty, name)
+                    .unwrap_or(TypeId::ANY)
+            }
+            (None, _) => TypeId::ANY,
+        };
         Some(self.without_no_infer(param))
     }
 }

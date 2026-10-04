@@ -12,7 +12,7 @@ use super::errors::is_close;
 use super::*;
 use crate::bind::{PatParent, ScopeId};
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
         self.check_computed_names(file);
         self.check_exports(file);
@@ -22,6 +22,7 @@ impl Checker<'_> {
     /// `checkComputedPropertyName`
     fn check_computed_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let unchecked = self.unchecked_jsdoc_types(file);
         let mut keys: Vec<(ExprId, u32)> = Vec::new();
         keys.extend(hir.props.iter().filter_map(|p| match p.key {
             PropKey::Computed(e) => Some((e, p.pos)),
@@ -39,7 +40,7 @@ impl Checker<'_> {
             }
         }
         for (e, start) in keys {
-            if bound.is_unchecked(e.idx()) {
+            if bound.is_unchecked(e.idx()) || unchecked.contain(start) {
                 continue;
             }
             let ty = self.type_of_expr(file, e);
@@ -412,7 +413,7 @@ pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node)
 
 /// `getFullyQualifiedName`
 pub(super) fn fully_qualified_name(
-    c: &mut Checker<'_>,
+    c: &mut Checker<'_, '_>,
     sym: Sym,
     containing_location: Option<Enclosing>,
 ) -> Vec<u8> {
@@ -426,7 +427,7 @@ pub(super) fn fully_qualified_name(
 }
 
 /// `getFullyQualifiedName` for an `AliasTarget`. A synthesized property (of a union, an intersection, a mapped type, a tuple) has no `Parent`.
-pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) -> Vec<u8> {
+pub(super) fn fully_qualified_name_of(c: &mut Checker<'_, '_>, symbol: AliasTarget) -> Vec<u8> {
     let (object, name) = match symbol {
         AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol, None),
         AliasTarget::Property(object, name, _) => (object, name),

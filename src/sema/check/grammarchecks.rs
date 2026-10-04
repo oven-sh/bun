@@ -6,7 +6,6 @@
 //! text next to a node, once the token is known to exist.
 
 use super::errors_operators::language_version;
-use super::errors_signatures::start_of_type_in_source;
 use super::related::Place;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
@@ -21,7 +20,7 @@ const PROPERTY_ASSIGNMENT: u8 = 4;
 const METHOD: u8 = 8;
 const GET_OR_SET_ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `grammarErrorOnNode`
     pub(super) fn grammar_error_on_node(
         &mut self,
@@ -234,9 +233,9 @@ impl Checker<'_> {
                 if f.kind != FnKind::Arrow
                     && hir.text.get(f.anchor as usize) == Some(&b'(')
                     && !hir.is_ambient(hir.node(p))
-                    && let Some(close) = end_of_brackets(&hir.text, f.anchor as usize)
                 {
-                    self.grammar_error_on_token_before(file, close as u32 - 1, b",", 1013);
+                    let end = self.end_of_param(file, p);
+                    self.grammar_error_on_token_after(file, end, b',', 1013);
                 }
                 if is_optional {
                     let end = self.end_of_pat(file, parameter.pat);
@@ -267,7 +266,7 @@ impl Checker<'_> {
         }
         if f.type_params.len() == 1 {
             let first = f.type_params.at(0);
-            let path = self.files().module(file).path.as_slice();
+            let path = self.files().module(file).path;
             // Neither a constraint nor a trailing comma.
             if hir[first].constraint.is_none()
                 && text.get(skip_trivia(text, hir[first].end as usize)) == Some(&b'>')
@@ -442,14 +441,19 @@ impl Checker<'_> {
         parameter.default.is_some() && self.grammar_error_on_node(file, name, 1052, &[])
     }
 
-    /// `checkGrammarConstructorTypeParameters`. They are not stored: they are between the name and
-    /// the `(`.
+    /// `checkGrammarConstructorTypeParameters`. They are between the name and the `(`.
     pub(super) fn check_grammar_constructor_type_parameters(
         &mut self,
         file: FileId,
         func: FnId,
     ) -> bool {
         let hir = self.hir(file);
+        // The reparser reports those of `@template` tags: it has the range of the tags.
+        if let Some(first) = hir[func].type_params.iter().next()
+            && hir.is_in_jsdoc(hir[first].pos)
+        {
+            return true;
+        }
         let text = &hir.text[..];
         let less_than = skip_trivia(
             text,
@@ -481,7 +485,7 @@ impl Checker<'_> {
         if ret.is_none() {
             return false;
         }
-        let start = start_of_type_in_source(&hir.text, hir[ret].pos);
+        let start = start_of_type(hir, ret);
         let end = self.end_of_type_node_from(file, ret, start);
         self.grammar_error_at((file, start, end), 1093, &[])
     }
@@ -897,7 +901,7 @@ fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
 }
 
 /// `TypeFlagsEnumLike`: a member of an enum, or an enum.
-fn is_enum_like(c: &mut Checker<'_>, ty: TypeId) -> bool {
+fn is_enum_like(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
     match c.data(ty) {
         TypeData::EnumLit { .. } | TypeData::Enum { .. } => true,
         TypeData::Union(parts) => match c.data(parts[0]) {

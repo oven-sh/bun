@@ -5,25 +5,36 @@
 //! here is a function of the graph and of program order alone.
 
 use crate::program::FileId;
+use crate::session::Arena;
 
-pub struct Component {
+pub struct Component<'s> {
     /// In program order.
-    pub files: Vec<FileId>,
+    pub files: &'s [FileId],
     /// 0 if it imports nothing outside itself. Otherwise one more than the highest level of a component it imports.
     pub level: u32,
 }
 
-pub struct Components {
+pub struct Components<'s> {
     /// In program order of their first files.
-    pub all: Vec<Component>,
+    pub all: &'s [Component<'s>],
     /// For each `FileId` the index of its component in `all`. `u32::MAX`: the file is not in the program.
-    pub of_file: Vec<u32>,
+    pub of_file: &'s [u32],
 }
 
-impl Components {
+impl<'s> Components<'s> {
+    /// Of a program without files.
+    pub const EMPTY: Components<'static> = Components {
+        all: &[],
+        of_file: &[],
+    };
+
     /// `order`: the files of the program, in program order. `imports(file)`: the files that `file` refers to, in any order, with
     /// repetitions.
-    pub fn new(order: &[FileId], imports: &dyn Fn(FileId) -> Vec<FileId>) -> Components {
+    pub fn new(
+        order: &[FileId],
+        imports: &dyn Fn(FileId) -> Vec<FileId>,
+        arena: &'s Arena,
+    ) -> Components<'s> {
         // A node is a position in `order`.
         let files = order.iter().map(|file| file.idx() + 1).max().unwrap_or(0);
         let mut node_of = vec![u32::MAX; files];
@@ -57,7 +68,7 @@ impl Components {
             index_of[number] = index as u32;
         }
         let component = |&number: &usize| Component {
-            files: numbered[number].iter().map(|&node| order[node]).collect(),
+            files: arena.alloc_slice_fill_iter(numbered[number].iter().map(|&node| order[node])),
             level: levels[number],
         };
         let of_node = |&node: &u32| match number_of.get(node as usize) {
@@ -65,8 +76,8 @@ impl Components {
             None => u32::MAX,
         };
         Components {
-            all: in_program_order.iter().map(component).collect(),
-            of_file: node_of.iter().map(of_node).collect(),
+            all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
+            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
         }
     }
 

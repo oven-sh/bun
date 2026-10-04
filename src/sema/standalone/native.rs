@@ -442,6 +442,20 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
 }
+/// `BUN_JSON_IDX_ODDITY`: `StructuralIndex` goes on with its scalar indexer.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_json_index_chunk(
+    _input: *const u8,
+    _len: usize,
+    _base_offset: usize,
+    _out_indices: *mut u32,
+    _out_dirty: *mut u64,
+    _inout_state: *mut u64,
+    out_flags: *mut u32,
+) -> usize {
+    unsafe { *out_flags = 1 << 3 };
+    0
+}
 
 // ───────────────────────────── simdutf ─────────────────────────────
 
@@ -670,6 +684,35 @@ fn __bun_macro_context_get_remap(
     _path: &[u8],
 ) -> Option<&'static bun_js_parser::Macro::MacroRemapEntry> {
     None
+}
+
+/// `String(number)`, as `WTF::numberToString` writes it.
+#[unsafe(no_mangle)]
+extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
+    use std::io::Write;
+    let mut text = Vec::new();
+    if number.is_nan() {
+        text.extend_from_slice(b"NaN");
+    } else if number.is_infinite() {
+        text.extend_from_slice(if number > 0.0 {
+            b"Infinity"
+        } else {
+            b"-Infinity"
+        });
+    } else if number == 0.0 {
+        text.push(b'0');
+    } else if number.abs() >= 1e21 || number.abs() < 1e-6 {
+        let _ = write!(text, "{number:e}");
+        if let Some(e) = bun_core::strings::index_of_char_usize(&text, b'e')
+            && text.get(e + 1) != Some(&b'-')
+        {
+            text.insert(e + 1, b'+');
+        }
+    } else {
+        let _ = write!(text, "{number}");
+    }
+    buf[..text.len()].copy_from_slice(&text);
+    text.len()
 }
 
 /// The longest prefix of `p` that is a decimal number, as `WTF::parseDouble` parses it.

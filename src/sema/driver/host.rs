@@ -3,16 +3,18 @@
 //! The checker's paths are absolute, use `/`, and start with one. On Windows it represents `C:\a\b`
 //! as `/C:/a/b`.
 
-use bun_core::strings::{BOM, index_of, without_trailing_slash};
+use bun_core::strings::{BOM, index_of, is_all_whitespace, without_trailing_slash};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
+use bun_sema::json::Json;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, Spent, inside, join, to_file_name_lower_case,
+    Host, ModuleDetection, Options, Phase, Spent, ancestors, inside, join, to_file_name_lower_case,
 };
-use bun_sema::util::ShardedMap;
+use bun_sema::session::Arena;
+use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::OnceLock;
@@ -53,18 +55,9 @@ pub fn find_lib_dir(
             (real != package).then(|| for_the_platform(dirname::<Posix>(&real)))?
         })
     };
-    let mut dir = dir;
-    loop {
-        if let Some(found) = in_node_modules(&join(dir, b"node_modules")) {
-            return Some(found);
-        }
-        let parent = dirname::<Posix>(dir);
-        if parent == dir || parent.is_empty() {
-            break;
-        }
-        dir = parent;
-    }
-    global_node_modules.and_then(in_node_modules)
+    ancestors(dir)
+        .find_map(|dir| in_node_modules(&join(dir, b"node_modules")))
+        .or_else(|| global_node_modules.and_then(in_node_modules))
 }
 
 /// `/C:/a` becomes `C:/a`, which Windows accepts.
@@ -166,15 +159,25 @@ pub struct Disk {
     real_directories: ShardedMap<Vec<u8>, Vec<u8>>,
     /// On macOS, opening and reading files slows down with the number of concurrent threads by more
     /// than the parallelism gains: 16 threads take six times as long for the same files as 4 do. So
-    /// only a few readers are admitted at a time, as in the bundler.
+    /// only a few readers are admitted at a time. The threads of `io_pool` are few by themselves.
+    /// This is for what the other threads read: `package.json` and configuration files.
     reading: Option<bun_threading::Semaphore>,
+    /// `Host::io_pool`
+    io_pool: Option<bun_threading::io_thread_pool::Ref>,
     /// Readers that are not in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
+    /// See `AlreadyRead`. `None` for a caller that has read nothing.
+    already_read: Option<bun_threading::Guarded<AlreadyRead>>,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
 }
+
+/// The text of files that the caller of the check has read, by path in the checker's format, as
+/// UTF-8 without a byte order mark. The first `Host::read` of such a file takes the text, so the
+/// file is not opened. `bun build --check` passes what the bundler has read.
+pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
 
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
 #[derive(Default)]
@@ -267,8 +270,14 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
 
 impl Disk {
     pub fn new(threads: usize) -> Self {
+        Self::with_already_read(threads, AlreadyRead::default())
+    }
+
+    pub fn with_already_read(threads: usize, already_read: AlreadyRead) -> Self {
         Disk {
             threads,
+            already_read: (!already_read.is_empty())
+                .then(|| bun_threading::Guarded::new(already_read)),
             caches: Default::default(),
             case_sensitive: is_file_system_case_sensitive(),
             directories: ShardedMap::default(),
@@ -280,6 +289,9 @@ impl Disk {
                 }
                 places
             }),
+            // The condition of the bundler, and the same for the threads of this check.
+            io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
+                .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
             times: Default::default(),
@@ -388,6 +400,14 @@ impl Disk {
     }
 }
 
+impl Drop for Disk {
+    fn drop(&mut self) {
+        if self.io_pool.is_some() {
+            bun_threading::io_thread_pool::release();
+        }
+    }
+}
+
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
     let directory = match bun_sys::open_dir_absolute(to_native(path)) {
@@ -458,6 +478,61 @@ fn is_file_system_case_sensitive() -> bool {
     !bun_sys::exists(&swapped)
 }
 
+/// `packagejson.Parse`, with Bun's JSON parser. That one also takes strings in single quotes and
+/// the number literals of JavaScript, which typescript-go refuses. `as_bun_install_does`: comments
+/// and trailing commas too.
+pub fn parse_package_json(arena: &Arena, text: &[u8], as_bun_install_does: bool) -> Option<Json> {
+    use bun_ast::e::{JsonValue, ObjectJSON};
+    use bun_parsers::json::ParsedJson;
+    fn json_of_object(object: &ObjectJSON, has_duplicates: bool) -> Json {
+        let properties = object.properties();
+        let mut entries: Vec<(Vec<u8>, Json)> = Vec::with_capacity(properties.len());
+        for property in properties {
+            let key = property.key.slice();
+            let value = json_of(&property.value, has_duplicates);
+            // `json.AllowDuplicateNames`: the last value, at the place of the first.
+            let earlier = has_duplicates.then(|| entries.iter_mut().find(|entry| entry.0 == key));
+            match earlier.flatten() {
+                Some(entry) => entry.1 = value,
+                None => entries.push((key.to_vec(), value)),
+            }
+        }
+        Json::Object(entries)
+    }
+    fn json_of(value: &JsonValue, has_duplicates: bool) -> Json {
+        match value {
+            JsonValue::Null => Json::Null,
+            JsonValue::Boolean(value) => Json::Bool(*value),
+            JsonValue::Number(number) => Json::Number(number.value()),
+            JsonValue::String(text) => Json::String(text.slice().to_vec()),
+            JsonValue::Array(array) => {
+                let items = array.get().items().iter();
+                Json::Array(items.map(|item| json_of(item, has_duplicates)).collect())
+            }
+            JsonValue::Object(object) => json_of_object(object.get(), has_duplicates),
+        }
+    }
+    let text = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
+    let mut log = bun_ast::Log::init();
+    let parse = if as_bun_install_does {
+        ParsedJson::parse_package_json
+    } else {
+        ParsedJson::parse_json
+    };
+    let parsed = parse(&source, &mut log).ok()?;
+    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
+        return None;
+    };
+    // The parser stops at the end of the first value. The object of an empty file has no `}`.
+    let end = usize::try_from(root.close_brace_loc.start).ok()? + 1;
+    // The only warning is about a duplicate key.
+    (as_bun_install_does || is_all_whitespace(&text[end..]))
+        .then(|| json_of_object(root.get(), log.warnings > 0))
+}
+
 impl Host for Disk {
     fn spent(&self, phase: Phase, time: Duration) {
         self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
@@ -467,6 +542,11 @@ impl Host for Disk {
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if let Some(already_read) = &self.already_read
+            && let Some(text) = already_read.lock().remove(path)
+        {
+            return Some(Cow::Owned(text));
+        }
         let _reading = Spent::on(self, Phase::Read);
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
@@ -540,9 +620,17 @@ impl Host for Disk {
     fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
     }
-    fn parse(&self, path: &[u8], text: &[u8], atoms: &Interner, options: &Options) -> hir::File {
+    fn parse<'s>(
+        &self,
+        arena: &'s Arena,
+        path: &[u8],
+        text: &[u8],
+        atoms: &Interner<'s>,
+        options: &Options,
+    ) -> hir::File<'s> {
         let began = Instant::now();
         let (file, parsing) = bun_js_parser::sema::summarize(
+            arena,
             path,
             text,
             atoms,
@@ -553,15 +641,17 @@ impl Host for Disk {
         self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));
         file
     }
+    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        parse_package_json(arena, text, false)
+    }
+    fn loaded(&self) {
+        self.caches.drop_those_of_the_parser();
+    }
     fn threads(&self) -> usize {
         self.threads
     }
-    fn readers(&self) -> usize {
-        if self.reading.is_some() {
-            READERS
-        } else {
-            usize::MAX
-        }
+    fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
+        self.io_pool.as_deref()
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         // In runs: adjacent paths are in the same directory.

@@ -49,7 +49,7 @@ impl Checked {
     }
 }
 
-impl Program {
+impl Program<'_> {
     /// The errors of `file`, after the last barrier. It runs no query and reads no HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
@@ -118,20 +118,44 @@ impl PartialEq for Container {
     }
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
+    /// Drops the memos of this checker that are keyed by a node of `file`, which `is_leaf` and has
+    /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
+    /// task of the last step checks dozens of such files. The capacity stays for the next one.
+    fn forget_nodes_of_leaf(&mut self, file: FileId) {
+        self.literals_checked_under.retain(|key, _| key.0 != file);
+        self.discriminated.retain(|key, _| key.0 != file);
+        self.non_existent_properties.retain(|key, _| key.0 != file);
+        self.rechecked_exprs.retain(|key, _| key.0 != file);
+        self.rechecked_members.retain(|key, _| key.0 != file);
+        self.late_bound_members.retain(|key, _| key.0.file != file);
+        self.resolved_signatures.retain(|key| key.0 != file);
+        self.context_checked_here.retain(|key| key.0 != file);
+        self.prepared.retain(|key| key.0 != file);
+    }
+
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
     /// cause in this one, are in the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
+        if let Some(previous) = self.task.file
+            && previous != file
+            && self.files().module(previous).is_leaf
+        {
+            self.forget_nodes_of_leaf(previous);
+        }
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.refused_expressions.clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
+        self.outermost_comparison = None;
+        self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
         self.instantiations_up_to_a_limit.clear();
         self.relations_cut_short.clear();
         self.variances_cut_short.clear();
+        self.generic_mapped_types_cut_short.clear();
         self.deferred_diagnostics.clear();
         // Entries the task's previous file added after its own `check_circular_mapped_properties`
         // are dropped, as they are for the last file.
@@ -354,9 +378,9 @@ impl Checker<'_> {
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for module in modules {
-            has_types_package |= strings::contains(&module.path, &types);
-            has_declarations |= crate::resolve::is_declaration_file_name(&module.path)
-                && strings::contains(&module.path, &own);
+            has_types_package |= strings::contains(module.path, &types);
+            has_declarations |= crate::resolve::is_declaration_file_name(module.path)
+                && strings::contains(module.path, &own);
         }
         let (code, args) = if has_types_package {
             (7040, vec![package.to_vec(), mangled])
@@ -539,7 +563,7 @@ impl Checker<'_> {
             }
             match decl {
                 Decl::ImportDefault(i) => self.report_non_default_export(file, i, module),
-                _ => self.error_no_module_member_symbol(file, module, target, spec, name, start),
+                _ => self.error_no_module_member_symbol(file, module, target, name, start),
             }
         } else if !matches!(decl, Decl::Require(_))
             && files.is_only_importable_as_default(usage, module)
@@ -549,7 +573,7 @@ impl Checker<'_> {
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
         {
-            self.error_no_module_member_symbol(file, module, target, spec, name, start);
+            self.error_no_module_member_symbol(file, module, target, name, start);
         }
     }
 
@@ -572,18 +596,16 @@ impl Checker<'_> {
 
     /// `errorNoModuleMemberSymbol`: `name`, at `start` in `from`, is imported from `module`, which
     /// has no such export. `target`: the value `module` exports with `export =`, or else `module`.
-    /// `spec`: the specifier that imports `module`.
     fn error_no_module_member_symbol(
         &mut self,
         from: FileId,
         module: Sym,
         target: Sym,
-        spec: Atom,
         name: Atom,
         start: u32,
     ) {
         let (code, other) = self.why_no_module_member(from, module, target, name, start);
-        let module_name = module_name_as_imported(self, module, spec);
+        let module_name = module_name_as_imported(self, module, from);
         // `DeclarationNameToString`: a string literal name keeps its quotes.
         let written = match self.hir(from).text.get(start as usize) {
             Some(b'"' | b'\'') => word_at(self, from, start),
@@ -741,10 +763,11 @@ impl Checker<'_> {
             return (2305, None);
         };
         // `getSymbolIfSameReference`
-        let local = files.resolve_alias(local);
+        let resolve = |s: Sym| files.resolve_alias(s).map(|target| files.canonical(target));
+        let local = resolve(local);
         let own = files.exports(module);
         let Some(equals) = files.export(module, known::export_equals) else {
-            return match own.iter().find(|&&(_, e)| files.resolve_alias(e) == local) {
+            return match own.iter().find(|&&(_, e)| resolve(e) == local) {
                 Some(&(_, exported)) => (2460, Some(exported)),
                 None => (2459, None),
             };
@@ -757,16 +780,15 @@ impl Checker<'_> {
                     .flags(s)
                     .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
         });
-        let code =
-            if local.is_none() || is_more_than_an_alias || files.resolve_alias(equals) != local {
-                2305
-            } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
-                2595
-            } else if self.hir(from).is_js {
-                2597
-            } else {
-                2616
-            };
+        let code = if local.is_none() || is_more_than_an_alias || resolve(equals) != local {
+            2305
+        } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
+            2595
+        } else if self.hir(from).is_js {
+            2597
+        } else {
+            2616
+        };
         (code, None)
     }
 
@@ -922,22 +944,13 @@ impl Checker<'_> {
             return true;
         }
         let symbol = bound.expr_symbol[e.idx()];
-        // `isSameScopedBindingElement`: a binding of a pattern, read in the nearest enclosing
-        // default initializer, which belongs to the same pattern. Nodes in the pattern are numbered
-        // before the initializer.
+        // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the
+        // initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
-            let mut at = parent;
-            loop {
-                match at {
-                    Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => {
-                        if self.outward(file, at) == Parent::VarInit(d) {
-                            return true;
-                        }
-                        break;
-                    }
-                    Parent::None | Parent::File | Parent::Module(_) => break,
-                    _ => at = self.outward(file, at),
-                }
+            let binding_element = hir.find_ancestor_kind(hir.node(e), Kind::BindingElement);
+            if binding_element.is_some() && hir.get_root_declaration(binding_element) == hir.node(d)
+            {
+                return true;
             }
         }
         // `isOuterVariable`, which uses the flow container before it is moved out of function
@@ -990,7 +1003,6 @@ impl Checker<'_> {
                         | Flags::ABSTRACT
                         | Flags::AMBIENT
                         | Flags::DEFINITE
-                        | Flags::OPTIONAL
                         | Flags::LITERAL_NAME,
                 )
             {
@@ -1006,18 +1018,35 @@ impl Checker<'_> {
                     let Some((prop, _)) = self.prop_ref(instance, name) else {
                         continue;
                     };
-                    (Some(name), self.type_of_prop(prop, MapperId::IDENTITY))
+                    // The declarations of one symbol have one type: that of `m: string = ""; m?: number`
+                    // is `string`. A declaration that `declareSymbolEx` refused has a symbol of its own.
+                    let own = (self.bound(file).member_symbol[m.idx()].is_some())
+                        .then(|| self.symbol_of_member(file, m));
+                    let ty = match prop.source {
+                        PropSource::Symbol(symbol) if Some(symbol) == own => {
+                            Some(self.type_of_prop(prop, MapperId::IDENTITY))
+                        }
+                        _ => None,
+                    };
+                    (Some(name), ty)
                 }
                 None => {
                     // `[k]: T` is subject to the check whatever `k` is.
                     let PropKey::Computed(k) = member.key else {
                         continue;
                     };
-                    (
-                        self.access_key(file, k),
-                        self.type_of_member_declaration(file, m),
-                    )
+                    (self.access_key(file, k), None)
                 }
+            };
+            let ty = match ty {
+                Some(ty) => ty,
+                // The type includes `undefined`, except that of an `accessor` field.
+                None if member.flags.contains(Flags::OPTIONAL)
+                    && !member.flags.contains(Flags::ACCESSOR) =>
+                {
+                    continue;
+                }
+                None => self.type_of_member_declaration(file, m),
             };
             if ty == TypeId::UNRESOLVED
                 || ty == TypeId::UNKNOWN
@@ -1067,12 +1096,48 @@ impl Checker<'_> {
         }
     }
 
-    /// `node.Parent` of the node `parent` represents. `None`: for a member of a type literal, whose
-    /// parent is not stored.
+    /// `node.Parent` of the node `parent` represents, as far as `Parent` can express it: a pattern
+    /// is skipped. `None`: for a member of a type literal and for a function type, whose parents
+    /// are not stored.
     pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let of_class = |c: ClassId| match bound.class_owner[c.idx()] {
+            ClassOwner::Expr(x) => Parent::Expr(x),
+            ClassOwner::Stmt(s) => Parent::Stmt(s),
+        };
+        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => of_class(c),
+            MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
+            _ => Parent::None,
+        };
+        let of_fn = |f: FnId| match bound.fns[f.idx()].owner {
+            FnOwner::Expr(x) => Parent::Expr(x),
+            FnOwner::Stmt(s) => Parent::Stmt(s),
+            FnOwner::Member(m) => of_member(m),
+            _ => Parent::None,
+        };
+        let of_pattern = |mut pat: PatId| loop {
+            match bound.pat_parent[pat.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
+                PatParent::Var(d) => return Parent::VarInit(d),
+                PatParent::Param(p) => return Parent::ParamDefault(p),
+                PatParent::None => return Parent::None,
+            }
+        };
         match parent {
+            Parent::None | Parent::File => Parent::None,
             Parent::Expr(x) if x.is_none() => Parent::None,
+            Parent::Expr(x) => bound.expr_parent[x.idx()],
+            Parent::Stmt(s) if s.is_none() => Parent::None,
+            Parent::Stmt(s) => bound.stmt_parent[s.idx()],
+            Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
+            Parent::Prop(p) | Parent::PropKey(_, p) => Parent::Expr(bound.prop_owner[p.idx()]),
+            Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
+            Parent::FnBody(f) => of_fn(f),
+            Parent::ParamDefault(p) => of_fn(bound.param_fn[p.idx()]),
+            Parent::MemberInit(m) => of_member(m),
+            Parent::PatPropDefault(p) | Parent::PatKey(p) => of_pattern(hir[p].value),
+            Parent::PatElemDefault(p) => of_pattern(hir[p].pat),
             // The name and the decorators of a member or a parameter are its children.
             Parent::MethodKey(p) => match hir[hir[p].value].kind {
                 ExprKind::Fn(f) => Parent::FnBody(f),
@@ -1086,15 +1151,9 @@ impl Checker<'_> {
                 }
             }
             Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
-            Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
-                MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
-                _ => self.outward(file, parent),
-            },
-            Parent::PropKey(_, p) => Parent::Expr(bound.prop_owner[p.idx()]),
-            Parent::PatKey(p) => Parent::PatPropDefault(p),
+            Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => of_class(c),
             Parent::EnumInit(m) => Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt),
             Parent::Module(m) => Parent::Stmt(hir[m].stmt),
-            _ => self.outward(file, parent),
         }
     }
 
@@ -1350,13 +1409,13 @@ impl Checker<'_> {
             if let Some(class) = hir.class_of(hir.parent(at)).some() {
                 let class = self.class_sym(file, class);
                 let constructor = self.type_of_symbol(class);
-                if self.has_property(constructor, name) {
+                if self.get_property_of_type(constructor, name).is_some() {
                     self.error(file, location, 2662, &[Arg::Atom(name), Arg::Sym(class)]);
                     return true;
                 }
                 if at == container && !hir.is_static(at) {
                     let instance = self.declared_type(class);
-                    if self.has_property(instance, name) {
+                    if self.get_property_of_type(instance, name).is_some() {
                         self.error(file, location, 2663, &[Arg::Atom(name)]);
                         return true;
                     }
@@ -1429,7 +1488,7 @@ impl Checker<'_> {
                 (hir.kind(parent), hir.data(parent.row()))
             {
                 let (declared, right) = (self.declared_type(symbol), hir[right].text);
-                if self.has_property(declared, right) {
+                if self.get_property_of_type(declared, right).is_some() {
                     self.error(file, parent, 2713, &[reported, Arg::Atom(right)]);
                     return;
                 }
@@ -1617,45 +1676,6 @@ impl Checker<'_> {
             flags
         }
     }
-
-    /// `getPropertyOfType`: whether `ty` has a property `name`, including the properties common to
-    /// all functions and all objects. A name covered only by an index signature is not a property.
-    fn has_property(&mut self, ty: TypeId, name: Atom) -> bool {
-        let ty = self.apparent_type(ty);
-        if let TypeData::Union(parts) = self.data(ty) {
-            return parts.iter().all(|&part| self.has_property(part, name));
-        }
-        if self.prop_ref(ty, name).is_some() {
-            return true;
-        }
-        let Some(members) = self.members(ty) else {
-            return false;
-        };
-        let (is_called, is_constructed) = (
-            !members.shape().call.is_empty(),
-            !members.shape().construct.is_empty(),
-        );
-        if is_called || is_constructed {
-            let strict = if is_called {
-                known::CallableFunction
-            } else {
-                known::NewableFunction
-            };
-            let function = if self.p.files.options.strict_bind_call_apply {
-                strict
-            } else {
-                known::Function
-            };
-            for global in [function, known::Function] {
-                let function = self.global_ref(global, &[]);
-                if self.prop_ref(function, name).is_some() {
-                    return true;
-                }
-            }
-        }
-        let object = self.global_ref(known::Object, &[]);
-        self.prop_ref(object, name).is_some()
-    }
 }
 
 /// Codes that are not reported in a file with parse diagnostics (`hasParseDiagnostics`). Only for diagnostics that are not the parser's own.
@@ -1801,7 +1821,7 @@ fn get_candidate_name(name: &[u8]) -> &[u8] {
 // ───────────────────────────── message arguments ─────────────────────────────
 
 /// `DeclarationNameToString`, `TokenText`: the name or the word at `start`.
-fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> Vec<u8> {
+fn word_at(c: &Checker<'_, '_>, file: FileId, start: u32) -> Vec<u8> {
     c.source_text(file, start, c.end_of_name_at(file, start))
 }
 
@@ -1846,7 +1866,7 @@ fn get_spelling_suggestion_for_name<'a>(
 /// exports it. `declareModuleMember`: the local there is a symbol that only refers to the export
 /// symbol.
 fn similar_in_scope_and_where(
-    c: &Checker<'_>,
+    c: &Checker<'_, '_>,
     file: FileId,
     scope: ScopeId,
     name: Atom,
@@ -1858,7 +1878,7 @@ fn similar_in_scope_and_where(
     files.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias)
 }
 
-impl Files {
+impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
     /// block that exports it.
     /// `try_resolve_alias`: the flags of `tryResolveAlias(candidate)`, all flags for
@@ -1992,20 +2012,19 @@ impl Files {
     }
 }
 
-/// `getFullyQualifiedName` of `module`, relative to an import of it. `getSpecifierForModuleSymbol`:
-/// a file is named by a specifier that resolves to it from there. `spec`, the specifier in the
-/// source, is used for that.
-fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> Vec<u8> {
+/// `getFullyQualifiedName` of `module`, relative to an import of it in `from`.
+fn module_name_as_imported(c: &mut Checker<'_, '_>, module: Sym, from: FileId) -> Vec<u8> {
     let decls = c.files().decls_of(module);
     if decls.iter().any(|d| matches!(d.1, Decl::File)) {
-        cat!(b"\"", c.atoms().bytes(spec), b"\"")
+        let specifier = c.specifier_for_module_symbol(module, from, ResolutionMode::None);
+        cat!(b"\"", specifier, b"\"")
     } else {
         c.symbol_to_string(module)
     }
 }
 
 /// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends. 0: unknown.
-pub(super) fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
+pub(super) fn end_of_extends(c: &Checker<'_, '_>, file: FileId, class: &Class) -> u32 {
     if class.extends_args.is_empty() {
         return c.end_of_expr(file, class.extends);
     }
@@ -2022,7 +2041,7 @@ pub(super) fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u3
 }
 
 /// `entityNameToString`
-fn entity_name_text(c: &Checker<'_>, file: FileId, e: ExprId) -> Vec<u8> {
+fn entity_name_text(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> Vec<u8> {
     match c.hir(file)[e].kind {
         ExprKind::Dot { obj, name, .. } => {
             cat!(entity_name_text(c, file, obj), b".", c.atoms().bytes(name))
@@ -2071,15 +2090,15 @@ fn operator_text(op: BinOp, is_assignment: bool) -> Vec<u8> {
 }
 
 /// The relation an operator requires between the types of its two operands.
-type Related = fn(&mut Checker<'_>, TypeId, TypeId) -> bool;
+type Related = fn(&mut Checker<'_, '_>, TypeId, TypeId) -> bool;
 
 /// `bothAreBigIntLike`
-pub(super) fn both_are_bigint_like(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn both_are_bigint_like(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     c.is_assignable(left, TypeId::BIGINT) && c.is_assignable(right, TypeId::BIGINT)
 }
 
 /// `closeEnoughKind`: whether `+` plausibly accepts the two operand types.
-pub(super) fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn may_be_added(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     [left, right].into_iter().all(|t| {
         c.is_any(t)
             || t == TypeId::UNKNOWN
@@ -2090,7 +2109,7 @@ pub(super) fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> 
 }
 
 /// Whether `<`, `<=`, `>` and `>=` accept the two operand types.
-pub(super) fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn can_be_ordered(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     if c.is_any(left) || c.is_any(right) {
         return true;
     }
@@ -2103,14 +2122,14 @@ pub(super) fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -
 }
 
 /// `isTypeEqualityComparableTo`, in either direction.
-pub(super) fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn can_be_equal(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     let nullable = |t: TypeId| t.is_null() || t.is_undefined();
     nullable(left) || nullable(right) || c.are_comparable(left, right)
 }
 
 // ───────────────────────────── operators ─────────────────────────────
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// `isGlobalNaN`
     fn is_global_nan(&self, file: FileId, e: ExprId) -> bool {
         let ExprKind::Ident(name) = self.hir(file)[e].kind else {
@@ -2444,8 +2463,7 @@ impl Checker<'_> {
         ) else {
             return true;
         };
-        let at = self.span_of_parenthesized_expr(file, e);
-        self.error_at(at, code, &[]);
+        self.error(file, hir.child(e), code, &[]);
         false
     }
 
@@ -2667,7 +2685,7 @@ impl Checker<'_> {
     }
 }
 
-impl Files {
+impl Files<'_> {
     /// `declaration.Loc`. `None`: the HIR does not store it.
     pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -2743,7 +2761,7 @@ impl Files {
 
 // ───────────────────────────── assignment targets ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     /// The kind of assignment to `e`, if any: `=`, a compound assignment operator, or `++` and
     /// `--`.
     fn write_kind(&self, file: FileId, e: ExprId) -> Option<Write> {
@@ -2774,7 +2792,7 @@ impl<'p> Checker<'p> {
         obj: ExprId,
         ty: TypeId,
         name: Atom,
-    ) -> Option<&'p Prop> {
+    ) -> Option<&'p Prop<'p>> {
         self.write_kind(file, e)?;
         if self.is_any(ty) {
             return None;

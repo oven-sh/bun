@@ -50,8 +50,8 @@ Bundlers solve several problems:
 - **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
 <Note>
-  `bun build` checks types only when you pass [`--check`](/runtime/check#check-before-you-run-build-or-test). It does
-  not generate type declarations. Use `tsc` to produce `.d.ts` files.
+  `bun build` checks types only when you pass [`--check`](/runtime/check#check-before-you-run-build-or-test), or `check:
+  true` to `Bun.build`. It does not generate type declarations. Use `tsc` to produce `.d.ts` files.
 </Note>
 
 ## Basic example

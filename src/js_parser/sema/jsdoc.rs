@@ -9,6 +9,7 @@
 use crate::sema::ts_syntax as ts;
 use bun_ast::op::Level;
 use bun_ast::{Range, StoreStr};
+use bun_core::lexer::scan_identifier_parts;
 use bun_sema::hir::{Diagnostic, DiagnosticKind, Flags, TypeNodeKind};
 
 use super::TypeSyntax;
@@ -232,7 +233,7 @@ pub(crate) fn is_jsdoc_like(comment: &[u8]) -> bool {
 }
 
 /// `isObjectOrObjectArrayTypeReference`
-fn is_object_or_object_array(file: &bun_sema::hir::File, ty: ts::TypeId) -> bool {
+fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, ty: ts::TypeId) -> bool {
     if ty.is_none() {
         return false;
     }
@@ -352,20 +353,6 @@ fn name_at_token(p: &P<'_, true, false, true>) -> Name {
         start: p.lexer.start as u32,
         end: p.lexer.end as u32,
         text: StoreStr::new(p.lexer.raw()),
-    }
-}
-
-/// `scanIdentifierParts`: the end of the identifier that continues at `at`.
-fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
-    loop {
-        at = end_of_run(text, at, is_identifier_continue);
-        if text.get(at) != Some(&b'\\') {
-            return at;
-        }
-        match peek_unicode_escape(text, at) {
-            Some((c, len)) if is_identifier_continue(c) => at += len,
-            _ => return at,
-        }
     }
 }
 
@@ -505,7 +492,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             .filter(|msg| msg.kind == bun_ast::Kind::Err);
         let diagnostics = errors.filter_map(|msg| {
             // `ScanJSDocToken` does not scan `</` as one token.
-            let mut diagnostic = super::diagnostic(&msg.data, &msg.notes, source, false)??;
+            let mut diagnostic = super::diagnostic(&msg, source, false)??;
             if diagnostic.kind == DiagnosticKind::Parse {
                 diagnostic.kind = DiagnosticKind::JsDoc;
             }
@@ -524,6 +511,15 @@ impl<'p, 'a> Reader<'p, 'a> {
             len: len as i32,
         };
         self.p.lexer.ts_error(range, code);
+    }
+
+    /// `'{0}' tag already specified.`, of the tag named `name`.
+    fn tag_already_specified(&mut self, name: Name) {
+        let range = Range {
+            loc: bun_ast::usize2loc(name.start as usize),
+            len: 0,
+        };
+        self.p.lexer.ts_error_about(range, 1223, name.text.slice());
     }
 
     /// `parseErrorAtCurrentToken`
@@ -650,7 +646,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             b'(' | b')' | b'>' | b'#' => Token::Other,
             b'\\' => match peek_unicode_escape(text, pos) {
                 Some((c, len)) if is_identifier_start(c) => {
-                    end = end_of_word_parts(text, pos + len);
+                    end = scan_identifier_parts(text, pos + len);
                     Token::Word
                 }
                 _ => Token::Unknown,
@@ -662,7 +658,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                     let is_part = |c| is_identifier_continue(c) || c == b'-' as CodePoint;
                     end = end_of_run(text, end, is_part);
                     if text.get(end) == Some(&b'\\') {
-                        end = end_of_word_parts(text, end);
+                        end = scan_identifier_parts(text, end);
                     }
                     Token::Word
                 } else {
@@ -1297,7 +1293,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                     .iter()
                     .any(|tag| matches!(tag.kind, TagKind::Return(_)))
                 {
-                    self.error(name.start as usize, 0, 1223);
+                    self.tag_already_specified(name);
                 }
                 let ty = self.try_type_expression();
                 self.trailing_comments(start, margin, indent_text);
@@ -1541,7 +1537,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             .iter()
             .any(|tag| matches!(tag.kind, TagKind::Type(_)))
         {
-            self.error(name.start as usize, 0, 1223);
+            self.tag_already_specified(name);
         }
         let ty = self.type_expression(true);
         if let Some(indent) = indent {

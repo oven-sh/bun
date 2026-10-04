@@ -116,10 +116,11 @@ impl ActiveMappers {
     }
 }
 
-impl<'p> Checker<'p> {
+impl<'p, 's> Checker<'p, 's> {
     pub fn mapper_from(&mut self, params: &[TypeId], args: &[TypeId]) -> MapperId {
-        self.types()
-            .mapper(params.iter().copied().zip(args.iter().copied()).collect())
+        let pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
+            params.iter().copied().zip(args.iter().copied()).collect();
+        self.types().mapper_of(&pairs)
     }
 
     /// The pairs of `mapper` by the declaration of the type parameter, as `typeParameters` and `outerTypeParameters` are. A mapper
@@ -162,9 +163,10 @@ impl<'p> Checker<'p> {
         }
         let scope = self.begin_scope();
         self.unresolved_members.push((second, scope.frames));
-        let (hits, cycle_at) = (self.unresolved_members_hits, self.cycle_at);
+        let (hits, in_place) = (self.unresolved_members_hits, self.members_in_place_hits);
+        let hit_at = self.members_in_place_hit_at;
         let lowest_below = std::mem::replace(&mut self.lowest_unresolved_members_hit, u32::MAX);
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
+        let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
         for &(param, value) in self.mapping_in_declaration_order(first).iter() {
             pairs.push((param, self.instantiate(value, second)));
         }
@@ -173,27 +175,28 @@ impl<'p> Checker<'p> {
                 pairs.push((param, value));
             }
         }
-        let composed = self.types().mapper(pairs);
+        let composed = self.types().mapper_of(&pairs);
         self.unresolved_members.pop();
         let lowest = std::mem::replace(&mut self.lowest_unresolved_members_hit, lowest_below);
-        let own_marks = self.unresolved_members_hits - hits;
-        let ended = if lowest == u32::MAX {
-            self.end_scope_by_counters(scope)
-        } else if lowest as usize >= self.unresolved_members.len()
-            && self.non_cacheable_mark() == (scope.counters.0 + own_marks, scope.counters.1)
+        // `resolveObjectTypeMembers` installs the members with the base types it has instantiated,
+        // whatever members were in place in the meantime. See `members_in_place_hits`.
+        let marks = self.members_in_place_hits - in_place;
+        let is_open = self.non_cacheable_mark() != (scope.counters.0 + marks, scope.counters.1);
+        if !is_open
+            && marks != 0
+            && marks == self.unresolved_members_hits - hits
+            && lowest as usize >= self.unresolved_members.len()
             && self.lowest_taint >= scope.frames as usize
         {
-            // Only the members of this type reference were read unresolved, and tsgo stores the
-            // base type it has instantiated that way. No caller has seen the marks.
-            self.unresolved_members_hits = hits;
-            (self.cycles, self.cycle_at) = (scope.counters.0, cycle_at);
+            // Only the members of this type reference were read unresolved. No caller has seen
+            // the marks.
+            (self.unresolved_members_hits, self.members_in_place_hits) = (hits, in_place);
+            (self.cycles, self.members_in_place_hit_at) = (scope.counters.0, hit_at);
             self.lowest_taint = usize::MAX;
-            self.end_scope_as(scope, false)
         } else {
             self.lowest_unresolved_members_hit = lowest_below.min(lowest);
-            self.end_scope_as(scope, true)
-        };
-        match ended {
+        }
+        match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 let kept =
                     (self.p.composed).insert(&mut self.task, (first, second), composed, stored);
@@ -229,6 +232,16 @@ impl<'p> Checker<'p> {
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
         types.iter().map(|&t| self.instantiate(t, mapper)).collect()
+    }
+
+    /// The same, to store.
+    pub(super) fn instantiate_list(
+        &mut self,
+        types: &[TypeId],
+        mapper: MapperId,
+    ) -> ArenaBox<'s, [TypeId]> {
+        let arena = self.arena;
+        ArenaBox::from_iter_in(types.iter().map(|&t| self.instantiate(t, mapper)), arena)
     }
 
     /// `getInstantiatedSymbol`
@@ -324,7 +337,9 @@ impl<'p> Checker<'p> {
         }
         // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter
         // too.
-        if self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000 {
+        if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
+            && !self.reset_instantiation_count_if_idle()
+        {
             return self.instantiation_too_deep();
         }
         let active = self.active_mappers.find(mapper);
@@ -375,6 +390,9 @@ impl<'p> Checker<'p> {
             return known;
         }
         let (hits_before, limits_before) = (self.instantiation_limit_hits, self.limits);
+        if self.instantiation_depth == 0 && self.stack.is_empty() {
+            self.reset_instantiation_count_if_idle();
+        }
         self.instantiation_depth += 1;
         if serial == 0 {
             self.active_mappers.push(mapper);
@@ -405,16 +423,18 @@ impl<'p> Checker<'p> {
                 let is_tainted = self.limits != limits_before;
                 // `getObjectTypeInstantiation`, `getConditionalTypeInstantiation` and
                 // `getTypeAliasInstantiation` store a result with the error type of the limit in it
-                // like any other, so the next caller does not get to the limit and 2589 is reported
-                // once. From depth 0 the result depends on no caller. The entry is valid until the
-                // end of the file: no activation has the serial number 0.
-                let is_from_depth_0 = self.instantiation_depth == 0
-                    && self.instantiation_count < 5_000_000
-                    && !is_tainted;
+                // like any other, at whatever depth, so the next caller does not get to the limit
+                // and 2589 is reported once: `type A = [F<X>]; type B = F<X>;` meet at the object
+                // type in `F`, not at `F<X>`, whose key has the alias `B`. The entry is valid until
+                // the end of the file: no activation has the serial number 0.
+                let has_instantiations = self.instantiation_depth == 0
+                    || matches!(self.data(ty), TypeData::Anon { .. } | TypeData::Cond { .. })
+                    || self.types().deferred(ty).is_some();
+                let is_stored =
+                    has_instantiations && self.instantiation_count < 5_000_000 && !is_tainted;
                 // Otherwise `cache[key] = result`, which `popActiveMapper` clears.
-                if self.cycles == cycles_before && hit_the_limit && (is_from_depth_0 || serial != 0)
-                {
-                    let under = if is_from_depth_0 { 0 } else { serial };
+                if self.cycles == cycles_before && hit_the_limit && (is_stored || serial != 0) {
+                    let under = if is_stored { 0 } else { serial };
                     self.instantiations_up_to_a_limit
                         .insert((ty, mapper), (under, result, is_tainted));
                 }
@@ -432,10 +452,7 @@ impl<'p> Checker<'p> {
         if literal.is_none() || !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
         }
-        let mut scope = self.scope_of_expr(file, literal);
-        if scope.is_none() {
-            return false;
-        }
+        let mut scope = self.enclosing_scope_of_expr(file, literal);
         while scope.is_some() {
             let enclosing = &bound.scopes[scope.idx()];
             if let crate::bind::ScopeKind::Fn(func) = enclosing.kind
@@ -463,7 +480,7 @@ impl<'p> Checker<'p> {
         };
         let (file, node) = (deferred.file, deferred.node);
         let new = self.map_mapper(deferred.mapper, mapper);
-        let arguments = TypeArguments::deferred(file, node, new);
+        let arguments = TypeArguments::deferred_in(file, node, new, self.arena);
         let reference = match self.data(ty) {
             TypeData::Ref { target, .. } => TypeData::Ref {
                 target: *target,
@@ -473,7 +490,7 @@ impl<'p> Checker<'p> {
                 flags, readonly, ..
             } => TypeData::Tuple {
                 elems: arguments,
-                flags: flags.clone(),
+                flags: flags.clone_in(self.arena),
                 readonly: *readonly,
             },
             _ => return ty,
@@ -500,10 +517,11 @@ impl<'p> Checker<'p> {
             }
             TypeData::Ref { target, .. } => {
                 let args = self.type_arguments(ty);
-                let args = self.instantiate_all(args, mapper);
-                self.intern(TypeData::Ref {
+                let args: SmallVec<[TypeId; 8]> =
+                    args.iter().map(|&t| self.instantiate(t, mapper)).collect();
+                self.intern_key(TypeKey::Ref {
                     target: *target,
-                    args: args.into(),
+                    args: &args,
                 })
             }
             TypeData::Tuple {
@@ -539,10 +557,7 @@ impl<'p> Checker<'p> {
             }
             TypeData::Fns { decls, mapper: own } => {
                 let new = self.map_mapper(*own, mapper);
-                self.intern(TypeData::Fns {
-                    decls: decls.clone(),
-                    mapper: new,
-                })
+                self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {
                 let scope = self.begin_scope();
@@ -550,10 +565,10 @@ impl<'p> Checker<'p> {
                     literal: shape.literal,
                     is_regular: shape.is_regular,
                     contains_widening_type: shape.contains_widening_type,
-                    ..Shape::default()
+                    ..Shape::new_in(self.arena)
                 };
                 for p in &shape.props {
-                    let mut p = p.clone();
+                    let mut p = p.clone_in(self.arena);
                     match p.source {
                         // `getObjectTypeInstantiation` maps the outer type parameters of the literal and nothing else.
                         // `p.mapper` has a key for each of them.
@@ -573,16 +588,16 @@ impl<'p> Checker<'p> {
                         ..*i
                     });
                 }
-                new.call = shape
-                    .call
-                    .iter()
-                    .map(|&s| self.instantiate_sig(s, mapper))
-                    .collect();
-                new.construct = shape
-                    .construct
-                    .iter()
-                    .map(|&s| self.instantiate_sig(s, mapper))
-                    .collect();
+                new.call.reserve_exact(shape.call.len());
+                new.call
+                    .extend(shape.call.iter().map(|&s| self.instantiate_sig(s, mapper)));
+                new.construct.reserve_exact(shape.construct.len());
+                (new.construct).extend(
+                    shape
+                        .construct
+                        .iter()
+                        .map(|&s| self.instantiate_sig(s, mapper)),
+                );
                 new.symbol_declared_at = shape.symbol_declared_at;
                 new.spread_rank = shape.spread_rank;
                 new.spread_of = shape.spread_of.map(|(left, right)| {
@@ -811,7 +826,7 @@ impl<'p> Checker<'p> {
         let arguments = self.tuple(&arguments, &flags, false);
         self.synth(Shape {
             single_signature_arguments: Some(arguments),
-            ..(**shape).clone()
+            ..(**shape).clone_in(self.arena)
         })
     }
 
@@ -885,7 +900,7 @@ impl<'p> Checker<'p> {
                 // `instantiateSignatureEx`: the type parameters that have no type arguments yet are
                 // cloned where their outer mapping changes, and everything in the signature refers
                 // to the clones.
-                let mut remaining: Vec<TypeId> = Vec::with_capacity(type_params.len());
+                let mut remaining = Vec::with_capacity_in(type_params.len(), self.arena);
                 let mut fresh: Vec<(TypeId, TypeId)> = Vec::new();
                 for &param in type_params.iter() {
                     if self.types().map(mapper, param).is_some() {
@@ -909,24 +924,23 @@ impl<'p> Checker<'p> {
                     let fresh = self.types().mapper(fresh);
                     self.compose(fresh, mapper)
                 };
-                let params: Vec<SigParam> = params
-                    .iter()
-                    .map(|p| SigParam {
-                        ty: self.instantiate(p.ty, mapper),
-                        ..*p
-                    })
-                    .collect();
+                let arena = self.arena;
+                let params = params.iter().map(|p| SigParam {
+                    ty: self.instantiate(p.ty, mapper),
+                    ..*p
+                });
+                let params = ArenaBox::from_iter_in(params, arena);
                 // `getReturnTypeOfSignature`, `case sig.target != nil`
                 let ret = self.sig_return(sig);
                 SigData::Synth {
                     type_params: remaining.into(),
-                    params: params.into(),
+                    params,
                     ret: self.instantiate(ret, mapper),
                     this: this.map(|t| self.instantiate(t, mapper)),
-                    of: of
-                        .iter()
-                        .map(|&part| self.instantiate_sig(part, mapper))
-                        .collect(),
+                    of: ArenaBox::from_iter_in(
+                        of.iter().map(|&part| self.instantiate_sig(part, mapper)),
+                        arena,
+                    ),
                     is_union: *is_union,
                 }
             }

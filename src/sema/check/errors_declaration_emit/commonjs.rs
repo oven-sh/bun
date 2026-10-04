@@ -35,7 +35,7 @@ impl ExportName {
     }
 }
 
-impl<'p> DeclarationEmit<'_, 'p> {
+impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the whole file.
     pub(super) fn transform_commonjs_exports(&mut self) {
         let file = self.file();

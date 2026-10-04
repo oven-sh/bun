@@ -1193,6 +1193,17 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `BundleOptions::type_check`. `cwd` is the directory that relative `entry_points` are resolved
+/// from. `sources` yields the path and the text of each JavaScript, TypeScript and JSON file of
+/// the bundle, which the type checker takes instead of reading the file again. Errors are added to
+/// `log`, or reported in another way. Returns whether the build goes on.
+pub type TypeCheck = fn(
+    cwd: &[u8],
+    entry_points: &[Box<[u8]>],
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    log: &mut bun_ast::Log,
+) -> bool;
+
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1326,6 +1337,10 @@ pub struct BundleOptions<'a> {
     pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
+    /// `--check`, `check: true`: type checks the program when every file is parsed, before
+    /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
+    /// checker.
+    pub type_check: Option<TypeCheck>,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1537,6 +1552,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
+            type_check: self.type_check,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1720,6 +1736,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: None,
             fold_chunks: true,
             module_preload: true,
+            type_check: None,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

@@ -1356,11 +1356,15 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_alloc",
+ "bun_collections",
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
  "bun_semver",
  "bun_threading",
+ "hashbrown 0.15.5",
+ "rustc-hash",
  "smallvec",
 ]
 
@@ -1384,6 +1388,7 @@ dependencies = [
  "bun_core",
  "bun_glob",
  "bun_js_parser",
+ "bun_parsers",
  "bun_paths",
  "bun_sema",
  "bun_sys",

@@ -1270,6 +1270,22 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// An error of TypeScript's, by its code: `TS2322`.
+    TypeScript {
+        code: u32,
+        kind: TypeScriptKind,
+    },
+}
+
+/// How TypeScript reports an error, which decides what suppresses it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypeScriptKind {
+    /// `parseErrorAtRange`
+    Parse,
+    /// `grammarErrorOnNode`
+    Grammar,
+    /// `Checker.error`
+    Checker,
 }
 
 #[derive(Copy, Clone)]

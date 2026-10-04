@@ -130,6 +130,9 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
 
         This outputs the compiled server and client assets to the `build/` directory.
 
+        <Note>
+          Deploying an uncompiled server requires `build/`, `package.json`, and production dependencies (`bun install --production`) on the host. To deploy without `node_modules`, compile into a [standalone executable](#standalone-executable-single-file-binary) instead.
+        </Note>
       </Step>
       <Step title="Start the production server">
         Start your standalone Bun server:

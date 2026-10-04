@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "7a828c116d96bb9a66f6c2e3417c739cbbfdb23c";
+const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",

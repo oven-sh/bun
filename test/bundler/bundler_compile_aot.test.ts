@@ -615,6 +615,157 @@ describe("bundler", () => {
     });
   });
 
+  describe("compile/aot/DeclarationsOfLiftedCommonJS", () => {
+    const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", main: "index.js" });
+    const buildAndRun = async (files: Record<string, string>) => {
+      using dir = tempDir("compile-aot-lifted-commonjs", files);
+      const path = join(String(dir), "remarks.txt");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.mjs", "--outfile", "out"],
+        env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+      await using reference = Bun.spawn({ cmd: [bunExe(), "entry.mjs"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      await using app = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [expected, stdout, exitCode] = await Promise.all([reference.stdout.text(), app.stdout.text(), app.exited]);
+      expect(exitCode).toBe(0);
+      const remarks = new Map<string, string[]>();
+      for (const line of (await Bun.file(path).text()).split("\n")) {
+        const [name, remark] = line.split("\t");
+        if (remark) remarks.set(name, [...(remarks.get(name) ?? []), remark]);
+      }
+      const calls = (name: string) => [...new Set(remarks.get(name)!.filter(remark => /^(direct-call:|cached-call$)/.test(remark)))].sort();
+      return { expected, stdout, calls };
+    };
+
+    test("a declaration that is never assigned is a known callee", async () => {
+      const { expected, stdout, calls } = await buildAndRun({
+        "node_modules/lifted/package.json": manifest("lifted"),
+        "node_modules/lifted/index.js": `
+          function leaf(a) { return a + 1; }
+          function callsLeaf(a) { return leaf(a) * 2; }
+          function* numbers() { yield 1; yield 2; }
+          function callsGenerator() { return [...numbers()].length; }
+          async function later() { return 1; }
+          function callsAsync() { return typeof later().then; }
+          exports.callsLeaf = callsLeaf;
+          exports.callsGenerator = callsGenerator;
+          exports.callsAsync = callsAsync;
+        `,
+        "entry.mjs": `
+          import { callsLeaf, callsGenerator, callsAsync } from "lifted";
+          function fromAnotherFile(a) { return callsLeaf(a) + callsGenerator() + callsAsync(); }
+          for (let i = 0; i < 3; i++) console.log(fromAnotherFile(i));
+        `,
+      });
+      expect(stdout).toBe("4function\n6function\n8function\n");
+      expect(stdout).toBe(expected);
+      expect({
+        callsLeaf: calls("callsLeaf"),
+        callsGenerator: calls("callsGenerator"),
+        callsAsync: calls("callsAsync"),
+        fromAnotherFile: calls("fromAnotherFile"),
+      }).toEqual({
+        callsLeaf: ["direct-call:leaf"],
+        callsGenerator: ["direct-call:numbers"],
+        callsAsync: ["direct-call:later"],
+        fromAnotherFile: ["direct-call:callsAsync", "direct-call:callsGenerator", "direct-call:callsLeaf"],
+      });
+    });
+
+    test("a declaration that is assigned, and an export that is patched, are not", async () => {
+      const { expected, stdout, calls } = await buildAndRun({
+        "node_modules/hazards/package.json": manifest("hazards"),
+        "node_modules/hazards/index.js": `
+          function replacement() { return 2; }
+          function assigned() { return 1; }
+          function callsAssigned(i) { if (i === 1) assigned = replacement; return assigned(); }
+          function byArrayPattern() { return 1; }
+          function byObjectPattern() { return 1; }
+          function byLoop() { return 1; }
+          function callsPatterned(i) {
+            if (i === 1) { [byArrayPattern] = [replacement]; ({ byObjectPattern } = { byObjectPattern: replacement }); for (byLoop of [replacement]); }
+            return "" + byArrayPattern() + byObjectPattern() + byLoop();
+          }
+          function twice() { return 1; }
+          function twice() { return 2; }
+          function callsTwice() { return twice(); }
+          function patched() { return 1; }
+          exports.patched = patched;
+          function callsExport(i) { if (i === 1) exports.patched = replacement; return exports.patched() + ":" + patched(); }
+          exports.callsAssigned = callsAssigned;
+          exports.callsPatterned = callsPatterned;
+          exports.callsTwice = callsTwice;
+          exports.callsExport = callsExport;
+        `,
+        "entry.mjs": `
+          import { callsAssigned, callsPatterned, callsTwice, callsExport } from "hazards";
+          for (let i = 0; i < 3; i++) console.log(callsAssigned(i), callsPatterned(i), callsTwice(), callsExport(i));
+        `,
+      });
+      expect(stdout).toBe("1 111 2 1:1\n2 222 2 2:1\n2 222 2 2:1\n");
+      expect(stdout).toBe(expected);
+      expect({
+        callsAssigned: calls("callsAssigned"),
+        callsPatterned: calls("callsPatterned"),
+        callsExport: calls("callsExport"),
+      }).toEqual({
+        callsAssigned: ["cached-call"],
+        callsPatterned: ["cached-call"],
+        callsExport: ["cached-call", "direct-call:patched"],
+      });
+    });
+
+    test("a direct eval can assign every declaration of its file", async () => {
+      const { expected, stdout, calls } = await buildAndRun({
+        "node_modules/evaluates/package.json": manifest("evaluates"),
+        "node_modules/evaluates/index.js": `
+          function evaluated() { return 1; }
+          function callsEvaluated(i) { if (i === 1) eval("evaluated = function () { return 2; }"); return evaluated(); }
+          exports.callsEvaluated = callsEvaluated;
+        `,
+        "entry.mjs": `
+          import { callsEvaluated } from "evaluates";
+          for (let i = 0; i < 3; i++) console.log(callsEvaluated(i));
+        `,
+      });
+      expect(stdout).toBe("1\n2\n2\n");
+      expect(stdout).toBe(expected);
+      expect(calls("callsEvaluated")).not.toContain("direct-call:evaluated");
+    });
+
+    test("a function merged with a var, or declared again in a block, keeps its file wrapped", async () => {
+      const { expected, stdout, calls } = await buildAndRun({
+        "node_modules/merged/package.json": manifest("merged"),
+        "node_modules/merged/index.js": `
+          function merged() { return 1; }
+          var merged = function () { return 2; };
+          function callsMerged() { return merged(); }
+          exports.callsMerged = callsMerged;
+        `,
+        "node_modules/late/package.json": manifest("late"),
+        "node_modules/late/index.js": `
+          var late;
+          function late() { return 1; }
+          function callsLate(i) { if (i === 1) late = function () { return 2; }; return late(); }
+          exports.callsLate = callsLate;
+        `,
+        "entry.mjs": `
+          import { callsMerged } from "merged";
+          import { callsLate } from "late";
+          for (let i = 0; i < 3; i++) console.log(callsMerged(), callsLate(i));
+        `,
+      });
+      expect(stdout).toBe("2 1\n2 2\n2 2\n");
+      expect(stdout).toBe(expected);
+      expect(calls("callsMerged")).not.toContain("direct-call:merged");
+      expect(calls("callsLate")).not.toContain("direct-call:late");
+    });
+  });
+
   test("compile/aot/RedundantRequestsAreDropped", async () => {
     const shapes: Record<string, string[]> = {
       diamondTop: ["diamondLeft", "diamondRight", "diamondBottom"],

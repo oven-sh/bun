@@ -1357,8 +1357,6 @@ fn record_chunk_bindings(
         if wrap == WrapKind::Cjs {
             continue;
         }
-        let is_lifted = c.graph.ast.items_flags()[source_index]
-            .contains(crate::bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM);
         let parts_live = &c.graph.parts_live[source_index];
         for (part_index, part) in c.graph.ast.items_parts()[source_index].iter().enumerate() {
             if !parts_live.is_set(part_index) {
@@ -1385,7 +1383,7 @@ fn record_chunk_bindings(
                     Kind::Constant => flag::KIND_CONST,
                     _ => continue,
                 };
-                if symbol.has_been_assigned_to() || is_lifted || has_direct_eval {
+                if symbol.has_been_assigned_to() || has_direct_eval {
                     flags |= flag::IS_ASSIGNED;
                 }
                 let escapes = symbol.escapes.load(core::sync::atomic::Ordering::Relaxed);

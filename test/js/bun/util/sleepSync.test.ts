@@ -32,12 +32,14 @@ it("can map with sleepSync", async () => {
 
 // Free blocks inside pages that are still in use belong to the thread that owns the pages. They go back to the OS
 // when that thread tells mimalloc that it is about to block.
-it.skipIf(isASAN /* malloc is not mimalloc */)("sleepSync lets mimalloc release this thread's free memory", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+it.skipIf(isASAN /* malloc is not mimalloc */)(
+  "sleepSync lets mimalloc release this thread's free memory",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const { heapStats } = require("bun:jsc");
       const purgeCalls = () => heapStats().mimalloc.purge_calls;
       const spin = ms => { const start = performance.now(); while (performance.now() - start < ms); };
@@ -64,10 +66,11 @@ it.skipIf(isASAN /* malloc is not mimalloc */)("sleepSync lets mimalloc release 
       }
       console.log(released >= 1000, strings.length);
       `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true 6250\n", stderr: "", exitCode: 0 });
-});
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true 6250\n", stderr: "", exitCode: 0 });
+  },
+);

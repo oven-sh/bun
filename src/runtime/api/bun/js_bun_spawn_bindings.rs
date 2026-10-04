@@ -1867,11 +1867,6 @@ fn spawn_maybe_sync(
             .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
             .expect("cached by the is_sync prepare above");
 
-        // The libuv loop has no handoff to mimalloc's scavenger across its poll, and its inline sweep is in the hook
-        // of a loop with a VM, which this one is not.
-        #[cfg(windows)]
-        bun_alloc::mimalloc::mi_on_thread_idle();
-
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {

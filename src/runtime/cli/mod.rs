@@ -1342,6 +1342,15 @@ pub(crate) mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        if graph
+            .flags
+            .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES)
+        {
+            unsafe extern "C" {
+                safe fn us_prefetch_root_system_certs();
+            }
+            us_prefetch_root_system_certs();
+        }
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {

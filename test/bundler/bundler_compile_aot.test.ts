@@ -2548,6 +2548,50 @@ describe("--compile-aot with a type table", () => {
     });
   });
 
+  describe("untyped code reads typed objects by the names recorded in their Structures", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-names");
+    for (const [label, options] of [
+      ["as it is", ""],
+      ["inline everywhere", "useAOTInlineGuessedPlacesEverywhere=1"],
+      ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
+      ["without guesses", "useAOTGuessedPlaces=0"],
+    ] as const) {
+      test(label, async () => {
+        using dir = tempDir("compile-aot-typed-names", {});
+        const remarksPath = join(String(dir), "remarks.txt");
+        await using reference = Bun.spawn({ cmd: [bunExe(), "src/main.ts"], env: bunEnv, cwd: fixture, stdout: "pipe", stderr: "pipe" });
+        const expected = await reference.stdout.text();
+        expect(expected).toStartWith("0,pair,0.5 0/0.5 1,two,3 1/3 4,five,undefined 4/undefined 6,seven,8 6/8 9,ten,11 9/11 a,b,c a/c 4 14 11 ");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", join(String(dir), "out")],
+          env: {
+            ...bunEnv,
+            BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
+            BUN_SOUND_TYPES_ORACLE_ROOT: fixture,
+            BUN_AOT_OPTIONS: ["useTypeTags=1", "useAOTTypedFields=1", `aotTypeTablePath=${join(fixture, "types.bin")}`, `aotRemarksPath=${remarksPath}`, options]
+              .filter(Boolean)
+              .join(","),
+          },
+          cwd: fixture,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+        await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: expected, exitCode: 0, signalCode: null });
+        const guessed = new Set(
+          (await Bun.file(remarksPath).text())
+            .split("\n")
+            .map(line => line.split("\t"))
+            .filter(([, remark]) => remark?.startsWith("guessed-place-read"))
+            .map(([name]) => name),
+        );
+        expect(["readsAll", "readsTwo"].filter(name => guessed.has(name))).toEqual(label === "without guesses" ? [] : ["readsAll", "readsTwo"]);
+      });
+    }
+  });
+
   describe("a check of a declared type that names its layout", () => {
     const fixture = join(import.meta.dir, "compile-aot-typed-edges");
     const checked = [

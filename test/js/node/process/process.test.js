@@ -68,7 +68,8 @@ describe("process property descriptors", () => {
         Object.defineProperty(process, name, descriptor);
         assert.deepEqual(Object.getOwnPropertyDescriptor(process, name), descriptor);
         if (!descriptor.writable) {
-          assert.throws(() => { "use strict"; process[name] = replacement; }, TypeError);
+          const assignStrict = Function("name", "replacement", '"use strict"; process[name] = replacement;');
+          assert.throws(() => assignStrict(name, replacement), TypeError);
           Function("replacement", "process[" + JSON.stringify(name) + "] = replacement")(replacement);
           assert.equal(process[name], descriptor.value);
         }
@@ -127,11 +128,9 @@ describe("process property descriptors", () => {
 });
 
 it.concurrent("process.argv redefinition reaches native consumers", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+  // parseArgs uses a different argv offset for -e; exercise a script's arguments.
+  using dir = tempDir("process-argv-redefinition", {
+    "index.cjs": `
       const assert = require("node:assert/strict");
       const { parseArgs } = require("node:util");
       const options = { before: { type: "boolean" }, after: { type: "boolean" } };
@@ -149,7 +148,9 @@ it.concurrent("process.argv redefinition reaches native consumers", async () => 
       assert.equal(parseArgs({ options }).values.before, true);
       console.log("ok");
     `,
-    ],
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "index.cjs")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

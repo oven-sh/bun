@@ -307,7 +307,11 @@ fn error_arguments(reported: &bun_ast::Data, code: u32, source: &[u8]) -> Option
         }
     };
     // `Lexer::ts_error_about`: a NUL separates two arguments.
-    Some(token.split(|&b| b == 0).map(Box::from).collect())
+    Some(
+        bun_core::strings::split(token, b"\0")
+            .map(Box::from)
+            .collect(),
+    )
 }
 
 fn early_error_in_place(text: &[u8]) -> Option<u32> {
@@ -439,10 +443,7 @@ pub fn summarize(
     // How long `parse_stmts_up_to` took. The rest is lowering.
     let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
     // `GetDeclarationFileExtension`
-    let base = &path[path
-        .iter()
-        .rposition(|&b| matches!(b, b'/' | b'\\'))
-        .map_or(0, |i| i + 1)..];
+    let base = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |i| i + 1)..];
     let is_declaration_file = base.ends_with(b".d.ts")
         || base.ends_with(b".d.mts")
         || base.ends_with(b".d.cts")

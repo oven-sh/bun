@@ -485,20 +485,29 @@ impl Walk {
         if !self.reduced.is_empty() {
             return None;
         }
-        self.round_labels
-            .iter()
-            .rev()
-            .find_map(|round| round.get(label))
-            .or_else(|| self.labels.get(label))
+        self.shared_at(label)
     }
 
     fn remember(&mut self, label: FlowId, ty: FlowType) {
         if self.reduced.is_empty() {
-            self.round_labels
-                .last_mut()
-                .unwrap_or(&mut self.labels)
-                .insert(label, ty);
+            self.remember_shared(label, ty);
         }
+    }
+
+    /// `sharedFlows`: the type found at `flow`, whatever the labels were reduced to by then.
+    fn shared_at(&self, flow: FlowId) -> Option<FlowType> {
+        self.round_labels
+            .iter()
+            .rev()
+            .find_map(|round| round.get(flow))
+            .or_else(|| self.labels.get(flow))
+    }
+
+    fn remember_shared(&mut self, flow: FlowId, ty: FlowType) {
+        self.round_labels
+            .last_mut()
+            .unwrap_or(&mut self.labels)
+            .insert(flow, ty);
     }
 }
 
@@ -1128,7 +1137,7 @@ impl<'p> Checker<'p> {
     /// Whether an entry of `flow_loops` pushed when `stack` had `depth` frames is on `flowLoopStack` now. `checkExpressionCached`
     /// empties `flowLoopStack`, and it computes what a resolution caches: a resolution entered since the push hides the entry.
     /// Not while `checkDeclarationInitializer` has the type from `getQuickTypeOfExpression`, which checks the callee uncached.
-    fn is_flow_loop_visible(&self, depth: usize) -> bool {
+    pub(super) fn is_flow_loop_visible(&self, depth: usize) -> bool {
         let depth = depth.min(self.stack.len());
         !self.stack[depth..].iter().enumerate().any(|(i, &q)| {
             let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&(depth + i));
@@ -1222,12 +1231,24 @@ impl<'p> Checker<'p> {
         let access = self.candidate_discriminant_access(reference, e, ty)?;
         // Using the declared type keeps a property a discriminant after the members that made it
         // one have been narrowed away.
-        let declared_parts = self.parts(declared);
-        let is_subset = is_declared_union
-            && (ty == declared || self.parts(ty).iter().all(|m| declared_parts.contains(m)));
+        let is_subset =
+            is_declared_union && (ty == declared || self.is_type_subset_of_union(ty, declared));
         let of = if is_subset { declared } else { ty };
         self.is_discriminant_property(of, access.name)
             .then_some(access)
+    }
+
+    /// `isTypeSubsetOfUnion`, without its rule for an enum: whether each member of `source` is a
+    /// member of the union `target`. It runs for every condition that every reference passes, so a
+    /// search per member makes n tests of a union of n members cost n^4.
+    fn is_type_subset_of_union(&self, source: TypeId, target: TypeId) -> bool {
+        let (members, of) = (self.parts(source), self.parts(target));
+        // Both are in the order of `compare_types`: one pass finds the members of a subset.
+        let mut rest = of.iter();
+        match members.iter().position(|m| !rest.any(|t| t == m)) {
+            None => true,
+            Some(unordered) => members[unordered..].iter().all(|m| of.contains(m)),
+        }
     }
 
     /// `isDiscriminantProperty`
@@ -1546,38 +1567,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isReadonlySymbol` of the property `name` of `object`: in a union one readonly member is
-    /// enough.
+    /// `isReadonlySymbol(getPropertyOfType(object, name))`
     fn is_readonly_property(&mut self, object: TypeId, name: Atom) -> bool {
-        if self.is_union(object) {
-            let (mut is_readonly, mut is_declared) = (false, false);
-            for &part in self.parts(object) {
-                let part = self.apparent_type(part);
-                if let Some((prop, _)) = self.prop_ref(part, name) {
-                    is_declared = true;
-                    is_readonly |= prop.flags.contains(PropFlags::READONLY);
-                    continue;
-                }
-                // A member that has it through an index signature takes the readonly state of the
-                // signature.
-                let Some(members) = self.members(part) else {
-                    return false;
-                };
-                let is_numeric = self.is_numeric_name(name);
-                let mut covered = false;
-                for info in &members.shape().index {
-                    if info.key == TypeId::STRING || info.key == TypeId::NUMBER && is_numeric {
-                        covered = true;
-                        is_readonly |= info.readonly;
-                    }
-                }
-                if !covered && !self.is_closed_object_literal_type(part) {
-                    return false;
-                }
-            }
-            return is_declared && is_readonly;
-        }
-        self.prop_ref(object, name)
+        self.get_property_of_type(object, name)
             .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::READONLY))
     }
 
@@ -1837,57 +1829,15 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        // `getTypeOfPropertyOfType`, which for a union is the property
-        // `createUnionOrIntersectionProperty` creates.
-        let mut prop_types: SmallVec<[TypeId; 8]> = SmallVec::new();
-        let (mut is_declared, mut has_never) = (false, false);
-        for &m in self.parts(base) {
-            // An uninhabited member does not contribute to the property type. (It stays in the
-            // union anyway.)
-            if self.is_never_intersection(m) {
-                continue;
-            }
-            // `t := c.getApparentType(current)`, `!(c.isErrorType(t) || t.flags&TypeFlagsNever != 0)`: a type parameter or a deferred
-            // conditional type whose constraint is `never`.
-            let apparent = self.apparent_type(m);
-            if self.is_error_type(apparent) || apparent.is_never() {
-                continue;
-            }
-            // Past the fixed elements of a tuple the type is its rest element type, or nothing if
-            // the tuple ends there.
-            if let TypeData::Tuple { flags, .. } = self.data(apparent)
-                && self.is_numeric_name(name)
-                && self.prop_ref(apparent, name).is_none()
-            {
-                let elems = self.type_arguments(apparent);
-                let fixed = Self::fixed_length(flags);
-                prop_types.push(if fixed < flags.len() {
-                    self.tuple_element_union(&elems[fixed..], &flags[fixed..])
-                } else {
-                    TypeId::UNDEFINED
-                });
-                continue;
-            }
-            match self.type_of_property(m, name) {
-                Some(t) => {
-                    is_declared = is_declared || self.finds_property(m, name);
-                    has_never |= t.is_never();
-                    prop_types.push(t);
-                }
-                // An object literal type without the property does not have it. For any other type
-                // that is unknown.
-                None if self.is_closed_object_literal_type(m) => prop_types.push(TypeId::UNDEFINED),
-                None => return None,
-            }
-        }
-        // An index signature substitutes for it only next to a member that has it.
-        if !is_declared {
-            return None;
-        }
-        let mut prop = self.union(&prop_types);
+        let mut prop = self.type_of_property_of_type(base, name)?;
         if self.is_any(prop) {
             return None;
         }
+        let has_never = prop.is_never()
+            || (self.parts(base).iter()).any(|&m| {
+                self.type_of_property_or_index_signature_of_type(m, name)
+                    .is_some_and(|t| t.is_never())
+            });
         if remove_nullable && access.optional {
             prop = self.optional(prop);
         }
@@ -2713,7 +2663,7 @@ impl<'p> Checker<'p> {
                         .iter()
                         .any(|&m| self.is_empty_anonymous_object_type(m)))
             {
-                if self.has_primitive_flags(value_ty)
+                if self.has_primitive_flag(value_ty)
                     || value_ty == TypeId::OBJECT
                     || self.is_empty_anonymous_object_type(value_ty)
                 {
@@ -2737,28 +2687,24 @@ impl<'p> Checker<'p> {
             return self.replace_primitives_with_literals(kept, as_written);
         }
         if self.is_unit(value_ty) {
+            let is_plain = Self::is_literal_outside_enum(self.flags(value_ty));
             return self.filter(ty, |c, m| {
+                if is_plain && Self::is_literal_outside_enum(c.flags(m)) {
+                    return c.with_freshness(m, false) != value_ty;
+                }
                 !(c.is_unit_like(m) && c.are_comparable(m, value_ty))
             });
         }
         ty
     }
 
-    /// `TypeFlagsPrimitive`, which `boolean` and an enum type have although they are unions.
-    /// `string | number` does not have it.
-    fn has_primitive_flags(&mut self, ty: TypeId) -> bool {
-        if self.is_primitive(ty) || self.is_boolean(ty) {
-            return true;
-        }
-        let TypeData::Union(parts) = self.data(ty) else {
-            return false;
-        };
-        let (TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. }) =
-            *self.data(parts[0])
-        else {
-            return false;
-        };
-        self.enum_type_of_member(member) == ty
+    /// FOR SPEED: a string, number or bigint literal type that is not a member of an enum. No rule
+    /// of `isSimpleTypeRelatedTo` relates two of them, so they are comparable only if their regular
+    /// types are the same. `x.kind !== "a"` tests every member of the type of `x.kind`.
+    #[inline]
+    fn is_literal_outside_enum(flags: u32) -> bool {
+        flags & (tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL) != 0
+            && flags & tf::ENUM_LITERAL == 0
     }
 
     /// `isUnitLikeType`: a tagged literal type also qualifies.
@@ -3126,18 +3072,12 @@ impl<'p> Checker<'p> {
             }
             // Otherwise, the generic members that may turn out to be a candidate once instantiated.
             c.map_type(ty, |c, t| {
-                let may_be_generic = match c.data(t) {
-                    TypeData::Intersection(parts) => parts.iter().any(|&p| c.is_deferred(p)),
-                    _ => c.is_deferred(t),
-                };
-                if may_be_generic {
-                    let constraint = c.base_constraint(t);
-                    let related = constraint == TypeId::UNKNOWN
-                        || if check_derived {
-                            c.is_type_derived_from(n, constraint)
-                        } else {
-                            c.is_subtype(n, constraint)
-                        };
+                if c.maybe_type_of_kind(t, Self::is_instantiable) {
+                    let related = match c.base_constraint_of(t) {
+                        None => true,
+                        Some(constraint) if check_derived => c.is_type_derived_from(n, constraint),
+                        Some(constraint) => c.is_subtype(n, constraint),
+                    };
                     if related {
                         return c.intersection(&[t, n]);
                     }
@@ -3231,28 +3171,8 @@ impl<'p> Checker<'p> {
                 ty
             };
         }
-        // `isTypePresencePossible`. A property that every object or every function has counts like
-        // any other property.
-        let may_be = |c: &mut Self, m: TypeId, present: bool| {
-            let apparent = c.apparent_type(m);
-            if c.is_union(apparent) {
-                return c.is_type_presence_possible_in_union(apparent, name, present);
-            }
-            let Some(members) = c.members(apparent) else {
-                return !present;
-            };
-            match c.property_in(&members, name) {
-                Some((prop, _)) => present || prop.flags.contains(PropFlags::OPTIONAL),
-                None => {
-                    c.applicable_index_info_for_name(&members, name)
-                        .map(|info| info.value)
-                        .is_some()
-                        || !present
-                }
-            }
-        };
-        if self.parts(ty).iter().any(|&m| may_be(self, m, true)) {
-            return self.filter(ty, |c, m| may_be(c, m, sense));
+        if (self.parts(ty).iter()).any(|&m| self.is_type_presence_possible(m, name, true)) {
+            return self.filter(ty, |c, m| c.is_type_presence_possible(m, name, sense));
         }
         // No member declares the property: in the true branch its presence is all that is known
         // about it.
@@ -3264,57 +3184,20 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `isTypePresencePossible` for a type variable whose apparent type is the union `apparent`:
-    /// `getPropertyOfType` returns the property that `createUnionOrIntersectionProperty` creates,
-    /// and `getApplicableIndexInfoForName` uses `getUnionIndexInfos`.
-    fn is_type_presence_possible_in_union(
-        &mut self,
-        apparent: TypeId,
-        name: Atom,
-        assume_true: bool,
-    ) -> bool {
-        let is_late_bound = self.atoms().is_symbol_name(name);
-        let parts = self.parts(apparent);
-        let (mut is_declared, mut is_optional) = (false, false);
-        // `CheckFlagsWritePartial`, `CheckFlagsReadPartial`
-        let (mut is_write_partial, mut is_read_partial) = (false, false);
-        for &part in parts {
-            let part = self.apparent_type(part);
-            if part.is_never() {
-                continue;
-            }
-            let Some(members) = self.members(part) else {
-                is_read_partial = true;
-                continue;
-            };
-            if let Some((prop, _)) = self.property_in(&members, name) {
-                is_declared = true;
-                is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
-            } else if !is_late_bound
-                && self
-                    .applicable_index_info_for_name(&members, name)
-                    .map(|info| info.value)
-                    .is_some()
-                || self.is_closed_object_literal_type(part)
-            {
-                is_write_partial = true;
-            } else {
-                is_read_partial = true;
-            }
+    /// `isTypePresencePossible`
+    fn is_type_presence_possible(&mut self, ty: TypeId, name: Atom, assume_true: bool) -> bool {
+        if let Some((prop, _)) = self.get_property_of_type(ty, name) {
+            let partial = PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL;
+            return prop.flags.intersects(PropFlags::OPTIONAL | partial) || assume_true;
         }
-        if is_declared && !is_read_partial && self.union_property(apparent, name).is_some() {
-            return is_optional || is_write_partial || assume_true;
-        }
-        let key = if is_late_bound {
-            TypeId::SYMBOL
-        } else {
-            self.string_literal(name, false)
+        // `getApplicableIndexInfoForName`
+        let is_indexed = match self.members_for_index_infos(ty) {
+            Some(members) => self
+                .applicable_index_info_for_name(&members, name)
+                .is_some(),
+            None => false,
         };
-        let infos = self.index_signatures_of(apparent);
-        infos
-            .iter()
-            .any(|&(index_key, _)| self.is_applicable_index_type(key, index_key))
-            || !assume_true
+        is_indexed || !assume_true
     }
 
     /// `narrowTypeByCallExpression`
@@ -3391,11 +3274,32 @@ impl<'p> Checker<'p> {
         // Uses the declared type of the callee: the call is resolved only if that is needed to
         // select the type guard. It may be the call whose arguments are currently being checked.
         let callee = match hir[data.callee].kind {
-            // A method of the reference being narrowed: the narrowed type is already available
-            // here, and querying it would re-enter.
-            ExprKind::Dot { obj, name, .. } if self.matches(reference, obj) => {
+            // `checkPropertyAccessExpression` of a member of the reference being narrowed: the type
+            // of the object is already available here, and querying it would re-enter.
+            ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                ..
+            } if self.matches(reference, obj) => {
                 let receiver = self.non_nullable(ty);
-                self.type_of_property(receiver, name)?
+                let declared = self.type_of_property(receiver, name)?;
+                if self.is_any(declared) {
+                    return None;
+                }
+                let prop = self
+                    .get_property_of_type(receiver, name)
+                    .map(|found| found.0);
+                let right = (file, name_pos, hir[data.callee].end);
+                let target = self.target_kind(file, data.callee);
+                self.get_flow_type_of_access_expression(
+                    file,
+                    data.callee,
+                    prop,
+                    declared,
+                    right,
+                    target,
+                )
             }
             // `getEffectsSignature`: `checkNonNullType(getOptionalExpressionType(..))`, which reports.
             _ => {
@@ -3741,7 +3645,7 @@ impl<'p> Checker<'p> {
             // An object type among the cases only shows that the value is an object, not which one.
             let mut ground = Vec::with_capacity(clause_types.len());
             for &t in &clause_types {
-                if self.has_primitive_flags(t) || t == TypeId::OBJECT {
+                if self.has_primitive_flag(t) || t == TypeId::OBJECT {
                     ground.push(t);
                 } else if self.is_object_type(t) {
                     ground.push(TypeId::OBJECT);
@@ -4040,7 +3944,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `prop.Flags&(SymbolFlagsVariable|SymbolFlagsProperty|SymbolFlagsAccessor) != 0`
-    fn is_variable_property_or_accessor(&self, prop: &Prop) -> bool {
+    pub(super) fn is_variable_property_or_accessor(&self, prop: &Prop) -> bool {
         let symbol = match &prop.source {
             PropSource::Symbol(sym) => Some(*sym),
             // The symbol itself (`getSpreadSymbol`), or one with its flags (`createSymbolWithType`).
@@ -5000,7 +4904,7 @@ impl<'p> Checker<'p> {
         let is_subset = |c: &Self, t: TypeId| {
             t == initial
                 || t.is_never()
-                || c.is_union(initial) && c.parts(t).iter().all(|p| c.parts(initial).contains(p))
+                || c.is_union(initial) && c.is_type_subset_of_union(t, initial)
         };
         let subtype_reduction = !types.iter().all(|&t| is_subset(self, t));
         self.union_or_evolving_with(types, subtype_reduction)
@@ -5179,7 +5083,7 @@ impl<'p> Checker<'p> {
             }
             _ => self.context_free_type_of_expression(file, value),
         };
-        let added = self.base_type_of_literal_type(added);
+        let added = self.base_of_literal(added);
         let added = self.regular_type_of_object_literal(added);
         if self
             .parts(added)
@@ -5218,6 +5122,7 @@ impl<'p> Checker<'p> {
         let mut flow = start;
         let depth = walk.depth;
         let mut incomplete = false;
+        let is_shared_in_finally = !walk.reduced.is_empty() && bound.is_shared(start);
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -5229,6 +5134,21 @@ impl<'p> Checker<'p> {
             if walk.depth > MAX_FLOW_DEPTH {
                 walk.too_deep = true;
                 break TypeId::ERROR;
+            }
+            // `FlowFlagsShared`: a shared node of a `finally` block keeps the type of its first
+            // visit, also when the block is traversed again for another way of leaving it.
+            if !walk.reduced.is_empty() && bound.is_shared(flow) {
+                if let Some(known) = walk.shared_at(flow) {
+                    incomplete = known.incomplete;
+                    break known.ty;
+                }
+                // An invocation of its own, which records the type.
+                if flow != start {
+                    walk.depth -= 1;
+                    let t = self.flow_type(walk, flow);
+                    incomplete = t.incomplete;
+                    break t.ty;
+                }
             }
             match bound.flow[flow.idx()] {
                 // "Simply return the non-auto declared type to reduce follow-on errors."
@@ -5535,7 +5455,7 @@ impl<'p> Checker<'p> {
                     self.narrow_by_switch(reference, seen, stmt, from as usize, to as usize)
                 }
                 Pending::Assert(call) => self.narrow_by_assertion(reference, seen, call),
-                Pending::Compound => self.base_type_of_literal_type(seen),
+                Pending::Compound => self.base_of_literal(seen),
                 Pending::Mutation(expr) => {
                     ty = self.after_array_mutation(file, ty, expr);
                     continue;
@@ -5550,6 +5470,9 @@ impl<'p> Checker<'p> {
             if narrowed != seen {
                 ty = FlowType::new(narrowed, incomplete).ty;
             }
+        }
+        if is_shared_in_finally {
+            walk.remember_shared(start, FlowType { ty, incomplete });
         }
         FlowType { ty, incomplete }
     }
@@ -5733,7 +5656,7 @@ impl<'p> Checker<'p> {
         }
         let declared = match target {
             FlowTarget::Expr(e) if self.is_in_compound_like_assignment(file, e) => {
-                self.base_type_of_literal_type(declared)
+                self.base_of_literal(declared)
             }
             _ => declared,
         };
@@ -5866,7 +5789,7 @@ impl<'p> Checker<'p> {
             return Some(ty);
         }
         let default = self.get_type_of_expression(file, default);
-        let ty = self.without_undefined(ty);
+        let ty = self.non_undefined_type(ty);
         Some(self.union(&[ty, default]))
     }
 
@@ -5888,7 +5811,7 @@ impl<'p> Checker<'p> {
                     // of the default.
                     let ty = self.assigned_type(file, p)?;
                     let (ty, default) = (
-                        self.without_undefined(ty),
+                        self.non_undefined_type(ty),
                         self.get_type_of_expression(file, value),
                     );
                     Some(self.union(&[ty, default]))
@@ -6308,13 +6231,9 @@ impl<'p> Checker<'p> {
         let callee = self.explicit_type(file, hir[c].callee)?;
         let sigs = self.signatures(callee, false);
         let sig = match sigs[..] {
-            // That it asserts, or never returns, holds for any type arguments. What it asserts is
-            // resolved where that matters.
-            [only] => only,
-            // Selecting among several overloads requires resolving the call, if that can make a
-            // difference.
+            [only] if self.sig_type_params(only).is_empty() => only,
             _ => {
-                if !sigs.iter().any(|&s| self.asserts_or_never_returns(s)) {
+                if !(sigs.iter()).any(|&s| self.has_type_predicate_or_never_return_type(s, true)) {
                     return None;
                 }
                 *required_resolution = true;
@@ -6326,6 +6245,15 @@ impl<'p> Checker<'p> {
 
     /// `hasTypePredicateOrNeverReturnType`, excluding `x is T`, which a call statement ignores.
     fn asserts_or_never_returns(&mut self, sig: SigId) -> bool {
+        self.has_type_predicate_or_never_return_type(sig, false)
+    }
+
+    /// `hasTypePredicateOrNeverReturnType`. `is_guard_included`: `x is T` counts.
+    fn has_type_predicate_or_never_return_type(
+        &mut self,
+        sig: SigId,
+        is_guard_included: bool,
+    ) -> bool {
         let Some((file, func, _)) = self.sig_decl(sig) else {
             return false;
         };
@@ -6337,7 +6265,7 @@ impl<'p> Checker<'p> {
             TypeNodeKind::Predicate { asserts, .. } => {
                 // `getTypePredicateOfSignature` resolves the predicate type of `x is T` as well as of `asserts x is T`.
                 let predicate = self.sig_predicate(sig);
-                asserts && predicate.is_some()
+                (asserts || is_guard_included) && predicate.is_some()
             }
             TypeNodeKind::Keyword(keyword) => keyword == Keyword::Never,
             // `getReturnTypeFromAnnotation`: `never` through an alias.
@@ -6656,24 +6584,6 @@ impl<'p> Checker<'p> {
             )
     }
 
-    /// `getBaseTypeOfLiteralType`
-    pub(super) fn base_type_of_literal_type(&mut self, ty: TypeId) -> TypeId {
-        self.map_type(ty, |c, m| c.base_of_literal(m))
-    }
-
-    /// Whether `getPropertyOfType` finds `name` in the apparent type of `ty`: a name that only an
-    /// index signature covers is not found.
-    pub(super) fn finds_property(&mut self, ty: TypeId, name: Atom) -> bool {
-        let apparent = self.apparent_type(ty);
-        self.parts(apparent).iter().all(|&part| {
-            let part = self.apparent_type(part);
-            match self.members(part) {
-                Some(members) => self.property_in(&members, name).is_some(),
-                None => false,
-            }
-        })
-    }
-
     /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard without declaring one.
     pub(super) fn inferred_predicate(&mut self, file: FileId, func: FnId) -> Option<Predicate> {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -6758,6 +6668,39 @@ impl<'p> Checker<'p> {
         predicate
     }
 
+    /// `checkExpressionCached(e)`, where `e` may be the body that `getReturnTypeFromBody` is
+    /// checking for `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`, which pushes no
+    /// type resolution. `checkExpression` has no re-entrancy guard: `e` is checked again, and the
+    /// first resolution on the way that is in progress closes the cycle. From then on
+    /// `links.resolvedType` has the result, also for `getReturnTypeOfSignature`, while the first
+    /// check is still in progress.
+    fn check_expression_cached_again(&mut self, file: FileId, e: ExprId) -> TypeId {
+        let q = Query::Expr(file, e);
+        let from = self.resolution_start.min(self.stack.len());
+        let Some(first) = self.stack[from..].iter().rposition(|&x| x == q) else {
+            return self.type_of_expr(file, e);
+        };
+        let first = first + from;
+        if let Some(raw) = self.provisional(q) {
+            return TypeId(raw as u32);
+        }
+        let height = self.stack.len();
+        let rechecks_at = std::mem::replace(&mut self.rechecks_at, height);
+        let ty = self.check_expression_ex(file, e, CheckMode::empty());
+        self.rechecks_at = rechecks_at;
+        // Valid until the first check ends. A hit taints what computing it again would.
+        let entry = Provisional {
+            raw: u64::from(ty.0),
+            depth: first as u32,
+            from: first as u32 + 1,
+            height: height as u32,
+            moved: 1,
+            serial: self.frames[first].serial,
+        };
+        self.provisional.insert(q, entry);
+        ty
+    }
+
     /// `checkIfExpressionRefinesAnyParameter`, and `functionHasImplicitReturn` before it.
     fn check_if_expression_refines_any_parameter(
         &mut self,
@@ -6771,7 +6714,7 @@ impl<'p> Checker<'p> {
         if info.end.is_some() && info.end != UNREACHABLE && self.is_reachable(file, info.end) {
             return None;
         }
-        let returned = self.type_of_expr(file, body);
+        let returned = self.check_expression_cached_again(file, body);
         if !self.is_boolean(returned) {
             return None;
         }

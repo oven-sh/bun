@@ -624,7 +624,7 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
-        if recent.ty == ty {
+        if recent.ty == ty && self.unresolved_members.is_empty() {
             return recent.resolved.map(|resolved| Members {
                 resolved,
                 mapper: recent.mapper,
@@ -636,6 +636,11 @@ impl<'p> Checker<'p> {
     /// `members` for a type that was not queried recently.
     fn members_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if let Some(known) = self.p.members.get(&mut self.task, &ty) {
+            if !self.unresolved_members.is_empty()
+                && let Some(declared) = self.declared_members_if_unresolved(ty, known.mapper)
+            {
+                return Some(declared);
+            }
             let resolved = self.p.shapes.at(&self.task, known.shape);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
                 resolved: Some(resolved),
@@ -647,7 +652,42 @@ impl<'p> Checker<'p> {
                 mapper: known.mapper,
             });
         }
-        self.members_on_cache_miss(ty)
+        let members = self.members_on_cache_miss(ty)?;
+        if !self.unresolved_members.is_empty()
+            && let Some(declared) = self.declared_members_if_unresolved(ty, members.mapper)
+        {
+            return Some(declared);
+        }
+        Some(members)
+    }
+
+    /// `resolveStructuredTypeMembers` of a type reference that has `ObjectFlagsUnresolvedMembers`:
+    /// the members that its class or interface declares. `mapper`: of the members of `ty`.
+    /// `None`: `ty` is no such type reference. See `unresolved_members`.
+    #[cold]
+    #[inline(never)]
+    fn declared_members_if_unresolved(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+    ) -> Option<Members<'p>> {
+        let at = (self.unresolved_members.iter()).position(|it| it.0 == mapper)?;
+        let &TypeData::Ref { target, .. } = self.data(ty) else {
+            return None;
+        };
+        if self.base_types(target).is_empty() {
+            return None;
+        }
+        // What follows from this answer is valid until that `compose` returns.
+        self.lowest_unresolved_members_hit = self.lowest_unresolved_members_hit.min(at as u32);
+        self.unresolved_members_hits += 1;
+        self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
+        self.note_cycle();
+        let shape = self.build_declared_shape(target, MapperId::IDENTITY, false, false);
+        Some(Members {
+            resolved: self.provisional_shape(shape).resolved,
+            mapper,
+        })
     }
 
     /// `members` for a type with no cached entry.
@@ -730,9 +770,9 @@ impl<'p> Checker<'p> {
                         if are_provisional && key == ty {
                             c.mark_tainted_from(c.frames.len() - 1);
                         }
-                        c.build_declared_shape(target, under, false)
+                        c.build_declared_shape(target, under, false, true)
                     },
-                    |c| c.build_declared_shape(target, under, true),
+                    |c| c.build_declared_shape(target, under, true, true),
                 );
                 // `mapper` is built from them.
                 if are_provisional {
@@ -1439,7 +1479,7 @@ impl<'p> Checker<'p> {
     pub(super) fn written_name(&self, name: Atom) -> &'p [u8] {
         let text = self.atoms().bytes(name);
         if text.first() == Some(&b'#') {
-            &text[..text.iter().position(|&c| c == b'@').unwrap_or(text.len())]
+            &text[..bun_core::strings::index_of_char_usize(text, b'@').unwrap_or(text.len())]
         } else {
             text
         }
@@ -1673,7 +1713,14 @@ impl<'p> Checker<'p> {
     /// The instance shape of a class or an interface, in terms of its own type parameters. `under`:
     /// the mapper applied to them in the base types.
     /// `early`: only the members the binder can name.
-    fn build_declared_shape(&mut self, sym: Sym, under: MapperId, early: bool) -> Shape {
+    /// `inherits`: with the members of the base types.
+    fn build_declared_shape(
+        &mut self,
+        sym: Sym,
+        under: MapperId,
+        early: bool,
+        inherits: bool,
+    ) -> Shape {
         let mut b = Builder::default();
         for (file, decl) in self.files().decls(sym) {
             let hir = self.hir(file);
@@ -1693,7 +1740,7 @@ impl<'p> Checker<'p> {
         let this = self.intern(TypeData::ThisParam(sym));
         let bases = self.base_types(sym);
         let own = b.shape.props.len();
-        for base in bases.iter().copied() {
+        for base in bases.iter().copied().filter(|_| inherits) {
             let base = self.instantiate(base, under);
             self.inherit(&mut b, base, Some((sym, this)));
         }
@@ -1728,8 +1775,7 @@ impl<'p> Checker<'p> {
         for (i, prop) in std::mem::take(props).into_iter().enumerate() {
             let is_outside =
                 !is_contained(i) && !self.is_within_ranges_of_declarations(&prop, ranges);
-            let (nowhere, file, pos) = self.order_of_property(&prop);
-            let place = self.place_in_program_order(file, pos);
+            let (nowhere, place) = self.order_of_property(&prop);
             keyed.push(((is_outside, nowhere, place, atoms.bytes(prop.name)), prop));
         }
         keyed.sort_by(|x, y| x.0.cmp(&y.0));
@@ -1998,7 +2044,7 @@ impl<'p> Checker<'p> {
             return known;
         }
         if !self.enter(Query::Bases(sym)) {
-            return Arc::from([]);
+            return self.base_types_in_progress(sym);
         }
         let mut bases = Vec::new();
         // `resolveBaseTypesOfClass`: the base class comes first, whichever declaration has the
@@ -2057,7 +2103,8 @@ impl<'p> Checker<'p> {
         let in_cycle = self.left_a_cycle;
         let bases = match left {
             Ok(stored) => self.p.base_types.insert(&mut self.task, sym, bases, stored),
-            Err(_) => bases,
+            // See `base_types_in_progress`.
+            Err(_) => (self.p.base_types.get(&mut self.task, &sym)).unwrap_or(bases),
         };
         // `popTypeResolution`: they were requested again while being resolved. The error is
         // reported at every class declaration and every interface declaration of the name,
@@ -2077,6 +2124,65 @@ impl<'p> Checker<'p> {
             }
         }
         bases
+    }
+
+    /// `getBaseTypes(sym)` where `pushTypeResolution` fails. `hasBaseType` rejects the base type that
+    /// closes the cycle, so the base types of every member depend on which member is resolved first.
+    /// With one checker that is the first one requested in program order. A task does not know what
+    /// the files before its own request, but `checkSourceFile` requests the base types of every
+    /// class and interface that it visits. So the member that those files declare first is resolved
+    /// first, above a `resolution_start` barrier. The frames of the cycle below the barrier are
+    /// tainted, except for `sym`, and `base_types` returns the stored value for them.
+    #[cold]
+    fn base_types_in_progress(&mut self, sym: Sym) -> Arc<[TypeId]> {
+        // A checker of `checkerPool` has visited those of the earlier files that are its own.
+        let own = self
+            .task
+            .file
+            .filter(|_| self.found_cycle && self.task.checker_count == 0);
+        let from = self.resolution_start.min(self.stack.len());
+        let head = self.stack[from..]
+            .iter()
+            .rposition(|&q| q == Query::Bases(sym));
+        let (Some(own), Some(head)) = (own, head) else {
+            return Arc::from([]);
+        };
+        let before = self.files().rank_of_file(own);
+        let members = self.stack[from + head..].iter().filter_map(|&q| match q {
+            Query::Bases(member) => Some((
+                self.first_declaration_checked_before(member, before)?,
+                member,
+            )),
+            _ => None,
+        });
+        match members.min_by_key(|member| member.0) {
+            Some((_, first)) if first != sym => {
+                let height = self.stack.len();
+                let resolution_start = std::mem::replace(&mut self.resolution_start, height);
+                self.base_types(first);
+                self.resolution_start = resolution_start;
+                let known = self.p.base_types.get(&mut self.task, &sym);
+                known.unwrap_or_else(|| Arc::from([]))
+            }
+            _ => Arc::from([]),
+        }
+    }
+
+    /// Where in check order the first class or interface declaration of `sym` is, among the files
+    /// that `checkSourceFile` visits before the file with the rank `before`.
+    fn first_declaration_checked_before(&self, sym: Sym, before: u32) -> Option<(u32, u32)> {
+        let declarations = self.files().decls(sym).into_iter();
+        let places = declarations.filter_map(|(file, declaration)| {
+            let hir = self.hir(file);
+            let start = match declaration {
+                Decl::Class(c) => hir[c].name_pos,
+                Decl::Interface(i) => hir[i].name_pos,
+                _ => return None,
+            };
+            let rank = self.files().rank_of_file(file);
+            (rank < before && self.reports_semantic_errors(file)).then_some((rank, start))
+        });
+        places.min()
     }
 
     /// What `reportCircularBaseType` reports at the class or interface `declaration` of `sym`.
@@ -2155,11 +2261,7 @@ impl<'p> Checker<'p> {
         if self.bound(file).is_unchecked(extends.idx()) {
             return None;
         }
-        Some((
-            file,
-            self.start_of(file, extends),
-            self.end_of_expr(file, extends),
-        ))
+        Some(self.span_of_parenthesized_expr(file, extends))
     }
 
     /// `baseType` of `resolveBaseTypesOfClass`: the instance type of the base class of `sym`. `c`:
@@ -2314,7 +2416,7 @@ impl<'p> Checker<'p> {
                 }
             }
             Origin::ObjectLiteral(file, expr, .., is_fresh) => {
-                let mut shape = self.build_object_literal_shape(file, expr);
+                let mut shape = self.build_object_literal_shape(file, expr, false);
                 if !is_fresh {
                     for prop in &mut shape.props {
                         prop.flags |= PropFlags::REGULAR;
@@ -2323,7 +2425,7 @@ impl<'p> Checker<'p> {
                 return shape;
             }
             Origin::WidenedLiteral(file, expr, ..) => {
-                let mut shape = self.build_object_literal_shape(file, expr);
+                let mut shape = self.build_object_literal_shape(file, expr, false);
                 // `getWidenedProperty`: methods and accessors are left unchanged.
                 for prop in &mut shape.props {
                     if !prop
@@ -3554,16 +3656,10 @@ impl<'p> Checker<'p> {
             }
         };
         let ty = if self.has_type_variables(base) {
-            let ty = if own_mapper == MapperId::IDENTITY {
-                base
-            } else {
-                self.instantiate(base, own_mapper)
-            };
-            if outer == MapperId::IDENTITY {
-                ty
-            } else {
-                self.instantiate(ty, outer)
-            }
+            // `getTypeOfInstantiatedSymbol`: for an inherited member, the mapper of the base type
+            // that `resolveObjectTypeMembers` has instantiated.
+            let mapper = self.compose(own_mapper, outer);
+            self.instantiate(base, mapper)
         } else {
             base
         };
@@ -4057,8 +4153,8 @@ impl<'p> Checker<'p> {
             } else {
                 self.intersection(&types)
             };
-            let all = self.instantiate(all, prop.mapper);
-            return self.instantiate(all, outer);
+            let mapper = self.compose(prop.mapper, outer);
+            return self.instantiate(all, mapper);
         }
         if !prop.flags.contains(PropFlags::ACCESSOR) {
             // `removeMissingType`: the missing type of an optional property cannot be assigned to
@@ -4101,9 +4197,8 @@ impl<'p> Checker<'p> {
             && self.hir(file)[param].ty.is_some()
         {
             let ty = self.type_from_node(file, self.hir(file)[param].ty);
-            let ty = self.instantiate(ty, prop.mapper);
-            let ty = self.instantiate(ty, outer);
-            return ty;
+            let mapper = self.compose(prop.mapper, outer);
+            return self.instantiate(ty, mapper);
         }
         self.type_of_prop(prop, outer)
     }

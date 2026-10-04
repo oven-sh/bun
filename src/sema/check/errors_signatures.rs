@@ -46,27 +46,6 @@ pub(super) fn start_of_type_in_source(text: &[u8], pos: u32) -> u32 {
     }
 }
 
-/// Position of the name of the type alias, class, interface or function declaration that owns the
-/// type parameter `tp`.
-fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32> {
-    let has = |list: Span<TypeParamId>| list.range().contains(&tp.idx());
-    let alias = hir.aliases.iter().find(|a| has(a.type_params));
-    let class = hir
-        .classes
-        .iter()
-        .find(|c| has(c.type_params) && c.name.is_some());
-    let interface = hir.interfaces.iter().find(|i| has(i.type_params));
-    let function = hir
-        .fns
-        .iter()
-        .find(|f| has(f.type_params) && f.kind == FnKind::Decl && f.name.is_some());
-    alias
-        .map(|a| a.name_pos)
-        .or_else(|| class.map(|c| c.name_pos))
-        .or_else(|| interface.map(|i| i.name_pos))
-        .or_else(|| function.map(|f| f.name_pos))
-}
-
 // ───────────────────────────── the grammar of signatures ─────────────────────────────
 
 impl Checker<'_> {
@@ -114,23 +93,16 @@ impl Checker<'_> {
                         let mapper = self.mapper_from(&[param], &[default]);
                         let constraint = self.instantiate(constraint, mapper);
                         let constraint = self.type_with_this_argument(constraint, default);
-                        self.relations_too_deep.clear();
                         let at = (
                             file,
                             start,
                             self.end_of_type_node_from(file, decl.default, start),
                         );
+                        // `checkTypeParameters` does not go through `checkSourceElement`.
+                        let declaration = CurrentNode::Node(file, hir.parent(hir.node(tp)));
+                        let saved = self.current_source_element.replace(declaration);
                         self.check_type_assignable_to(default, constraint, Some(at), Some(2344));
-                        // `checkTypeRelatedToEx`: a comparison without an error node reports at `currentNode`, the declaration.
-                        let too_deep = std::mem::take(&mut self.relations_too_deep);
-                        if let Some(start) = name_of_type_parameter_owner(hir, tp) {
-                            for (source, target) in too_deep {
-                                let at = self.place_of_token(file, start);
-                                self.error_at(at, 2321, &[Arg::Type(source), Arg::Type(target)]);
-                            }
-                        }
-                        // Printing a type also runs comparisons.
-                        self.relations_too_deep.clear();
+                        self.current_source_element = saved;
                     }
                 }
             }

@@ -119,6 +119,8 @@ impl Builder<'_> {
             ty,
             readonly,
             optional,
+            is_readonly_with_plus,
+            is_optional_with_plus,
             extra_member_loc,
             members,
         } = mapped;
@@ -139,6 +141,8 @@ impl Builder<'_> {
             ty,
             readonly,
             optional,
+            is_readonly_with_plus,
+            is_optional_with_plus,
             members,
         }))
     }

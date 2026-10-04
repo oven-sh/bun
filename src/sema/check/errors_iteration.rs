@@ -411,7 +411,7 @@ impl Checker<'_> {
         // `getIndexNodeForAccessExpression`: for `[k]`, the expression in the brackets. `["a"]` is
         // stored as the name `a`.
         let name = match property.key {
-            PropKey::Computed(k) => (file, self.start_of(file, k), self.end_of_expr(file, k)),
+            PropKey::Computed(k) => self.error_range_of(file, k),
             _ => {
                 let mut at = property.pos;
                 if hir.text.get(at as usize) == Some(&b'[') {

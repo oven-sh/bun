@@ -2046,12 +2046,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b.file[root].kind = ExprKind::This;
         } else if root.is_some()
             && let ExprKind::String(name) = self.b.file[root].kind
-            && !self
-                .b
-                .atoms
-                .bytes(name)
-                .iter()
-                .any(|c| matches!(c, b'-' | b':'))
+            && !bun_core::strings::index_of_any(self.b.atoms.bytes(name), b"-:").is_some()
         {
             self.b.file[root].kind = ExprKind::Ident(name);
         }

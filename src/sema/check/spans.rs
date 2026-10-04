@@ -216,10 +216,8 @@ pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
             let b = text[at - 1];
             if matches!(b, b'\n' | b'\r') {
                 at -= 1;
-                let line = text[..at]
-                    .iter()
-                    .rposition(|&c| matches!(c, b'\n' | b'\r'))
-                    .map_or(0, |i| i + 1);
+                let line =
+                    bun_core::strings::last_index_of_any(&text[..at], b"\n\r").map_or(0, |i| i + 1);
                 if let Some(comment) = line_comment_start(&text[line..at]) {
                     at = line + comment;
                 }
@@ -559,7 +557,7 @@ fn jsx_name_end(text: &[u8], at: usize) -> usize {
 fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
     let mut end = jsx_name_end(text, at);
     // "`a:b.c` is invalid syntax, don't even look for the `.` if we parse `a:b`"
-    if end == at || text[at..end].contains(&b':') {
+    if end == at || bun_core::strings::contains_char(&text[at..end], b':') {
         return end;
     }
     loop {

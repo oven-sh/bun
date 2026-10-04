@@ -236,8 +236,9 @@ impl Checker<'_> {
         ) && let ExprKind::String(name) = hir[jsx.tag].kind
         {
             let name = self.atoms().bytes(name);
-            if let Some(colon) = name.iter().position(|&c| c == b':')
-                && !(name[0].is_ascii_lowercase() || name[..colon].contains(&b'-'))
+            if let Some(colon) = bun_core::strings::index_of_char_usize(name, b':')
+                && !(name[0].is_ascii_lowercase()
+                    || bun_core::strings::contains_char(&name[..colon], b'-'))
             {
                 let tag = hir[jsx.tag];
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
@@ -723,7 +724,7 @@ impl Checker<'_> {
             let Some(name) = self.member_name(file, prop.key) else {
                 continue;
             };
-            if self.atoms().bytes(name).contains(&b'-') {
+            if bun_core::strings::contains_char(self.atoms().bytes(name), b'-') {
                 continue;
             }
             let (at, mut diags) = (
@@ -876,7 +877,8 @@ impl Checker<'_> {
                 indexed = self.indexed_access_if_any(arrays, key, false);
                 if indexed.is_none()
                     && self.is_union(arrays)
-                    && let Some(best) = self.best_matching_type(source, arrays)
+                    && let Some(best) = self
+                        .best_matching_type(source, arrays, &mut |c, s, t| c.is_assignable(s, t))
                 {
                     indexed = self.indexed_access_if_any(best, key, false);
                 }
@@ -1099,7 +1101,7 @@ fn jsx_factory_entity(
 /// `parseIsolatedEntityName`, returned as the identifiers of the name. Empty text is not a name.
 fn parse_isolated_entity_name(atoms: Atoms<'_>, text: &[u8]) -> Option<Vec<Atom>> {
     crate::verify::is_entity_name(text).then(|| {
-        text.split(|&c| c == b'.')
+        bun_core::strings::split(text, b".")
             .map(|name| atoms.intern(name.trim_ascii()))
             .collect()
     })

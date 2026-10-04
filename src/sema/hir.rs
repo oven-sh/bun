@@ -670,7 +670,7 @@ pub struct Prop {
 
 /// `IsIntrinsicJsxName`
 pub fn is_intrinsic_jsx_name(name: &[u8]) -> bool {
-    name.first().is_some_and(u8::is_ascii_lowercase) || name.contains(&b'-')
+    name.first().is_some_and(u8::is_ascii_lowercase) || bun_core::strings::contains_char(name, b'-')
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1370,8 +1370,34 @@ pub struct Mapped {
     pub ty: TypeNodeId,
     pub readonly: MappedModifier,
     pub optional: MappedModifier,
+    /// `ReadonlyToken` is `+`: `+readonly`. It means what `readonly` means.
+    pub is_readonly_with_plus: bool,
+    /// `QuestionToken` is `+`: `+?`
+    pub is_optional_with_plus: bool,
     /// The members after `[K in T]: X`, which are an error and which the checker never visits.
     pub members: Span<MemberId>,
+}
+
+impl Mapped {
+    /// `ReadonlyToken` as the node builder prints it, which copies the token of the declaration.
+    pub fn readonly_text(&self) -> &'static [u8] {
+        match self.readonly {
+            MappedModifier::None => b"",
+            MappedModifier::Add if self.is_readonly_with_plus => b"+readonly ",
+            MappedModifier::Add => b"readonly ",
+            MappedModifier::Remove => b"-readonly ",
+        }
+    }
+
+    /// `QuestionToken`, likewise.
+    pub fn question_text(&self) -> &'static [u8] {
+        match self.optional {
+            MappedModifier::None => b"",
+            MappedModifier::Add if self.is_optional_with_plus => b"+?",
+            MappedModifier::Add => b"?",
+            MappedModifier::Remove => b"-?",
+        }
+    }
 }
 
 /// An `Identifier` of an entity name that is not an expression: of `A.B.C` in a type reference, in

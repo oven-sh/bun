@@ -1532,13 +1532,21 @@ impl Dump<'_> {
             ty,
             readonly,
             optional,
+            is_readonly_with_plus,
+            is_optional_with_plus,
             members,
         } = node!(self, depth, label, mapped, id);
+        let plus_readonly = if is_readonly_with_plus {
+            " +readonly"
+        } else {
+            ""
+        };
+        let plus_optional = if is_optional_with_plus { " +?" } else { "" };
         put!(
             self,
             depth,
             label,
-            "Mapped readonly={readonly:?} optional={optional:?}"
+            "Mapped readonly={readonly:?} optional={optional:?}{plus_readonly}{plus_optional}"
         );
         let d = depth + 1;
         self.type_param(d, "param", param);

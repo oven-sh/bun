@@ -1002,7 +1002,8 @@ impl Data {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 // The creator of the location may have included the lines preceding its own line.
-                let mut lines_before: Vec<&[u8]> = line_text.split(|&b| b == b'\n').collect();
+                let mut lines_before: Vec<&[u8]> =
+                    bun_core::strings::split(line_text, b"\n").collect();
                 let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =

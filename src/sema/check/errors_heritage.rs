@@ -17,6 +17,8 @@ use smallvec::SmallVec;
 /// The arguments `checkIndexConstraints` passes on.
 struct IndexConstraints<'a> {
     file: FileId,
+    /// `t`
+    ty: TypeId,
     /// `getIndexInfosOfType(t)`
     infos: &'a [IndexInfo],
     /// The members declared directly in the declarations of `t`.
@@ -550,12 +552,29 @@ impl Checker<'_> {
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
         let decls = self.files().decls_of(sym);
-        // `interfaceChecked`: once for the interface, at the first of its declarations that is checked.
-        let first = decls.iter().find_map(|&(f, d)| match d {
-            Decl::Interface(id) if self.reports_semantic_errors(f) => Some((f, id)),
+        let interfaces = decls.iter().filter_map(|&(f, d)| match d {
+            Decl::Interface(id) => Some((f, id)),
             _ => None,
         });
+        // `interfaceChecked`: once for the interface, at the first of its declarations that is
+        // checked. Each checker of `checkerPool` has that flag. `decls` is in the order of merging,
+        // where the scripts come before every `declare global`.
+        let (files, checker_count) = (self.files(), self.task.checker_count);
+        let checker_of = |f: FileId| files.rank_of_file(f).checked_rem(checker_count);
+        let order = |&(f, id): &(FileId, InterfaceId)| {
+            self.place_in_program_order(f, self.hir(f)[id].name_pos)
+        };
+        let first = (interfaces.clone())
+            .filter(|&(f, _)| self.reports_semantic_errors(f) && checker_of(f) == checker_of(file))
+            .min_by_key(order);
         let is_first = first == Some((file, i));
+        let is_first_in_file = interfaces
+            .clone()
+            .filter(|it| it.0 == file)
+            .min_by_key(order)
+            == Some((file, i));
+        // `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
+        let interface_declaration = interfaces.clone().next();
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
@@ -592,15 +611,17 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        // An error at the name of the interface is reported once. None is reported where a class
-        // has the same name: the type is then that of the class (`ObjectFlagsInterface`).
-        let is_class = self.files().flags(sym).contains(SymFlags::CLASS);
-        let fallback = first
-            .filter(|&(f, _)| f == file && is_first && !is_class)
-            .map(|_| (self.hir(file).node(i), sym));
-        if is_first || first.is_some_and(|(f, _)| f != file) {
-            self.check_index_constraints(file, ty, &locals, false, fallback);
+        // `check_index_constraints` reports what is in `file`.
+        if !is_first_in_file {
+            return;
         }
+        // None is reported where a class has the same name: the type is then that of the class
+        // (`ObjectFlagsInterface`).
+        let is_class = self.files().flags(sym).contains(SymFlags::CLASS);
+        let fallback = interface_declaration
+            .filter(|&(f, _)| f == file && !is_class)
+            .map(|(_, id)| (self.hir(file).node(id), sym));
+        self.check_index_constraints(file, ty, &locals, false, fallback);
     }
 
     /// `checkInheritedPropertiesAreIdentical`. `type_node`: where to report, if at all.
@@ -715,6 +736,7 @@ impl Checker<'_> {
             .collect();
         let cx = IndexConstraints {
             file,
+            ty,
             infos: &infos,
             locals,
             interface,
@@ -799,7 +821,7 @@ impl Checker<'_> {
         for info in cx.infos {
             let applies = match name_type {
                 Some(name_type) => self.is_applicable_index_type(name_type, info.key),
-                None => self.is_name_applicable_to_index(prop.name, info.key),
+                None => self.is_property_applicable_to_index(cx.ty, prop, info.key),
             };
             if !applies {
                 continue;

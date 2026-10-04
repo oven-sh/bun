@@ -105,9 +105,9 @@ impl Bundle {
         let mut rest = bytes;
         while !rest.is_empty() {
             let header = rest.strip_prefix(b"=== ")?;
-            let end = header.iter().position(|&b| b == b'\n')?;
+            let end = bun_core::strings::index_of_char_usize(header, b'\n')?;
             let (header, after) = (&header[..end], &header[end + 1..]);
-            let space = header.iter().rposition(|&b| b == b' ')?;
+            let space = bun_core::strings::last_index_of_char(header, b' ')?;
             let length: usize = std::str::from_utf8(&header[space + 1..])
                 .ok()?
                 .parse()
@@ -217,9 +217,7 @@ impl Virtual {
             }
             let mut end = 0;
             while end < path.len() {
-                end = path[end + 1..]
-                    .iter()
-                    .position(|&b| b == b'/')
+                end = bun_core::strings::index_of_char_usize(&path[end + 1..], b'/')
                     .map_or(path.len(), |i| end + 1 + i);
                 if let Some(target) = self.links.get(&self.key(&path[..end])) {
                     path = [target, &path[end..]].concat();
@@ -275,7 +273,7 @@ impl Host for Virtual {
             };
             let names: BTreeSet<&[u8]> = bundle
                 .under(&real)
-                .filter_map(|rest| rest.split(|&b| b == b'/').next())
+                .filter_map(|rest| bun_core::strings::split(rest, b"/").next())
                 .collect();
             return names.into_iter().map(<[u8]>::to_vec).collect();
         }
@@ -294,7 +292,7 @@ impl Host for Virtual {
         for (key, written) in written {
             if let Some(rest) = key.strip_prefix(&prefix[..])
                 && !rest.is_empty()
-                && !rest.contains(&b'/')
+                && !bun_core::strings::contains_char(rest, b'/')
             {
                 names.insert(written[written.len() - rest.len()..].to_vec());
             }
@@ -302,7 +300,7 @@ impl Host for Virtual {
         for key in self.links.keys() {
             if let Some(rest) = key.strip_prefix(&prefix[..])
                 && !rest.is_empty()
-                && !rest.contains(&b'/')
+                && !bun_core::strings::contains_char(rest, b'/')
             {
                 names.insert(rest.to_vec());
             }
@@ -376,10 +374,7 @@ fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
     let value = rest[end..].trim_ascii_start().strip_prefix(b":")?;
     // `[^\r\n]*`
     let value = value.trim_ascii_start();
-    let value_end = value
-        .iter()
-        .position(|&b| b == b'\r' || b == b'\n')
-        .unwrap_or(value.len());
+    let value_end = bun_core::strings::index_of_any(value, b"\r\n").unwrap_or(value.len());
     Some((
         String::from_utf8_lossy(&rest[..end]).to_lowercase(),
         &value[..value_end],
@@ -388,7 +383,7 @@ fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
 
 /// `lineDelimiter.Split`
 fn lines_of(text: &[u8]) -> Vec<&[u8]> {
-    text.split(|&b| b == b'\n').collect()
+    bun_core::strings::split(text, b"\n").collect()
 }
 
 struct Unit {
@@ -460,7 +455,7 @@ fn units_of(code: &[u8], file_name: &str) -> Parsed {
 /// `extractCompilerSettings`
 fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
     let mut settings = BTreeMap::new();
-    for line in code.split(|&b| b == b'\n') {
+    for line in bun_core::strings::split(code, b"\n") {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         if let Some((name, value)) = option_in(line) {
             let value = String::from_utf8_lossy(trim(value)).into_owned();
@@ -776,7 +771,7 @@ fn render(
         new_line(&mut out);
         out.extend_from_slice(format!("==== {name} ({} errors) ====", errors.len()).as_bytes());
         let starts = compute_ecma_line_starts(content);
-        let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
+        let lines: Vec<&[u8]> = bun_core::strings::split(content, b"\n").collect();
         for (index, line) in lines.iter().enumerate() {
             let is_last = index == lines.len() - 1;
             let line = line.strip_suffix(b"\r").unwrap_or(line);
@@ -1420,11 +1415,8 @@ fn run_one(
         let common = if !options.root_dir.is_empty() {
             options.root_dir.clone()
         } else if !options.config_path.is_empty() {
-            let end = options
-                .config_path
-                .iter()
-                .rposition(|&b| b == b'/')
-                .unwrap_or(0);
+            let end =
+                bun_core::strings::last_index_of_char(&options.config_path, b'/').unwrap_or(0);
             options.config_path[..end].to_vec()
         } else {
             let sources = (roots.iter().chain(&others))
@@ -1435,7 +1427,7 @@ fn run_one(
                 a[..same].to_vec()
             });
             let common = common.unwrap_or_default();
-            let end = common.iter().rposition(|&b| b == b'/').unwrap_or(0);
+            let end = bun_core::strings::last_index_of_char(&common, b'/').unwrap_or(0);
             common[..end].to_vec()
         };
         let common = common.strip_suffix(b"/").unwrap_or(&common).to_vec();
@@ -1579,6 +1571,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
             let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
             let thread = std::thread::Builder::new().stack_size(stack);
             let spawned = thread.spawn_scoped(scope, || {
+                bun_core::StackCheck::configure_thread();
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(path) = tests.get(i) else { break };
@@ -1766,7 +1759,7 @@ impl Watched {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     for (name, since) in IN_PROGRESS.lock().unwrap().iter().flatten() {
-                        if since.elapsed() > std::time::Duration::from_secs(60) {
+                        if since.elapsed() > std::time::Duration::from_secs(600) {
                             eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
                             std::process::exit(3);
                         }

@@ -55,7 +55,7 @@ fn next_token(text: &[u8], mut at: usize) -> (usize, bool) {
             }
             [b'/', b'*', rest @ ..] => {
                 let len = bun_core::strings::index_of(rest, b"*/").map_or(rest.len(), |i| i + 2);
-                is_on_new_line |= rest[..len].iter().any(|&b| matches!(b, b'\n' | b'\r'));
+                is_on_new_line |= bun_core::strings::index_of_any(&rest[..len], b"\n\r").is_some();
                 at += 2 + len;
             }
             _ => return (at, is_on_new_line),

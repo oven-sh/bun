@@ -229,20 +229,10 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId
     let data = hir[call];
     let tag = c.type_of_expr(file, data.callee);
     let apparent = c.apparent_type(tag);
-    let has_call_signatures = !c.signatures(apparent, false).is_empty();
-    // `isUntypedFunctionCall`
-    let is_untyped = c.is_any(tag)
-        || c.is_any(apparent) && matches!(c.data(tag), TypeData::TypeParam(..))
-        || !has_call_signatures
-            && c.signatures(apparent, true).is_empty()
-            && !c.is_union(apparent)
-            && !apparent.is_never()
-            && {
-                let function = c.global_ref(known::Function, &[]);
-                c.is_assignable(tag, function)
-            };
-    if !is_untyped {
-        if has_call_signatures {
+    let calls = c.signatures(apparent, false).len();
+    let constructs = c.signatures(apparent, true).len();
+    if !c.is_untyped_function_call(tag, apparent, calls, constructs) {
+        if calls != 0 {
             return;
         }
         if matches!(c.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)))

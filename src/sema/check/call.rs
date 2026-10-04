@@ -239,7 +239,9 @@ impl<'p> Checker<'p> {
             self.resolution_start = self.stack.len();
         }
         let around = self.call_resolution_errors.take();
+        let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         let resolved = self.resolve_signature(file, call);
+        self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, around);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
@@ -663,11 +665,23 @@ impl<'p> Checker<'p> {
     ) -> ResolvedCall {
         let hir = self.hir(file);
         let data = &hir[id];
+        let is_re_resolved = self.is_call_re_resolved;
         let mut callee = self.type_of_expr(file, data.callee);
         if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
             callee = self.non_nullable(callee);
         }
-        callee = self.non_null_type(callee);
+        // `check_call` reports it for the type that the callee has in the end.
+        callee = if is_re_resolved {
+            let since = self.reported.len();
+            let callee = self.check_non_null_callee(file, data.callee, callee, is_new);
+            let reported = self.reported.split_off(since);
+            if !reported.is_empty() {
+                (self.call_resolution_errors.get_or_insert_default()).extend(reported);
+            }
+            callee
+        } else {
+            self.non_null_type(callee)
+        };
         // `silentNeverSignature`
         if callee == TypeId::SILENT_NEVER {
             return ResolvedCall {
@@ -1014,7 +1028,7 @@ impl<'p> Checker<'p> {
             // Another checker may be the one to report it.
             let reported = self.reported.split_off(since);
             if !reported.is_empty() {
-                self.call_resolution_errors = Some(reported);
+                (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
         }
         resolved

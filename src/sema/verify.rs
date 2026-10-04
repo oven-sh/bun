@@ -17,7 +17,7 @@ use strings::without_trailing_slash;
 
 /// `hasZeroOrOneAsteriskCharacter`
 fn has_at_most_one_asterisk(text: &[u8]) -> bool {
-    text.bytes().filter(|&b| b == b'*').count() <= 1
+    bun_core::strings::count_char(text, b'*') <= 1
 }
 
 /// `PathIsAbsolute`: `GetEncodedRootLength(path) != 0`
@@ -53,9 +53,8 @@ fn is_identifier(text: &[u8]) -> bool {
 /// `ParseIsolatedEntityName`: whether `text` is an identifier or a qualified name. Keywords count as identifiers, and white space may
 /// surround each name. Comments, `\u` escapes and a leading `#!` line are not supported: a text that contains one is rejected.
 pub fn is_entity_name(text: &[u8]) -> bool {
-    let mut names = text
-        .split(|&b| b == b'.')
-        .map(|name| name.trim_with(is_white_space_like));
+    let mut names =
+        bun_core::strings::split(text, b".").map(|name| name.trim_with(is_white_space_like));
     // `tokenIsIdentifierOrKeyword` is true for a private identifier, so `parseEntityName` accepts
     // `#a` as the first name.
     // `parseRightSideOfDot` rejects it after a dot.

@@ -374,15 +374,15 @@ impl Checker<'_> {
             };
             parts.iter().flat_map(of_part).collect()
         };
-        let is_declared_here = |sym: Sym| files.parts(sym).iter().any(|part| part.file == file);
-        for &(target, source, parts) in &files.refused_merges {
-            let (target, source) = (files.canonical(target), files.canonical(source));
-            if !is_declared_here(target) && !is_declared_here(source) {
+        for refused in &files.refused_merges {
+            let (there, added) = (&refused.target_parts[..], &refused.source_parts[..]);
+            if !there.iter().chain(added).any(|part| part.file == file) {
                 continue;
             }
-            let there = declarations(&files.parts(target)[..parts as usize]);
-            let added = declarations(&files.parts(source));
-            if files.flags(target).contains(SymFlags::NAMESPACE_MODULE) {
+            let (there, added) = (declarations(there), declarations(added));
+            let target = files.canonical(refused.target);
+            let source = files.canonical(refused.source);
+            if refused.target_flags.contains(SymFlags::NAMESPACE_MODULE) {
                 // A value that merges with a non-instantiated namespace reports TS2649 once, on its first declaration.
                 if let Some(&(of, decl, _)) = added.first()
                     && of == file
@@ -393,7 +393,7 @@ impl Checker<'_> {
                 continue;
             }
             // `reportMergeSymbolError`
-            let either = files.flags(target) | files.flags(source);
+            let either = refused.target_flags | refused.source_flags;
             let code = if either.intersects(SymFlags::ENUM) {
                 2567
             } else if either.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {

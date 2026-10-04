@@ -290,11 +290,6 @@ impl Module {
         .into_iter()
         .find_map(|mode| self.imports.get(&(spec, mode)).copied())
     }
-
-    /// Whether `spec` resolves to JavaScript without type declarations, in any resolution mode.
-    pub fn is_untyped_import(&self, spec: Atom) -> bool {
-        self.untyped_imports.iter().any(|untyped| untyped.0 == spec)
-    }
 }
 
 /// `ast.SymbolTable`. Iteration is in insertion order, which is the same in every run.
@@ -391,9 +386,7 @@ pub struct Files {
     merged_exports: FxHashMap<Sym, SymbolMap>,
     /// `symbol.Members` of a transient symbol.
     merged_members: FxHashMap<Sym, SymbolMap>,
-    /// `reportMergeSymbolError`: the pairs that `mergeSymbol` refused to merge. The existing
-    /// symbol, the symbol to be added, and the number of `parts` the first had at that point.
-    pub refused_merges: Vec<(Sym, Sym, u32)>,
+    pub refused_merges: Vec<RefusedMerge>,
     /// The files that declare one of `refused_merges`. Filled by `link`.
     files_of_refused_merges: FxHashSet<FileId>,
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
@@ -588,6 +581,19 @@ impl TypeOnlyDeclaration {
             )
         )
     }
+}
+
+/// `mergeSymbol(target, source)` for two symbols that exclude each other, with what it reads of
+/// them. It reports at once. Merges that follow add flags and declarations to either symbol.
+#[derive(Debug)]
+pub struct RefusedMerge {
+    pub target: Sym,
+    pub source: Sym,
+    pub target_flags: SymFlags,
+    pub source_flags: SymFlags,
+    /// `target.Declarations`, as `Files::parts`.
+    pub target_parts: Box<[Sym]>,
+    pub source_parts: Box<[Sym]>,
 }
 
 /// `AliasSymbolLinks`
@@ -1142,7 +1148,8 @@ trait Resolve: std::ops::Deref<Target = Files> {
     ) -> Option<Sym> {
         let links = self.alias_links(target);
         *type_only = type_only.or(links.type_only_declaration);
-        links.alias_target
+        // `getMergedSymbol(resolveAlias(target))`: see `resolved_at_merge`.
+        links.alias_target.map(|resolved| self.canonical(resolved))
     }
 
     /// `resolveESModuleSymbol`, limited to what the symbol tables can answer.
@@ -1508,7 +1515,7 @@ fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> (Vec<u8>, boo
         // `getLibraryNameFromLibFileName`: `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
         // `@typescript/lib-es2015/symbol-wellknown`.
         let mut name = b"@typescript/lib-".to_vec();
-        for (i, part) in lib.split(|&b| b == b'.').enumerate() {
+        for (i, part) in strings::split(lib, b".").enumerate() {
             match i {
                 0 => {}
                 1 => name.push(b'/'),
@@ -1536,7 +1543,10 @@ fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> (Vec<u8>, boo
 
 /// `HasExtension`
 fn has_extension(path: &[u8]) -> bool {
-    path[strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..].contains(&b'.')
+    strings::contains_char(
+        &path[strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..],
+        b'.',
+    )
 }
 
 /// The first test of `getSourceFileFromReference`: the error code for a file name whose extension is not supported
@@ -1647,8 +1657,7 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<Vec<u8>>
 
 /// `GetPathComponents` of an absolute path: the root, then the names. The root is empty, or a drive: `/c:/a` is `c:/a` to TypeScript.
 fn components_of_path(path: &[u8]) -> Vec<&[u8]> {
-    let mut parts: Vec<&[u8]> = path
-        .split(|&b| b == b'/')
+    let mut parts: Vec<&[u8]> = strings::split(path, b"/")
         .filter(|part| !part.is_empty())
         .collect();
     let starts_with_drive = parts
@@ -2961,7 +2970,10 @@ impl Files {
             let tslib = known::tslib;
             if is_javascript(&found) {
                 untyped_imports.push((tslib, default_mode));
-                let package = resolver.package_id(&found);
+                let has_package_id = resolved.has_package_id;
+                let package = has_package_id
+                    .then(|| resolver.package_id(&found))
+                    .flatten();
                 untyped_import_files.push((
                     atoms.intern(&found),
                     package
@@ -2993,7 +3005,10 @@ impl Files {
                     let types = atoms.intern(&types);
                     untyped_import_alternates.push((spec, default_mode, types));
                 }
-                let package = resolver.package_id(&found);
+                let has_package_id = resolved.has_package_id;
+                let package = has_package_id
+                    .then(|| resolver.package_id(&found))
+                    .flatten();
                 untyped_import_files.push((
                     atoms.intern(&found),
                     package
@@ -3031,7 +3046,7 @@ impl Files {
             let base = &base[strings::last_index_of_char(base, b'/').map_or(0, |i| i + 1)..];
             if options.resolves_like_node
                 && (text.starts_with(b"./") || text.starts_with(b"../"))
-                && !base.contains(&b'.')
+                && !strings::contains_char(base, b'.')
             {
                 let stem = join(dirname::<Posix>(path), text);
                 // `getSuggestedImportExtension`
@@ -3107,7 +3122,10 @@ impl Files {
                             let types = atoms.intern(&types);
                             untyped_import_alternates.push((spec, mode, types));
                         }
-                        let package = resolver.package_id(&found);
+                        let has_package_id = resolved.has_package_id;
+                        let package = has_package_id
+                            .then(|| resolver.package_id(&found))
+                            .flatten();
                         untyped_import_files.push((
                             atoms.intern(&found),
                             // The name can contain a `@` only at its start.
@@ -3466,7 +3484,7 @@ impl Files {
                 // ordinary name.
                 let text = self.atoms.bytes(name);
                 if let Some(star) = strings::index_of_char_usize(text, b'*')
-                    && !text[star + 1..].contains(&b'*')
+                    && !strings::contains_char(&text[star + 1..], b'*')
                 {
                     self.ambient_patterns.push((
                         text[..star].to_vec(),
@@ -3866,10 +3884,17 @@ impl Files {
         }
     }
 
-    /// `reportMergeSymbolError`
+    /// The two branches of `mergeSymbol` that report.
     fn refuse_merge(&mut self, target: Sym, source: Sym) {
-        let parts = self.parts(target).len() as u32;
-        self.refused_merges.push((target, source, parts));
+        let refused = RefusedMerge {
+            target,
+            source,
+            target_flags: self.flags(target),
+            source_flags: self.flags(source),
+            target_parts: self.parts(target).into_vec().into(),
+            source_parts: self.parts(source).into_vec().into(),
+        };
+        self.refused_merges.push(refused);
     }
 
     /// Whether `file` declares one of `refused_merges`. There may be thousands of those, and every
@@ -3959,7 +3984,10 @@ impl Files {
             }
             target = self.clone_symbol(resolved);
         }
-        self.symbol_mut(target).flags |= source_flags;
+        // The name resolver hides an export only if `moduleExport.Flags == SymbolFlagsAlias`, and
+        // `target` has `SymbolFlagsTransient`.
+        let flags = &mut self.symbol_mut(target).flags;
+        *flags = (*flags | source_flags).difference(SymFlags::EXPORT_ONLY);
         // `SetValueDeclaration(target, source.ValueDeclaration)`
         let own = self.value_declaration(target).map(|it| it.1);
         if let Some((_, declaration)) = self.value_declaration(source)
@@ -4755,11 +4783,8 @@ impl Files {
             }
         }
         let refused = self.refused_merges.iter();
-        let refused = refused.flat_map(|&(target, source, _)| [target, source]);
-        self.files_of_refused_merges = refused
-            .flat_map(|sym| self.parts(self.canonical(sym)).into_vec())
-            .map(|part| part.file)
-            .collect();
+        let parts = refused.flat_map(|it| it.target_parts.iter().chain(it.source_parts.iter()));
+        self.files_of_refused_merges = parts.map(|part| part.file).collect();
         self.is_linked = true;
     }
 

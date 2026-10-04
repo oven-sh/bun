@@ -16,7 +16,15 @@ impl Checker<'_> {
         (file, start, self.end_of_token_at(file, start))
     }
 
-    /// `getErrorRangeForNode` of a declaration: its name, or its start if it has none.
+    /// `GetErrorRangeForNode` of a declaration.
+    pub(super) fn error_place_of_declaration(&self, file: FileId, decl: Decl) -> Option<Place> {
+        match self.error_range_of_declaration(file, decl) {
+            Some((start, end)) => Some((file, start, end)),
+            None => self.place_of_declaration(file, decl),
+        }
+    }
+
+    /// `GetNameOfDeclaration(decl) ?? decl`: its name, or its start if it has none.
     pub(super) fn place_of_declaration(&self, file: FileId, decl: Decl) -> Option<Place> {
         let start = self.declaration_name_start(file, decl)?;
         if let Decl::Member(_) | Decl::Property(_) = decl {
@@ -63,10 +71,7 @@ impl Checker<'_> {
             return None;
         }
         let of_declaration =
-            |c: &Self, file: FileId, decl: Decl| match c.error_range_of_declaration(file, decl) {
-                Some((start, end)) => Some((file, start, end)),
-                None => c.place_of_declaration(file, decl),
-            };
+            |c: &Self, file: FileId, decl: Decl| c.error_place_of_declaration(file, decl);
         match &prop.source {
             &PropSource::Literal(file, written) => {
                 of_declaration(self, file, Decl::Property(written))

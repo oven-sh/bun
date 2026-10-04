@@ -436,7 +436,7 @@ impl<'a> Writer<'a> {
             }
             // `emitNewLineBeforeLeadingCommentOfPosition`
             if !std::mem::replace(&mut has_source_comment, true)
-                && self.source[pos..comment.0].contains(&b'\n')
+                && bun_core::strings::contains_char(&self.source[pos..comment.0], b'\n')
             {
                 self.write_line();
             }
@@ -562,7 +562,7 @@ fn write_comment_range(
     };
     let line_start = strings::last_index_of_char(&text[..start], b'\n').map_or(0, |at| at + 1);
     let first_line_indent = indent_of(&text[line_start..start]);
-    for (i, line) in text[start..end].split(|&b| b == b'\n').enumerate() {
+    for (i, line) in bun_core::strings::split(&text[start..end], b"\n").enumerate() {
         if i != 0 {
             written.push(b'\n');
             let spaces = indent as isize * 4 - first_line_indent + indent_of(line);
@@ -2776,7 +2776,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return Vec::new();
         }
         let lines_between =
-            |from: usize, to: usize| text[from..to].iter().filter(|&&b| b == b'\n').count();
+            |from: usize, to: usize| bun_core::strings::count_char(&text[from..to], b'\n');
         let mut detached: Vec<(usize, usize)> = Vec::new();
         for comment in super::spans::get_leading_comment_ranges(text, pos) {
             // "There was a blank line between the last comment and this comment."
@@ -3487,7 +3487,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             ResolutionMode::Import => b"import",
             ResolutionMode::Require => b"require",
             ResolutionMode::None => {
-                match reported.and_then(|it| it.split(|&b| b == b'"' || b == b'\'').nth(2)) {
+                match reported.and_then(|it| bun_core::strings::split_any(it, b"\"'").nth(2)) {
                     Some(b"import") => b"import",
                     Some(b"require") => b"require",
                     _ => return Vec::new(),
@@ -5234,7 +5234,7 @@ fn js_extension_for_file(path: &[u8], preserves_jsx: bool) -> &'static [u8] {
 /// `GetNormalizedAbsolutePath(path, "")` for a package name followed by a path inside the package.
 fn normalized_name(path: &[u8]) -> Vec<u8> {
     let mut parts: Vec<&[u8]> = Vec::new();
-    for part in path.split(|&b| b == b'/') {
+    for part in bun_core::strings::split(path, b"/") {
         match part {
             b"" | b"." => {}
             b".." => {
@@ -5368,7 +5368,7 @@ fn module_name_from_package_exports(
         for (key, value) in entries {
             let matching = if key.ends_with(b"/") {
                 Matching::Directory
-            } else if key.contains(&b'*') {
+            } else if bun_core::strings::contains_char(key, b'*') {
                 Matching::Pattern
             } else {
                 Matching::Exact

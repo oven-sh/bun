@@ -92,12 +92,6 @@ impl Checker<'_> {
         text[(start as usize).min(end)..end].to_vec()
     }
 
-    /// `check_file` and `finish_file`, for callers that check a single file.
-    pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
-        let checked = self.check_file(file);
-        self.p.finish_file(file, checked)
-    }
-
     /// Computes the end of `d`, if it has not been set.
     pub(super) fn settle_place(&self, d: &mut Reported) {
         d.was_bare = d.is_bare();

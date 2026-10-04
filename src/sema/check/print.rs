@@ -352,11 +352,6 @@ impl Checker<'_> {
         out.append(&mut text);
     }
 
-    /// `signatureToString`
-    pub fn signature_to_string(&mut self, signature: SigId) -> Vec<u8> {
-        self.printed(|c, out| c.write_signature(out, signature))
-    }
-
     /// `t.alias`, as far as it can be determined: the type alias `type_to_string` prints `ty` as.
     /// `None`: it expands `ty`.
     pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
@@ -662,7 +657,7 @@ impl Node {
             [b"\n", &b"    ".repeat(to)[..]].concat(),
         );
         for text in std::iter::once(&mut self.text).chain(&mut self.types) {
-            if text.contains(&b'\n') {
+            if bun_core::strings::contains_char(text, b'\n') {
                 *text = bun_core::strings::replace_owned(&text[..], &old, &new);
             }
         }
@@ -1450,8 +1445,11 @@ impl<'p> Printer<'_, 'p> {
             return Some(Node::new(cat!(b"typeof Symbol.", name), TYPE_OPERATOR));
         }
         // A member has no symbol: it is as accessible as its container, and is reached through it.
+        // `lookupSymbolChainWorker` looks for a chain under either condition.
+        let has_chain =
+            self.enclosing_declaration.is_some() || self.flags & USE_FULLY_QUALIFIED_TYPE != 0;
         let owner = match self.c.owner_of_unique_symbol(symbol) {
-            Some(owner) if self.enclosing_declaration.is_some() => owner?,
+            Some(owner) if has_chain => owner?,
             _ => {
                 self.approximate_length += 6 + 2 * (name.len() + 1);
                 return Some(Node::new(cat!(b"typeof ", name), TYPE_OPERATOR));
@@ -1687,7 +1685,7 @@ impl<'p> Printer<'_, 'p> {
     /// always at `start` (the name of an `@overload` is at the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
         match self.get_text_of_node(file, name) {
-            written if written.contains(&b'\\') => written.to_vec(),
+            written if bun_core::strings::contains_char(written, b'\\') => written.to_vec(),
             _ => self.property_key_text(file, name),
         }
     }
@@ -3163,7 +3161,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let margin = b"    ".repeat(indent);
         let mut text = b"/**\n".to_vec();
-        for line in description.split(|&byte| byte == b'\n') {
+        for line in bun_core::strings::split(description, b"\n") {
             text.extend_from_slice(&cat!(margin, b" * ", line, b"\n"));
         }
         text.extend_from_slice(&cat!(margin, b" */\n", margin));
@@ -3668,10 +3666,7 @@ impl<'p> Printer<'_, 'p> {
             return self.c.written_name(name).to_vec();
         }
         if let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
-            let end = symbol
-                .iter()
-                .position(|&b| b == b'@')
-                .unwrap_or(symbol.len());
+            let end = bun_core::strings::index_of_char_usize(symbol, b'@').unwrap_or(symbol.len());
             return cat!(b"[", symbol[..end], b"]");
         }
         let text = bytes.to_vec();
@@ -3860,6 +3855,21 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
+    /// `len(ast.SymbolName(propertySymbol))`. The name of a property that a `unique symbol` names ends
+    /// with the id of the symbol. typescript-go assigns ids on first use, in the order of the check:
+    /// four digits in a large program. Ours says where the symbol is declared, and is longer.
+    fn length_of_symbol_name(&self, name: Atom) -> usize {
+        let text = self.c.written_name(name);
+        if !self.c.atoms().is_symbol_name(name) {
+            return text.len();
+        }
+        match bun_core::strings::last_index_of_char(text, b'@') {
+            // `[Symbol.iterator]` has no id.
+            Some(at) if at >= crate::atom::SYMBOL_NAME_PREFIX.len() => at + 1 + 4,
+            _ => text.len(),
+        }
+    }
+
     /// `addPropertyToElementList`
     fn add_property_to_element_list(
         &mut self,
@@ -3903,7 +3913,7 @@ impl<'p> Printer<'_, 'p> {
             }
             None => self.property_name(prop),
         };
-        self.approximate_length += self.c.written_name(prop.name).len() + 1;
+        self.approximate_length += self.length_of_symbol_name(prop.name) + 1;
         if prop.flags.contains(PropFlags::ACCESSOR) {
             let write_type = self.c.write_type_of_prop(prop, mapper);
             let (in_class, is_field) = self.accessor_declaration(prop);
@@ -4685,16 +4695,7 @@ impl<'p> Printer<'_, 'p> {
         let template = self.type_to_node(template);
         self.leave_scope(outer_scope);
         self.approximate_length += 10;
-        let readonly: &[u8] = match mapped.readonly {
-            MappedModifier::None => b"",
-            MappedModifier::Add => b"readonly ",
-            MappedModifier::Remove => b"-readonly ",
-        };
-        let question: &[u8] = match mapped.optional {
-            MappedModifier::None => b"",
-            MappedModifier::Add => b"?",
-            MappedModifier::Remove => b"-?",
-        };
+        let (readonly, question) = (mapped.readonly_text(), mapped.question_text());
         let result = cat! {
             b"{ ", readonly, b"[", name, b" in ", constraint, renamed, b"]", question, b": ",
             template.text, b"; }"

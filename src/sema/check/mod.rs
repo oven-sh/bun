@@ -153,7 +153,7 @@ macro_rules! buffered_fields {
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
-            calls_before_signatures
+            calls_before_signatures untyped_signatures_in_js
         )
     };
 }
@@ -227,6 +227,8 @@ pub struct Program {
     mapped_types_with_errors: ById<TypeId, (), Buffered>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered>,
+    /// See `is_untyped_signature_in_js_file`.
+    untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered>,
     declared_types: ByNode<Sym, (TypeId, bool), Buffered>,
     shapes: ByIdIndirect<TypeId, shape::Resolved, Buffered>,
     /// `intersectionTypes`, for sets that contain a union. The key: the set, `IntersectionFlagsNoConstraintReduction`, and whether the set
@@ -403,6 +405,7 @@ impl Program {
             global_errors: Default::default(),
             mapped_types_with_errors: Default::default(),
             initializer_is_undefined: ByNode::new(&params),
+            untyped_signatures_in_js: ByNode::new(&fns),
             declared_types: ByNode::new(&symbols),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
@@ -542,6 +545,10 @@ impl Program {
             instantiation_depth: 0,
             instantiation_count: 0,
             recent_instantiations: Default::default(),
+            recent_composed: Default::default(),
+            unresolved_members: Vec::new(),
+            unresolved_members_hits: 0,
+            lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
             instantiation_limit_hits: 0,
@@ -564,7 +571,8 @@ impl Program {
             inherited_names: [0; 4],
             cond_distributive_memo: FxHashMap::default(),
             relation_too_complex: false,
-            relations_too_deep: Vec::new(),
+            relation_too_deep: false,
+            current_source_element: None,
             is_type_checked: false,
             reported: Vec::new(),
             never_checked: Default::default(),
@@ -625,6 +633,8 @@ impl Program {
             within_unreachable_code: false,
             reported_unreachable_nodes: Vec::new(),
             call_resolution_errors: None,
+            is_call_re_resolved: false,
+            assigned_parameters: Vec::new(),
             context_checking: Vec::new(),
             context_checked_here: Default::default(),
             resolved_signatures: Default::default(),
@@ -639,6 +649,9 @@ impl Program {
             work: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
+            unwind_to: usize::MAX,
+            unwind_work: 0,
+            restart_with: None,
         };
         checker
     }
@@ -694,7 +707,7 @@ enum Query {
     /// `TypeSystemPropertyNameResolvedTypeArguments`
     TypeArguments(TypeId),
     /// The relation cache entry for two types, keyed by a hash of their printed names, which is the same in every task. Never on the
-    /// stack: it only owns the diagnostic of a stack depth overflow (`error_at_current_expression`).
+    /// stack: it only owns the diagnostic of a stack depth overflow (`error_about_comparison_at_current_node`).
     Comparison(u64),
 }
 
@@ -799,11 +812,13 @@ enum EnterOutcome {
 pub(super) enum CurrentNode {
     Expr(FileId, ExprId),
     TypeNode(FileId, TypeNodeId),
+    Node(FileId, Node),
 }
 
-/// For unbounded recursion. tsgo has no limit, and a refusal here is expensive: `bailed_out` makes
-/// everything in progress non-cacheable. A chain of 36 functions that each return what the next
-/// returns is 220 queries deep. One query takes about 2.3 KB of stack, which `is_stack_low` guards.
+/// For unbounded recursion. tsgo has no limit. A declaration without an annotation whose type is
+/// that of the next one takes three queries: `Symbol`, `Pat`, `Expr`, or `Return`, `Expr`, `Call`.
+/// One query takes 1 to 2 KB of stack in a release build, which `is_stack_low` guards. See
+/// `refuse_as_too_deep`.
 const MAX_DEPTH: usize = 1000;
 
 /// The metadata of an entry of `Checker::stack`.
@@ -957,6 +972,24 @@ pub struct Checker<'p> {
     instantiation_count: u32,
     /// The entries most recently read from or written to `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
+    /// The entries most recently read from or written to `Program::composed`.
+    recent_composed: instantiate::Recent,
+    /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers`
+    /// with the members that the class or interface declares before it instantiates the base
+    /// types. A request for the members of the type reference in the meantime finds no inherited
+    /// member: with `class C<T extends B> extends B<T["p"]>` and `R` = `C<R>`, `R["p"]` is
+    /// `unknown` there, and the base type of `R` is `B<unknown>` from then on.
+    /// Here all references share the members of the declared type, and the instantiated base type
+    /// is `compose(first, second)`: `first` is the mapper of an inherited member, `second` that of
+    /// the members of the reference. An entry per `compose` in progress: `second`, and the height
+    /// of `frames` when it began.
+    unresolved_members: Vec<(MapperId, u32)>,
+    /// How many times `members` has left out the inherited members. Each time is counted in
+    /// `cycles` too.
+    unresolved_members_hits: u64,
+    /// The lowest index in `unresolved_members` for which it has, since the innermost `compose` in
+    /// progress began.
+    lowest_unresolved_members_hit: u32,
     active_mappers: instantiate::ActiveMappers,
     /// How many times `error_at_current_node` had nothing to report since `check_file` began: the
     /// computation in progress is not cached.
@@ -1002,8 +1035,10 @@ pub struct Checker<'p> {
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
-    /// The two types of each `checkTypeRelatedToEx` that has reached 100 nested comparisons (2321). The caller clears it before comparing.
-    pub(super) relations_too_deep: Vec<(TypeId, TypeId)>,
+    /// Whether the last `checkTypeRelatedToEx` reached 100 nested comparisons (2321).
+    pub(super) relation_too_deep: bool,
+    /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
+    pub(super) current_source_element: Option<CurrentNode>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
     is_type_checked: bool,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
@@ -1134,6 +1169,11 @@ pub struct Checker<'p> {
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.
     call_resolution_errors: Option<Vec<Reported>>,
+    /// The call that `resolve_signature` is resolving was already being resolved.
+    is_call_re_resolved: bool,
+    /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It
+    /// pushes no type resolution, so a cycle through the initializer of one is not its cycle.
+    assigned_parameters: Vec<usize>,
     /// `links.resolvedSignature != nil` for the calls that this checker has resolved and that
     /// `Program::calls` may not have: tsgo caches a signature that was resolved inside a cycle,
     /// `calls` does not. Whether a call is deferred under `CheckModeSkipGenericFunctions` depends
@@ -1177,6 +1217,13 @@ pub struct Checker<'p> {
     work_trap: u64,
     /// The file, start and end of the expressions in which a query was refused for lack of native stack. See `refuse_for_lack_of_stack`.
     refused_expressions: Vec<(FileId, u32, u32)>,
+    /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
+    /// `refuse_as_too_deep`.
+    unwind_to: usize,
+    /// `work` of the next `enter` while that is so. It takes the slow path (`work_trap`).
+    unwind_work: u64,
+    /// The innermost resolution that was in progress at the refusal. The frame at `unwind_to` resolves it and starts over.
+    restart_with: Option<Query>,
 }
 
 /// The current stack pointer of the thread. Read from the register, not the address of a local:
@@ -1366,7 +1413,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         if self.stack.len() >= MAX_DEPTH {
-            return self.refuse_as_too_deep();
+            return self.refuse_as_too_deep(q);
         }
         self.last_enter = EnterOutcome::Entered;
         self.stack.push(q);
@@ -1426,6 +1473,18 @@ impl<'p> Checker<'p> {
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
+        if self.unwind_to != usize::MAX {
+            if self.work == self.unwind_work && self.stack.len() > self.unwind_to {
+                self.unwind_work = self.work + 1;
+                self.work_trap = self.work + 1;
+                self.last_enter = EnterOutcome::Refused;
+                self.bailed_out_from(self.unwind_to);
+                return true;
+            }
+            // The frame has been left, and it is not one that starts over.
+            self.unwind_to = usize::MAX;
+            self.restart_with = None;
+        }
         let span_of = |c: &Self, q: Query| match q {
             Query::Expr(file, e) | Query::Call(file, e) => {
                 Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
@@ -1461,18 +1520,91 @@ impl<'p> Checker<'p> {
         true
     }
 
+    /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
+    ///
+    /// The result of no frame in progress is cached. A frame that goes on regardless computes
+    /// again, from its lower height, what the frames above it could not finish: a chain of
+    /// functions that is n links too long costs n^3. So every query is refused until `stack` is
+    /// back at `unwind_to`.
+    ///
+    /// The type of a variable and the return type of a function are the same from any height, if
+    /// nothing in progress is a context for them. Then the outermost such frame resolves the
+    /// innermost one from its own height, where that has the depth which the frames in between
+    /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
+    /// cycle that is longer than `MAX_DEPTH` never closes, and is refused again.
     #[cold]
     #[inline(never)]
-    fn refuse_as_too_deep(&mut self) -> bool {
+    fn refuse_as_too_deep(&mut self, q: Query) -> bool {
         self.last_enter = EnterOutcome::Refused;
-        self.ran_out_of_stack.set(true);
         bun_core::scoped_log!(
             SemaCycles,
             "too deep: {:?}",
             &self.stack[self.stack.len() - 12..]
         );
-        self.bailed_out();
+        let starts_over = |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..));
+        let is_without_context = self.flow_loops.is_empty()
+            && self.inference_contexts.is_empty()
+            && self.eager.is_empty()
+            && self.contextual_binding_patterns.is_empty()
+            && self.printing_floors.is_empty()
+            && self.assigned_parameters.is_empty()
+            && self.context_checking.is_empty()
+            && self.context_checked_under.is_empty();
+        let outermost = self.stack.iter().position(starts_over);
+        let innermost = match starts_over(&q) {
+            true => Some(q),
+            false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
+        };
+        self.unwind_work = self.work + 1;
+        self.work_trap = self.work + 1;
+        match (outermost, innermost) {
+            (Some(outermost), Some(innermost))
+                if is_without_context && self.stack[outermost] != innermost =>
+            {
+                self.unwind_to = outermost;
+                self.restart_with = Some(innermost);
+            }
+            _ => {
+                self.unwind_to = 0;
+                self.restart_with = None;
+                self.ran_out_of_stack.set(true);
+            }
+        }
+        self.bailed_out_from(self.unwind_to);
         false
+    }
+
+    /// After the `leave` of a `Query::Symbol` or a `Query::Return`, if `stack.len() == unwind_to`.
+    /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
+    #[cold]
+    #[inline(never)]
+    fn resolve_what_was_too_deep(&mut self) -> bool {
+        // Every `enter` since the refusal was refused in turn.
+        let is_unwinding = self.unwind_work == self.work + 1;
+        let restart_with = self.restart_with.take().filter(|_| is_unwinding);
+        self.unwind_to = usize::MAX;
+        self.work_trap = if self.refused_expressions.is_empty() {
+            WORK_TRAP_DISARMED
+        } else {
+            self.work + 1
+        };
+        let is_resolved = match restart_with {
+            Some(Query::Symbol(sym)) => {
+                self.type_of_symbol(sym);
+                self.p.symbol_types.get(&mut self.task, &sym).is_some()
+            }
+            Some(Query::Return(file, func)) => {
+                self.return_type_of_fn(file, func);
+                let key = (file, func);
+                self.p.fn_return_types.get(&mut self.task, &key).is_some()
+            }
+            _ => return false,
+        };
+        if !is_resolved {
+            self.ran_out_of_stack.set(true);
+            self.bailed_out();
+        }
+        is_resolved
     }
 
     /// How `enter` handles a `q` that is in progress at `stack[i]`. `false`: it is restarted.
@@ -1518,7 +1650,13 @@ impl<'p> Checker<'p> {
         self.note_cycle();
         self.task.closed_a_cycle = true;
         bun_core::scoped_log!(SemaCycles, "cycle: {:?}", &self.stack[i..]);
-        true
+        // `checkExpression` has no re-entrancy guard. The expression is checked again, up to the
+        // resolution on that path that has just become circular, which is `any` there. So the
+        // callee of a call that is resolved again has its type, and the arguments their contextual
+        // types. See `recheck_in_flow_loop` for a path that ends at a loop that is visible.
+        !(marked
+            && matches!(q, Query::Expr(..))
+            && self.frames[i + 1..].iter().any(|frame| frame.circular))
     }
 
     /// Whether `q` requests the members of a function, class, enum or module as a value, or of a
@@ -1587,7 +1725,7 @@ impl<'p> Checker<'p> {
         }
         for j in i..self.stack.len() {
             let q = self.stack[j];
-            if !self.is_resolution(q) {
+            if !self.is_resolution(q) || j != i && self.assigned_parameters.contains(&j) {
                 continue;
             }
             if !self.frames[j].circular {
@@ -1762,16 +1900,22 @@ impl<'p> Checker<'p> {
     /// A query was refused only because of the depth at which it was made. Made from elsewhere it
     /// has a result, so nothing being computed from the missing result may be cached.
     fn bailed_out(&mut self) {
-        self.mark_tainted_from(0);
+        self.bailed_out_from(0);
+    }
+
+    /// `bailed_out`, where the frame at `from` makes the query again: see `refuse_as_too_deep`.
+    fn bailed_out_from(&mut self, from: usize) {
+        self.mark_tainted_from(from);
         self.note_cycle();
         self.refused_at = self.work;
     }
 
-    /// `c.currentNode`, derived from the queries in progress. `checkExpression` always sets it.
-    /// `getTypeFromTypeNode` never does, but `checkSourceElement` visits a type node before
+    /// `c.currentNode`. What `checkExpression` sets is derived from the queries in progress.
+    /// `getTypeFromTypeNode` never sets it, but `checkSourceElement` visits a type node before
     /// anything resolves it: the type nodes `check_type_node` queries, a type node in an expression
     /// (`checkAssertion`), and the type arguments of a call (`resolveCall`). A type node reached
     /// through any other query is resolved on demand and does not change `currentNode`.
+    /// `None`: `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
         let innermost_expr = self
             .stack
@@ -1793,6 +1937,26 @@ impl<'p> Checker<'p> {
             current = Some(CurrentNode::TypeNode(file, node));
         }
         current
+    }
+
+    /// `GetErrorRangeForNode(c.currentNode)`
+    fn place_of_current_node(&self, current: CurrentNode) -> (FileId, u32, u32) {
+        match current {
+            CurrentNode::Expr(file, e) => (
+                file,
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
+            CurrentNode::TypeNode(file, node) => (
+                file,
+                self.hir(file)[node].pos,
+                self.end_of_type_node(file, node),
+            ),
+            CurrentNode::Node(file, node) => {
+                let (start, end) = self.get_error_range_for_node(file, node);
+                (file, start, end)
+            }
+        }
     }
 
     /// `instantiateTypeWithAlias`, `getConditionalType`: an instantiation limit was hit. Reports
@@ -1843,18 +2007,7 @@ impl<'p> Checker<'p> {
             self.note_limit();
             return self.mark_tainted_from(0);
         };
-        let at = match current {
-            CurrentNode::Expr(file, e) => (
-                file,
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            ),
-            CurrentNode::TypeNode(file, node) => (
-                file,
-                self.hir(file)[node].pos,
-                self.end_of_type_node(file, node),
-            ),
-        };
+        let at = self.place_of_current_node(current);
         self.add_diagnostic_of(None, Reported::bare(at, code));
         // A query that began under an instantiation had less depth left than the same query has
         // from depth 0, where a finite type does not reach the limit. tsgo stores its result
@@ -1864,18 +2017,14 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `error_at_current_node`, with arguments, where `c.currentNode` is an expression. Elsewhere
-    /// nothing is reported here: see `relations_too_deep`.
+    /// `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`. A limit of
+    /// `error_at_current_node` is not reported at `current_source_element`: the passes resolve types
+    /// at other times than tsgo, where reaching a limit is no evidence that tsgo reaches it.
     #[cold]
-    fn error_at_current_expression(&mut self, code: u32, args: &[Arg<'_>]) {
-        if let (Some(CurrentNode::Expr(file, e)), true) =
-            (self.current_node(), self.eager.is_empty())
-        {
-            let at = (
-                file,
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            );
+    fn error_about_comparison_at_current_node(&mut self, code: u32, args: &[Arg<'_>]) {
+        let current = self.current_node().or(self.current_source_element);
+        if let (Some(current), true) = (current, self.eager.is_empty()) {
+            let at = self.place_of_current_node(current);
             let diagnostic = self.new_diagnostic(at, code, args);
             // tsgo caches the overflow in the relation cache, so the next comparison of the two types is a cache hit and reports nothing.
             let mut hasher = crate::util::FxHasher::default();
@@ -2174,6 +2323,11 @@ impl<'p> Checker<'p> {
         if entry.moved & 8 != 0 && self.stack.len() < entry.height as usize {
             return None;
         }
+        // `checkExpressionCached` empties `flowLoopStack`: what follows from the incomplete type of
+        // a loop is computed again where the loop is not visible.
+        if entry.moved & 4 != 0 && !self.is_flow_loop_visible(depth) {
+            return None;
+        }
         // The test of `enter`.
         if entry.from == u32::MAX
             && (self.inference_contexts.is_empty() || !self.is_innermost_tainted())
@@ -2223,7 +2377,16 @@ impl<'p> Checker<'p> {
         }
         self.lowest_taint = self.lowest_taint.min(depth);
         self.note_taint_event(depth);
-        for frame in &mut self.frames[depth..] {
+        // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
+        // which checks the callee with the loops visible.
+        let quick = &self.quick_initializers;
+        for (i, frame) in self.frames[depth..].iter_mut().enumerate() {
+            if quick
+                .iter()
+                .any(|&(from, to)| (from..to).contains(&(depth + i)))
+            {
+                continue;
+            }
             frame.tainted = true;
             frame.incomplete_flow = true;
         }

@@ -145,6 +145,20 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
+        loop {
+            let ty = self.resolve_type_of_symbol_once(sym);
+            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+                return ty;
+            }
+            if let Some(known) = self.p.symbol_types.get(&mut self.task, &sym) {
+                return known;
+            }
+        }
+    }
+
+    /// Inlined: a frame of its own would be one more for each variable in a chain.
+    #[inline(always)]
+    fn resolve_type_of_symbol_once(&mut self, sym: Sym) -> TypeId {
         let value_declaration = self.files().value_declaration(sym);
         // A parameter property has the type of its parameter, which is a separate query.
         if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
@@ -2449,23 +2463,9 @@ impl<'p> Checker<'p> {
         }
         // `const s = Symbol()`
         if let Some(name) = unique_symbol_name
-            && let ExprKind::Call(c) = hir[decl.init].kind
+            && self.is_symbol_or_symbol_for_call(file, decl.init)
         {
-            let callee = match hir[hir[c].callee].kind {
-                ExprKind::Dot { obj, name, .. } if self.atoms().bytes(name) == b"for" => obj,
-                _ => hir[c].callee,
-            };
-            // `isSymbolOrSymbolForCall`: it must resolve to the global value of that name, which
-            // must exist.
-            if matches!(hir[callee].kind, ExprKind::Ident(known::Symbol))
-                && self.bound(file).expr_symbol[callee.idx()].is_none()
-                && self
-                    .files()
-                    .global(known::Symbol, SymFlags::VALUE)
-                    .is_some()
-            {
-                return self.unique_symbol_of_variable(file, decl.pat, name);
-            }
+            return self.unique_symbol_of_variable(file, decl.pat, name);
         }
         let ty = self.type_of_declaration_initializer(file, decl.init);
         // `getWidenedLiteralTypeForInitializer`
@@ -2787,6 +2787,20 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
+        loop {
+            let ty = self.resolve_return_type_of_fn_once(file, func);
+            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+                return ty;
+            }
+            if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
+                return known;
+            }
+        }
+    }
+
+    /// Inlined: see `resolve_type_of_symbol_once`.
+    #[inline(always)]
+    fn resolve_return_type_of_fn_once(&mut self, file: FileId, func: FnId) -> TypeId {
         if self.prepare_query_for_fn(file, func)
             && let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func))
         {
@@ -3123,7 +3137,10 @@ impl<'p> Checker<'p> {
     }
 
     /// `return f(..)` in `f`, or `return await f(..)`: its type is that of the other return
-    /// statements.
+    /// statements. `checkAndAggregateReturnExpressionTypes` finds out with
+    /// `checkExpressionCached(expr.Expression())`, for any callee that is an identifier. That is
+    /// outside `getResolvedSignature`, which resets the resolution stack: a resolution in progress
+    /// that the callee re-enters is a cycle.
     fn is_call_of_the_function_itself(
         &mut self,
         file: FileId,
@@ -3142,6 +3159,7 @@ impl<'p> Checker<'p> {
         if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
             return false;
         }
+        let ty = self.check_expression_cached_ex(file, callee, CheckMode::empty());
         let symbol = self.bound(file).expr_symbol[callee.idx()];
         if symbol.is_none() {
             return false;
@@ -3161,7 +3179,6 @@ impl<'p> Checker<'p> {
                 {
                     return true;
                 }
-                let ty = self.type_of_expr(file, callee);
                 matches!(self.data(ty), TypeData::Fns { decls, .. } if decls.len() == 1 && decls[0] == (file, func))
             }
             _ => false,
@@ -3364,9 +3381,8 @@ impl<'p> Checker<'p> {
             // A result that depends on one of these is not cacheable, and `non_cacheable_mark` does not always show it.
             && self.inference_contexts.is_empty()
             && self.provisional.is_empty()
-            // These are set for the current caller, every time.
-            && !(self.relation_too_complex
-                || !self.relations_too_deep.is_empty())
+            // It is set for the current caller, every time.
+            && !self.relation_too_complex
             && self.reliability == 0
         {
             self.p

@@ -30,6 +30,9 @@ struct Mentioned {
     values_in: Vec<(FileId, ScopeId)>,
     /// The references cannot be determined.
     everything: bool,
+    /// `getOuterTypeParameters`: the `infer` type parameters of the conditional types around the
+    /// syntax. `isTypeParameterPossiblyReferenced` never reaches their container, an `infer` type.
+    inferred_around: SmallVec<[TypeId; 4]>,
 }
 
 /// `toInt32` of jsnum.go
@@ -531,6 +534,29 @@ impl<'p> Checker<'p> {
         pos: u32,
         mentioned: &Mentioned,
     ) -> MapperId {
+        let mapper = self.identity_mapper_of_mentioned_in_scope(file, scope, pos, mentioned);
+        if mentioned.inferred_around.is_empty() {
+            return mapper;
+        }
+        // In the true branch they are in scope.
+        let mapping = self.types().mapping(mapper);
+        let is_missing = |param: &&TypeId| !mapping.iter().any(|pair| pair.0 == **param);
+        let mut pairs = mapping.to_vec();
+        pairs.extend(
+            (mentioned.inferred_around.iter())
+                .filter(is_missing)
+                .map(|&p| (p, p)),
+        );
+        self.types().mapper(pairs)
+    }
+
+    fn identity_mapper_of_mentioned_in_scope(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        pos: u32,
+        mentioned: &Mentioned,
+    ) -> MapperId {
         if mentioned.everything {
             return self.identity_mapper(file, scope);
         }
@@ -745,7 +771,9 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> MapperId {
-        if self.type_params_in_scope(file, scope).is_empty() {
+        let is_in_conditional_type = self.has_conditional_or_mapped_type(file)
+            && self.is_in_conditional_type_with_infer(file, node);
+        if self.type_params_in_scope(file, scope).is_empty() && !is_in_conditional_type {
             return MapperId::IDENTITY;
         }
         // `getObjectTypeInstantiation`, `getTypeFromConditionalTypeNode`: the type a generic alias
@@ -759,6 +787,9 @@ impl<'p> Checker<'p> {
         };
         self.collect_mentions(file, node, &mut mentioned);
         self.collect_mentions_of_extends_types_around(file, node, &mut mentioned);
+        if is_in_conditional_type {
+            self.collect_infer_params_around(file, node, &mut mentioned);
+        }
         let mapper =
             self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned);
         // `getIntersectionType`: the alias and all its type arguments are part of the identity of
@@ -824,6 +855,39 @@ impl<'p> Checker<'p> {
                 self.collect_mentions(file, extends, out);
             }
             node = parent;
+        }
+    }
+
+    /// Whether a conditional type around `node` has an `infer` type.
+    fn is_in_conditional_type_with_infer(&self, file: FileId, mut node: TypeNodeId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        while let Some(parent) = Self::type_node_parent(hir, node).some() {
+            if let TypeNodeKind::Cond { extends, .. } = hir[parent].kind
+                && bound.type_scope[extends.idx()].is_some()
+            {
+                return true;
+            }
+            node = parent;
+        }
+        false
+    }
+
+    fn collect_infer_params_around(
+        &mut self,
+        file: FileId,
+        mut node: TypeNodeId,
+        out: &mut Mentioned,
+    ) {
+        let mut declared = Vec::new();
+        while let Some(parent) = Self::type_node_parent(self.hir(file), node).some() {
+            if let TypeNodeKind::Cond { extends, .. } = self.hir(file)[parent].kind {
+                self.collect_infer_params(file, extends, &mut declared);
+            }
+            node = parent;
+        }
+        for tp in declared {
+            let param = self.type_param(file, tp);
+            out.inferred_around.push(param);
         }
     }
 
@@ -1278,8 +1342,9 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `hasNonCircularBaseConstraint`, negated, following only type parameters, unions and
-    /// intersections.
+    /// `hasNonCircularBaseConstraint`, negated, following only type parameters, unions,
+    /// intersections, the placeholders of template literal types, the operands of string mappings
+    /// and the check types of distributive conditional types.
     pub(super) fn has_circular_base_constraint(
         &mut self,
         param: TypeId,
@@ -1287,7 +1352,12 @@ impl<'p> Checker<'p> {
     ) -> bool {
         if !matches!(
             self.data(constraint),
-            TypeData::TypeParam(..) | TypeData::Union(_) | TypeData::Intersection(_)
+            TypeData::TypeParam(..)
+                | TypeData::Union(_)
+                | TypeData::Intersection(_)
+                | TypeData::Template { .. }
+                | TypeData::StringMapping { .. }
+                | TypeData::Cond { .. }
         ) || !self.has_type_variables(constraint)
         {
             return false;
@@ -1300,12 +1370,21 @@ impl<'p> Checker<'p> {
                 return true;
             }
             match self.data(t) {
-                TypeData::Union(parts) | TypeData::Intersection(parts) => todo.extend(
+                TypeData::Union(parts)
+                | TypeData::Intersection(parts)
+                | TypeData::Template { types: parts, .. } => todo.extend(
                     parts
                         .iter()
                         .copied()
                         .filter(|&part| self.has_type_variables(part)),
                 ),
+                TypeData::StringMapping { ty, .. } => todo.push(*ty),
+                // `getConstraintOfDistributiveConditionalType`
+                &TypeData::Cond { file, node, .. } => {
+                    if self.is_distributive_conditional(file, node) {
+                        todo.push(self.cond_check(t));
+                    }
+                }
                 TypeData::TypeParam(..) if !seen.contains(&t) => {
                     seen.push(t);
                     // The constraints of the other type parameters are only inspected to follow the
@@ -3500,6 +3579,39 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `SignatureFlagsIsUntypedSignatureInJSFile`: a JavaScript function with untyped parameters
+    /// and no contextual type. `getSignatureFromDeclaration` asks for the contextual type once,
+    /// when the function is first checked, and the flag stays whatever is in progress.
+    pub(super) fn is_untyped_signature_in_js_file(&mut self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.is_js
+            || !matches!(
+                hir[func].kind,
+                FnKind::Decl
+                    | FnKind::Expr
+                    | FnKind::Arrow
+                    | FnKind::Method
+                    | FnKind::Getter
+                    | FnKind::Setter
+                    | FnKind::Constructor
+            )
+            || !hir[func].params.iter().all(|p| hir[p].ty.is_none())
+            || (bound.get_immediately_invoked_function_expression(hir, func)).is_some()
+        {
+            return false;
+        }
+        let crate::bind::FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
+            return true;
+        };
+        if let Some(known) = (self.p.untyped_signatures_in_js).get(&mut self.task, &(file, func)) {
+            return known;
+        }
+        let is_untyped = (self.contextual_type(file, e, ContextFlags::empty())).is_none();
+        let (key, stored) = ((file, func), Stored::new());
+        (self.p.untyped_signatures_in_js).insert(&self.task, key, is_untyped, stored);
+        is_untyped
+    }
+
     #[inline]
     pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
         let recent = self.recent_sig_params[sig.0 as usize % RECENT_SIGS];
@@ -3575,27 +3687,8 @@ impl<'p> Checker<'p> {
         let actual = bound
             .get_immediately_invoked_function_expression(hir, func)
             .map(|call| hir[call].args.len());
-        // `SignatureFlagsIsUntypedSignatureInJSFile`, `getMinArgumentCount`: a JavaScript function
-        // with untyped parameters and no contextual type has no minimum argument count.
-        let is_untyped_in_js = hir.is_js
-            && actual.is_none()
-            && matches!(
-                hir[func].kind,
-                FnKind::Decl
-                    | FnKind::Expr
-                    | FnKind::Arrow
-                    | FnKind::Method
-                    | FnKind::Getter
-                    | FnKind::Setter
-                    | FnKind::Constructor
-            )
-            && hir[func].params.iter().all(|p| hir[p].ty.is_none())
-            && match bound.fns[func.idx()].owner {
-                crate::bind::FnOwner::Expr(e) => self
-                    .contextual_type(file, e, ContextFlags::empty())
-                    .is_none(),
-                _ => true,
-            };
+        // `getMinArgumentCount`: it has no minimum argument count.
+        let is_untyped_in_js = self.is_untyped_signature_in_js_file(file, func);
         for (i, p) in hir[func].params.iter().enumerate() {
             let param = &hir[p];
             let name = match hir[param.pat].kind {
@@ -3904,7 +3997,8 @@ impl<'p> Checker<'p> {
                         if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC))
                             && offset >= first + fixed_at_end
                         {
-                            return TypeId::UNRESOLVED;
+                            let index = self.number_literal(offset as f64, false);
+                            return self.indexed_access(rest, index);
                         }
                         // `getRestTypeOfTupleType`: from the first variable-length element on, the
                         // type is the union of the remaining elements.

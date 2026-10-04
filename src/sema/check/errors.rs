@@ -602,7 +602,7 @@ impl Checker<'_> {
                 let local = self.local_of_module(module, name);
                 let declarations = local.map(|local| self.files().decls_of(local));
                 for (i, &(of, decl)) in declarations.iter().flat_map(|it| it.iter()).enumerate() {
-                    if let Some(place) = self.place_of_declaration(of, decl) {
+                    if let Some(place) = self.error_place_of_declaration(of, decl) {
                         related.push(match i {
                             0 => self.new_diagnostic(place, 2728, &[written]),
                             _ => self.new_diagnostic(place, 6204, &[]),
@@ -1512,7 +1512,7 @@ impl Checker<'_> {
             .text
             .get(at.1 as usize..at.2 as usize)
             .filter(|written| {
-                written.contains(&b'\\')
+                bun_core::strings::contains_char(written, b'\\')
                     && hir.kind(location) == Kind::Identifier
                     && hir.text(location) == name
             });
@@ -1813,12 +1813,12 @@ pub(crate) enum SpellingSuggestion {
     Word(&'static str),
 }
 
-/// The position of the first declaration of `sym`, ordered libraries first, then by file, then by
-/// position. `compareSymbols`, `compareNodes`
-pub(super) fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, FileId, u32)> {
+/// `compareSymbols`, `compareNodes`: the sort key of the first declaration of `sym`, as
+/// `place_in_program_order` makes it.
+fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, u32, u32)> {
     let (file, decl) = files.decls_of(sym).first().copied()?;
     let pos = files.start_of_declaration(file, decl);
-    Some((!files.module(file).is_lib, file, pos))
+    Some((!files.module(file).is_lib, files.rank_of_file(file), pos))
 }
 
 /// `getSpellingSuggestionForName`
@@ -2186,8 +2186,8 @@ impl Checker<'_> {
     pub(super) fn place_of_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
         (
             file,
-            self.start_inside_parentheses(file, e),
-            self.end_inside_parentheses(file, e),
+            self.error_start_inside_parentheses(file, e),
+            self.error_end_inside_parentheses(file, e),
         )
     }
 
@@ -2495,9 +2495,9 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression`
-        // with `writeOnly`, `AccessFlagsWriting`.
+        // with `writeOnly`, which `(a.b) += c` does not reach, and `AccessFlagsWriting`.
         let property = match hir[left].kind {
-            ExprKind::Dot { obj, name, .. } => Some((obj, name)),
+            ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, left) => Some((obj, name)),
             ExprKind::Index { obj, index, .. } => match hir[index].kind {
                 ExprKind::String(name) => Some((obj, name)),
                 _ => None,
@@ -2518,6 +2518,15 @@ impl Checker<'_> {
                 && read != Some(written)
             {
                 expected = written;
+                // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
+                if let ExprKind::Dot { name_pos, .. } = hir[left].kind {
+                    let prop = self.get_property_of_type(object, name).map(|found| found.0);
+                    let right = (file, name_pos, hir[left].end);
+                    let target = self.target_kind(file, left);
+                    expected = self.get_flow_type_of_access_expression(
+                        file, left, prop, written, right, target,
+                    );
+                }
             }
         }
         if !self.check_reference_expression(file, left, 2364, 2779) {

@@ -942,7 +942,11 @@ impl<'p> Checker<'p> {
                 origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
                 ..
             } => {
+                // In JavaScript `o.x = 1` gives the `{}` that `o` is initialized with a member.
+                let bound = self.bound(*file);
+                let symbol = bound.expr_symbol[e.idx()];
                 matches!(self.hir(*file)[*e].kind, ExprKind::Object(props) if props.is_empty())
+                    && (symbol.is_none() || bound.symbols[symbol.idx()].exports.is_none())
             }
             _ => false,
         }

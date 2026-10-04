@@ -159,6 +159,8 @@ pub(crate) struct MappedType {
     pub(crate) ty: TypeId,
     pub(crate) readonly: MappedModifier,
     pub(crate) optional: MappedModifier,
+    pub(crate) is_readonly_with_plus: bool,
+    pub(crate) is_optional_with_plus: bool,
     /// Position at which the first member after `[K in T]: X` is reported.
     pub(crate) extra_member_loc: Option<Loc>,
     /// The members after `[K in T]: X`, which are an error.

@@ -145,7 +145,7 @@ impl<'p> Checker<'p> {
         pairs.into()
     }
 
-    /// `first`, then `second`.
+    /// `first`, then `second`. See `unresolved_members`.
     pub fn compose(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if first == MapperId::IDENTITY {
             return second;
@@ -153,10 +153,17 @@ impl<'p> Checker<'p> {
         if second == MapperId::IDENTITY {
             return first;
         }
+        if let Some(kept) = self.recent_composed.get(first.0, second.0) {
+            return MapperId(kept);
+        }
         if let Some(kept) = self.p.composed.get(&mut self.task, &(first, second)) {
+            self.recent_composed.put(first.0, second.0, kept.0);
             return kept;
         }
         let scope = self.begin_scope();
+        self.unresolved_members.push((second, scope.frames));
+        let (hits, cycle_at) = (self.unresolved_members_hits, self.cycle_at);
+        let lowest_below = std::mem::replace(&mut self.lowest_unresolved_members_hit, u32::MAX);
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
         for &(param, value) in self.mapping_in_declaration_order(first).iter() {
             pairs.push((param, self.instantiate(value, second)));
@@ -167,9 +174,34 @@ impl<'p> Checker<'p> {
             }
         }
         let composed = self.types().mapper(pairs);
-        match self.end_scope_by_counters(scope) {
+        self.unresolved_members.pop();
+        let lowest = std::mem::replace(&mut self.lowest_unresolved_members_hit, lowest_below);
+        let own_marks = self.unresolved_members_hits - hits;
+        let ended = if lowest == u32::MAX {
+            self.end_scope_by_counters(scope)
+        } else if lowest as usize >= self.unresolved_members.len()
+            && self.non_cacheable_mark() == (scope.counters.0 + own_marks, scope.counters.1)
+            && self.lowest_taint >= scope.frames as usize
+        {
+            // Only the members of this type reference were read unresolved, and tsgo stores the
+            // base type it has instantiated that way. No caller has seen the marks.
+            self.unresolved_members_hits = hits;
+            (self.cycles, self.cycle_at) = (scope.counters.0, cycle_at);
+            self.lowest_taint = usize::MAX;
+            self.end_scope_as(scope, false)
+        } else {
+            self.lowest_unresolved_members_hit = lowest_below.min(lowest);
+            self.end_scope_as(scope, true)
+        };
+        match ended {
             Ok(stored) => {
-                (self.p.composed).insert(&mut self.task, (first, second), composed, stored)
+                let kept =
+                    (self.p.composed).insert(&mut self.task, (first, second), composed, stored);
+                // As for `recent_instantiations`.
+                if first.is_local() || second.is_local() || !kept.is_local() {
+                    self.recent_composed.put(first.0, second.0, kept.0);
+                }
+                kept
             }
             Err(_) => composed,
         }
@@ -329,11 +361,10 @@ impl<'p> Checker<'p> {
                 .put_tagged(ty.0, mapper.0, known.0, serial);
             return known;
         }
-        if serial != 0
-            && self.instantiation_limit_hits != 0
+        if self.instantiation_limit_hits != 0
             && let Some(&(under, known, is_tainted)) =
                 self.instantiations_up_to_a_limit.get(&(ty, mapper))
-            && under == serial
+            && (under == 0 || under == serial)
         {
             // A cache hit records the same marks as recomputing it would.
             self.instantiation_limit_hits += 1;
@@ -371,11 +402,21 @@ impl<'p> Checker<'p> {
                 kept
             }
             _ => {
-                // `cache[key] = result`, which `popActiveMapper` clears.
-                if self.cycles == cycles_before && hit_the_limit && serial != 0 {
-                    let is_tainted = self.limits != limits_before;
+                let is_tainted = self.limits != limits_before;
+                // `getObjectTypeInstantiation`, `getConditionalTypeInstantiation` and
+                // `getTypeAliasInstantiation` store a result with the error type of the limit in it
+                // like any other, so the next caller does not get to the limit and 2589 is reported
+                // once. From depth 0 the result depends on no caller. The entry is valid until the
+                // end of the file: no activation has the serial number 0.
+                let is_from_depth_0 = self.instantiation_depth == 0
+                    && self.instantiation_count < 5_000_000
+                    && !is_tainted;
+                // Otherwise `cache[key] = result`, which `popActiveMapper` clears.
+                if self.cycles == cycles_before && hit_the_limit && (is_from_depth_0 || serial != 0)
+                {
+                    let under = if is_from_depth_0 { 0 } else { serial };
                     self.instantiations_up_to_a_limit
-                        .insert((ty, mapper), (serial, result, is_tainted));
+                        .insert((ty, mapper), (under, result, is_tainted));
                 }
                 result
             }

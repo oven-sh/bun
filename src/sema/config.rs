@@ -850,7 +850,7 @@ struct GlobPattern {
 
 /// `IsImplicitGlob`: `foo` is treated as `foo/**/*` if it has no extension and no wildcard.
 fn is_implicit_glob(last: &[u8]) -> bool {
-    !last.iter().any(|c| matches!(c, b'.' | b'*' | b'?'))
+    strings::index_of_any(last, b".*?").is_none()
 }
 
 fn is_hidden(name: &[u8]) -> bool {
@@ -868,7 +868,7 @@ fn is_package_folder(name: &[u8]) -> bool {
 fn path_parts<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + Clone {
     let root = prefix.starts_with(b"/").then_some(&b""[..]);
     root.into_iter()
-        .chain(prefix.split(|&b| b == b'/').filter(|p| !p.is_empty()))
+        .chain(strings::split(prefix, b"/").filter(|p| !p.is_empty()))
         .chain((!suffix.is_empty()).then_some(suffix))
 }
 
@@ -882,7 +882,7 @@ impl GlobPattern {
     ) -> Option<GlobPattern> {
         let absolute = join(base, spec);
         let mut parts: Vec<&[u8]> = std::iter::once(&b""[..])
-            .chain(absolute.split(|&b| b == b'/').filter(|p| !p.is_empty()))
+            .chain(strings::split(&absolute, b"/").filter(|p| !p.is_empty()))
             .collect();
         if usage != Usage::Exclude && parts.last() == Some(&&b"**"[..]) {
             return None;
@@ -1130,7 +1130,7 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
     match strings::index_of_any(absolute, b"*?") {
         None => {
             let name = absolute.rsplit(|&b| b == b'/').next().unwrap_or(b"");
-            if name.contains(&b'.') {
+            if strings::contains_char(name, b'.') {
                 dirname::<Posix>(absolute).to_vec()
             } else {
                 absolute.to_vec()

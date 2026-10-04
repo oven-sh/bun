@@ -318,21 +318,13 @@ impl<'p> Checker<'p> {
         relation: Relation,
         is_trial: bool,
     ) -> Result<bool, u32> {
-        let too_deep_before = self.relations_too_deep.len();
+        self.relation_too_deep = false;
         let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
         self.is_trial_comparison = is_trial;
         let is_related = self.related(source, target, relation);
         self.is_trial_comparison = false;
         let is_too_complex = std::mem::replace(&mut self.relation_too_complex, too_complex_before);
-        // Only the entry for (source, target) is this comparison's own `r.overflow`. Nested comparisons, run while a type is being resolved,
-        // use a separate `Relater` without an error node. Their entries stay in the list and the caller reports them at `c.currentNode`.
-        let (mut at, mut is_too_deep) = (0, false);
-        self.relations_too_deep.retain(|&pair| {
-            at += 1;
-            let is_own = at > too_deep_before && pair == (source, target);
-            is_too_deep |= is_own;
-            !is_own
-        });
+        let mut is_too_deep = self.relation_too_deep;
         // "such that we don't attempt the overflowing operation again"
         if !is_related && !is_too_deep && !is_trial {
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
@@ -383,16 +375,32 @@ impl<'p> Checker<'p> {
         r.head_message = head;
         let mut result =
             self.is_related_to_ex::<true>(&mut r, source, target, REC_BOTH, STATE_NONE);
-        // The comparison overflowed during elaboration: no elaboration.
+        // typescript-go has this run alone, and the overflow is what it reports. The run without
+        // `reportErrors` before this one can end sooner: `relateVariances` goes on to a structural
+        // comparison, for its elaboration, only with `reportErrors`.
+        let mut overflow = None;
         if r.overflow {
             result = Ternary::FALSE;
             (r.error_node, r.error_chain) = (error_node, None);
             r.related_info.clear();
-            self.report_error_results_alone(&mut r, source, target, head);
+            overflow = self.record_overflow(&r, source, target);
+            if overflow.is_none() {
+                self.report_error_results_alone(&mut r, source, target, head);
+            }
         }
         self.relation_too_complex = too_complex;
         self.reliability = reliability;
-        let lines = lines_of(&r.error_chain, 0);
+        let lines = match overflow {
+            Some(code) => {
+                let types = vec![self.type_to_string(source), self.type_to_string(target)];
+                vec![Line {
+                    code,
+                    args: super::sink::held(types),
+                    level: 0,
+                }]
+            }
+            None => lines_of(&r.error_chain, 0),
+        };
         let diagnostic = (!result.holds() && !lines.is_empty()).then_some(RelationDiagnostic {
             at: r.error_node,
             lines,
@@ -582,13 +590,18 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSpellingSuggestionForName(name, properties, SymbolFlagsValue)`
-    pub(super) fn suggested_property(&self, name: &[u8], properties: &[Prop]) -> Option<usize> {
+    pub(super) fn suggested_property(&mut self, name: &[u8], properties: &[Prop]) -> Option<usize> {
+        // `compareSymbols` breaks ties between equally close candidates.
+        let order: Vec<_> = (properties.iter())
+            .map(|prop| self.order_of_property(prop))
+            .collect();
         // `getCandidateName`
         let get_name = |i: usize| match self.written_name(properties[i].name) {
             [b'"' | 0xFE, ..] => &[][..],
             name => name,
         };
-        get_spelling_suggestion(name, 0..properties.len(), get_name, |a, b| a.cmp(&b))
+        let compare = |a: usize, b: usize| (order[a], get_name(a)).cmp(&(order[b], get_name(b)));
+        get_spelling_suggestion(name, 0..properties.len(), get_name, compare)
     }
 
     /// `getSuggestedTypeForNonexistentStringLiteralType`

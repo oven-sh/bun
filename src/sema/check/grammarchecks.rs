@@ -278,9 +278,8 @@ impl Checker<'_> {
         }
         let arrow = f.anchor as usize;
         text[arrow.min(text.len())..].starts_with(b"=>")
-            && text[skip_trivia_back(text, arrow)..arrow]
-                .iter()
-                .any(|b| matches!(b, b'\n' | b'\r'))
+            && bun_core::strings::index_of_any(&text[skip_trivia_back(text, arrow)..arrow], b"\n\r")
+                .is_some()
             && self.grammar_error_at((file, f.anchor, f.anchor + 2), 1200, &[])
     }
 

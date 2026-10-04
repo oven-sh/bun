@@ -857,7 +857,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     let dir = if is_rooted || dir == b"/" { b"" } else { dir };
     let mut out = Vec::with_capacity(dir.len() + rest.len() + 1);
     out.extend_from_slice(dir);
-    for part in rest.split(|&c| c == b'/' || c == b'\\') {
+    for part in strings::split_any(rest, b"/\\") {
         match part {
             b"" | b"." => {}
             b".." => out.truncate(strings::last_index_of_char(&out, b'/').unwrap_or(0)),
@@ -915,6 +915,9 @@ struct Look<'a> {
     found_package: &'a Cell<bool>,
     /// `IsExternalLibraryImport`
     is_external: &'a Cell<bool>,
+    /// `resolved.packageId` stays empty: `nodeLoadModuleByRelativeName` sets it for a file, and
+    /// `loadNodeModuleFromDirectory` does not.
+    lacks_package_id: &'a Cell<bool>,
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
@@ -988,6 +991,8 @@ pub struct ResolvedModule {
     pub alternate_result: Option<Vec<u8>>,
     /// `file_name` replaces a declaration file, and `Extension` is that of the declaration file.
     pub is_project_reference_redirect: bool,
+    /// `PackageId.Name != ""`, if `file_name` is in a package: see `Resolver::package_id`.
+    pub has_package_id: bool,
 }
 
 pub struct Resolver<'h> {
@@ -1015,8 +1020,8 @@ pub struct Resolver<'h> {
 /// `guessDirectorySymlink`: the real path of the symlinked directory and the path of the symlink,
 /// inferred from a file at `real` that was found at `link`.
 fn guess_directory_link(real: &[u8], link: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    let mut a: Vec<&[u8]> = real.split(|&b| b == b'/').collect();
-    let mut b: Vec<&[u8]> = link.split(|&b| b == b'/').collect();
+    let mut a: Vec<&[u8]> = strings::split(real, b"/").collect();
+    let mut b: Vec<&[u8]> = strings::split(link, b"/").collect();
     // `isNodeModulesOrScopedPackageDirectory`: the symlink is an entry of such a directory, not the
     // directory itself.
     let holds_packages = |name: &[u8]| name == b"node_modules" || name.starts_with(b"@");
@@ -1387,6 +1392,7 @@ impl<'h> Resolver<'h> {
         }
         let (using_ts_extension, arbitrary_extension) = (Cell::new(false), Cell::new(false));
         let (found_package, is_external) = (Cell::new(false), Cell::new(false));
+        let lacks_package_id = Cell::new(false);
         let look = self.look(
             mode,
             true,
@@ -1394,6 +1400,7 @@ impl<'h> Resolver<'h> {
             &arbitrary_extension,
             &found_package,
             &is_external,
+            &lacks_package_id,
         );
         let found = self.resolve_with(spec, from, look).map(|path| {
             let mut resolved = ResolvedModule {
@@ -1403,6 +1410,7 @@ impl<'h> Resolver<'h> {
                 is_external_library_import: is_external.get(),
                 alternate_result: None,
                 is_project_reference_redirect: false,
+                has_package_id: !lacks_package_id.get(),
             };
             // `resolveNodeLike`: whether types would be found if the `exports` of the package were
             // ignored.
@@ -1441,6 +1449,7 @@ impl<'h> Resolver<'h> {
         arbitrary_extension: &'a Cell<bool>,
         found_package: &'a Cell<bool>,
         is_external: &'a Cell<bool>,
+        lacks_package_id: &'a Cell<bool>,
     ) -> Look<'a> {
         let like_node = self.options.resolves_like_node;
         Look {
@@ -1459,6 +1468,7 @@ impl<'h> Resolver<'h> {
             arbitrary_extension,
             found_package,
             is_external,
+            lacks_package_id,
             ignores_exports: false,
         }
     }
@@ -1501,7 +1511,7 @@ impl<'h> Resolver<'h> {
         }
         if let Found::No = found {
             // A specifier that looks like a URI is not in a package.
-            if spec.contains(&b':') {
+            if strings::contains_char(spec, b':') {
                 return None;
             }
             found = self.node_modules(spec, from_dir, look);
@@ -1669,7 +1679,9 @@ impl<'h> Resolver<'h> {
     ) -> Option<(Vec<u8>, bool)> {
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let ignored = Cell::new(false);
-        let look = self.look(mode, false, &ignored, &ignored, &ignored, &ignored);
+        let look = self.look(
+            mode, false, &ignored, &ignored, &ignored, &ignored, &ignored,
+        );
         let has_roots = self.options.type_roots.is_some();
         // First in the type roots, regardless of the location of the reference.
         let primary = if has_roots {
@@ -1763,7 +1775,9 @@ impl<'h> Resolver<'h> {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look
             };
+            // `tryLoadModuleUsingPaths` returns what `tryFile` finds as it is.
             self.very_file(target, &path)
+                .inspect(|_| look.lacks_package_id.set(true))
                 .or_else(|| self.file_or_directory(&path, look))
         })
     }
@@ -1875,7 +1889,9 @@ impl<'h> Resolver<'h> {
     /// Under Node's rules for `import` a directory does not resolve.
     fn directory(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
         if !look.esm && self.is_dir(path) {
-            self.package_entry(path, look)
+            let found = self.package_entry(path, look)?;
+            look.lacks_package_id.set(true);
+            Some(found)
         } else {
             None
         }
@@ -2342,7 +2358,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Found {
         if !name.ends_with(b"/")
-            && !name.contains(&b'*')
+            && !strings::contains_char(name, b'*')
             && let Some((_, target)) = table.iter().find(|e| e.0 == name)
         {
             return self.export_target(package_dir, target, b"", false, is_imports, look);
@@ -2409,8 +2425,8 @@ impl<'h> Resolver<'h> {
                 }
                 // The target must stay inside the package and outside the packages nested in it.
                 let leads_away = |part: &[u8]| matches!(part, b".." | b"." | b"node_modules");
-                if path.split(|&b| b == b'/').skip(1).any(leads_away)
-                    || subpath.split(|&b| b == b'/').any(leads_away)
+                if strings::split(path, b"/").skip(1).any(leads_away)
+                    || strings::split(subpath, b"/").any(leads_away)
                 {
                     return Found::No;
                 }
@@ -2597,14 +2613,14 @@ pub fn resolve_config(
         ..Default::default()
     };
     let resolver = Resolver::new(host, &options);
-    let [a, b, c, d] = [(); 4].map(|()| Cell::new(false));
+    let [a, b, c, d, e] = [(); 5].map(|()| Cell::new(false));
     let look = Look {
         typescript: false,
         declarations: false,
         js: false,
         json: true,
         is_config_lookup: true,
-        ..resolver.look(ResolutionMode::Require, true, &a, &b, &c, &d)
+        ..resolver.look(ResolutionMode::Require, true, &a, &b, &c, &d, &e)
     };
     resolver.resolve_with(module_name, containing_file, look)
 }
@@ -2661,7 +2677,10 @@ pub(crate) fn best_pattern<'t, 'n, T>(
     table: &'t [(Vec<u8>, T)],
     name: &'n [u8],
 ) -> Option<(&'t T, &'n [u8])> {
-    if let Some((_, exact)) = table.iter().find(|e| e.0 == name && !e.0.contains(&b'*')) {
+    if let Some((_, exact)) = table
+        .iter()
+        .find(|e| e.0 == name && !strings::contains_char(&e.0, b'*'))
+    {
         return Some((exact, b""));
     }
     let mut best: Option<(&'t T, &'n [u8], usize)> = None;
@@ -2670,7 +2689,7 @@ pub(crate) fn best_pattern<'t, 'n, T>(
         let Some(star) = strings::index_of_char_usize(pattern, b'*') else {
             continue;
         };
-        if !pattern[star + 1..].contains(&b'*')
+        if !strings::contains_char(&pattern[star + 1..], b'*')
             && best.is_none_or(|b| star > b.2)
             && let Some(matched) = match_pattern(pattern, name)
         {

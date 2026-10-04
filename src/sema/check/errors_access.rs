@@ -288,13 +288,9 @@ impl Checker<'_> {
         }
     }
 
-    /// The error span for the expression `e`.
+    /// `place_of_expr`
     pub(super) fn place_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
-        (
-            file,
-            self.start_inside_parentheses(file, e),
-            self.end_inside_parentheses(file, e),
-        )
+        self.place_of_expr(file, e)
     }
 
     /// `getPropertyTypeForIndexType`: the `noImplicitAny` errors for `a[k]` at `e` when the lookup
@@ -310,11 +306,7 @@ impl Checker<'_> {
             return;
         };
         let at_access = self.place_inside_parentheses(file, e);
-        let at_index = (
-            file,
-            self.start_of(file, index),
-            self.end_of_expr(file, index),
-        );
+        let at_index = self.span_of_parenthesized_expr(file, index);
         let is_target = self.is_assignment_target(file, e);
         if let Some(name) = name
             && self.static_side_has(object, name)
@@ -587,7 +579,7 @@ impl Checker<'_> {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
         });
-        let mut candidates: Vec<(((u8, FileId, u32), &[u8]), Atom)> = Vec::new();
+        let mut candidates: Vec<(((u8, (bool, u32, u32)), &[u8]), Atom)> = Vec::new();
         // `getPropertiesOfUnionOrIntersectionType`: for a union, the properties all its members
         // have, which are a subset of those of the first member. A member with index signatures may
         // cover through them a property that only the next member declares.
@@ -698,7 +690,7 @@ impl Checker<'_> {
 
     /// The position of the first declaration of `prop`, in `compareSymbols` order: a property
     /// without a declaration sorts last.
-    pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, FileId, u32) {
+    pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, (bool, u32, u32)) {
         let declared = match &prop.source {
             PropSource::Literal(file, literal) => Some((
                 *file,
@@ -714,8 +706,8 @@ impl Checker<'_> {
                 }
                 // Not by symbol id: the binder declares the functions of a block before the rest of
                 // it.
-                _ => super::errors::place_of_first_declaration(self.files(), *symbol)
-                    .map(|(_, file, pos)| (file, pos)),
+                _ => (self.files().decls_of(*symbol).first().copied())
+                    .map(|(file, decl)| (file, self.files().start_of_declaration(file, decl))),
             },
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
@@ -727,12 +719,14 @@ impl Checker<'_> {
             PropSource::Mapped(..) => {
                 return match prop.declared_by_modifiers_property().first() {
                     Some(first) => self.order_of_property(first),
-                    None => (1, FileId(0), 0),
+                    None => (1, (false, 0, 0)),
                 };
             }
             _ => None,
         };
-        declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
+        declared.map_or((1, (false, 0, 0)), |(file, pos)| {
+            (0, self.place_in_program_order(file, pos))
+        })
     }
 
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get` or a `set` method that accepts
@@ -1529,8 +1523,5 @@ fn as_written(name: &[u8]) -> &[u8] {
     if name.first() != Some(&b'#') {
         return name;
     }
-    &name[..name
-        .iter()
-        .position(|&b| b == b'@' || b == b'\'')
-        .unwrap_or(name.len())]
+    &name[..bun_core::strings::index_of_any(name, b"@'").unwrap_or(name.len())]
 }

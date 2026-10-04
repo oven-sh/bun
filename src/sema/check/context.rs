@@ -827,6 +827,10 @@ impl<'p> Checker<'p> {
         if self.is_any(context) {
             return None;
         }
+        // `mapTypeEx`
+        if context.is_never() {
+            return Some(context);
+        }
         let mut types = Parts::new();
         for &written in self.parts(context) {
             // `getApparentTypeOfContextualType`: a mapped type is left unchanged.
@@ -1067,6 +1071,10 @@ impl<'p> Checker<'p> {
 
     /// `getApplicableIndexInfo`, member by member, for a name of which only the type `key` is known.
     fn contextual_index(&mut self, context: TypeId, key: TypeId) -> Option<TypeId> {
+        // `mapTypeEx`
+        if context.is_never() {
+            return Some(context);
+        }
         let mut types = Vec::new();
         for &part in self.parts(context) {
             let part = self.apparent_type(part);
@@ -1934,6 +1942,10 @@ impl<'p> Checker<'p> {
         first_spread: Option<usize>,
         last_spread: Option<usize>,
     ) -> Option<TypeId> {
+        // `mapTypeEx`
+        if context.is_never() {
+            return Some(context);
+        }
         let variable = ElemFlags::REST | ElemFlags::VARIADIC;
         let before_spreads = first_spread.is_none_or(|s| index < s);
         let mut types = Parts::new();

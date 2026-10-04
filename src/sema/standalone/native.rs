@@ -312,6 +312,19 @@ unsafe extern "C" fn highway_index_of_any_char(
     first(unsafe { bytes(p, len) }, |c| chars.contains(&c))
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn highway_last_index_of_any_char(
+    p: *const u8,
+    len: usize,
+    chars: *const u8,
+    chars_len: usize,
+) -> usize {
+    let chars = unsafe { bytes(chars, chars_len) };
+    unsafe { bytes(p, len) }
+        .iter()
+        .rposition(|c| chars.contains(c))
+        .unwrap_or(len)
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn highway_memmem(
     h: *const u8,
     h_len: usize,

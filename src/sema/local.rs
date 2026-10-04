@@ -14,7 +14,6 @@
 
 use std::alloc::Layout;
 use std::any::Any;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Set in the id of a type, a signature, a mapper, a component list, an atom or a handle that
 /// belongs to a task.
@@ -746,24 +745,9 @@ impl Default for FileLocalTables {
     }
 }
 
-static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
-
-/// The peak size of the `FileLocal` tables of one task for one file, excluding kept values. For
-/// `--timing`.
-pub fn peak_file_local_bytes() -> usize {
-    PEAK_BYTES.load(Ordering::Relaxed)
-}
-
 impl FileLocalTables {
     /// Drops every entry. From now on the nodes of `file` have dense words.
     pub(crate) fn begin_file(&mut self, file: u32) {
-        let bytes = |t: &FileLocalTable| {
-            t.cells.capacity() * 8 + t.sparse.capacity() * size_of::<((u32, u32), u64)>()
-        };
-        let taken = self.tables.iter().map(bytes).sum();
-        if taken > PEAK_BYTES.load(Ordering::Relaxed) {
-            PEAK_BYTES.fetch_max(taken, Ordering::Relaxed);
-        }
         for table in &mut self.tables {
             clear_cells(&mut table.cells);
             if table.sparse.capacity() > 1 << 16 {

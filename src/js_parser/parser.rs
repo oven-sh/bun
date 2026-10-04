@@ -870,9 +870,10 @@ impl<'a> JSXTag<'a> {
         let mut name = Self::parse_namespaced_name(p, first, &mut tag_range)?;
 
         // `isJsxIntrinsicTagName`. A namespaced name cannot be followed by a member access.
-        if name.contains(&b':')
+        if bun_core::strings::contains_char(name, b':')
             || (p.lexer().token != T::TDot
-                && (name.contains(&b'-') || name.first().is_some_and(u8::is_ascii_lowercase)))
+                && (bun_core::strings::contains_char(name, b'-')
+                    || name.first().is_some_and(u8::is_ascii_lowercase)))
         {
             return Ok(JSXTag {
                 data: JSXTagData::Tag(p.new_expr(E::String::init(name), loc)),
@@ -976,7 +977,7 @@ impl<'a> JSXTag<'a> {
         let namespace = if let Some(namespace) = first.strip_suffix(b":") {
             // The lexer scanned the colon as part of the name.
             namespace
-        } else if !first.contains(&b':')
+        } else if !bun_core::strings::contains_char(first, b':')
             && (lexer.token == T::TColon || (lexer.token == T::TSyntaxError && lexer.raw() == b":"))
         {
             lexer.next_inside_jsx_element()?;

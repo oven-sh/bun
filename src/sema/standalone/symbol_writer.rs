@@ -912,9 +912,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         match info.declaration {
             Some(declaration) => declarations.push(declaration),
             None => {
+                let key_type = if self.c.atoms().is_symbol_name(name) {
+                    TypeId::SYMBOL
+                } else {
+                    self.c.string_literal(name, false)
+                };
                 for info in &members.shape().index {
                     if let Some(declaration) = info.declaration
-                        && self.c.is_name_applicable_to_index(name, info.key)
+                        && self.c.is_applicable_index_type(key_type, info.key)
                     {
                         declarations.push(declaration);
                     }

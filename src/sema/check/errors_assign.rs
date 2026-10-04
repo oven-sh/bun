@@ -96,7 +96,7 @@ impl Checker<'_> {
                 continue;
             }
             let target = self.type_from_node(file, node);
-            let at = (file, self.start_of(file, e), self.end_of_expr(file, e));
+            let at = self.span_of_parenthesized_expr(file, e);
             self.check_initializer(file, e, target, at);
         }
         let by_kind = self.exprs_by_kind(file);
@@ -1507,7 +1507,9 @@ impl Checker<'_> {
         let expected = match self.indexed_access_by_name(target, name) {
             Some(expected) => expected,
             None if self.is_union(target) => {
-                let Some(best) = self.best_matching_type(source, target) else {
+                let best =
+                    self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t));
+                let Some(best) = best else {
                     return false;
                 };
                 let Some(expected) = self.indexed_access_by_name(best, name) else {
@@ -1620,8 +1622,14 @@ impl Checker<'_> {
     }
 
     /// `getBestMatchingType`: the member of the union `target` that `source` is most likely meant for.
-    pub(super) fn best_matching_type(&mut self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        if let Some(found) = self.matching_discriminant_type(source, target) {
+    /// `is_related_to`: `isRelatedTo`, as "is not `TernaryFalse`".
+    pub(super) fn best_matching_type(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        is_related_to: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
+    ) -> Option<TypeId> {
+        if let Some(found) = self.find_matching_discriminant_type(source, target, is_related_to) {
             return Some(found);
         }
         // In `CompareTypes` order: ties are decided by which comes first, or last.

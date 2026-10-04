@@ -198,13 +198,22 @@ impl Checker<'_> {
     /// `checkDeferredNodes`: nodes deferred in the meantime are appended to the queue.
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
+            let saved = self.enter_source_element(CurrentNode::Expr(file, e));
             self.check_deferred_node(file, e);
+            self.current_source_element = saved;
         }
+    }
+
+    /// `checkSourceElement`: `c.currentNode = node`, `c.instantiationCount = 0`. Returns
+    /// `saveCurrentNode`.
+    #[inline]
+    fn enter_source_element(&mut self, node: CurrentNode) -> Option<CurrentNode> {
+        self.instantiation_count = 0;
+        self.current_source_element.replace(node)
     }
 
     /// `checkDeferredNode`
     fn check_deferred_node(&mut self, file: FileId, e: ExprId) {
-        self.instantiation_count = 0;
         let hir = self.hir(file);
         match hir[e].kind {
             // `checkFunctionExpressionOrObjectLiteralMethodDeferred`, `checkAccessorDeclaration`
@@ -348,13 +357,17 @@ impl Checker<'_> {
             self.check_grammar_function_like_declaration(file, func);
         }
         self.check_type_parameters(file, hir[func].type_params);
+        let saved = self.current_source_element;
         if hir[func].this_param.is_some() {
+            self.enter_source_element(CurrentNode::Node(file, hir.node(hir[func].this_param)));
             self.check_parameter(file, func, hir[func].this_param);
             self.type_of_this_parameter(file, func);
         }
         for p in hir[func].params.iter() {
+            self.enter_source_element(CurrentNode::Node(file, hir.node(p)));
             self.check_parameter(file, func, p);
         }
+        self.current_source_element = saved;
         self.check_signature_implicitly_any(file, func);
         self.check_type_node(file, hir[func].ret);
         self.check_generator_return_type(file, func);
@@ -526,7 +539,9 @@ impl Checker<'_> {
             }
             PatKind::Object(props) => {
                 self.check_empty_binding_pattern(file, pat);
+                let saved = self.current_source_element;
                 for (i, p) in props.iter().enumerate() {
+                    self.enter_source_element(CurrentNode::Node(file, hir.node(p)));
                     if hir[p].is_rest && !has_parse_diagnostics(hir) {
                         let (is_last, is_named) =
                             (i + 1 == props.len(), hir[p].key != PropKey::None);
@@ -555,10 +570,13 @@ impl Checker<'_> {
                     }
                     self.check_binding_element_initializer(file, hir[p].value, hir[p].default);
                 }
+                self.current_source_element = saved;
             }
             PatKind::Array(elems) => {
                 self.check_empty_binding_pattern(file, pat);
+                let saved = self.current_source_element;
                 for (i, e) in elems.iter().enumerate() {
+                    self.enter_source_element(CurrentNode::Node(file, hir.node(e)));
                     if hir[e].is_rest && !has_parse_diagnostics(hir) {
                         let is_last = i + 1 == elems.len();
                         check_grammar_rest_element(
@@ -581,6 +599,7 @@ impl Checker<'_> {
                     }
                     self.check_binding_element_initializer(file, hir[e].pat, hir[e].default);
                 }
+                self.current_source_element = saved;
             }
         }
     }
@@ -643,10 +662,13 @@ impl Checker<'_> {
         decls: Span<VarDeclId>,
         parent: Kind,
     ) {
+        let saved = self.current_source_element;
         for d in decls.iter() {
+            self.enter_source_element(CurrentNode::Node(file, self.hir(file).node(d)));
             self.check_grammar_variable_declaration(file, d, parent);
             self.check_variable_declaration(file, d);
         }
+        self.current_source_element = saved;
     }
 
     /// The initializer of a loop: a `VariableDeclarationList`, or an expression.
@@ -734,8 +756,11 @@ impl Checker<'_> {
         self.check_type_name_is_reserved(file, alias, decl.name, 2457);
         // `getTypeFromTypeAliasReference`: a reference to the alias in its own declaration starts with `getDeclaredTypeOfTypeAlias`.
         let symbol = self.bound(file).alias_symbol[alias.idx()];
+        // tsgo resolves nothing here, so there is no `currentNode` to report a limit at.
         if symbol.is_some() {
+            let saved = self.current_source_element.take();
             self.declared_type(self.files().sym(file, symbol));
+            self.current_source_element = saved;
         }
         self.check_type_parameters(file, decl.type_params);
         self.check_type_parameters_deferred(file, symbol, decl.type_params, true);
@@ -749,7 +774,9 @@ impl Checker<'_> {
     fn check_members(&mut self, file: FileId, members: Span<MemberId>) {
         let hir = self.hir(file);
         let is_lib = self.files().module(file).is_lib;
+        let saved = self.current_source_element;
         for m in members.iter() {
+            self.enter_source_element(CurrentNode::Node(file, hir.node(m)));
             let member = &hir[m];
             if !member.modifiers.is_empty() {
                 self.check_grammar_modifiers_of_member(file, m);
@@ -817,6 +844,7 @@ impl Checker<'_> {
                 self.set_node_links_for_private_identifier_scope(file, m);
             }
         }
+        self.current_source_element = saved;
     }
 
     /// `checkPropertyDeclaration`: 1267. `checkMethodDeclaration`: 1245.
@@ -887,7 +915,13 @@ impl Checker<'_> {
         if node.is_none() || self.is_stack_low() {
             return;
         }
-        self.instantiation_count = 0;
+        let saved = self.enter_source_element(CurrentNode::TypeNode(file, node));
+        self.check_type_node_worker(file, node);
+        self.current_source_element = saved;
+    }
+
+    /// `checkSourceElementWorker` for a type node.
+    fn check_type_node_worker(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
         match hir[node].kind {
             // `checkTypeReferenceNode`
@@ -976,14 +1010,16 @@ impl Checker<'_> {
             // `checkInferType`
             TypeNodeKind::Infer(tp) => {
                 self.check_infer_type(file, node, tp);
+                let saved = self.enter_source_element(CurrentNode::Node(file, hir.node(tp)));
                 self.check_type_parameter(file, tp);
+                self.current_source_element = saved;
             }
             // `checkTemplateLiteralType`
             TypeNodeKind::Template { types, .. } => {
                 for placeholder in hir.ids(types) {
                     self.check_type_node(file, placeholder);
                 }
-                self.check_template_literal_type(file, node, types);
+                self.check_template_literal_type(file, types);
                 self.type_from_node(file, node);
             }
             // `checkIndexedAccessType`
@@ -994,7 +1030,10 @@ impl Checker<'_> {
             }
             // `checkMappedType`
             TypeNodeKind::Mapped(mapped) => {
+                let param = CurrentNode::Node(file, hir.node(hir[mapped].param));
+                let saved = self.enter_source_element(param);
                 self.check_type_parameter(file, hir[mapped].param);
+                self.current_source_element = saved;
                 self.check_type_node(file, hir[mapped].name_ty);
                 self.check_type_node(file, hir[mapped].ty);
                 if hir[mapped].ty.is_none() && self.p.files.options.no_implicit_any {
@@ -1019,8 +1058,9 @@ impl Checker<'_> {
         {
             self.within_unreachable_code = true;
         }
-        self.instantiation_count = 0;
+        let saved = self.enter_source_element(CurrentNode::Node(file, self.hir(file).node(s)));
         self.check_source_element_worker(file, s);
+        self.current_source_element = saved;
         self.within_unreachable_code = within_unreachable_code;
     }
 

@@ -251,12 +251,18 @@ impl Checker<'_> {
             ExprKind::Ident(name) => {
                 // `declareModuleMember`: where an exported declaration is in scope its name
                 // resolves to a local symbol, which has `SymbolFlagsExportValue` and no other flag.
+                // `expr_symbol` has its `ExportSymbol`. A name found among the exports of an enclosing
+                // namespace, declared in another block of it, resolves to that symbol itself.
                 let bound = self.bound(file);
-                let local = bound.expr_symbol[e.idx()];
-                if local.is_some()
-                    && (bound.symbols[local.idx()].flags).contains(SymFlags::EXPORT_VALUE)
-                {
-                    return false;
+                let recorded = bound.expr_symbol[e.idx()];
+                if recorded.is_some() {
+                    let mut scope = self.enclosing_scope_of_expr(file, e);
+                    while scope.is_some() {
+                        if bound.export_symbol_of_local(scope, name) == recorded {
+                            return false;
+                        }
+                        scope = bound.scopes[scope.idx()].parent;
+                    }
                 }
                 self.symbol_of_identifier(file, e, name)
                     .is_some_and(|s| self.files().flags(s).intersects(SymFlags::ENUM))

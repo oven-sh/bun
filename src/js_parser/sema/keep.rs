@@ -1098,6 +1098,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         ty,
                         readonly,
                         optional,
+                        is_readonly_with_plus: member.leading_sign == Some(true),
+                        is_optional_with_plus: member.trailing_sign == Some(true),
                         extra_member_loc: None,
                         members: Members::EMPTY,
                     }));

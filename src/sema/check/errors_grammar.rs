@@ -435,7 +435,7 @@ fn operand_follows_on_the_line(text: &[u8], mut at: usize) -> bool {
                 let Some(end) = strings::index_of(rest, b"*/") else {
                     return false;
                 };
-                if rest[..end].iter().any(|b| matches!(b, b'\n' | b'\r')) {
+                if bun_core::strings::index_of_any(&rest[..end], b"\n\r").is_some() {
                     return false;
                 }
                 at += end + 4;

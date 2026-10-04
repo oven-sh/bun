@@ -575,7 +575,7 @@ impl Checker<'_> {
         let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
         let named = files
             .resolve_entity(file, scope, &names, SymFlags::TYPE)
-            .and_then(|s| files.resolve_alias_if_needed(s))?;
+            .and_then(|s| files.resolve_alias_as(s, SymFlags::TYPE))?;
         files
             .flags(named)
             .contains(SymFlags::TYPE_ALIAS)
@@ -736,7 +736,7 @@ impl Checker<'_> {
                 let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 let named = files
                     .resolve_entity(file, bound.type_scope[node.idx()], &names, SymFlags::TYPE)
-                    .and_then(|s| files.resolve_alias_if_needed(s));
+                    .and_then(|s| files.resolve_alias_as(s, SymFlags::TYPE));
                 if let Some(named) = named {
                     let (least, most) = self.type_argument_arity(named);
                     if !(least..=most).contains(&args.len()) {

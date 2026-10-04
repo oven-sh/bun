@@ -1692,7 +1692,7 @@ impl<'p> Checker<'p> {
                 }
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
-                    if self.is_name_applicable_to_index(prop.name, info.key) {
+                    if self.is_property_applicable_to_index(source, prop, info.key) {
                         // The type of the property when it is present.
                         let ty = self.type_of_prop(prop, sm.mapper);
                         types.push(if prop.flags.contains(PropFlags::OPTIONAL) {
@@ -2630,7 +2630,7 @@ impl<'p> Checker<'p> {
         if let Some(ty) = inferred {
             let constraint_with_this = self.type_with_this_argument(constraint, ty);
             if !compare(self, ty, constraint_with_this)
-                && !self.satisfies_constraint_in_outer_context(n, ty, constraint)
+                && !self.satisfies_constraint_in_outer_context(n, ty, constraint, compare)
             {
                 // An inference from the contextual return type alone is speculative anyway: the
                 // part of it that satisfies the constraint is used.
@@ -2658,13 +2658,16 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether the constraint of the type parameter `ty` of the source signature is assignable to
+    /// Whether the constraint of the type parameter `ty` of the source signature is related to
     /// `constraint`, once it is instantiated with the outer mapper of that signature.
+    /// `instantiateSignature` clones the type parameters, so in tsgo `ty` has that constraint. Here
+    /// an instantiated signature has the declared type parameters and a mapper.
     fn satisfies_constraint_in_outer_context(
         &mut self,
         n: &Inference,
         ty: TypeId,
         constraint: TypeId,
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> bool {
         if n.around_source == MapperId::IDENTITY
             || !matches!(self.data(ty), TypeData::TypeParam(..))
@@ -2676,7 +2679,7 @@ impl<'p> Checker<'p> {
             return false;
         };
         let extended = self.instantiate(declared, n.around_source);
-        extended != declared && (extended == constraint || self.is_assignable(extended, constraint))
+        extended != declared && (extended == constraint || compare(self, extended, constraint))
     }
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.

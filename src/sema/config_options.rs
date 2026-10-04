@@ -189,8 +189,7 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
         // `ParseListTypeOption`: only the items of an enum-valued list are trimmed.
         Kind::List(Element::String | Element::FilePath) => Json::Array(
-            text.trim_ascii()
-                .split(|&b| b == b',')
+            bun_core::strings::split(text.trim_ascii(), b",")
                 .map(|item| {
                     if name == b"lib" {
                         item.trim_ascii()

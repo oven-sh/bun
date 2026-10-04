@@ -1771,7 +1771,7 @@ impl<'a> Lexer<'a> {
         };
         // The name ended at a backslash that does not start an escape, before any escape was
         // scanned.
-        if self.tolerant && !original_text.contains(&b'\\') {
+        if self.tolerant && !bun_core::strings::contains_char(original_text, b'\\') {
             result.token = tables::keyword(result.contents).unwrap_or(T::TIdentifier);
         }
 
@@ -3307,9 +3307,7 @@ impl<'a> Lexer<'a> {
     fn end_unterminated_reg_exp(&mut self) {
         let text: &'a [u8] = self.contents;
         let body = self.start + 1;
-        let end_of_body = text[body..]
-            .iter()
-            .position(|&ch| matches!(ch, b'\n' | b'\r'))
+        let end_of_body = bun_core::strings::index_of_any(&text[body..], b"\n\r")
             .map_or(text.len(), |len| body + len);
         let mut end = body;
         let (mut in_escape, mut in_quantifier) = (false, false);
@@ -4826,7 +4824,7 @@ pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
 
 /// Start of the escape sequence that the end of `text` truncates.
 fn last_backslash(text: &[u8]) -> usize {
-    text.iter().rposition(|&b| b == b'\\').unwrap_or(0)
+    bun_core::strings::last_index_of_char(text, b'\\').unwrap_or(0)
 }
 
 /// `IsLineBreak` of the first character of `text`.

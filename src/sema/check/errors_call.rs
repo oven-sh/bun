@@ -70,6 +70,36 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkNonNullTypeWithReporter` with `reportCannotInvokePossiblyNullOrUndefinedError`, and
+    /// `checkNonNullExpression` for `new`.
+    pub(super) fn check_non_null_callee(
+        &mut self,
+        file: FileId,
+        callee: ExprId,
+        called: TypeId,
+        is_new: bool,
+    ) -> TypeId {
+        let from = self.reported.len();
+        let called = self.check_non_null_type(file, callee, called);
+        for i in from..self.reported.len() {
+            let code = match self.reported[i].code {
+                other if is_new => other,
+                18047 | 2531 => 2721,
+                18048 | 2532 => 2722,
+                18049 | 2533 => 2723,
+                18050 if matches!(self.hir(file)[callee].kind, ExprKind::Null) => 2721,
+                18050 => 2722,
+                other => other,
+            };
+            if code != self.reported[i].code {
+                let end = self.error_end_of(file, callee);
+                let d = &mut self.reported[i];
+                (d.code, d.end, d.args) = (code, end, Default::default());
+            }
+        }
+        called
+    }
+
     fn check_call(&mut self, file: FileId, e: ExprId, c: CallId, is_new: bool) {
         let hir = self.hir(file);
         let data = hir[c];
@@ -92,24 +122,7 @@ impl Checker<'_> {
         } else {
             self.chain_receiver(file, data.callee, data.chain).0
         };
-        let from = self.reported.len();
-        let called = self.check_non_null_type(file, data.callee, called);
-        for i in from..self.reported.len() {
-            let code = match self.reported[i].code {
-                other if is_new => other,
-                18047 | 2531 => 2721,
-                18048 | 2532 => 2722,
-                18049 | 2533 => 2723,
-                18050 if matches!(hir[data.callee].kind, ExprKind::Null) => 2721,
-                18050 => 2722,
-                other => other,
-            };
-            if code != self.reported[i].code {
-                let end = self.error_end_of(file, data.callee);
-                let d = &mut self.reported[i];
-                (d.code, d.end, d.args) = (code, end, Default::default());
-            }
-        }
+        let called = self.check_non_null_callee(file, data.callee, called, is_new);
         let apparent = self.apparent_type(called);
         // `resolveErrorCall`
         if self.is_error_type(apparent) {

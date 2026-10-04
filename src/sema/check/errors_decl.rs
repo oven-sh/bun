@@ -251,16 +251,6 @@ impl Checker<'_> {
             return;
         }
         let is_property = matches!(node.1, Decl::Member(_));
-        // For a property or a parameter property only where the two types are not even mutually
-        // assignable.
-        if !matches!(node.1, Decl::Var(_))
-            && self.is_any(t) == self.is_any(declaration_type)
-            && (self.is_any(t)
-                || self.is_assignable(t, declaration_type)
-                    && self.is_assignable(declaration_type, t))
-        {
-            return;
-        }
         let (of, first) = value_declaration;
         let related = self.error_range_of_declaration(of, first);
         let related =

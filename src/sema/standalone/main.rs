@@ -211,11 +211,9 @@ fn main() {
                     let mut error_types = error_types.lock().unwrap();
                     for (start, kind) in found {
                         let before = &text[..(start as usize).min(text.len())];
-                        let line_start = before
-                            .iter()
-                            .rposition(|&b| b == b'\n')
+                        let line_start = bun_core::strings::last_index_of_char(before, b'\n')
                             .map_or(0, |n| n + 1);
-                        let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
+                        let line = bun_core::strings::count_char(before, b'\n') + 1;
                         let column = before.len() - line_start + 1;
                         let path = bun_sema::messages::text(&module.path);
                         error_types.push((path, line, column, kind));

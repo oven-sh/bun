@@ -85,8 +85,9 @@ impl<'p> Checker<'p> {
         Some(self.type_reference(sym, args))
     }
 
-    /// The type of the member's value: the function type of a method, the value type of a property
-    /// or an accessor.
+    /// `getTypeOfNode(node)`, which is `getTypeOfSymbol(getSymbolOfDeclaration(node))`: the function
+    /// type of a method, the value type of a property or an accessor. Nothing substitutes for
+    /// `this`.
     fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
         let member = self.hir(file)[m];
         let sym = self.class_sym(file, class);
@@ -97,9 +98,9 @@ impl<'p> Checker<'p> {
         };
         match self
             .member_name(file, member.key)
-            .and_then(|name| self.type_of_property(holder, name))
+            .and_then(|name| self.prop_ref(holder, name))
         {
-            Some(ty) => ty,
+            Some((prop, _)) => self.type_of_prop(prop, MapperId::IDENTITY),
             None => self.type_of_member_declaration(file, m),
         }
     }
@@ -137,6 +138,8 @@ impl<'p> Checker<'p> {
         if hir.legacy_decorators {
             // `getClassElementPropertyKeyType`
             let key_of = |c: &mut Self, m: MemberId| match hir[m].key {
+                // `["a"]` and `[0]`
+                PropKey::Name(_) if hir[m].flags.contains(Flags::COMPUTED_NAME) => TypeId::STRING,
                 PropKey::Name(name) => c.string_literal(name, false),
                 // A type assignable to symbol is used unchanged (`isTypeAssignableToKind`).
                 PropKey::Computed(e) => {

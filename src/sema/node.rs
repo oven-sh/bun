@@ -3066,16 +3066,6 @@ impl File {
         self.context_of(node, Flags::ASYNC)
     }
 
-    /// `node.Flags&NodeFlagsYieldContext != 0`
-    pub fn is_in_yield_context(&self, node: Node) -> bool {
-        self.context_of(node, Flags::GENERATOR) == Ok(true)
-    }
-
-    /// `node.Flags&NodeFlagsInWithStatement != 0`
-    pub fn is_in_with_statement(&self, node: Node) -> bool {
-        self.is_in_with(self.start(node))
-    }
-
     /// The state of `NodeFlagsAwaitContext` (`ASYNC`) or `NodeFlagsYieldContext` (`GENERATOR`) that
     /// `setContextFlags` had set where `node` was parsed.
     fn context_of(&self, node: Node, modifier: Flags) -> Result<bool, Node> {

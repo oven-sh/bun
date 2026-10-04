@@ -104,7 +104,7 @@ impl Checker<'_> {
                 continue;
             }
             let implemented = self.type_from_node(file, node);
-            let implemented = self.reduced_base_type(implemented);
+            let implemented = self.reduced(implemented);
             if self.is_settled_base(implemented) && !self.is_valid_base_type(implemented) {
                 let at = (file, hir[node].pos, self.end_of_type_node(file, node));
                 self.error_at(at, 2422, &[]);
@@ -204,27 +204,6 @@ impl Checker<'_> {
         let mapper = self.mapper_from(&[param], &[keys]);
         let name = self.instantiate(name, mapper);
         self.is_generic(name) && !self.is_pattern_literal(name)
-    }
-
-    /// `getReducedType`, including `isConflictingPrivateProperty`: no value inhabits an
-    /// intersection in which a property is private in one member and redeclared by another.
-    fn reduced_base_type(&mut self, ty: TypeId) -> TypeId {
-        let ty = self.reduced(ty);
-        if self.is_intersection(ty)
-            && let Some(members) = self.members(ty)
-        {
-            for prop in &members.shape().props {
-                if let PropSource::Intersected(_, parts) = &prop.source
-                    && parts
-                        .iter()
-                        .any(|part| part.flags.contains(PropFlags::PRIVATE))
-                    && Self::value_declaration(prop).is_none()
-                {
-                    return TypeId::NEVER;
-                }
-            }
-        }
-        ty
     }
 
     // ───────────────────────────── base types of an interface ─────────────────────────────
@@ -466,10 +445,9 @@ impl Checker<'_> {
         let late_bound = written
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
             .map(|described| {
-                let description = &described[..described
-                    .iter()
-                    .rposition(|&b| b == b'@')
-                    .unwrap_or(described.len())];
+                let description =
+                    &described[..bun_core::strings::last_index_of_char(described, b'@')
+                        .unwrap_or(described.len())];
                 [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@0"[..]].concat()
             });
         let text = late_bound.as_deref().unwrap_or(written);

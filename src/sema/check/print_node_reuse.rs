@@ -1108,7 +1108,8 @@ impl<'p> Printer<'_, 'p> {
                 let text = &hir.text[..];
                 let from = super::super::errors_declaration_emit::pos_before(text, pos as usize);
                 let to = (self.c.end_of_type_node(file, node) as usize).clamp(from, text.len());
-                let is_on_several_lines = self.is_transformer && text[from..to].contains(&b'\n');
+                let is_on_several_lines =
+                    self.is_transformer && bun_core::strings::contains_char(&text[from..to], b'\n');
                 let outer = match is_on_several_lines {
                     true => self.indent_members(),
                     false => self.indent,
@@ -1268,16 +1269,7 @@ impl<'p> Printer<'_, 'p> {
                 } else {
                     Vec::new()
                 };
-                let readonly: &[u8] = match mapped.readonly {
-                    MappedModifier::None => b"",
-                    MappedModifier::Add => b"readonly ",
-                    MappedModifier::Remove => b"-readonly ",
-                };
-                let question: &[u8] = match mapped.optional {
-                    MappedModifier::None => b"",
-                    MappedModifier::Add => b"?",
-                    MappedModifier::Remove => b"-?",
-                };
+                let (readonly, question) = (mapped.readonly_text(), mapped.question_text());
                 let member = cat! {
                     readonly, b"[", name, b" in ", constraint.text, renamed, b"]", question,
                     b": ", template.text, b";"
@@ -1428,7 +1420,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let hir = self.c.hir(file);
         let ends: Vec<u32> = function.params.iter().map(|p| hir[p].loc.end).collect();
-        if has_this || ends.contains(&0) {
+        if has_this || function.params.iter().any(|p| hir[p].loc.end == 0) {
             return Some(parameters.join(&b", "[..]));
         }
         let first_pos = function.params.iter().next().map(|p| hir[p].loc.pos);
@@ -1864,7 +1856,7 @@ impl<'p> Printer<'_, 'p> {
         let Some(found) = files.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
             return true;
         };
-        if files.resolve_alias(found) != Some(target) {
+        if files.resolve_alias_as(found, SymFlags::TYPE) != Some(target) {
             return true;
         }
         let type_parameters = self.c.all_type_params_of_symbol(target);

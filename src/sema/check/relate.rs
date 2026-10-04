@@ -1030,6 +1030,7 @@ impl<'p> Checker<'p> {
             r.failed.clear();
         }
         self.free_relaters.push(r);
+        self.relation_too_deep = is_too_deep;
         if is_too_complex {
             // Recorded as failed so that the comparison is not attempted again.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
@@ -1044,8 +1045,8 @@ impl<'p> Checker<'p> {
             if let Ok(stored) = self.end_scope_as(scope, false) {
                 self.insert_relation(key, FAILED | STACK_DEPTH_OVERFLOW, stored);
             }
-            // There is no error node: `errorNode = c.currentNode`.
-            self.error_at_current_expression(2321, &[Arg::Type(source), Arg::Type(target)]);
+            let types = [Arg::Type(source), Arg::Type(target)];
+            self.error_about_comparison_at_current_node(2321, &types);
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was recorded for `source` and `target`.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
@@ -1455,10 +1456,7 @@ impl<'p> Checker<'p> {
         let (parts, is_intersection) = match self.data(object) {
             TypeData::Union(parts) => (parts, false),
             TypeData::Intersection(parts)
-                if !(parts.iter().any(|&p| self.is_instantiable(p))
-                    && parts
-                        .iter()
-                        .any(|&p| self.is_empty_anonymous_object_type(p))) =>
+                if !self.should_defer_index_type(object, IndexFlags::empty()) =>
             {
                 (parts, true)
             }
@@ -2731,16 +2729,6 @@ impl<'p> Checker<'p> {
         .holds()
     }
 
-    /// `findMatchingDiscriminantType`, called from outside a relation check.
-    pub(super) fn matching_discriminant_type(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<TypeId> {
-        let mut r = Relater::new(Relation::Assignable, self.cycles);
-        self.find_matching_discriminant_type(&mut r, source, target)
-    }
-
     /// `hasExcessProperties`
     pub(super) fn has_excess_properties<const REPORT: bool>(
         &mut self,
@@ -2772,7 +2760,11 @@ impl<'p> Checker<'p> {
         let mut reduced_target = target;
         let is_union = matches!(td, TypeData::Union(_));
         if is_union {
-            reduced_target = match self.find_matching_discriminant_type(r, source, target) {
+            let is_related_to_simple =
+                |c: &mut Self, s, t| c.is_related_to(r, s, t, REC_BOTH).holds();
+            let matching =
+                self.find_matching_discriminant_type(source, target, is_related_to_simple);
+            reduced_target = match matching {
                 Some(found) => found,
                 None => self.filter_primitives_if_contains_non_primitive(target),
             };
@@ -2789,7 +2781,7 @@ impl<'p> Checker<'p> {
         };
         for prop in &sm.shape().props {
             // `isIgnoredJsxProperty`
-            if is_jsx && self.atoms().bytes(prop.name).contains(&b'-') {
+            if is_jsx && bun_core::strings::contains_char(self.atoms().bytes(prop.name), b'-') {
                 continue;
             }
             // `shouldCheckAsExcessProperty`: properties copied by a spread are not checked.
@@ -2990,7 +2982,7 @@ impl<'p> Checker<'p> {
         // An attribute with a hyphen in its name is treated as known.
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         sm.shape().props.iter().any(|p| {
-            is_jsx && self.atoms().bytes(p.name).contains(&b'-')
+            is_jsx && bun_core::strings::contains_char(self.atoms().bytes(p.name), b'-')
                 || self.is_known_property(target, p.name)
         })
     }
@@ -3006,12 +2998,12 @@ impl<'p> Checker<'p> {
         union
     }
 
-    /// `findMatchingDiscriminantType`
+    /// `findMatchingDiscriminantType`. `is_related_to`: `isRelatedTo`, as "is not `TernaryFalse`".
     pub(super) fn find_matching_discriminant_type(
         &mut self,
-        r: &mut Relater,
         source: TypeId,
         target: TypeId,
+        mut is_related_to: impl FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> Option<TypeId> {
         if !self.is_union(target) || !(self.is_object_type(source) || self.is_intersection(source))
         {
@@ -3048,10 +3040,9 @@ impl<'p> Checker<'p> {
                 let Some(expected) = self.property_or_index_signature_type(t, prop.name) else {
                     continue;
                 };
-                if self
-                    .parts(actual)
-                    .iter()
-                    .any(|&s| self.is_related_to(r, s, expected, REC_BOTH).holds())
+                // `Distributed`: `never` is one type, and it is related to every type.
+                if actual.is_never()
+                    || (self.parts(actual).iter()).any(|&s| is_related_to(self, s, expected))
                 {
                     matched = true;
                 } else {
@@ -3370,8 +3361,13 @@ impl<'p> Checker<'p> {
             }
         }
         // Elaborates only against the best matching member.
-        if REPORT && let Some(best) = self.best_matching_type(source, target) {
-            self.is_related_to_ex::<true>(r, source, best, REC_TARGET, state);
+        if REPORT {
+            let best = self.best_matching_type(source, target, &mut |c, s, t| {
+                c.is_related_to(r, s, t, REC_BOTH).holds()
+            });
+            if let Some(best) = best {
+                self.is_related_to_ex::<true>(r, source, best, REC_TARGET, state);
+            }
         }
         Ternary::FALSE
     }
@@ -3668,10 +3664,7 @@ impl<'p> Checker<'p> {
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() {
-            if is_too_deep {
-                self.relations_too_deep.push((r.top_source, r.top_target));
-                r.is_too_deep = true;
-            }
+            r.is_too_deep |= is_too_deep;
             r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
@@ -3747,6 +3740,28 @@ impl<'p> Checker<'p> {
     }
 
     #[inline]
+    /// `checkTypeRelatedToEx` after a run with `reportErrors` that set `r.overflow`: the code of the
+    /// error. The comparison is recorded as failed, "such that we don't attempt the overflowing
+    /// operation again". `None`: the native stack ran low, which is no overflow in typescript-go.
+    pub(super) fn record_overflow(
+        &mut self,
+        r: &Relater,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<u32> {
+        let (code, kind) = match () {
+            _ if r.relation_count <= 0 => (2859, COMPLEXITY_OVERFLOW),
+            _ if r.is_too_deep => (2321, STACK_DEPTH_OVERFLOW),
+            _ => return None,
+        };
+        let (key, _) = self.relation_key(source, target, r.relation, STATE_NONE, false);
+        let scope = self.begin_scope();
+        if let Ok(stored) = self.end_scope_as(scope, false) {
+            self.insert_relation(key, FAILED | kind, stored);
+        }
+        Some(code)
+    }
+
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.p.relations.insert(&mut self.task, key, entry, stored);
@@ -5876,7 +5891,11 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         // `isPropertySymbolTypeRelated`
-        let expected = self.type_of_prop_as_read(target_prop, target_mapper);
+        let mut expected = self.type_of_prop_as_read(target_prop, target_mapper);
+        // `targetIsOptional`: `CheckFlagsPartial`
+        if tf.intersects(PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL) {
+            expected = self.optional(expected);
+        }
         let related = if self.has_any_flag(expected)
             || expected == TypeId::UNRESOLVED
             || expected == TypeId::UNKNOWN && r.relation != Relation::StrictSubtype
@@ -6957,7 +6976,8 @@ impl<'p> Checker<'p> {
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {
-                return self.members_related_to_index_info::<REPORT>(r, &sm, key, expected, state);
+                return self
+                    .members_related_to_index_info::<REPORT>(r, source, &sm, key, expected, state);
             }
         }
         if REPORT {
@@ -7093,8 +7113,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isApplicableIndexType`, for the name of a property.
-    pub(super) fn is_name_applicable_to_index(&mut self, name: Atom, key: TypeId) -> bool {
+    /// `isApplicableIndexType(getLiteralTypeFromProperty(prop, ..), key)`. `owner`: the type that
+    /// has `prop`.
+    pub(super) fn is_property_applicable_to_index(
+        &mut self,
+        owner: TypeId,
+        prop: &Prop,
+        key: TypeId,
+    ) -> bool {
+        let name = prop.name;
         if self.atoms().is_symbol_name(name) {
             return key == TypeId::SYMBOL;
         }
@@ -7107,14 +7134,19 @@ impl<'p> Checker<'p> {
         if key == TypeId::SYMBOL {
             return false;
         }
-        let literal = self.string_literal(name, false);
-        self.is_assignable(literal, key)
+        // A name that is a numeric literal in the source is a number, which no template literal
+        // type accepts. `neverType`, for a private name, is assignable to every type.
+        match self.key_type_of_prop(owner, prop) {
+            Some(literal) => self.is_assignable(literal, key),
+            None => true,
+        }
     }
 
     /// `membersRelatedToIndexInfo`
     fn members_related_to_index_info<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
+        source: TypeId,
         sm: &Members,
         key: TypeId,
         expected: TypeId,
@@ -7124,10 +7156,10 @@ impl<'p> Checker<'p> {
         let is_jsx = sm.shape().literal == Literalness::JsxAttributes;
         for prop in &sm.shape().props {
             // `isIgnoredJsxProperty`
-            if is_jsx && self.atoms().bytes(prop.name).contains(&b'-') {
+            if is_jsx && bun_core::strings::contains_char(self.atoms().bytes(prop.name), b'-') {
                 continue;
             }
-            if !self.is_name_applicable_to_index(prop.name, key) {
+            if !self.is_property_applicable_to_index(source, prop, key) {
                 continue;
             }
             // An optional property is compared with the index signature by its type when present.
@@ -7139,7 +7171,7 @@ impl<'p> Checker<'p> {
             {
                 declared
             } else {
-                self.without_undefined(declared)
+                self.type_with_ne_undefined(declared)
             };
             let related = self.is_related_to_ex::<REPORT>(r, actual, expected, REC_BOTH, state);
             if !related.holds() {

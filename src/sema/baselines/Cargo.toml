@@ -10,6 +10,7 @@ path = "lib.rs"
 bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_threading.workspace = true
+bun_core.workspace = true
 bun_paths.workspace = true
 
 [lints]

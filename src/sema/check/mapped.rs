@@ -66,7 +66,11 @@ impl<'p> Checker<'p> {
                 let name = self.instantiate(declared, with_keys);
                 self.is_generic(name)
             }
-            TypeData::Template { .. } | TypeData::StringMapping { .. } => true,
+            // `isGenericStringLikeType`: an object type that tags a placeholder, as in
+            // `${string & Tag<T>}`, may contain type variables.
+            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                !self.is_pattern_literal(ty)
+            }
             // `getGenericObjectFlags`
             &TypeData::Substitution { base, constraint } => {
                 self.is_generic(base) || self.is_generic(constraint)
@@ -124,7 +128,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `shouldDeferIndexType`
-    fn should_defer_index_type(&mut self, ty: TypeId, index_flags: IndexFlags) -> bool {
+    pub(super) fn should_defer_index_type(&mut self, ty: TypeId, index_flags: IndexFlags) -> bool {
         self.flags(ty) & tf::INSTANTIABLE_NON_PRIMITIVE != 0
             || self.is_generic_tuple_type(ty)
             || self.is_generic_mapped_type(ty) && self.mapped_name_type(ty).is_some()
@@ -137,7 +141,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIndexTypeForMappedType`
-    fn get_index_type_for_mapped_type(&mut self, ty: TypeId, index_flags: IndexFlags) -> TypeId {
+    pub(super) fn get_index_type_for_mapped_type(
+        &mut self,
+        ty: TypeId,
+        index_flags: IndexFlags,
+    ) -> TypeId {
         let Some((file, node, mapper)) = self.mapped_origin(ty) else {
             return TypeId::NEVER;
         };
@@ -267,7 +275,7 @@ impl<'p> Checker<'p> {
         let text = self.atoms().bytes(name);
         // A string that starts with `#` is an ordinary string: the renaming distinguishes a private
         // name (`rename_private_names`).
-        if text.starts_with(b"#") && text.contains(&b'@') {
+        if text.starts_with(b"#") && bun_core::strings::contains_char(text, b'@') {
             return None;
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
@@ -732,11 +740,7 @@ impl<'p> Checker<'p> {
     fn place_of_index_node(&self, access_node: AccessNode) -> Option<Place> {
         match access_node {
             AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Index { index, .. } => Some((
-                    file,
-                    self.start_of(file, index),
-                    self.end_of_expr(file, index),
-                )),
+                ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
                 _ => None,
             },
             AccessNode::IndexedAccessType(file, node) => match self.hir(file)[node].kind {
@@ -752,9 +756,7 @@ impl<'p> Checker<'p> {
             AccessNode::PropertyName(file, prop) => {
                 let (hir, prop) = (self.hir(file), &self.hir(file)[prop]);
                 Some(match prop.key {
-                    PropKey::Computed(k) => {
-                        (file, self.start_of(file, k), self.end_of_expr(file, k))
-                    }
+                    PropKey::Computed(k) => self.span_of_parenthesized_expr(file, k),
                     _ => {
                         let mut at = prop.pos;
                         if hir.text.get(at as usize) == Some(&b'[') {
@@ -2390,8 +2392,9 @@ impl<'p> Checker<'p> {
                 None => key,
             };
             let key_name = self.property_name_of_type(key);
+            // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
-                (Some(m), Some(name)) => m.resolved.prop(name),
+                (Some(m), Some(name)) => self.property_in(m, name).map(|(prop, _)| prop),
                 _ => None,
             };
             // `addMemberForKeyTypeWorker`

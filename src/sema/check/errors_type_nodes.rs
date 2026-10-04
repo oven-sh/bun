@@ -285,14 +285,7 @@ impl Checker<'_> {
     }
 
     /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`: 2322.
-    /// Also 2321, for a nested comparison that exceeds the depth limit: it has no error node, and
-    /// the template literal type is `currentNode`.
-    pub(super) fn check_template_literal_type(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        types: IdList<TypeNodeId>,
-    ) {
+    pub(super) fn check_template_literal_type(&mut self, file: FileId, types: IdList<TypeNodeId>) {
         let hir = self.hir(file);
         if hir.text.is_empty() {
             return;
@@ -305,7 +298,6 @@ impl Checker<'_> {
             TypeId::NULL,
             TypeId::UNDEFINED,
         ]);
-        self.relations_too_deep.clear();
         for placeholder in hir.ids(types) {
             let ty = self.type_from_node(file, placeholder);
             let start = start_of_type(hir, placeholder);
@@ -316,12 +308,6 @@ impl Checker<'_> {
             );
             self.check_type_assignable_to(ty, constraint, Some(error_node), None);
         }
-        for (source, target) in std::mem::take(&mut self.relations_too_deep) {
-            let at = (file, hir[node].pos, self.end_of_type_node(file, node));
-            self.error_at(at, 2321, &[Arg::Type(source), Arg::Type(target)]);
-        }
-        // Printing a type also runs comparisons.
-        self.relations_too_deep.clear();
     }
 
     // ───────────────────────────── instantiation depth ─────────────────────────────
@@ -786,7 +772,7 @@ impl Checker<'_> {
             return None;
         }
         // `getReducedType`: no value inhabits its constraint, and anything is a key of `never`.
-        if self.has_conflicting_private_properties(apparent) {
+        if self.reduced(apparent).is_never() {
             return None;
         }
         if self.is_generic_object_type(object)
@@ -809,49 +795,16 @@ impl Checker<'_> {
         Some(2536)
     }
 
-    /// `isConflictingPrivateProperty` for any property of the intersection `ty`: several
-    /// declarations, one of them private.
-    fn has_conflicting_private_properties(&mut self, ty: TypeId) -> bool {
-        self.is_intersection(ty)
-            && self.members(ty).is_some_and(|m| {
-                m.shape().props.iter().any(|prop| match &prop.source {
-                    PropSource::Intersected(_, parts) => {
-                        parts.iter().any(|p| p.flags.contains(PropFlags::PRIVATE))
-                            && parts.iter().any(|p| p.source != parts[0].source)
-                    }
-                    _ => false,
-                })
-            })
-    }
-
-    /// `keyof object`, as `checkIndexedAccessIndexType` computes it: for a generic mapped type with
-    /// a name type, the result of `getIndexTypeForMappedType` on its constraint type.
+    /// `objectIndexType` of `checkIndexedAccessIndexType`: "skip index type deferral on remapping
+    /// mapped types"
     fn keys_to_look_into(&mut self, object: TypeId) -> TypeId {
-        if let Some((file, node, _)) = self.mapped_origin(object)
-            && self.is_generic(object)
+        if self.is_generic_mapped_type(object)
             && let Some(name_type) = self.mapped_name_type(object)
         {
+            // `MappedTypeNameTypeKindRemapping`
             let param = self.mapped_type_param(object);
-            let over = self.mapped_keys(object);
-            let constraint = self.hir(file)[self.mapped_decl(file, node).param].constraint;
-            let is_keyof = constraint.is_some()
-                && matches!(self.hir(file)[constraint].kind, TypeNodeKind::Keyof(_));
-            if !is_keyof && self.is_generic(over) {
-                // `MappedTypeNameTypeKindRemapping`
-                if !self.is_assignable(name_type, param) {
-                    let renamed: Vec<TypeId> = self
-                        .parts(over)
-                        .iter()
-                        .map(|&key| {
-                            let mapper = self.mapper_from(&[param], &[key]);
-                            match self.instantiate(name_type, mapper) {
-                                TypeId::STRING => self.union(&[TypeId::STRING, TypeId::NUMBER]),
-                                name => name,
-                            }
-                        })
-                        .collect();
-                    return self.union(&renamed);
-                }
+            if !self.is_assignable(name_type, param) {
+                return self.get_index_type_for_mapped_type(object, IndexFlags::empty());
             }
         }
         self.keyof(object)

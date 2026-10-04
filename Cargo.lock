@@ -1368,6 +1368,7 @@ dependencies = [
 name = "bun_sema_baselines"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
@@ -1394,6 +1395,7 @@ name = "bun_sema_standalone"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_js_parser",
  "bun_paths",
  "bun_sema",

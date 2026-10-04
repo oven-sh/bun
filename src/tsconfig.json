@@ -13,7 +13,8 @@
   "include": ["**/*.ts", "**/*.tsx", "../packages/bun-types/index.d.ts"],
   // js and runtime/bake are projects of their own, with settings that only apply there. The `bun init` and
   // `bun create` templates are users' projects: each has its own tsconfig and dependencies that are not installed
-  // here (`cli` is a link to `runtime/cli`). The libuv stub generator needs tree-sitter, which is not installed.
+  // here (`cli` is a link to `runtime/cli`). The libuv stub generator needs tree-sitter, which is not installed. The
+  // fixtures of the type checker's tests have type errors on purpose.
   "exclude": [
     "js",
     "runtime/bake",
@@ -21,6 +22,7 @@
     "runtime/cli/create",
     "cli/init",
     "cli/create",
-    "jsc/bindings/libuv"
+    "jsc/bindings/libuv",
+    "sema/tests/fixtures"
   ]
 }

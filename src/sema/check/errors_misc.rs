@@ -275,7 +275,7 @@ impl Checker<'_> {
             ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => {
                 hir[e].pos + b"delete".len() as u32
             }
-            _ => self.start_inside_parentheses(file, operand),
+            _ => self.error_start_inside_parentheses(file, operand),
         };
         // A missing node is empty.
         let end = match hir[operand].kind {

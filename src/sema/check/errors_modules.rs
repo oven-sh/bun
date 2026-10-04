@@ -304,13 +304,7 @@ impl Checker<'_> {
             // `TryParsePattern`
             if !is_augmentation
                 && let ModuleName::String(name) = module.name
-                && files
-                    .atoms
-                    .bytes(name)
-                    .iter()
-                    .filter(|&&c| c == b'*')
-                    .count()
-                    > 1
+                && bun_core::strings::count_char(files.atoms.bytes(name), b'*') > 1
             {
                 self.error_at((cx.file, name_pos, 0), 5061, &[Arg::Atom(name)]);
             }
@@ -1517,10 +1511,7 @@ fn first_token_start(text: &[u8]) -> u32 {
         0
     };
     if text[at..].starts_with(b"#!") {
-        at += text[at..]
-            .iter()
-            .position(|&c| c == b'\n' || c == b'\r')
-            .unwrap_or(text.len() - at);
+        at += bun_core::strings::index_of_any(&text[at..], b"\n\r").unwrap_or(text.len() - at);
     }
     skip_trivia(text, at) as u32
 }

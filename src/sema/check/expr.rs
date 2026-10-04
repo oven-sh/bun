@@ -35,7 +35,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getQuickTypeOfExpression` for `new` and `await new`.
+    /// `getQuickTypeOfExpression`. Not for a literal, whose type `checkExpression` has as quickly.
     pub(super) fn quick_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         if e.is_none() {
             return None;
@@ -47,6 +47,8 @@ impl<'p> Checker<'p> {
             }
             ExprKind::New(_) => self.quick_type_of_new(file, e),
             ExprKind::Call(_) => self.quick_type_of_call(file, e),
+            // The operand is not checked. `x as const` is `ExprKind::AsConst`.
+            ExprKind::As { ty, .. } => Some(self.type_from_node(file, ty)),
             _ => None,
         }
     }
@@ -949,7 +951,7 @@ impl<'p> Checker<'p> {
             }
         };
         let receiver = self.widened_left_type_of_property_access(file, e, left);
-        let cycles_before = self.cycles;
+        let (cycles_before, work_before) = (self.cycles, self.work);
         // `isThisPropertyAccessInConstructor`: the property is `autoType`, and `getTypeOfSymbol` is not called.
         if hir.is_js
             && !is_private
@@ -987,7 +989,12 @@ impl<'p> Checker<'p> {
         };
         let apparent = self.reduced_apparent_type(receiver);
         let Some((declared, how)) = found else {
-            if self.cycles != cycles_before {
+            // A cycle whose head is this expression or a caller: the members are not all known. One
+            // that began and ended in the lookup, as two interfaces that extend each other, is
+            // final.
+            if self.cycles != cycles_before
+                && self.lowest_taint_since(work_before + 1) <= self.frames.len()
+            {
                 return (TypeId::UNRESOLVED, stops);
             }
             if is_private {
@@ -1055,7 +1062,13 @@ impl<'p> Checker<'p> {
         };
         let prop = match how {
             Found::ByIndex => None,
-            _ => self.prop_ref(apparent, name).map(|(prop, _)| prop),
+            _ => match self.prop_ref(apparent, name) {
+                Some((prop, _)) => Some(prop),
+                // A property of a union, or of `Object` or `Function`.
+                None => self
+                    .get_property_of_type(apparent, name)
+                    .map(|found| found.0),
+            },
         };
         if how == Found::ByIndex {
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
@@ -1342,10 +1355,20 @@ impl<'p> Checker<'p> {
         let prop = match self.property_name_of_type(key) {
             Some(name) => {
                 let apparent = self.apparent_type(receiver);
-                self.prop_ref(apparent, name).map(|found| found.0)
+                match self.prop_ref(apparent, name) {
+                    Some((prop, _)) => Some(prop),
+                    // A property of a union, or of `Object` or `Function`.
+                    None => self
+                        .get_property_of_type(apparent, name)
+                        .map(|found| found.0),
+                }
             }
             None => None,
         };
+        // `getPropertyTypeForIndexType` has narrowed the type of whatever it found, of a method
+        // too, which `getFlowTypeOfAccessExpression` then leaves as it is.
+        let prop =
+            prop.filter(|prop| target.definite || self.is_variable_property_or_accessor(prop));
         let index_expression = (
             file,
             self.start_of(file, index),
@@ -2005,7 +2028,7 @@ impl<'p> Checker<'p> {
                 && flags.intersects(SymFlags::VARIABLE)
                 && self.is_in_compound_like_assignment(file, e)
             {
-                return self.base_type_of_literal_type(declared);
+                return self.base_of_literal(declared);
             }
             return declared;
         }
@@ -2053,7 +2076,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getAssignmentTargetKind`
-    fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
+    pub(super) fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
         let target = self.bound(file).get_assignment_target(self.hir(file), e);
         let assigned = matches!(
             target,
@@ -2599,10 +2622,27 @@ impl<'p> Checker<'p> {
         (PropSource::Literal(file, p), PropFlags::empty())
     }
 
+    /// `source_of_literal_member`. `is_written`: the cached type of `p` will not be the type it has
+    /// in this check, see `object_literal_in_flow_loop`.
+    fn source_of_literal_member_in(
+        &mut self,
+        file: FileId,
+        p: PropId,
+        name: Atom,
+        is_written: bool,
+    ) -> (PropSource, PropFlags) {
+        if is_written && !matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter) {
+            let ty = self.check_literal_member(file, p);
+            let source = Self::literal_member_of_type(file, p, name, ty).source;
+            return (source, PropFlags::WRITTEN);
+        }
+        self.source_of_literal_member(file, p, name)
+    }
+
     /// `checkObjectLiteral` creates a new type for the symbol of the literal every time. `kept`,
     /// whose members are those of the first check, represents it if the members are the same.
     fn recheck_object_literal(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
-        let mut shape = self.build_object_literal_shape(file, e);
+        let shape = self.build_object_literal_shape(file, e, false);
         let is_empty_resolved_type = shape.props.is_empty() && shape.index.is_empty();
         if is_empty_resolved_type
             || self.inference_contexts.is_empty()
@@ -2612,6 +2652,23 @@ impl<'p> Checker<'p> {
         {
             return kept;
         }
+        self.object_literal_with_shape(kept, shape)
+    }
+
+    /// `checkObjectLiteral` where a member has read the incomplete type of a loop
+    /// (`getTypeAtFlowLoopLabel`): the properties have the types just computed. The members of
+    /// `kept` are resolved when they are read, from the complete type of the loop.
+    fn object_literal_in_flow_loop(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
+        let shape = self.build_object_literal_shape(file, e, true);
+        if shape.props.is_empty() && shape.index.is_empty() {
+            return kept;
+        }
+        self.object_literal_with_shape(kept, shape)
+    }
+
+    /// The type of another check of the literal that `kept` is the type of, with the members
+    /// `shape`.
+    fn object_literal_with_shape(&mut self, kept: TypeId, mut shape: Shape) -> TypeId {
         shape.literal = Literalness::Literal;
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(kept);
         shape.is_js_literal = self.has_js_literal_flag(kept);
@@ -3085,7 +3142,11 @@ impl<'p> Checker<'p> {
         if !self.is_rechecking() {
             self.check_grammar_object_literal_expression(file, e, props);
         }
+        let taints = self.taints;
         let object_flags = self.look_at_members(file, e, props);
+        // `recheck_in_flow_loop` taints the frame before anything is read.
+        let is_in_flow_loop = self.taints != taints
+            && (self.frames.last()).is_some_and(|frame| frame.incomplete_flow);
         self.check_spread_overrides(file, props);
         if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
             let scope = self.scope_of_expr(file, e);
@@ -3097,6 +3158,8 @@ impl<'p> Checker<'p> {
             });
             return if self.is_rechecking() {
                 self.recheck_object_literal(file, e, kept)
+            } else if is_in_flow_loop {
+                self.object_literal_in_flow_loop(file, e, kept)
             } else {
                 kept
             };
@@ -3168,7 +3231,8 @@ impl<'p> Checker<'p> {
                 flags
             };
             pending.props.retain(|x| x.name != name);
-            let (source, written) = self.source_of_literal_member(file, source, name);
+            let (source, written) =
+                self.source_of_literal_member_in(file, source, name, is_in_flow_loop);
             pending.props.push(Prop {
                 name,
                 flags: flags | written,
@@ -3314,6 +3378,10 @@ impl<'p> Checker<'p> {
         }
         let hir = self.hir(file);
         let f = &hir[func];
+        // `getSignaturesOfType(getTypeOfSymbol(..))` creates the signature.
+        if hir.is_js {
+            self.is_untyped_signature_in_js_file(file, func);
+        }
         let is_inferential = check_mode.contains(CheckMode::INFERENTIAL);
         let is_context_sensitive = self.is_context_sensitive(file, e);
         let mut assigned = None;
@@ -3352,7 +3420,9 @@ impl<'p> Checker<'p> {
         // `assignContextualParameterTypes`, `assignNonContextualParameterTypes`
         if is_context_sensitive {
             for p in f.params.iter() {
+                self.assigned_parameters.push(self.stack.len());
                 self.type_of_param(file, p);
+                self.assigned_parameters.pop();
             }
         }
         if contextual_signature.is_some()
@@ -3555,6 +3625,11 @@ impl<'p> Checker<'p> {
                 self.type_of_param(file, p);
             }
             if param.default.is_some() {
+                // `checkVariableLikeDeclaration`: `checkExpressionCached(initializer)`, which has no
+                // `getQuickTypeOfExpression`.
+                if let ExprKind::As { expr, .. } = hir[param.default].kind {
+                    self.look_at(file, expr);
+                }
                 self.look_at(file, param.default);
             }
         }
@@ -3789,7 +3864,13 @@ impl<'p> Checker<'p> {
         infos
     }
 
-    pub(super) fn build_object_literal_shape(&mut self, file: FileId, e: ExprId) -> Shape {
+    /// `is_written`: see `source_of_literal_member_in`.
+    pub(super) fn build_object_literal_shape(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_written: bool,
+    ) -> Shape {
         let hir = self.hir(file);
         let ExprKind::Object(props) = hir[e].kind else {
             return Shape::default();
@@ -3886,7 +3967,8 @@ impl<'p> Checker<'p> {
                 }
                 shape.props.remove(existing);
             }
-            let (source, written) = self.source_of_literal_member(file, source, name);
+            let (source, written) =
+                self.source_of_literal_member_in(file, source, name, is_written);
             shape.props.push(Prop {
                 name,
                 flags: flags | written,
@@ -3954,6 +4036,11 @@ impl<'p> Checker<'p> {
         if let Some(raw) = self.provisional(Query::LiteralProp(file, p)) {
             return TypeId(raw as u32);
         }
+        if !self.flow_loops.is_empty()
+            && let Some(ty) = self.recheck_literal_prop_in_flow_loop(file, p)
+        {
+            return ty;
+        }
         if !self.enter(Query::LiteralProp(file, p)) {
             return TypeId::UNRESOLVED;
         }
@@ -3968,6 +4055,33 @@ impl<'p> Checker<'p> {
                 ty
             }
         }
+    }
+
+    /// `checkPropertyAssignment`, `checkShorthandPropertyAssignment` and `checkObjectLiteralMethod`
+    /// have no re-entrancy guard either: `recheck_in_flow_loop` for the member `p`. An accessor has
+    /// one (`getTypeOfAccessors`).
+    fn recheck_literal_prop_in_flow_loop(&mut self, file: FileId, p: PropId) -> Option<TypeId> {
+        if matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter) {
+            return None;
+        }
+        let first = self
+            .stack
+            .iter()
+            .rposition(|&q| q == Query::LiteralProp(file, p))?;
+        let pushed_at = self.flow_loop_pushed_since(first)?;
+        let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
+        let entered = self.enter(Query::LiteralProp(file, p));
+        self.resolution_start = resolution_start;
+        if !entered {
+            return Some(TypeId::UNRESOLVED);
+        }
+        self.taint_from(pushed_at);
+        let ty = self.type_of_literal_prop_uncached(file, p);
+        // `object_literal_in_flow_loop` reads it again.
+        if let Err(open) = self.leave(Query::LiteralProp(file, p)) {
+            self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
+        }
+        Some(ty)
     }
 
     fn type_of_literal_prop_uncached(&mut self, file: FileId, p: PropId) -> TypeId {

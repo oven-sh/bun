@@ -822,10 +822,7 @@ fn find_bytes(text: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
 fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
     loop {
         let before = text[..open].trim_ascii_end();
-        if text[before.len()..open]
-            .iter()
-            .any(|&c| c == b'\n' || c == b'\r')
-        {
+        if bun_core::strings::index_of_any(&text[before.len()..open], b"\n\r").is_some() {
             return None;
         }
         let &last = before.last()?;
@@ -906,7 +903,7 @@ fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
                 }
                 // The rest of the link is text.
                 let rest = &comment[i..];
-                let end = rest.iter().position(|c| matches!(c, b'}' | b'\n' | b'\r'));
+                let end = bun_core::strings::index_of_any(rest, b"}\n\r");
                 i += end.unwrap_or(rest.len());
             }
             _ => {}
@@ -1839,7 +1836,7 @@ impl Checker<'_> {
                 bun_core::strings::last_index_of(before, b"@template")
                     .map(|at| at.saturating_sub(1))
             } else {
-                before.iter().rposition(|&c| c == b'<')
+                bun_core::strings::last_index_of_char(before, b'<')
             };
             let start = open.map_or_else(|| first.saturating_sub(1), |at| at as u32);
             let last = self.end_of_type_param(file, params.at(params.len() - 1));

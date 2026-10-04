@@ -4503,17 +4503,18 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
         nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }
 
-    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
-
-    JSC::MarkedArgumentBuffer args;
-    args.append(this);
-    args.append(nextTickQueueObject);
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
-
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue initializer = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalProcessNextTickQueue);
+    JSValue nextTickFunction;
+    if (!scope.exception()) [[likely]] {
+        JSC::MarkedArgumentBuffer args;
+        args.append(this);
+        args.append(nextTickQueueObject);
+        args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
+        nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    }
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);

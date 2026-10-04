@@ -662,12 +662,20 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 chunk_indices.push(chunk_index as u32);
             }
             if complete && !inputs.is_empty() {
+                let mut redundant_requests_dropped = 0usize;
                 prelinked_graph = crate::prelinked_module_graph::build(
                     &inputs,
                     &mut module_info_strings,
                     external_string_table,
+                    c.options.aot.then_some(&mut redundant_requests_dropped),
                 )
                 .map(|bytes| (bytes, chunk_indices));
+                if redundant_requests_dropped != 0 {
+                    bun_core::Output::print_errorln(format_args!(
+                        "module graph: {} redundant requests dropped",
+                        redundant_requests_dropped
+                    ));
+                }
             }
         }
 
@@ -1851,6 +1859,11 @@ fn wanted_internal_modules(
                     wanted.push(id);
                 }
             }
+        }
+    }
+    if let Some(id) = builtins.find(b"internal:process/next_tick_queue") {
+        if !wanted.contains(&id) {
+            wanted.push(id);
         }
     }
     let mut i = 0;

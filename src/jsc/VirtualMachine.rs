@@ -6435,6 +6435,11 @@ impl VirtualMachine {
         fn is_unknown_source(url: &bun_core::String) -> bool {
             url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
         }
+        fn is_noisy_frame(f: &crate::ZigStackFrame) -> bool {
+            is_noisy_builtin(&f.function_name)
+                && (is_unknown_source(&f.source_url)
+                    || f.source_url.eq_ascii(b"internal:process/next_tick_queue"))
+        }
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -6451,7 +6456,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                if is_noisy_frame(frame) {
                     start_index = Some(0);
                     break;
                 }
@@ -6463,9 +6468,7 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_unknown_source(&frame.source_url)
-                        && is_noisy_builtin(&frame.function_name)
-                    {
+                    if is_noisy_frame(frame) {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`

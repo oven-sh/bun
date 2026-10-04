@@ -164,6 +164,7 @@ pub(crate) fn build(
     modules: &[ModuleInput<'_>],
     strings: &mut ModuleInfoSlotTableBuilder,
     string_table: &crate::bundle_v2::dispatch::EncoderStringTableHandle,
+    redundant_requests_dropped: Option<&mut usize>,
 ) -> Option<Vec<u8>> {
     let slot_for = |s: &[u8]| string_table.slot(s);
     let mut path_to_module: bun_collections::HashMap<Vec<u8>, u32> = Default::default();
@@ -249,6 +250,9 @@ pub(crate) fn build(
             export.resolution = resolution;
         }
     }
+    if let Some(dropped) = redundant_requests_dropped {
+        *dropped = drop_redundant_requests(&mut graph);
+    }
 
     // By-name lookups at runtime binary-search these by the name's hash (stored in the entry).
     let hash = |sid: u32| name_hash(&hashes, sid);
@@ -262,6 +266,102 @@ pub(crate) fn build(
     }
 
     Some(serialize(&graph, strings.count(), &hashes))
+}
+
+fn drop_redundant_requests(graph: &mut [Module]) -> usize {
+    fn is_walked(request: &Request) -> bool {
+        request.module != NO_MODULE && request.attributes & PHASE_DEFER_BIT == 0
+    }
+    fn contains(set: &[u64], index: usize) -> bool {
+        (set[index / 64] >> (index % 64)) & 1 != 0
+    }
+
+    let count = graph.len();
+    let words = count.div_ceil(64);
+    let mut reachable = vec![0u64; count * words];
+    let mut awaits = vec![0u64; words];
+    for (index, module) in graph.iter().enumerate() {
+        reachable[index * words + index / 64] |= 1u64 << (index % 64);
+        if module.flags & module_flags::HAS_TLA != 0 {
+            awaits[index / 64] |= 1u64 << (index % 64);
+        }
+    }
+    loop {
+        let mut changed = false;
+        for index in (0..count).rev() {
+            for request in &graph[index].requests {
+                if !is_walked(request) {
+                    continue;
+                }
+                let target = request.module as usize;
+                for word in 0..words {
+                    let merged = reachable[index * words + word] | reachable[target * words + word];
+                    changed |= merged != reachable[index * words + word];
+                    reachable[index * words + word] = merged;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut dropped = 0usize;
+    for (index, module) in graph.iter_mut().enumerate() {
+        let mut is_named = vec![false; module.requests.len()];
+        for import in &module.imports {
+            is_named[import.request as usize] = true;
+        }
+        for export in &module.exports {
+            if export.kind != ExportKind::Local {
+                is_named[export.request as usize] = true;
+            }
+        }
+        for &request in &module.star_exports {
+            is_named[request as usize] = true;
+        }
+
+        let mut walked = vec![0u64; words];
+        let mut renumbered: Vec<u32> = Vec::with_capacity(module.requests.len());
+        let mut kept: Vec<Request> = Vec::with_capacity(module.requests.len());
+        for (position, request) in core::mem::take(&mut module.requests)
+            .into_iter()
+            .enumerate()
+        {
+            renumbered.push(kept.len() as u32);
+            if !is_walked(&request) {
+                kept.push(request);
+                continue;
+            }
+            let target = request.module as usize;
+            let below = &reachable[target * words..(target + 1) * words];
+            let may_await = below.iter().zip(&awaits).any(|(a, b)| a & b != 0);
+            if is_named[position] || may_await || !contains(&walked, target) {
+                kept.push(request);
+            }
+            if contains(below, index) {
+                walked[target / 64] |= 1u64 << (target % 64);
+            } else {
+                for (word, bits) in walked.iter_mut().zip(below) {
+                    *word |= *bits;
+                }
+            }
+        }
+        dropped += renumbered.len() - kept.len();
+        module.requests = kept;
+        for import in &mut module.imports {
+            import.request = renumbered[import.request as usize];
+        }
+        for export in &mut module.exports {
+            if export.kind != ExportKind::Local {
+                export.request = renumbered[export.request as usize];
+            }
+        }
+        for request in &mut module.star_exports {
+            *request = renumbered[*request as usize];
+        }
+    }
+    dropped
 }
 
 fn name_hash(hashes: &[Option<u32>], sid: u32) -> u32 {
@@ -692,4 +792,250 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     }
     debug_assert_eq!(out.len(), total);
     out
+}
+
+#[cfg(test)]
+fn graph_with_requests(requests: &[&[u32]]) -> Vec<Module> {
+    requests
+        .iter()
+        .enumerate()
+        .map(|(index, targets)| Module {
+            key: index as u32,
+            flags: 0,
+            requests: targets
+                .iter()
+                .map(|&module| Request {
+                    specifier: module,
+                    module,
+                    attributes: 0,
+                    host_defined: 0,
+                })
+                .collect(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+            star_exports: Vec::new(),
+            bindings: Vec::new(),
+            export_by_name: Default::default(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn requested_by(graph: &[Module]) -> Vec<Vec<u32>> {
+    graph
+        .iter()
+        .map(|module| module.requests.iter().map(|request| request.module).collect())
+        .collect()
+}
+
+#[cfg(test)]
+fn evaluation_order(graph: &[Module], roots: &[usize], throws: Option<usize>) -> Vec<usize> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Status {
+        Unvisited,
+        Evaluating,
+        Evaluated,
+        Failed,
+    }
+    struct Walk<'a> {
+        graph: &'a [Module],
+        throws: Option<usize>,
+        status: Vec<Status>,
+        index: Vec<usize>,
+        ancestor_index: Vec<usize>,
+        visited: usize,
+        stack: Vec<usize>,
+        order: Vec<usize>,
+    }
+    impl<'a> Walk<'a> {
+        fn visit(&mut self, module: usize) -> bool {
+            self.status[module] = Status::Evaluating;
+            self.index[module] = self.visited;
+            self.ancestor_index[module] = self.visited;
+            self.visited += 1;
+            self.stack.push(module);
+            let graph: &'a [Module] = self.graph;
+            for request in &graph[module].requests {
+                if request.module == NO_MODULE || request.attributes & PHASE_DEFER_BIT != 0 {
+                    continue;
+                }
+                let target = request.module as usize;
+                if self.status[target] == Status::Unvisited && !self.visit(target) {
+                    return false;
+                }
+                match self.status[target] {
+                    Status::Failed => return false,
+                    Status::Evaluating => {
+                        self.ancestor_index[module] =
+                            self.ancestor_index[module].min(self.ancestor_index[target]);
+                    }
+                    Status::Unvisited | Status::Evaluated => {}
+                }
+            }
+            self.order.push(module);
+            if self.throws == Some(module) {
+                return false;
+            }
+            if self.ancestor_index[module] == self.index[module] {
+                while let Some(done) = self.stack.pop() {
+                    self.status[done] = Status::Evaluated;
+                    if done == module {
+                        break;
+                    }
+                }
+            }
+            true
+        }
+    }
+    let mut walk = Walk {
+        graph,
+        throws,
+        status: vec![Status::Unvisited; graph.len()],
+        index: vec![0; graph.len()],
+        ancestor_index: vec![0; graph.len()],
+        visited: 0,
+        stack: Vec::new(),
+        order: Vec::new(),
+    };
+    for &root in roots {
+        walk.order.push(usize::MAX);
+        if walk.status[root] == Status::Unvisited && !walk.visit(root) {
+            for failed in core::mem::take(&mut walk.stack) {
+                walk.status[failed] = Status::Failed;
+            }
+        }
+    }
+    walk.order
+}
+
+#[cfg(test)]
+fn assert_requests_left(before: Vec<Module>, mut after: Vec<Module>, left: &[&[u32]]) {
+    let total: usize = before.iter().map(|module| module.requests.len()).sum();
+    let dropped = drop_redundant_requests(&mut after);
+    let left: Vec<Vec<u32>> = left.iter().map(|targets| targets.to_vec()).collect();
+    assert_eq!(requested_by(&after), left);
+    assert_eq!(dropped, total - left.iter().map(Vec::len).sum::<usize>());
+
+    let count = before.len();
+    let ascending: Vec<usize> = (0..count).collect();
+    let descending: Vec<usize> = (0..count).rev().collect();
+    let mut sequences: Vec<Vec<usize>> = vec![ascending, descending];
+    sequences.extend((0..count).map(|root| vec![root]));
+    for first in 0..count {
+        for second in 0..count {
+            sequences.push(vec![first, second]);
+        }
+    }
+    for roots in &sequences {
+        for throws in core::iter::once(None).chain((0..count).map(Some)) {
+            assert_eq!(
+                evaluation_order(&before, roots, throws),
+                evaluation_order(&after, roots, throws),
+                "roots {:?}, throws {:?}",
+                roots,
+                throws
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+fn assert_left(requests: &[&[u32]], left: &[&[u32]]) {
+    assert_requests_left(graph_with_requests(requests), graph_with_requests(requests), left);
+}
+
+#[cfg(test)]
+#[test]
+fn redundant_requests_of_a_diamond() {
+    assert_left(&[&[1, 2, 3], &[3], &[3, 1], &[]], &[&[1, 2], &[3], &[3, 1], &[]]);
+    assert_left(&[&[3, 1, 2], &[3], &[3, 1], &[]], &[&[3, 1, 2], &[3], &[3, 1], &[]]);
+    assert_left(&[&[2, 1, 3, 2], &[3], &[3, 1], &[]], &[&[2], &[3], &[3, 1], &[]]);
+}
+
+#[cfg(test)]
+#[test]
+fn redundant_requests_of_a_chain() {
+    assert_left(
+        &[&[], &[0], &[1, 0], &[2, 1, 0], &[3, 2, 1, 0], &[4, 3, 2, 1, 0]],
+        &[&[], &[0], &[1], &[2], &[3], &[4]],
+    );
+    assert_left(
+        &[&[], &[0], &[0, 1], &[0, 1, 2], &[0, 1, 2, 3]],
+        &[&[], &[0], &[0, 1], &[0, 1, 2], &[0, 1, 2, 3]],
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn requests_inside_a_cycle_are_kept() {
+    assert_left(
+        &[&[1, 3, 2], &[2, 3], &[0, 3, 1], &[], &[1, 3, 0, 2]],
+        &[&[1, 3, 2], &[2, 3], &[0, 3, 1], &[], &[1]],
+    );
+    assert_left(&[&[1, 2], &[0], &[]], &[&[1, 2], &[0], &[]]);
+    assert_left(&[&[0, 1, 1], &[]], &[&[0, 1], &[]]);
+}
+
+#[cfg(test)]
+#[test]
+fn requests_for_what_may_await_are_kept() {
+    let shape: &[&[u32]] = &[&[1, 3, 2, 4], &[4, 3, 2], &[4], &[4], &[]];
+    let awaiting = |module: usize| {
+        let mut graph = graph_with_requests(shape);
+        graph[module].flags |= module_flags::HAS_TLA;
+        graph
+    };
+    assert_requests_left(awaiting(3), awaiting(3), &[&[1, 3], &[4, 3, 2], &[4], &[4], &[]]);
+    assert_requests_left(awaiting(4), awaiting(4), shape);
+    assert_requests_left(awaiting(0), awaiting(0), &[&[1], &[4, 3, 2], &[4], &[4], &[]]);
+}
+
+#[cfg(test)]
+#[test]
+fn requests_that_an_entry_names_are_kept_and_renumbered() {
+    let make = || {
+        let mut graph =
+            graph_with_requests(&[&[1, 5, 2, 3, 4, 5], &[2, 3, 4, 5], &[], &[], &[], &[]]);
+        graph[0].star_exports.push(2);
+        graph[0].imports.push(Import {
+            local: 0,
+            import_name: 0,
+            request: 3,
+            kind: ImportKind::Single,
+            resolution: Resolution::Binding { module: 3, local: 0 },
+        });
+        graph[0].exports.push(Export {
+            name: 0,
+            kind: ExportKind::Indirect,
+            local_or_import: 0,
+            request: 4,
+            resolution: Resolution::Binding { module: 4, local: 0 },
+        });
+        graph[0].exports.push(Export {
+            name: 1,
+            kind: ExportKind::Local,
+            local_or_import: 1,
+            request: 0,
+            resolution: Resolution::Binding { module: 0, local: 1 },
+        });
+        graph
+    };
+    assert_requests_left(make(), make(), &[&[1, 2, 3, 4], &[2, 3, 4, 5], &[], &[], &[], &[]]);
+    let mut graph = make();
+    assert_eq!(drop_redundant_requests(&mut graph), 2);
+    assert_eq!(graph[0].star_exports, vec![1]);
+    assert_eq!(graph[0].imports[0].request, 2);
+    assert_eq!(graph[0].exports[0].request, 3);
+    assert_eq!(graph[0].exports[1].request, 0);
+}
+
+#[cfg(test)]
+#[test]
+fn deferred_and_outside_requests_are_kept_and_justify_nothing() {
+    let make = || {
+        let mut graph = graph_with_requests(&[&[1, 2, NO_MODULE, 2, NO_MODULE], &[2], &[]]);
+        graph[0].requests[0].attributes |= PHASE_DEFER_BIT;
+        graph
+    };
+    assert_requests_left(make(), make(), &[&[1, 2, NO_MODULE, NO_MODULE], &[2], &[]]);
 }

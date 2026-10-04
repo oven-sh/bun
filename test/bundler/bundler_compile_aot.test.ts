@@ -71,6 +71,30 @@ describe("bundler", () => {
       run: { ...usesImage("10 6 1,2,3\n"), env: { BUN_AOT_VERBOSE: "1", BUN_JSC_useAOTOperationCounters: "1" } },
     });
 
+    itBundled("NextTickQueueIsCompiled", {
+      files: {
+        "/entry.ts": /* js */ `
+          const order: string[] = [];
+          process.nextTick((a: string, b: string) => order.push(a + b), "first", "!");
+          process.nextTick(() => order.push("second"));
+          await new Promise<void>(done => process.nextTick(() => process.nextTick(done)));
+          const error = await new Promise<Error>(done => process.nextTick(() => done(new Error("here"))));
+          console.log(order.join(" "), /processTicksAndRejections \\(internal:process\\/next_tick_queue/.test(error.stack!));
+          console.error(error);
+        `,
+      },
+      run: {
+        env: { BUN_AOT_VERBOSE: "1" },
+        validate({ stdout, stderr }) {
+          expect(stdout).toBe("first! second true\n");
+          expect(stderr).toContain("[aot] image: ");
+          expect(stderr).not.toContain("[aot] not using");
+          expect(stderr).toContain("error: here");
+          expect(stderr).not.toContain("processTicksAndRejections");
+        },
+      },
+    });
+
     itBundled("VariableLiveAcrossTwoHandlers", {
       files: {
         "/entry.ts": /* js */ `
@@ -566,6 +590,117 @@ describe("bundler", () => {
       run: usesImage("1 2\nTypeError true true 3\ntrue false\n"),
     });
   }
+
+  test("compile/aot/RedundantRequestsAreDropped", async () => {
+    const shapes: Record<string, string[]> = {
+      diamondTop: ["diamondLeft", "diamondRight", "diamondBottom"],
+      diamondLeft: ["diamondBottom"],
+      diamondRight: ["diamondBottom", "diamondLeft"],
+      diamondBottom: [],
+      chain0: [],
+      chain1: ["chain0"],
+      chain2: ["chain1"],
+      chain3: ["chain2"],
+      chain4: ["chain3", "chain1"],
+      chain5: ["chain4", "chain0", "chain2"],
+      cycleA: ["cycleB", "cycleLeaf", "cycleC"],
+      cycleB: ["cycleC", "cycleLeaf"],
+      cycleC: ["cycleA", "cycleLeaf", "cycleB"],
+      cycleLeaf: [],
+      cycleOutside: ["cycleB", "cycleLeaf", "cycleA", "cycleC"],
+      awaitTop: ["awaitMiddle", "awaitLeaf", "awaitPlain", "awaitBelow"],
+      awaitMiddle: ["awaitBelow", "awaitLeaf", "awaitPlain"],
+      awaitLeaf: ["awaitBelow"],
+      awaitPlain: ["awaitBelow"],
+      awaitBelow: [],
+      throwTop: ["throwFirst", "throwMiddle", "throwBad", "throwAfter"],
+      throwMiddle: ["throwFirst", "throwBad", "throwAfter"],
+      throwFirst: [],
+      throwBad: ["throwFirst"],
+      throwAfter: ["throwFirst"],
+      namedFirst: ["namedStar", "namedMore", "namedWhole", "namedBase"],
+      namedStar: ["namedBase"],
+      namedMore: ["namedBase"],
+      namedWhole: ["namedBase"],
+      namedBase: [],
+    };
+    const files: Record<string, string> = {};
+    for (const [name, needs] of Object.entries(shapes)) {
+      files[name + ".ts"] = [
+        ...needs.map(need => `import { tag as ${need} } from "./${need}";`),
+        `export function tag() { return "${name}"; }`,
+        name === "awaitLeaf" ? `log("awaitLeaf starts"); await Promise.resolve(); await new Promise(done => setTimeout(done, 1));` : "",
+        `log("${name}(" + [${needs.join(", ")}].map(f => f()).join() + ")");`,
+        name === "throwBad" ? `throw new Error("thrown by throwBad");` : "",
+      ].join("\n");
+    }
+    files["namedTop.ts"] = `
+      import { tag as namedFirst } from "./namedFirst";
+      export * from "./namedStar";
+      export { tag as renamed } from "./namedMore";
+      import * as whole from "./namedWhole";
+      import { tag as namedBase } from "./namedBase";
+      export const seen = Object.keys(whole).join() + namedBase() + namedFirst();
+      log("namedTop");
+    `;
+    files["entry.ts"] = `
+      const order: string[] = [];
+      (globalThis as any).log = (name: string) => void order.push(name);
+      export const never = [${Object.keys(files).map(file => `() => import("./${file.slice(0, -3)}")`).join(", ")}];
+      async function load(what: string, importer: () => Promise<any>) {
+        let said = "";
+        try {
+          const namespace = await importer();
+          said = Object.keys(namespace).map(key => key + "=" + (typeof namespace[key] === "function" ? namespace[key]() : namespace[key])).join();
+        } catch (error: any) {
+          said = "threw " + error.message;
+        }
+        console.log(what + ": " + order.splice(0).join(" ") + " | " + said);
+      }
+      await load("diamond", () => import("./diamondTop"));
+      await load("chain, from the middle", () => import("./chain2"));
+      await load("chain, the rest", () => import("./chain5"));
+      await load("cycle, from outside", () => import("./cycleOutside"));
+      await load("cycle, again from inside", () => import("./cycleC"));
+      await load("await", () => import("./awaitTop"));
+      await load("throw", () => import("./throwTop"));
+      await load("throw, again", () => import("./throwTop"));
+      await load("throw, the middle", () => import("./throwMiddle"));
+      await load("throw, what never ran", () => import("./throwAfter"));
+      await load("named", () => import("./namedTop"));
+    `;
+    using dir = tempDir("compile-aot-redundant-requests", files);
+    const buildAndRun = async (outfile: string, ...flags: string[]) => {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", ...flags, "--splitting", "entry.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, said, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(said).not.toContain("error");
+      expect(buildExitCode).toBe(0);
+      await using app = Bun.spawn({ cmd: [join(String(dir), outfile)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+      expect(exitCode).toBe(0);
+      return { said, stdout };
+    };
+    const [reduced, whole] = await Promise.all([
+      buildAndRun("reduced", "--compile-aot"),
+      buildAndRun("whole", "--bytecode", "--format=esm"),
+    ]);
+    expect(whole.said).not.toContain("module graph:");
+    expect(Number(/module graph: (\d+) redundant requests dropped/.exec(reduced.said)?.[1])).toBeGreaterThan(20);
+    expect(reduced.stdout).toBe(whole.stdout);
+    expect(reduced.stdout.split("\n").slice(0, 3)).toEqual([
+      "diamond: diamondBottom() diamondLeft(diamondBottom) diamondRight(diamondBottom,diamondLeft) diamondTop(diamondLeft,diamondRight,diamondBottom) | tag=diamondTop",
+      "chain, from the middle: chain0() chain1(chain0) chain2(chain1) | tag=chain2",
+      "chain, the rest: chain3(chain2) chain4(chain3,chain1) chain5(chain4,chain0,chain2) | tag=chain5",
+    ]);
+    expect(reduced.stdout).toContain("throw: throwFirst() throwBad(throwFirst) | threw thrown by throwBad\nthrow, again:  | threw thrown by throwBad\n");
+    expect(reduced.stdout).toContain("throw, what never ran: throwAfter(throwFirst) | tag=throwAfter\n");
+  });
 
   test("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
     using dir = tempDir("compile-aot-caller", {

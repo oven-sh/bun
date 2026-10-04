@@ -12614,6 +12614,104 @@ const o = {
       expect(exitCode).toBe(1);
     });
 
+    test("an unresolved name from another file is printed as an unresolved import of this file", async () => {
+      using dir = project({
+        "a.ts": `import type { Elsewhere, Generic } from "./nowhere1";
+import type * as NS from "./nowhere1";
+import type { NotExported } from "./d";
+import type { Shorthand } from "shorthand";
+export interface Policy { naming?: Elsewhere; tableName: string }
+export interface Qualified { naming?: NS.Inner; tableName: string }
+export interface WithArguments { naming?: Generic<string>; tableName: string }
+export interface Missing { naming?: NotExported; tableName: string }
+export interface Ambient { naming?: Shorthand; tableName: string }
+export interface Query { naming?: typeof NS.value; tableName: string }
+export declare function take(input: { tableName: number }): void;
+`,
+        "ambient.d.ts": `declare module "shorthand";
+`,
+        "b.ts": `import type { Zeta } from "./nowhere2";
+import type { Alpha } from "./nowhere3";
+import { take, type Policy, type Qualified, type WithArguments, type Missing, type Ambient, type Query } from "./a";
+declare const p1: Policy, p2: Qualified, p3: WithArguments, p4: Missing, p5: Ambient, p6: Query;
+const c1 = { ...p1 }; take(c1);
+const c2 = { ...p2 }; take(c2);
+const c3 = { ...p3 }; take(c3);
+const c4 = { ...p4 }; take(c4);
+const c5 = { ...p5 }; take(c5);
+const c6 = { ...p6 }; take(c6);
+function inner() { type Local = 1; const c7 = { ...p1 }; take(c7); return null! as Local; }
+export type { Zeta, Alpha };
+export { inner };
+`,
+        "c.ts": `import { take, type Policy, type WithArguments } from "./a";
+declare const p1: Policy, p3: WithArguments;
+const c1 = { ...p1 }; take(c1);
+const c3 = { ...p3 }; take(c3);
+`,
+        "d.ts": `export const d = 1;
+`,
+        "e.ts": `import value from "./nowhere4";
+import * as Star from "./nowhere5";
+import { take, type Policy } from "./a";
+declare const p1: Policy;
+const c1 = { ...p1 }; take(c1);
+export { value, Star };
+`,
+        "f.ts": `import { take, type Policy } from "./a";
+import { Late } from "shorthand";
+declare const p1: Policy;
+const c1 = { ...p1 }; take(c1);
+export { Late };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,41): error TS2307: Cannot find module './nowhere1' or its corresponding type declarations.
+        a.ts(2,26): error TS2307: Cannot find module './nowhere1' or its corresponding type declarations.
+        a.ts(3,15): error TS2305: Module '"./d"' has no exported member 'NotExported'.
+        a.ts(9,37): error TS2709: Cannot use namespace 'Shorthand' as a type.
+        b.ts(1,27): error TS2307: Cannot find module './nowhere2' or its corresponding type declarations.
+        b.ts(2,28): error TS2307: Cannot find module './nowhere3' or its corresponding type declarations.
+        b.ts(5,28): error TS2345: Argument of type '{ naming?: Zeta; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(6,28): error TS2345: Argument of type '{ naming?: Zeta; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(7,28): error TS2345: Argument of type '{ naming?: Zeta<string>; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(8,28): error TS2345: Argument of type '{ naming?: Zeta; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(9,28): error TS2345: Argument of type '{ naming?: Shorthand; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(10,28): error TS2345: Argument of type '{ naming?: typeof Zeta; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(11,63): error TS2345: Argument of type '{ naming?: Zeta; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        c.ts(3,28): error TS2345: Argument of type '{ naming?: Elsewhere; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        c.ts(4,28): error TS2345: Argument of type '{ naming?: Generic<string>; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        e.ts(1,19): error TS2307: Cannot find module './nowhere4' or its corresponding type declarations.
+        e.ts(2,23): error TS2307: Cannot find module './nowhere5' or its corresponding type declarations.
+        e.ts(5,28): error TS2345: Argument of type '{ naming?: value; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+        f.ts(4,28): error TS2345: Argument of type '{ naming?: Elsewhere; tableName: string; }' is not assignable to parameter of type '{ tableName: number; }'.
+          Types of property 'tableName' are incompatible.
+            Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

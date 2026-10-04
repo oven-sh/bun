@@ -1821,9 +1821,25 @@ impl<'p> Printer<'_, 'p, '_> {
         } else {
             SymFlags::TYPE
         };
-        let found = files.resolve_entity(file, scope, names, meaning)?;
-        // `resolveEntityName`: an alias that does not itself have the meaning is resolved.
-        let symbol = files.resolve_alias_as(found, meaning).unwrap_or(found);
+        // `resolveEntityName`: `if namespace == c.unknownSymbol { return namespace }`
+        let is_qualified_by_unknown_symbol = (1..names.len()).any(|count| {
+            let namespace = SymFlags::NAMESPACE;
+            let qualifier = files.resolve_entity(file, scope, &names[..count], namespace);
+            qualifier.is_some_and(|it| matches!(self.c.resolve_alias(it), AliasTarget::Unknown))
+        });
+        let symbol = if is_qualified_by_unknown_symbol {
+            files.unknown_symbol
+        } else {
+            let found = files.resolve_entity(file, scope, names, meaning)?;
+            // An alias that does not itself have the meaning is resolved.
+            match files.resolve_alias_as(found, meaning) {
+                Some(symbol) => symbol,
+                None if matches!(self.c.resolve_alias(found), AliasTarget::Unknown) => {
+                    files.unknown_symbol
+                }
+                None => found,
+            }
+        };
         if !self.c.is_symbol_accessible_at(symbol, meaning, false, at) {
             return None;
         }

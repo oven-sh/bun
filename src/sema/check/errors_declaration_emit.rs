@@ -1797,10 +1797,13 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// `resolveAlias`
+    /// `resolveAlias`. `None`: a property, which has no `Sym`.
     fn resolve_alias_or_unknown(&mut self, alias: Sym) -> Option<Sym> {
-        let target = self.resolve_alias(alias).symbol();
-        Some(target.unwrap_or_else(|| self.files().unknown_symbol))
+        match self.resolve_alias(alias) {
+            AliasTarget::Symbol(target) => Some(target),
+            AliasTarget::Property(..) => None,
+            AliasTarget::Unknown => Some(self.files().unknown_symbol),
+        }
     }
 
     /// `getCandidateListForSymbol`

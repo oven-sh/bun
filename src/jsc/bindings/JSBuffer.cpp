@@ -2341,8 +2341,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     const JSValue endValue = callFrame->argument(1);
 
     if (!castedThis) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a buffer"_s);
     }
 
     const size_t length = castedThis->byteLength();
@@ -2467,8 +2466,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
     JSValue lengthValue = callFrame->argument(2);
 
     if (!castedThis) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a buffer"_s);
     }
 
     RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, stringValue, offsetValue, lengthValue));
@@ -2486,8 +2484,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
 
     auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
     if (!castedThis) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a buffer"_s);
     }
 
     const JSValue strValue = callFrame->argument(0);

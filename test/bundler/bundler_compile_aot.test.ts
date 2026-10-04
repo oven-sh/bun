@@ -2658,4 +2658,62 @@ describe("--compile-aot with a type table", () => {
       expect([broken.exitCode, broken.signalCode]).toEqual([0, null]);
     });
   });
+
+  describe("spreads and rests of objects with a layout", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-copies");
+    const copy = "operationAOTTryCopyDataProperties";
+
+    test.each([
+      ["as it is", "", {}],
+      ["without inlining", "useAOTInlining=0", {}],
+      ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1", {}],
+      ["without data stubs", "useAOTDataStubs=0", { BUN_JSC_useAOTDataStubs: "0" }],
+      ["with frequent collections", "", { BUN_JSC_slowPathAllocsBetweenGCs: "20" }],
+      [
+        "with a verified heap",
+        "",
+        { BUN_JSC_verifyGC: "1", BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+      ],
+    ])("%s", async (_, options, env) => {
+      using dir = tempDir("compile-aot-typed-copies", {});
+      const out = join(String(dir), "out");
+      const counts = join(String(dir), "counts");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", out],
+        env: {
+          ...bunEnv,
+          BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
+          BUN_SOUND_TYPES_ORACLE_ROOT: fixture,
+          BUN_AOT_OPTIONS: ["useTypeTags=1", "useAOTTypedFields=1", `aotTypeTablePath=${join(fixture, "types.bin")}`, options]
+            .filter(Boolean)
+            .join(","),
+        },
+        cwd: fixture,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+      await using proc = Bun.spawn({
+        cmd: [out],
+        env: { ...bunEnv, ...env, BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: counts },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(await Bun.file(join(fixture, "expected.txt")).text());
+      expect(exitCode).toBe(0);
+
+      const count = new Map<string, number>();
+      for (const line of (await Bun.file(counts + ".operations").text()).split("\n")) {
+        const [n, name] = line.split("\t");
+        if (name) count.set(name, Number(n));
+      }
+      const of = (ending: string) => count.get(copy + ":" + ending) ?? 0;
+      const arrivals = count.get(copy) ?? 0;
+      expect(arrivals).toBeGreaterThan(150_000);
+      expect(of("copied")).toBeGreaterThan(arrivals * 0.99);
+      expect(of("value-is-rejected")).toBeGreaterThanOrEqual(12);
+      expect(of("value-is-rejected")).toBeLessThan(60);
+    });
+  });
 });

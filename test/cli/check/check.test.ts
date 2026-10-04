@@ -6041,9 +6041,11 @@ export declare const o: { readonly L: unique symbol };
     });
 
     // 200 comparisons deep. The stack frames of a debug build are several times larger, and it runs out of stack first.
-    test.skipIf(isDebug || isASAN)("a comparison that exceeds the depth limit while its error is elaborated", async () => {
-      using dir = project({
-        "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
+    test.skipIf(isDebug || isASAN)(
+      "a comparison that exceeds the depth limit while its error is elaborated",
+      async () => {
+        using dir = project({
+          "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
 interface T1<A> { a: A; next: T2<A[]> | null; take(x: T2<A>): void }
 interface T2<A> { a: A; next: T3<A[]> | null; take(x: T3<A>): void }
 interface T3<A> { a: A; next: T4<A[]> | null; take(x: T4<A>): void }
@@ -6096,17 +6098,18 @@ interface T49<A> { a: A; next: T0<A[]> | null; take(x: T0<A>): void }
 export const u: T0<unknown> = null! as T0<string>;
 export const v: T0<string> = null! as T0<unknown>;
 `,
-      });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
         "a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T0<string>' and 'T0<unknown>'.
         a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T49<?>' and 'T49<?>'.
         a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
           Types of property 'a' are incompatible.
             Type 'unknown' is not assignable to type 'string'."
       `);
-      expect(exitCode).toBe(1);
-    });
+        expect(exitCode).toBe(1);
+      },
+    );
 
     test("a constant in a nested loop whose initializer calls a method of the loop variable", async () => {
       using dir = project({
@@ -6846,7 +6849,11 @@ describe.concurrent("--check", () => {
         }
         let damaged = edited.join("");
         if (kind === "cut") damaged = text.slice(0, 1 + below(text.length - 1));
-        else if (kind === "line") damaged = text.split("\n").toSpliced(below(text.split("\n").length), 1).join("\n");
+        else if (kind === "line")
+          damaged = text
+            .split("\n")
+            .toSpliced(below(text.split("\n").length), 1)
+            .join("\n");
         add(`m${seed}_${kind}`, damaged);
       }
     }
@@ -6879,7 +6886,9 @@ describe.concurrent("--check", () => {
         "a sequence of `if` statements in a `finally` block",
         size,
         n =>
-          `declare const c: boolean; declare function f(): string | undefined;\nexport function g() { const d = f(); if (!d) return; try { c; } finally { ${range(n)
+          `declare const c: boolean; declare function f(): string | undefined;\nexport function g() { const d = f(); if (!d) return; try { c; } finally { ${range(
+            n,
+          )
             .map(() => "if (c) { c; }")
             .join(" ")} } return d.length; }`,
       ],
@@ -6895,13 +6904,33 @@ describe.concurrent("--check", () => {
         "nested loops that assign the same variable",
         size,
         n =>
-          `declare const c: boolean; declare function h(v: unknown): string | number;\nexport function g() { let x: string | number = 1; ${range(n)
+          `declare const c: boolean; declare function h(v: unknown): string | number;\nexport function g() { let x: string | number = 1; ${range(
+            n,
+          )
             .map(() => "while (c) { x = h(x);")
             .join(" ")} ${"}".repeat(n)} return x; }`,
       ],
-      ["a chain of `&&`", size, n => `declare const a: { p?: number };\nexport const r = ${range(n).map(() => "a.p").join(" && ")};`],
-      ["a chain of `+`", size, n => `declare const a: number;\nexport const r = ${range(n).map(() => "a").join(" + ")};`],
-      ["a chain of method calls", size, n => `declare const a: { m(): typeof a };\nexport const r = a${".m()".repeat(n)};`],
+      [
+        "a chain of `&&`",
+        size,
+        n =>
+          `declare const a: { p?: number };\nexport const r = ${range(n)
+            .map(() => "a.p")
+            .join(" && ")};`,
+      ],
+      [
+        "a chain of `+`",
+        size,
+        n =>
+          `declare const a: number;\nexport const r = ${range(n)
+            .map(() => "a")
+            .join(" + ")};`,
+      ],
+      [
+        "a chain of method calls",
+        size,
+        n => `declare const a: { m(): typeof a };\nexport const r = a${".m()".repeat(n)};`,
+      ],
       [
         // TypeScript needs seconds for 400 members too.
         "a discriminated union narrowed member by member",
@@ -6940,7 +6969,11 @@ describe.concurrent("--check", () => {
             .join("\n")}\nexport function f${n}() { return 1; }`,
       ],
       ["nested object literals", size, n => `export const r = ${"{ a: ".repeat(n)}1${" }".repeat(n)};`],
-      ["nested array types", size, n => `export type T = ${"Array<".repeat(n)}number${">".repeat(n)};\nexport declare const t: T;`],
+      [
+        "nested array types",
+        size,
+        n => `export type T = ${"Array<".repeat(n)}number${">".repeat(n)};\nexport declare const t: T;`,
+      ],
       [
         "a recursive conditional type",
         size,
@@ -6980,15 +7013,17 @@ describe.concurrent("--check", () => {
     test("variables in a loop that each need the one before", async () => {
       const n = size / 2;
       using dir = project({
-        "index.ts": `interface S { nxt: S | null }\ndeclare function mk(): S;\nexport function g() { let s: S | null = mk(); while (s) { const c0 = s.nxt; ${range(n)
+        "index.ts": `interface S { nxt: S | null }\ndeclare function mk(): S;\nexport function g() { let s: S | null = mk(); while (s) { const c0 = s.nxt; ${range(
+          n,
+        )
           .map(i => `const c${i + 1} = c${i};`)
           .join(" ")} s = c${n}; } }\n`,
       });
       const { stdout, exitCode } = await check(dir);
       // Each of them is circular through the back edge of the loop.
-      expect(stdout.split("\n").map(line => /error TS7022: '(c\d+)' implicitly has type 'any'/.exec(line)?.[1])).toEqual(
-        range(n + 1).map(i => `c${i}`),
-      );
+      expect(
+        stdout.split("\n").map(line => /error TS7022: '(c\d+)' implicitly has type 'any'/.exec(line)?.[1]),
+      ).toEqual(range(n + 1).map(i => `c${i}`));
       expect(exitCode).toBe(1);
     });
   });

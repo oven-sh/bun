@@ -615,6 +615,94 @@ describe("bundler", () => {
     });
   });
 
+  test("compile/aot/GuessedPlacesPreferShapesOfTheModule", async () => {
+    using dir = tempDir("compile-aot-guessed-places", {
+      "entry.js": `
+        const { makesPairThere, readsInBothThere, makesOnlyThere, makesFirstOrderThere, makesSecondOrderThere, makesWithFarName } = await import("./other.js");
+        function check(actual, expected, what) {
+            if (!Object.is(actual, expected))
+                throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+        }
+
+        function makesPairHere(i) { return { aheadHere: 0, inBoth: i }; }
+        function readsInBothHere(o) { return o.inBoth; }
+        function readsOnlyThere(o) { return o.onlyThere; }
+        function readsSwappedThere(o) { return o.swappedThere; }
+        function makesNear(i) { return { nearName: i, inBothWithFar: i }; }
+        function readsNearAndFar(o) { return o.inBothWithFar + o.farName; }
+
+        for (let i = 0; i < 100; i++) {
+            check(readsInBothHere(makesPairHere(i)), i, "an object of this module read in this module");
+            check(readsInBothHere(makesPairThere(i)), i, "an object of the other module read in this module");
+            check(readsInBothThere(makesPairThere(i)), i, "an object of the other module read in the other module");
+            check(readsInBothThere(makesPairHere(i)), i, "an object of this module read in the other module");
+            check(readsOnlyThere(makesOnlyThere(i)), i, "a name that only the other module gives at birth");
+            check(readsSwappedThere(makesFirstOrderThere(i)) + readsSwappedThere(makesSecondOrderThere(i)), 2 * i, "a name that the other module gives in two orders");
+            check(readsNearAndFar(makesWithFarName(i)), 2 * i, "names that no object of this module has together");
+            check(readsNearAndFar(makesNear(i)), NaN, "an object of this module that lacks one of the names");
+        }
+        console.log("the values are right");
+      `,
+      "other.js": `
+        export function makesPairThere(i) { return { inBoth: i, behindThere: 0 }; }
+        export function readsInBothThere(o) { return o.inBoth; }
+        export function makesOnlyThere(i) { return { aheadOfOnlyThere: 0, onlyThere: i }; }
+        export function makesFirstOrderThere(i) { return { swappedThere: i, swappedToo: 0 }; }
+        export function makesSecondOrderThere(i) { return { swappedToo: 0, swappedThere: i }; }
+        export function makesWithFarName(i) { return { farName: i, inBothWithFar: i }; }
+      `,
+    });
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using app = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([app.stdout.text(), app.exited]);
+    expect([stdout, exitCode]).toEqual(["the values are right\n", 0]);
+    const remarks = new Map<string, Set<string>>();
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+      const [name, remark] = line.split("\t");
+      if (remark && /^(guessed-place:|no-guess:)/.test(remark)) remarks.set(name, (remarks.get(name) ?? new Set()).add(remark));
+    }
+    const guesses = (...names: string[]) => Object.fromEntries(names.map(name => [name, [...(remarks.get(name) ?? [])].sort()]));
+    expect(guesses("readsInBothHere", "readsInBothThere", "readsOnlyThere", "readsSwappedThere", "readsNearAndFar")).toEqual({
+      readsInBothHere: ["guessed-place:inBoth"],
+      readsInBothThere: ["guessed-place:inBoth"],
+      readsOnlyThere: ["guessed-place:onlyThere"],
+      readsSwappedThere: ["no-guess:disagree"],
+      readsNearAndFar: ["guessed-place:farName", "guessed-place:inBothWithFar"],
+    });
+  });
+
+  test("compile/aot/RemarksNameFunctionsByKey", async () => {
+    using dir = tempDir("compile-aot-remarks-key", {
+      "entry.ts": /* js */ `
+        const first = { run(x: number) { return x + 1; } };
+        const second = { run(x: number) { return x * 2; } };
+        function alone(x: number) { return first.run(x) + second.run(x); }
+        console.log(alone(1));
+      `,
+    });
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await build.exited).toBe(0);
+    const lines = (await Bun.file(path).text()).split("\n").filter(Boolean).map(line => line.split("\t"));
+    expect(lines.filter(fields => fields.length !== 3 || !/^\d+:\d+:\d+$/.test(fields[2]))).toEqual([]);
+    const keysOf = (name: string) => new Set(lines.filter(fields => fields[0] === name).map(fields => fields[2])).size;
+    expect({ run: keysOf("run"), alone: keysOf("alone") }).toEqual({ run: 2, alone: 1 });
+  });
+
   describe("compile/aot/DeclarationsOfLiftedCommonJS", () => {
     const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", main: "index.js" });
     const buildAndRun = async (files: Record<string, string>) => {

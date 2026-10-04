@@ -34,6 +34,105 @@ import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
+describe.each([
+  ["net", createNetServer],
+  ["http", createServer],
+  ["https", createHttpsServer],
+])("%s listen port validation", (_name, create) => {
+  it.each([65536, -1, 1.5, NaN, Infinity, -Infinity, "65536", "1.5", "", " ", "\t", "\u3000"])(
+    "throws ERR_SOCKET_BAD_PORT synchronously for %j in every port overload",
+    async port => {
+      const calls = [
+        [port],
+        [port, "127.0.0.1"],
+        [port, 1],
+        [port, "127.0.0.1", 1],
+        [{ port }],
+        [{ port, host: "127.0.0.1" }],
+        [{ port, path: "unused.sock" }],
+      ];
+      for (const args of calls) {
+        const server = create();
+        const errors: unknown[] = [];
+        const callbacks: unknown[] = [];
+        server.on("error", error => errors.push(error));
+        try {
+          let thrown;
+          try {
+            server.listen(...(args as [any]), () => callbacks.push("listening"));
+          } catch (error) {
+            thrown = error;
+          }
+          await new Promise(resolve => setImmediate(resolve));
+          expect(thrown).toBeInstanceOf(RangeError);
+          expect(thrown).toHaveProperty("code", "ERR_SOCKET_BAD_PORT");
+          expect(errors).toEqual([]);
+          expect(callbacks).toEqual([]);
+          expect(server.listening).toBe(false);
+        } finally {
+          if (server.listening) await new Promise(resolve => server.close(resolve));
+        }
+      }
+    },
+  );
+
+  it.each(["-1", "-1.5", "not-a-port", "65536x"])("rejects the entire options.port string %j", async port => {
+    const server = create();
+    const errors: unknown[] = [];
+    server.on("error", error => errors.push(error));
+    try {
+      let thrown;
+      try {
+        server.listen({ port: port as any });
+      } catch (error) {
+        thrown = error;
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect(thrown).toHaveProperty("code", "ERR_SOCKET_BAD_PORT");
+      expect(errors).toEqual([]);
+    } finally {
+      if (server.listening) await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it.each([0, "0", "0.0", "0e0", "0x0", " 0 ", null, undefined])("accepts the ephemeral port %j", async port => {
+    const server = create();
+    try {
+      const listening = once(server, "listening");
+      server.listen({ port: port as any, host: "127.0.0.1" });
+      await listening;
+      expect((server.address() as AddressInfo).port).toBeGreaterThan(0);
+    } finally {
+      if (server.listening) await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it("still emits EADDRINUSE asynchronously", async () => {
+    const holder = create();
+    const contender = create();
+    try {
+      const listening = once(holder, "listening");
+      holder.listen(0, "127.0.0.1");
+      await listening;
+      let returned = false;
+      let afterReturn = false;
+      contender.once("error", () => {
+        afterReturn = returned;
+      });
+      const error = once(contender, "error");
+      contender.listen((holder.address() as AddressInfo).port, "127.0.0.1");
+      returned = true;
+      const [err] = await error;
+      expect(err).toHaveProperty("code", "EADDRINUSE");
+      expect(afterReturn).toBe(true);
+    } finally {
+      if (holder.listening) await new Promise(resolve => holder.close(resolve));
+      if (contender.listening) await new Promise(resolve => contender.close(resolve));
+    }
+  });
+});
+
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();

@@ -3170,105 +3170,42 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getExecPath(globalObject));
 }
 
-extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
+static JSValue constructArgv(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* process = globalObject->processObject();
-    if (!process) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(process->getArgv(globalObject));
+    return JSValue::decode(Bun__Process__createArgv(processObject->globalObject()));
 }
 
-// get from js
-JSC_DEFINE_CUSTOM_GETTER(processArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+static JSValue constructExecArgv(VM& vm, JSObject* processObject)
 {
-    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
-    if (!process) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(process->getArgv(globalObject));
+    return JSValue::decode(Bun__Process__createExecArgv(processObject->globalObject()));
 }
 
 JSValue Process::getArgv(JSGlobalObject* globalObject)
 {
-    if (auto argv = m_argv.get()) {
-        return argv;
-    }
-
-    JSValue argv = JSValue::decode(Bun__Process__createArgv(globalObject));
-    setArgv(globalObject, argv);
-    return argv;
+    return get(globalObject, Identifier::fromString(globalObject->vm(), "argv"_s));
 }
 
-void Process::setArgv(JSGlobalObject* globalObject, JSValue value)
+JSValue Process::getExecArgv(JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
-    m_argv.set(vm, this, value);
+    return get(globalObject, Identifier::fromString(globalObject->vm(), "execArgv"_s));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
+extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
 {
-    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
-    if (!process) {
-        return true;
-    }
-
-    JSValue value = JSValue::decode(encodedValue);
-    process->setArgv(globalObject, value);
-    return true;
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue argv = globalObject->processObject()->getArgv(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(argv);
 }
 
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* process = globalObject->processObject();
-    if (!process) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(process->getExecArgv(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(processExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
-    if (!process) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(process->getExecArgv(globalObject));
-}
-
-JSValue Process::getExecArgv(JSGlobalObject* globalObject)
-{
-    if (auto argv = m_execArgv.get()) {
-        return argv;
-    }
-
-    JSValue argv = JSValue::decode(Bun__Process__createExecArgv(globalObject));
-    setExecArgv(globalObject, argv);
-    return argv;
-}
-
-void Process::setExecArgv(JSGlobalObject* globalObject, JSValue value)
-{
-    auto& vm = globalObject->vm();
-    m_execArgv.set(vm, this, value);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
-{
-    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
-    if (!process) {
-        return true;
-    }
-
-    JSValue value = JSValue::decode(encodedValue);
-    process->setExecArgv(globalObject, value);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue execArgv = globalObject->processObject()->getExecArgv(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(execArgv);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processGetEval, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -3776,8 +3713,6 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
-    visitor.append(thisObject->m_argv);
-    visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
@@ -5025,8 +4960,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback
   loadEnvFile                      constructLoadEnvFile                                PropertyCallback
   finalization                     constructFinalization                               PropertyCallback
-  arch                             constructArch                                       PropertyCallback
-  argv                             processArgv                                         CustomAccessor
+  arch                             constructArch                                       PropertyCallback|ReadOnly
+  argv                             constructArgv                                       PropertyCallback
   argv0                            constructArgv0                                      PropertyCallback
   assert                           Process_functionAssert                              Function 1
   availableMemory                  Process_availableMemory                             Function 0
@@ -5045,7 +4980,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   dlopen                           Process_functionDlopen                              Function 1
   emitWarning                      Process_emitWarning                                 Function 1
   env                              constructEnv                                        PropertyCallback
-  execArgv                         processExecArgv                                     CustomAccessor
+  execArgv                         constructExecArgv                                   PropertyCallback
   execPath                         constructExecPath                                   PropertyCallback
   execve                           Process_functionExecve                              Function 3
   exit                             Process_functionExit                                Function 1
@@ -5063,12 +4998,12 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   openStdin                        Process_functionOpenStdin                           Function 0
-  pid                              constructPid                                        PropertyCallback
-  platform                         constructPlatform                                   PropertyCallback
-  ppid                             processPpid                                         CustomAccessor
+  pid                              constructPid                                        PropertyCallback|ReadOnly
+  platform                         constructPlatform                                   PropertyCallback|ReadOnly
+  ppid                             processPpid                                         CustomValue
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
-  release                          constructProcessReleaseObject                       PropertyCallback
+  release                          constructProcessReleaseObject                       PropertyCallback|ReadOnly
   report                           constructProcessReportObject                        PropertyCallback
   resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
@@ -5078,12 +5013,12 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
-  title                            processTitle                                        CustomAccessor
+  title                            processTitle                                        CustomValue
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
-  version                          constructVersion                                    PropertyCallback
-  versions                         constructVersions                                   PropertyCallback
+  version                          constructVersion                                    PropertyCallback|ReadOnly
+  versions                         constructVersions                                   PropertyCallback|ReadOnly
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

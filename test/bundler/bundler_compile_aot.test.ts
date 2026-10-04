@@ -591,6 +591,30 @@ describe("bundler", () => {
     });
   }
 
+  test("compile/aot/LazilyRequiredInternalModulesAreNotCarried", async () => {
+    using dir = tempDir("compile-aot-empty", { "entry.ts": "export {};" });
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path}` },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await build.exited).toBe(0);
+    const compiled = new Set((await Bun.file(path).text()).split("\n").map(line => line.split("\t")[0]));
+    const has = (...names: string[]) => Object.fromEntries(names.map(name => [name, compiled.has(name)]));
+    expect(has("processTicksAndRejections", "validateFunction", "hideFromStack", "FixedQueue", "formatValue", "urlParse", "debuglog")).toEqual({
+      processTicksAndRejections: true,
+      validateFunction: true,
+      hideFromStack: true,
+      FixedQueue: true,
+      formatValue: false,
+      urlParse: false,
+      debuglog: false,
+    });
+  });
+
   test("compile/aot/RedundantRequestsAreDropped", async () => {
     const shapes: Record<string, string[]> = {
       diamondTop: ["diamondLeft", "diamondRight", "diamondBottom"],
@@ -2266,7 +2290,7 @@ describe("--compile-aot with a type table", () => {
       'a number for the string in an object that is returned in registers: TypeError: Type check failed: property "label": expected string, got number',
       'a string in an object that is returned: TypeError: Type check failed: property "count": expected number, got string',
       "a string in an object that is returned in registers from a try block: -0.5:caught",
-      "an object that the constructor of the class did not make: TypeError: Type check failed: the object does not have the layout of its declared type, and cannot be converted to it: it was not made by the constructor of the class",
+      "an object that the constructor of the class did not make: TypeError: Type check failed: the object does not have the layout of its declared type, the class Leaked, and cannot be converted to it: it was not made by the constructor of the class",
       'a string in an object that is made in a try block and returned after it: true, TypeError: Type check failed: property "count": expected number, got string',
       "",
     ]);

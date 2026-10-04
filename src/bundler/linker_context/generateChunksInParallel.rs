@@ -1861,11 +1861,6 @@ fn wanted_internal_modules(
             }
         }
     }
-    if let Some(id) = builtins.find(b"internal:process/next_tick_queue") {
-        if !wanted.contains(&id) {
-            wanted.push(id);
-        }
-    }
     let mut i = 0;
     while i < wanted.len() {
         for dep in builtins.dependencies(wanted[i]) {
@@ -1874,6 +1869,20 @@ fn wanted_internal_modules(
             }
         }
         i += 1;
+    }
+    let evaluated_by_the_first_tick: [&[u8]; 5] = [
+        b"internal:process/next_tick_queue",
+        b"internal:validators",
+        b"internal:shared",
+        b"internal:fixed_queue",
+        b"internal:async_hooks_tick",
+    ];
+    for name in evaluated_by_the_first_tick {
+        if let Some(id) = builtins.find(name) {
+            if !wanted.contains(&id) {
+                wanted.push(id);
+            }
+        }
     }
     wanted
 }

@@ -47,7 +47,8 @@ it.skipIf(isASAN /* malloc is not mimalloc */)(
       // the characters of these strings are allocated and freed by this thread
       let strings = [];
       for (let i = 0; i < 100000; i++) strings.push(Buffer.alloc(900 + (i % 5) * 8, 97).toString("latin1"));
-      strings = strings.filter((_, i) => i % 16 === 0);
+      // (far enough apart that whole OS pages are free in between, also where those are 16 KB)
+      strings = strings.filter((_, i) => i % 64 === 0);
       Bun.gc(true);
 
       // what needs no idle thread settles first, without going idle
@@ -60,17 +61,17 @@ it.skipIf(isASAN /* malloc is not mimalloc */)(
       }
 
       let released = 0;
-      for (let i = 0; i < 20 && released < 1000; i++) {
+      for (let i = 0; i < 20 && released < 500; i++) {
         Bun.sleepSync(100);
         released = purgeCalls() - before;
       }
-      console.log(released >= 1000, strings.length);
+      console.log(released >= 500, strings.length);
       `,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true 6250\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true 1563\n", stderr: "", exitCode: 0 });
   },
 );

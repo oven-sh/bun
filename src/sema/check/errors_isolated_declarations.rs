@@ -1332,8 +1332,12 @@ impl<'p, 's> Checker<'p, 's> {
         if func.is_none() {
             return false;
         }
-        let params = hir[func].params;
-        let index = (p.0 - params.start) as usize;
+        let (params, this) = (hir[func].params, hir[func].this_param);
+        // `slices.Index(node.Parent.Parameters(), node)`, of which `this` is the first.
+        let index = match p == this {
+            true => 0,
+            false => (p.0 - params.start) as usize + usize::from(this.is_some()),
+        };
         // `getImmediatelyInvokedFunctionExpression`: the argument count of its immediate
         // invocation.
         let actual = bound

@@ -674,7 +674,7 @@ impl Checker<'_, '_> {
 
     /// `declareSymbol`: the type parameters of a class or an interface are among its `members`, so
     /// a member of an instance that has the name of one is a later declaration of the same symbol.
-    fn type_parameter_merged_with_member(
+    pub(super) fn type_parameter_merged_with_member(
         &self,
         file: FileId,
         member: MemberId,

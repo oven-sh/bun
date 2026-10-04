@@ -3884,6 +3884,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             PropSource::Symbol(symbol) => {
                 return match self.c.files().value_declaration(*symbol) {
+                    Some((file, Decl::Member(member)))
+                        if (self.c)
+                            .type_parameter_merged_with_member(file, member, prop.name)
+                            .is_some() =>
+                    {
+                        self.c.atoms().bytes(prop.name).to_vec()
+                    }
                     Some((file, Decl::Member(member))) => {
                         // `2n`, and `#x` outside a class, are not a `PropKey` but are still printed.
                         let name = self.c.hir(file).node(member).with(Part::Name);

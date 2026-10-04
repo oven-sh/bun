@@ -789,6 +789,14 @@ impl<'p, 's> Checker<'p, 's> {
             };
             let mut matched: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
             let mut circularity = false;
+            // `Extract<A | B | .., { kind: T }>` is a union of conditional types that differ only
+            // where there is no type parameter. Inferring from one source to one target a second
+            // time changes nothing: the candidates are a set, `invoke_once` returns the priority
+            // it has stored, and `matched`, `circularity` and the priority only accumulate.
+            let has_many_pairs = sources.len() >= 4 && targets.len() >= 4;
+            let mut inferred_to = crate::util::FxHashSet::default();
+            // By source: `None` if what is inferred from it depends on more than the branches.
+            let mut source_aliases: SmallVec<[Option<Option<Sym>>; 8]> = SmallVec::new();
             // First to the targets that are not naked type parameters, tracking the sources from
             // which an inference was made at a priority as good as a naked type parameter would
             // get.
@@ -798,7 +806,28 @@ impl<'p, 's> Checker<'p, 's> {
                     type_variable_count += 1;
                     continue;
                 }
+                let is_repeated = has_many_pairs
+                    && (self.generic_parts_of_branches(t))
+                        .is_some_and(|parts| !inferred_to.insert(parts));
+                let target_alias = is_repeated.then(|| self.alias_symbol_of_type(t));
+                if is_repeated && source_aliases.is_empty() {
+                    source_aliases.extend(sources.iter().map(|&s| {
+                        let depends_on_more = s == TypeId::WILDCARD
+                            || matches!(
+                                self.data(s),
+                                TypeData::Cond { .. } | TypeData::Substitution { .. }
+                            );
+                        (!depends_on_more).then(|| self.alias_symbol_of_type(s))
+                    }));
+                }
                 for (i, &s) in sources.iter().enumerate() {
+                    // `same_alias` is the other thing that `infer_types` asks of the target.
+                    if let Some(target_alias) = target_alias
+                        && let Some(source_alias) = source_aliases[i]
+                        && (source_alias.is_none() || source_alias != target_alias)
+                    {
+                        continue;
+                    }
                     let saved = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
                     self.infer_types(n, s, t);
                     if n.inference_priority == n.priority as i32 {
@@ -866,6 +895,38 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+    }
+
+    /// What `infer_to_conditional_type` infers to, from a source that is not a conditional type,
+    /// in that order: the branches of `target`, without those parts from which `infer_types`
+    /// returns at once. `None`: `target` is not a conditional type.
+    fn generic_parts_of_branches(&mut self, target: TypeId) -> Option<SmallVec<[TypeId; 2]>> {
+        if !matches!(self.data(target), TypeData::Cond { .. }) {
+            return None;
+        }
+        let mut generic: SmallVec<[TypeId; 2]> = SmallVec::new();
+        for branch in [self.cond_true(target), self.cond_false(target)] {
+            if !self.has_type_variables(branch) {
+                continue;
+            }
+            // `infer_types` goes on to each part of such an intersection, and none is a naked
+            // type parameter.
+            let parts: Parts = match self.data(branch) {
+                TypeData::Intersection(parts) => SmallVec::from_slice(parts),
+                _ => SmallVec::new(),
+            };
+            if !parts.is_empty()
+                && self.alias_symbol_of_type(branch).is_none()
+                && !self.is_no_infer(branch)
+                && (parts.iter())
+                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t))
+            {
+                generic.extend(parts.into_iter().filter(|&t| self.has_type_variables(t)));
+            } else {
+                generic.push(branch);
+            }
+        }
+        Some(generic)
     }
 
     /// `inferToConditionalType`

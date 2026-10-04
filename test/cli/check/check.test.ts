@@ -855,6 +855,51 @@ describe.concurrent("bun check", () => {
         ...extra,
       });
 
+    test("a `this` parameter in the declaration file of a referenced project", async () => {
+      const compilerOptions = JSON.parse(tsconfig).compilerOptions;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions, files: ["b.ts"], references: [{ path: "./a" }] }),
+        "a/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...compilerOptions, noEmit: false, composite: true, outDir: "dist", rootDir: "src" },
+          include: ["src"],
+        }),
+        "a/src/x.ts": `export function f(this: { a: 1 }, b: number, c = 1) {\n  return [this.a, b, c];\n}\n`,
+        "b.ts": `import { f } from "./a/src/x";\nexport const g: 1 = f;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"b.ts(2,14): error TS2322: Type '(this: { a: 1; }, b: number, c?: number | undefined) => number[]' is not assignable to type '1'."`,
+      );
+    });
+
+    test("a project sees the declaration files of the projects before it, whether it references them or not", async () => {
+      const compilerOptions = {
+        ...options,
+        module: "nodenext",
+        moduleResolution: "nodenext",
+        outDir: "dist",
+        rootDir: ".",
+      };
+      const config = (references: { path: string }[]) =>
+        JSON.stringify({ compilerOptions, include: ["*.ts"], references });
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./a" }, { path: "./b" }, { path: "./c" }] }),
+        "a/tsconfig.json": config([]),
+        "a/index.ts": `export const a = 1;\n`,
+        "b/tsconfig.json": config([{ path: "../a" }]),
+        "b/index.ts": `import { a } from "../a/index.js";\nexport const b: string = a;\n`,
+        "c/tsconfig.json": config([]),
+        "c/index.ts": `import { a } from "../a/dist/index.js";\nexport const c: string = a;\n`,
+      });
+      const expected = `b/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.
+c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+      // Whichever of them are built at the same time.
+      for (const threads of ["1", "8"]) {
+        const { stdout } = await check(dir, ["--threads", threads]);
+        expect(stdout).toBe(expected);
+      }
+    });
+
     test("checks every referenced project without a build", async () => {
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);
@@ -12899,6 +12944,122 @@ export const wider: <T>(x: T) => Simple<T, 1 | 2 | 3> = make;
                   Type at position 0 in source is not compatible with type at position 0 in target.
                     Type 'unknown' is not assignable to type 'A'.
                       'A' could be instantiated with an arbitrary type which could be unrelated to 'unknown'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("type arguments are inferred from a union to a union of conditional types that differ where there is no type parameter", async () => {
+      using dir = project({
+        "a.ts": `type Ev =
+  | { type: "a"; data: { x: number } }
+  | { type: "b"; data: { y: string } }
+  | { type: "c"; data: { z: boolean } }
+  | { type: "d"; data: { w: null } }
+  | { type: "e"; data: { v: 1 } };
+type Payload<K extends Ev["type"]> = Extract<Ev, { type: K }>;
+declare function event<K extends Ev["type"]>(type: K, data: Payload<K>["data"]): Payload<K>;
+declare function pick<K extends Ev["type"]>(): Payload<K>;
+declare function both<K extends Ev["type"], L>(other: L): Extract<Ev, { type: K }> | Extract<Ev, { data: L }>;
+const list: Ev[] = [event("a", { x: 1 }), event("b", { y: 1 })];
+const all: Ev = pick();
+const some: Extract<Ev, { type: "a" | "b" }> = pick();
+const none: { type: "a"; data: { x: string } } = pick();
+const mixed: Ev = both({ x: 1 });
+const shown: number = pick<"a" | "c">();
+const inferred = [pick()].map(it => it.type);
+const wrong: "a"[] = inferred;
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,56): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(14,7): error TS2322: Type '{ type: "a"; data: { x: number; }; }' is not assignable to type '{ type: "a"; data: { x: string; }; }'.
+          The types of 'data.x' are incompatible between these types.
+            Type 'number' is not assignable to type 'string'.
+        a.ts(16,7): error TS2322: Type 'Payload<"a" | "c">' is not assignable to type 'number'.
+          Type '{ type: "a"; data: { x: number; }; }' is not assignable to type 'number'.
+        a.ts(18,7): error TS2322: Type '("a" | "b" | "c" | "d" | "e")[]' is not assignable to type '"a"[]'.
+          Type '"a" | "b" | "c" | "d" | "e"' is not assignable to type '"a"'.
+            Type '"b"' is not assignable to type '"a"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a conditional type that recurs through a type node that is not deferred reaches the instantiation limit", async () => {
+      using dir = project({
+        "a.ts": `type H<X> = X;
+type Template<T> = T extends string ? \`x\${Template<any>}\` : never;
+type Union<T> = T extends string ? 1 | Union<any> : never;
+type Intersection<T> = T extends string ? { a: 1 } & Intersection<any> : never;
+type Keyof<T> = T extends string ? keyof Keyof<any> : never;
+type Indexed<T> = T extends string ? Indexed<any>["a"] : never;
+type Argument<T> = T extends string ? H<Argument<any>> : never;
+type Intrinsic<T> = T extends string ? Uppercase<Intrinsic<any>> : never;
+type Deferred<T> = T extends string ? [Deferred<any>] : never;
+export const template: Template<"a"> = 1;
+export const keys: Keyof<"a"> = 1;
+export const deferred: Deferred<"a"> = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      // The type has a level for every round up to the limit.
+      expect(stdout.replace("x".repeat(99), "<99 x>")).toMatchInlineSnapshot(`
+        "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(4,54): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(5,42): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(6,38): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(7,41): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(8,50): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(10,14): error TS2322: Type '1' is not assignable to type '\`<99 x>\${any}\`'.
+        a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[[[[[[[[[[[[...]]]]]]]]]]]]'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a member with the name of a type parameter of its class or interface is printed as the type parameter is written", async () => {
+      using dir = project({
+        "a.ts": `interface A<Rebuild> { readonly "Rebuild": Rebuild; b: number }
+export const x: A<1> = {};
+interface B<Rebuild> { "Rebuild": Rebuild }
+export const y: B<1> = {};
+class C<Q> { "Q" = 1; s = 3 }
+export const z: C<1> = {};
+interface D<Other> { "Rebuild": Other }
+export const w: D<1> = {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,14): error TS2739: Type '{}' is missing the following properties from type 'A<1>': Rebuild, b
+        a.ts(4,14): error TS2741: Property 'Rebuild' is missing in type '{}' but required in type 'B<1>'.
+        a.ts(6,14): error TS2739: Type '{}' is missing the following properties from type 'C<1>': Q, s
+        a.ts(8,14): error TS2741: Property '"Rebuild"' is missing in type '{}' but required in type 'D<1>'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`this` counts where the parameters of an immediately invoked function are matched with its arguments", async () => {
+      using dir = project({
+        "a.ts": `export const one = (function (this: unknown, a, b) { return [a, b]; })(1);
+export const two = (function (a, b) { return [a, b]; })(1);
+export const three = (function (this: unknown, a, b) { return [a, b]; })();
+export const four = (function (this: unknown, ...rest) { return rest; })(1, 2);
+export const five: [number, number] = four;
+export const six = (function (this: unknown, a = 1, b) { return [a, b]; })(1, "s");
+export const seven: number = six;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,72): error TS2345: Argument of type '1' is not assignable to parameter of type 'undefined'.
+        a.ts(4,77): error TS2554: Expected 1 arguments, but got 2.
+        a.ts(5,14): error TS2322: Type '[number]' is not assignable to type '[number, number]'.
+          Source has 1 element(s) but target requires 2.
+        a.ts(6,46): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(6,76): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+        a.ts(7,14): error TS2322: Type '(string | undefined)[]' is not assignable to type 'number'."
       `);
       expect(exitCode).toBe(1);
     });

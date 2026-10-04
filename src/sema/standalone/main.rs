@@ -166,6 +166,9 @@ fn main() {
             // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
+            // `--task-instructions`, with `--timing --threads=1`: every task is listed, with its
+            // instructions in place of its time (1 s = 1 G).
+            let task_instructions = || bun_sema_standalone::instructions_and_cycles().0;
             let progress = (shows_progress || is_timed)
                 .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
             // `--timing`: the instruction count of loading, so that checking can be measured
@@ -257,10 +260,11 @@ fn main() {
                 chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
                 min_tasks: number("--min-tasks=", defaults.min_tasks),
                 type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
-                split_files: number("--split-files=", 0) as u32,
+                split_files: number("--split-files=", defaults.split_files as usize) as u32,
                 split_tolerates: number("--split-tolerates=", 0) as u8,
                 split_publishes_everything: has("--split-publishes-everything"),
                 checkers: number("--checkers=", defaults.checkers),
+                projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
             };
             let list_files_only = has("--listFilesOnly")
                 .then(|| bun_sema_driver::compiler_option_from_flag(b"listFilesOnly", None).ok());
@@ -288,7 +292,9 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--order="))
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(1),
-                digests: is_timed,
+                digests: is_timed && !has("--task-instructions"),
+                task_clock: has("--task-instructions")
+                    .then_some(&task_instructions as &(dyn Fn() -> u64 + Sync)),
                 plan_options,
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,

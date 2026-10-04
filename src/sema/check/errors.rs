@@ -2030,8 +2030,21 @@ fn similar_in_scope_and_where(
     let files = c.files();
     let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
     let name = (name, c.atoms().bytes(name));
-    files.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias)
+    files.suggested_symbol_for_nonexistent_symbol(
+        file,
+        scope,
+        name,
+        meaning,
+        try_resolve_alias,
+        Some(&c.suggestions_among_globals),
+    )
 }
+
+/// By `meaning` and by the text of the name: what `getSuggestionForSymbolNameLookup` finds in
+/// `globals`. A program without the types of its test framework asks for the same few names
+/// thousands of times.
+pub(crate) type SuggestionsAmongGlobals =
+    std::cell::RefCell<FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>>;
 
 impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
@@ -2039,6 +2052,7 @@ impl Files<'_> {
     /// `try_resolve_alias`: the flags of `tryResolveAlias(candidate)`, all flags for
     /// `unknownSymbol`. `None`: nil.
     /// `text`: the text of `name`, which may be a task-local atom.
+    /// `among_globals`: only with a `try_resolve_alias` that is a function of its argument.
     pub(crate) fn suggested_symbol_for_nonexistent_symbol(
         &self,
         file: FileId,
@@ -2046,6 +2060,7 @@ impl Files<'_> {
         (name, text): (Atom, &[u8]),
         meaning: SymFlags,
         try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
+        among_globals: Option<&SuggestionsAmongGlobals>,
     ) -> Option<(SpellingSuggestion, bool)> {
         let (files, hir, bound) = (self, self.hir(file), self.bound(file));
         let (mut word, mut is_among_locals) = (None, false);
@@ -2093,6 +2108,12 @@ impl Files<'_> {
                     text,
                     files.each_export(container).filter(fits).map(named),
                 ),
+                SymbolTable::Globals
+                    if let Some(known) = among_globals
+                        .and_then(|it| it.borrow().get(&meaning.bits())?.get(text).copied()) =>
+                {
+                    known
+                }
                 SymbolTable::Globals => {
                     // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` is an entry of `globals`.
                     let primitives: [(&'static str, Atom); 6] = [
@@ -2117,11 +2138,17 @@ impl Files<'_> {
                         )
                         .map(|word| (word.as_bytes(), SpellingSuggestion::Word(word)));
                     let globals = files.globals.iter().copied();
-                    get_spelling_suggestion_for_name(
+                    let suggestion = get_spelling_suggestion_for_name(
                         files,
                         text,
                         globals.filter(fits).map(named).chain(words),
-                    )
+                    );
+                    if let Some(among_globals) = among_globals {
+                        let mut among_globals = among_globals.borrow_mut();
+                        let of_meaning = among_globals.entry(meaning.bits()).or_default();
+                        of_meaning.insert(text.to_vec(), suggestion);
+                    }
+                    suggestion
                 }
             };
             match suggestion? {

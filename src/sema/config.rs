@@ -65,6 +65,7 @@ impl ConfigError {
 }
 
 /// `core.ProjectReference`
+#[derive(Clone)]
 pub struct ProjectReference {
     /// The directory or the configuration file of the referenced project.
     pub path: Vec<u8>,
@@ -72,6 +73,7 @@ pub struct ProjectReference {
 }
 
 /// `ParsedCommandLine`
+#[derive(Clone)]
 pub struct Project {
     /// The configuration file. Empty if there is none.
     pub config_path: Vec<u8>,

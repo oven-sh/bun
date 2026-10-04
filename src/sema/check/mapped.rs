@@ -2165,9 +2165,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// The properties available on a value of the union `ty` without knowing which member it is:
     /// `getPropertiesOfUnionOrIntersectionType`, and the index signatures common to all members.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
+        if let Some(known) = self.p.union_objects.get(&mut self.task, &ty) {
+            return known;
+        }
+        let scope = self.begin_scope();
         let parts = self.parts(ty);
         let mut shape = Shape::new_in(self.arena);
-        let mut checked: Vec<Atom> = Vec::new();
+        let mut checked = crate::util::FxHashSet::default();
         for &part in parts {
             // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
             // conditional type is one.
@@ -2180,8 +2184,7 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             };
             for prop in &members.shape().props {
-                if !checked.contains(&prop.name) {
-                    checked.push(prop.name);
+                if checked.insert(prop.name) {
                     shape.props.extend(
                         self.get_property_of_type(ty, prop.name)
                             .map(|it| it.0.clone_in(self.arena)),
@@ -2195,7 +2198,11 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         shape.index.extend(self.union_index_infos(parts));
-        self.synth(shape)
+        let object = self.synth(shape);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => (self.p.union_objects).insert(&mut self.task, ty, object, stored),
+            Err(_) => object,
+        }
     }
 
     /// The key types that `resolveMappedTypeMembers` and `getIndexTypeForMappedType` iterate over,

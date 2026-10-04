@@ -1331,7 +1331,14 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             Some(target.map_or(SymFlags::all(), |target| self.flags(target)))
         };
         let name = (name, self.atoms.bytes(name));
-        self.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias);
+        self.suggested_symbol_for_nonexistent_symbol(
+            file,
+            scope,
+            name,
+            meaning,
+            try_resolve_alias,
+            None,
+        );
     }
 
     /// `resolveIndirectionAlias`. `type_only`: `typeOnlyDeclaration` of the source.

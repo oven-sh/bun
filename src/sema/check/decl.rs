@@ -2246,10 +2246,11 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.conditional_flow_type_of_type(file, ty, node);
         let ty = self.with_alias_for_type_node(file, node, ty);
         match self.leave(Query::TypeNode(file, node)) {
+            // Where the node was in progress several times, the outermost is the last to store.
             Ok(stored) => {
                 self.p
                     .type_node_types
-                    .insert(&mut self.task, (file, node), ty, stored);
+                    .rewrite(&self.task, (file, node), ty, stored);
             }
             Err(open) => {
                 self.cache_provisionally(Query::TypeNode(file, node), u64::from(ty.0), open);

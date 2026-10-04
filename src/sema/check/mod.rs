@@ -150,7 +150,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults conditionals
             mapped_param_constraints
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
@@ -310,6 +310,8 @@ pub struct Program<'s> {
     intersected_props: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.propertyCache`. A synthetic type holds the property.
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
+    /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
+    union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
     never_intersections: ById<TypeId, bool, Buffered, &'s Session>,
     /// `getMappedTargetWithSymbol` of a mapped type.
     mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
@@ -460,6 +462,7 @@ impl<'s> Program<'s> {
             union_properties: ByKey::new_in(session),
             never_intersections: ById::new_in(session),
             mapped_targets: ById::new_in(session),
+            union_objects: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
             plain_global_refs: ById::new_in(session),
@@ -651,6 +654,7 @@ impl<'s> Program<'s> {
             declaration_file: None,
             declaration_indent: None,
             has_ambient_context: false,
+            suggestions_among_globals: Default::default(),
             parsed_again_for_await: None,
             flow_analysis_disabled_in: None,
             inline_level: 0,
@@ -853,8 +857,6 @@ enum EnterOutcome {
     Entered,
     /// Out of time, stack or depth, or a cycle that tsgo detects, defers or never runs into.
     Refused,
-    /// A cycle that tsgo does not detect: it recurses until `instantiationDepth == 100` or `tailCount == 1000`. See `is_runaway`.
-    Runaway,
 }
 
 /// `Checker.currentNode`
@@ -1191,6 +1193,7 @@ pub struct Checker<'p, 's> {
     declaration_indent: Option<usize>,
     /// Whether anything in the file that is being checked is in an ambient context.
     has_ambient_context: bool,
+    suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
@@ -1761,6 +1764,10 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(q, Query::Cond(..)) {
             return false;
         }
+        // Neither has `getTypeFromTypeNode`. The result has a level for every round up to the limit.
+        if matches!(q, Query::TypeNode(..)) && self.is_runaway(i) {
+            return false;
+        }
         // `checkExpression`, `checkPropertyAssignment`, `getTypeFromTypeNode` and, for a declaration
         // whose name is a pattern, `getTypeForVariableLikeDeclaration` have no re-entrancy guard. The
         // second visit takes `any` for the return type that is being resolved, or finds the members
@@ -1797,10 +1804,6 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.is_resolution(q) || !is_through_printing)
             && self.mark_cycle_from(i);
         self.found_cycle = marked && self.is_resolution(q);
-        if marked && self.is_runaway(i) {
-            self.last_enter = EnterOutcome::Runaway;
-            bun_core::scoped_log!(SemaCycles, "RUNAWAY {:?}", q);
-        }
         if self.has_members_in_place(q) {
             self.note_members_in_place();
         } else {
@@ -1895,16 +1898,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether re-entering `stack[i]` is a recursion that tsgo does not detect. `getTypeFromTypeNode`, `getTypeAliasInstantiation` and
     /// `getConditionalType` push no type resolution and cache their result only when they return, so a cycle of type nodes and
     /// conditional types alone runs into an instantiation limit. tsgo ends the cycle where it defers a type reference
-    /// (`isDeferredTypeReferenceNode`, `getObjectTypeInstantiation`): at an element type or a type argument. That is a type node
-    /// directly inside a type node, or an `instantiate` nested in the `instantiate` of the reference.
+    /// (`getObjectTypeInstantiation`): that is an `instantiate` nested in the `instantiate` of the reference.
     fn is_runaway(&self, i: usize) -> bool {
-        let is_type_node = |q: &Query| matches!(q, Query::TypeNode(..));
         let (cycle, frames) = (&self.stack[i..], &self.frames[i..]);
         cycle
             .iter()
             .all(|q| matches!(q, Query::TypeNode(..) | Query::Cond(..)))
-            && !(cycle.iter().zip(&cycle[1..])).any(|(a, b)| is_type_node(a) && is_type_node(b))
-            && !(is_type_node(&cycle[0]) && cycle.last().is_some_and(is_type_node))
+            // Every round takes a level of instantiation.
+            && cycle.iter().any(|q| matches!(q, Query::Cond(..)))
             && (frames.iter().zip(&frames[1..])).all(|(a, b)| b.entry_depth <= a.entry_depth + 1)
             && frames
                 .last()
@@ -2208,13 +2209,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`, `getConditionalType`: an instantiation limit was hit. Reports
     /// 2589 at `currentNode` and returns the error type. Safe to call after any `enter` that
     /// refused. Returns `UNRESOLVED` where the recursion here is no evidence of recursion in tsgo:
-    /// after a refusal other than `EnterOutcome::Runaway`, and more than 60 levels of `instantiate`
-    /// deep under a conditional type.
+    /// after a refusal, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
         // Only the call right after a refused `enter` sees the refusal.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
-            EnterOutcome::Runaway => true,
             EnterOutcome::Refused => false,
             // `getConditionalType` loops where `conditional_type` recurses: a tail call costs one level of `instantiate` here and
             // none in tsgo. `instantiate` allows at least 60 levels.
@@ -2315,6 +2314,16 @@ impl<'p, 's> Checker<'p, 's> {
         // regardless, and which types that breaks depends on the order in which it checks files.
         if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
             self.mark_tainted_from(from);
+            // Not so a type that is infinite (`is_runaway`): a type node that is in progress
+            // several times.
+            for i in from..self.stack.len() {
+                let q = self.stack[i];
+                if matches!(q, Query::TypeNode(..))
+                    && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
+                {
+                    self.frames[i].tainted = false;
+                }
+            }
         }
     }
 

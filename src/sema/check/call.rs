@@ -437,6 +437,9 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let args = self.effective_args(file, args);
         let own = &hir[hir[func].params.at(index)];
+        // `slices.Index(fn.Parameters(), parameter)`, of which `this` is the first. It is not
+        // subtracted here.
+        let index = index + usize::from(hir[func].this_param.is_some());
         // Not under `anySignature`: a request for the call resolves it again.
         if own.flags.contains(Flags::REST) {
             return Some(self.spread_argument_type(

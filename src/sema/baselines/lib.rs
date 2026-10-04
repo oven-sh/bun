@@ -1271,6 +1271,9 @@ pub struct Setup<'a> {
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
+    /// The index of the first of those. The values below `every` divide the tests among as many
+    /// runs.
+    pub first: usize,
 }
 
 impl Setup<'_> {
@@ -1898,7 +1901,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                     let base = path.rsplit('/').next().unwrap();
                     if SKIPPED.contains(&base)
                         || setup.only.is_some_and(|only| !path.contains(only))
-                        || i % setup.every.max(1) != 0
+                        || i % setup.every.max(1) != setup.first
                     {
                         continue;
                     }
@@ -2229,7 +2232,7 @@ impl Drop for Watched {
     }
 }
 
-/// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n] [--threads=n] [--report=file]
+/// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n [--first=i]] [--threads=n] [--report=file]
 /// [--out=dir] [--types-and-symbols] [--declarations] [--traces]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
@@ -2277,6 +2280,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         traces: args.iter().any(|it| it == "--traces"),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
+        first: number("first").unwrap_or(0),
     };
     let mut all = Vec::new();
     for spec in args.iter().filter(|a| !a.starts_with("--")) {

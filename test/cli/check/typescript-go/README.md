@@ -13,7 +13,7 @@ checkout:
 | `/testdata/baselines/reference`       | what is expected of each test, see below. `names.txt`: all the baselines |
 | `/internal/bundled/libs`              | `lib.*.d.ts`, as that version of typescript-go has them                  |
 
-`../conformance.test.ts` runs them all and compares byte for byte:
+The files in `../conformance` run them all and compare byte for byte. CI limits the time of a test file, so each file runs an eighth of the tests, in one process:
 
 | Baseline            | What                                                                                       |
 | ------------------- | ------------------------------------------------------------------------------------------ |
@@ -26,9 +26,9 @@ checkout:
 typescript-go also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 
 ```sh
-bun bd test test/cli/check/conformance.test.ts
+bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text
-ONLY=arrowFunctionErrorSpan bun bd test test/cli/check/conformance.test.ts
+ONLY=arrowFunctionErrorSpan bun bd test test/cli/check/conformance
 # The test and what is expected of it, as files
 bun test/cli/check/typescript-go/sync.ts --extract arrowFunctionErrorSpan
 # Another version of typescript-go

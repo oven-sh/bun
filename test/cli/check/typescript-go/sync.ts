@@ -4,7 +4,7 @@
 //   bun test/cli/check/typescript-go/sync.ts <path to a checkout of it, with its submodule>
 //   bun test/cli/check/typescript-go/sync.ts --extract <part of a path> [directory]
 //
-// `../conformance.test.ts` runs the tests. After a sync, `bun check` is expected to differ wherever typescript-go changed.
+// The files in `../conformance` run the tests. After a sync, `bun check` is expected to differ wherever typescript-go changed.
 import { $ } from "bun";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

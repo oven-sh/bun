@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 // `bun check` reads `lib.*.d.ts` from the `typescript` package installed in the project.
@@ -10219,7 +10228,7 @@ export class D7 { accessor b?: number = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("`this[\"z\"]` in an optional property, in an intersection with the class whose property is being resolved", async () => {
+    test('`this["z"]` in an optional property, in an intersection with the class whose property is being resolved', async () => {
       using dir = project({
         "a.ts": `declare function fy(v: { y: unknown }): 1;
 export class A1 { p?: this["z"]; z = { a: fy(null! as A1 & { p?: unknown }) }; y = 1; }
@@ -12239,7 +12248,7 @@ export const n12: number = f12(1, []).v;
       expect(exitCode).toBe(1);
     });
 
-    test("a surrogate pair in the \"types\" of a package.json", async () => {
+    test('a surrogate pair in the "types" of a package.json', async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `import { x } from "p";
@@ -13617,10 +13626,14 @@ describe.concurrent("--check", () => {
               i =>
                 `export function f${i}() { interface G<in out T> { r: G<T[]> | null } let s!: G<Sub>, S!: G<Sup>; S = s; }`,
             )
-            .join("\n")}\nexport function last() { interface G<T> { p: T } let s!: G<string>, S!: G<number>; S = s; }\n`,
+            .join(
+              "\n",
+            )}\nexport function last() { interface G<T> { p: T } let s!: G<string>, S!: G<number>; S = s; }\n`,
         });
         const { stdout, exitCode } = await check(dir);
-        const errors = stdout.split("\n").flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
+        const errors = stdout
+          .split("\n")
+          .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
         expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2321`), `${n + 2} TS2322`]);
         expect(exitCode).toBe(1);
       },

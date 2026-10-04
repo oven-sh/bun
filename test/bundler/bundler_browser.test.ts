@@ -101,6 +101,30 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // `import os from "node:os"` is the usual way to reach Node's CommonJS shape.
+  // These four polyfills had no default export, so a default import failed the
+  // build with "doesn't have a matching export named default".
+  itBundled("browser/NodeDefaultImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import os from "node:os";
+        import process from "node:process";
+        import timers from "node:timers";
+        import constants from "node:constants";
+        console.log(os.platform(), os.arch(), JSON.stringify(os.EOL), os.tmpdir());
+        console.log(process.cwd(), typeof process.nextTick, process.browser);
+        console.log(typeof timers.setTimeout, typeof timers.clearInterval, typeof timers.promises);
+        console.log(constants.O_RDONLY, constants.E2BIG, constants.SIGINT);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: 'browser javascript "\\n" /tmp\n/ function true\nfunction function object\n0 7 2',
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

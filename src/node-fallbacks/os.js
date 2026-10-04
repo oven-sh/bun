@@ -62,3 +62,26 @@ export const EOL = "\n";
 export const homedir = function () {
   return "/";
 };
+
+// `import os from "node:os"` is how Node's CommonJS shape is usually reached.
+// Without a default export the bundler fails the build with "doesn't have a
+// matching export named default", so mirror the other fallbacks here.
+export default {
+  EOL,
+  arch,
+  cpus,
+  endianness,
+  freemem,
+  getNetworkInterfaces,
+  homedir,
+  hostname,
+  loadavg,
+  networkInterfaces,
+  platform,
+  release,
+  tmpDir,
+  tmpdir,
+  totalmem,
+  type,
+  uptime,
+};

@@ -47,6 +47,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn prelinked_module_name(&self, _index: u32) -> Option<&'static [u8]> {
         None
     }
+    fn is_compiled_module(&self, _name: &[u8]) -> bool {
+        false
+    }
+    fn is_internal_module(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
     /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension
@@ -79,7 +85,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
             .len()
         };
         if let Some(name) = self.find_assume_standalone_path(&buf[..path_len]) {
-            return Some(name);
+            return Some(name).filter(|name| !self.is_internal_module(name));
         }
         // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.
         let extension = bun_paths::extension(&buf[..path_len]);
@@ -105,6 +111,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         }
         buf[stem_len..stem_len + 3].copy_from_slice(b".js");
         self.find_assume_standalone_path(&buf[..stem_len + 3])
+            .filter(|name| !self.is_internal_module(name))
     }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).

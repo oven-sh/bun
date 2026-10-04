@@ -527,6 +527,32 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
+    if let Some(coverage) = bun_ast::sound_types::oracle::take_table_coverage() {
+        bun_core::Output::print_errorln(format_args!("type table: {} sources tagged", coverage.tagged));
+        bun_core::Output::print_errorln(format_args!("type table: {} sources differ", coverage.differing));
+        bun_core::Output::print_errorln(format_args!("type table: {} sources unknown", coverage.unknown));
+        if coverage.tagged == 0 || !coverage.refused.is_empty() {
+            let mut msg: Vec<u8> = Vec::new();
+            if coverage.refused.is_empty() {
+                writeln!(
+                    &mut msg,
+                    "The type table (BUN_SOUND_TYPES_TAGS) has seen none of the sources of this bundle"
+                )?;
+            } else {
+                writeln!(
+                    &mut msg,
+                    "The type table (BUN_SOUND_TYPES_TAGS) was not made from the sources of this bundle: {} of them differ from what it has seen or are unknown to it, so what it says about the whole program does not hold",
+                    coverage.refused.len()
+                )?;
+            }
+            for (path, what) in coverage.refused.iter().take(20) {
+                writeln!(&mut msg, "  {}: {}", what, bstr::BStr::new(path))?;
+            }
+            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
+            return Err(crate::Error::BuildFailed);
+        }
+    }
+
     // After final_rel_path is computed for all chunks, fix up module_info
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
@@ -631,6 +657,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     path: &path[..],
                     info: mi,
                     table_ids,
+                    is_entry_point: chunk.entry_point.is_entry_point(),
                 });
                 chunk_indices.push(chunk_index as u32);
             }

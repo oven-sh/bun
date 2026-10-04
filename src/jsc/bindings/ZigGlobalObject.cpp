@@ -819,13 +819,21 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
     return globalObject->moduleLoader();
 }
 
+extern "C" bool Bun__standaloneModuleIsCompiled(const Latin1Character*, size_t);
+extern "C" bool Bun__standaloneModuleIsInternal(const Latin1Character*, size_t);
+
+static bool isInternalStandaloneModule(const StringImpl* key)
+{
+    return key && key->is8Bit() && Bun__standaloneModuleIsInternal(key->span8().data(), key->length());
+}
+
 // A key that is not an atom already names no module, and does not become one.
 static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
 {
     if (!keyValue.isString())
         return nullptr;
     auto atom = asString(keyValue)->toExistingAtomString(globalObject);
-    if (!atom.data)
+    if (!atom.data || isInternalStandaloneModule(atom.data))
         return nullptr;
     auto* loader = moduleLoaderOfRequirer(globalObject, requirer);
     if (!loader)
@@ -866,8 +874,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* moduleLoader = moduleLoaderOfRequirer(globalObject, callFrame->argument(1));
-    if (!moduleLoader)
+    if (!moduleLoader || isInternalStandaloneModule(key.impl()))
         return JSValue::encode(jsBoolean(false));
+    if (key.impl()->is8Bit() && Bun__standaloneModuleIsCompiled(key.impl()->span8().data(), key.impl()->length()))
+        return throwVMTypeError(globalObject, scope, makeString("Cannot evict \""_s, key.string(), "\": it was compiled ahead of time"_s));
     // A module whose load is in flight is not in require.cache and is not evicted.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
         if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
@@ -883,7 +893,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     JSC::MarkedArgumentBuffer keys;
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()))
+            if (isModuleEvaluated(entry->record()) && !isInternalStandaloneModule(specifier))
                 keys.append(jsString(vm, String { specifier }));
         });
     }
@@ -904,6 +914,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     JSValue keyValue = callFrame->argument(0);
     auto keyString = keyValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (isInternalStandaloneModule(keyString.impl()))
+        return throwVMTypeError(globalObject, scope, makeString("Cannot find module \""_s, keyString, "\""_s));
     auto key = JSC::Identifier::fromString(vm, keyString);
 
     // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
@@ -3624,6 +3636,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     return Identifier::fromString(vm, resolved);
 }
 
+static bool isEmbeddedModuleKey(JSValue value)
+{
+    if (!value || !value.isString() || asString(value)->isRope())
+        return false;
+    auto view = asString(value)->tryGetValue();
+    return view->is8Bit() && Bun__standaloneModuleHasModuleInfo(view->span8().data(), view->length());
+}
+
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
@@ -3635,7 +3655,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             if (view->is8Bit()) {
                 auto span = view->span8();
                 size_t canonicalLength = 0;
-                if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength)) {
+                if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength); canonical && (!Bun__standaloneModuleIsInternal(canonical, canonicalLength) || isEmbeddedModuleKey(referrer))) {
                     // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
                     if (canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength))
                         return Identifier::fromString(globalObject->vm(), string->tryGetValue());

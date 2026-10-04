@@ -605,6 +605,8 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     }
 }
 
+extern "C" bool Bun__standaloneModuleIsCompiled(const Latin1Character*, size_t);
+
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -695,6 +697,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (specifier.is8Bit() && Bun__standaloneModuleIsCompiled(specifier.span8().data(), specifier.length())) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) cannot replace a module that was compiled ahead of time"_s));
+        return {};
+    }
 
     JSC::JSObject* callback = callbackValue.getObject();
 

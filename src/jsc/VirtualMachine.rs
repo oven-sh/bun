@@ -608,6 +608,20 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, le
     standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    standalone_module_graph().is_some_and(|graph| graph.is_compiled_module(name))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleIsInternal(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    standalone_module_graph().is_some_and(|graph| graph.is_internal_module(name))
+}
+
 /// The module key (canonical embedded name) of graph module `index`; null if out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__standalonePrelinkedModuleName(

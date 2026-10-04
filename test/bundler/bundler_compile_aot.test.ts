@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -59,6 +59,18 @@ describe("bundler", () => {
       run: usesImage("3 15\n"),
     });
 
+    itBundled("CodeMadeAtRunTimeWithOperationCounters", {
+      files: {
+        "/entry.ts": /* js */ `
+          function compiled(a: number) { return a + 1; }
+          globalThis.compiled = compiled;
+          const made = new Function("a", "function inner(b) { return compiled(b) * 2; } return inner(a) + inner(a + 1);");
+          console.log(made(1), (0, eval)("(function () { function later(x) { return compiled(x); } return later(5); })()"), [3, 1, 2].sort().join());
+        `,
+      },
+      run: { ...usesImage("10 6 1,2,3\n"), env: { BUN_AOT_VERBOSE: "1", BUN_JSC_useAOTOperationCounters: "1" } },
+    });
+
     itBundled("VariableLiveAcrossTwoHandlers", {
       files: {
         "/entry.ts": /* js */ `
@@ -103,6 +115,66 @@ describe("bundler", () => {
         `,
       },
       run: usesImage("TypeError TypeError RangeError RangeError\n"),
+    });
+
+    itBundled("AsyncFramesOfErrorsFromNativeCode", {
+      files: {
+        "/entry.ts": /* js */ `
+          async function inner(path: string) {
+            return await Bun.file(path).text();
+          }
+          async function middle(path: string) {
+            return (await inner(path)).length;
+          }
+          async function outer(path: string) {
+            return (await middle(path)) + 1;
+          }
+          try {
+            await outer("/nonexistent/file/for/this/test");
+          } catch (error) {
+            const frames = String((error as Error).stack).split(String.fromCharCode(10)).filter(line => line.includes("at async "));
+            const lines = frames.map(line => Number(line.split(":").at(-2)));
+            console.log(frames.map(line => line.trim().split(" ")[2]).join(" "), lines[0] < lines[1] && lines[1] < lines[2]);
+          }
+        `,
+      },
+      run: usesImage("inner middle outer true\n"),
+    });
+
+    itBundled("StackWalksGiveNoFunctionObjects", {
+      files: {
+        "/entry.ts": /* js */ `
+          import { run } from "./sloppy.cjs";
+          console.log(run());
+          const guest = new Function(\`
+            const previous = Error.prepareStackTrace;
+            Error.prepareStackTrace = (error, sites) => sites;
+            const sites = new Error("x").stack;
+            Error.prepareStackTrace = previous;
+            return sites.slice(0, 2).map(site => typeof site.getFunction()).join(" ");
+          \`);
+          function callsGuest() { const result = guest(); return result; }
+          console.log(callsGuest());
+        `,
+        "/sloppy.cjs": /* js */ `
+          function capture() {
+            const previous = Error.prepareStackTrace;
+            Error.prepareStackTrace = (error, sites) => sites;
+            const sites = new Error("x").stack;
+            Error.prepareStackTrace = previous;
+            return sites.slice(0, 3).map(site => [site.getFunctionName(), typeof site.getFunction(), site.getFunction() === hidden, typeof site.getThis(), site.getLineNumber() > 0, site.getColumnNumber() > 0].join(":")).join(" ");
+          }
+          function hidden() { const result = capture(); return result; }
+          exports.run = function run() {
+            const mode = (function () { return this === undefined ? "strict" : "sloppy"; })();
+            const result = hidden();
+            return mode + " " + result;
+          };
+        `,
+      },
+      run: usesImage(
+        "strict capture:undefined:false:undefined:true:true hidden:undefined:false:undefined:true:true run:undefined:false:undefined:true:true\nfunction undefined\n",
+      ),
     });
 
     itBundled("LargeArrayLiteral", {
@@ -268,6 +340,230 @@ describe("bundler", () => {
         `,
       },
       run: usesImage("48\n4\n"),
+    });
+
+    itBundled("InternalChunksHaveNoName", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+          import vm from "node:vm";
+          const [a, b] = await Promise.all([import("./a"), import("./b")]);
+          console.log(a.fromA(), b.fromB());
+          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
+          const internal = pathIn(a.stackOfShared()), target = pathIn(a.stackInA());
+          const dir = mkdtempSync(join(tmpdir(), "names-"));
+          const namesOf = (ns: object) => Object.keys(ns).join();
+          const importing = (path: string) => "import * as ns from " + JSON.stringify(path) + "; export const names = Object.keys(ns).join();";
+          function routesTo(path: string, label: string): Record<string, () => unknown> {
+            writeFileSync(join(dir, label + "-static.mjs"), importing(path));
+            writeFileSync(join(dir, label + "-dynamic.mjs"), "export const names = Object.keys(await import(" + JSON.stringify(path) + ")).join();");
+            writeFileSync(join(dir, label + "-require.cjs"), "module.exports = Object.keys(require(" + JSON.stringify(path) + ")).join();");
+            return {
+              "import() in made code": () => new Function("p", "return import(p)")(path).then(namesOf),
+              "import() in indirect eval": () => (0, eval)("import(" + JSON.stringify(path) + ")").then(namesOf),
+              "import() in node:vm": () => vm.runInThisContext("import(" + JSON.stringify(path) + ")", { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }).then(namesOf),
+              "import() in a file": () => import(join(dir, label + "-dynamic.mjs")).then(m => m.names),
+              "static import in a file": () => import(join(dir, label + "-static.mjs")).then(m => m.names),
+              "static import in a data: module": () => import("data:text/javascript," + encodeURIComponent(importing(path))).then(m => m.names),
+              "require in a file": () => require(join(dir, label + "-require.cjs")),
+              "createRequire": () => namesOf(createRequire(join(dir, "x.js"))(path)),
+              "import.meta.require": () => namesOf(import.meta.require(path)),
+              "Bun.resolveSync": () => Bun.resolveSync(path, dir) === path,
+              "require.resolve": () => require.resolve(path) === path,
+              "require.cache lists it": () => { if (!Object.keys(require.cache).includes(path)) throw new Error("no"); return true; },
+              "require.cache has it": () => { if (!(path in require.cache)) throw new Error("no"); return true; },
+              "require.cache gives it": () => namesOf(require.cache[path]!.exports),
+              "a worker on it": () => new Promise((resolve, reject) => {
+                const worker = new Worker(path);
+                worker.addEventListener("error", () => reject(new Error("no")));
+                worker.addEventListener("close", (event: any) => (event.code ? reject(new Error("no")) : resolve("ran")));
+              }),
+            };
+          }
+          const routes = { internal: routesTo(internal, "internal"), target: routesTo(target, "target") };
+          for (const [label, table] of Object.entries(routes)) {
+            for (const [name, route] of Object.entries(table)) {
+              let said: string;
+              try { said = String(await route()); } catch { said = "refused"; }
+              console.log(label + ": " + name + ": " + said);
+            }
+          }
+          console.log(a.fromA(), b.fromB(), (await import("./a")) === a);
+          rmSync(dir, { recursive: true, force: true });
+          process.exit(0);
+        `,
+        "/a.ts": /* js */ `
+          import { readTable, stackInShared, table, ready } from "./shared";
+          export function fromA() { return readTable() + ":" + table.kept + ":" + ready; }
+          export const stackOfShared = stackInShared;
+          export function stackInA() { return new Error("here").stack!; }
+        `,
+        "/b.ts": /* js */ `
+          import { readTable, table } from "./shared";
+          export function fromB() { return readTable() + ":" + table.other; }
+        `,
+        "/shared.ts": /* js */ `
+          export const ready = await Promise.resolve("ready");
+          export const table = { kept: 1, other: 2 };
+          export function readTable() { return table.kept + table.other; }
+          export function stackInShared() { return new Error("here").stack!; }
+        `,
+      },
+      run: usesImage(
+        [
+          "3:1:ready 3:2",
+          ...[
+            "import() in made code",
+            "import() in indirect eval",
+            "import() in node:vm",
+            "import() in a file",
+            "static import in a file",
+            "static import in a data: module",
+            "require in a file",
+            "createRequire",
+            "import.meta.require",
+            "Bun.resolveSync",
+            "require.resolve",
+            "require.cache lists it",
+            "require.cache has it",
+            "require.cache gives it",
+            "a worker on it",
+          ].map(route => "internal: " + route + ": refused"),
+          "target: import() in made code: fromA,stackInA,stackOfShared",
+          "target: import() in indirect eval: fromA,stackInA,stackOfShared",
+          "target: import() in node:vm: fromA,stackInA,stackOfShared",
+          "target: import() in a file: fromA,stackInA,stackOfShared",
+          "target: static import in a file: fromA,stackInA,stackOfShared",
+          "target: static import in a data: module: fromA,stackInA,stackOfShared",
+          "target: require in a file: fromA,stackInA,stackOfShared",
+          "target: createRequire: fromA,stackInA,stackOfShared",
+          "target: import.meta.require: fromA,stackInA,stackOfShared",
+          "target: Bun.resolveSync: true",
+          "target: require.resolve: true",
+          "target: require.cache lists it: true",
+          "target: require.cache has it: true",
+          "target: require.cache gives it: fromA,stackInA,stackOfShared",
+          "target: a worker on it: ran",
+          "3:1:ready 3:2 true",
+          "",
+        ].join("\n"),
+      ),
+    });
+
+    itBundled("CompiledModulesCannotBeMocked", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          const [a, b] = await Promise.all([import("./a"), import("./b")]);
+          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
+          const { mock, jest } = await new Function("return import('bun:test')")();
+          const replacement = () => ({ table: { kept: "mocked", other: "mocked" }, readTable: () => "mocked", fromA: () => "mocked" });
+          for (const [label, path] of [["internal", pathIn(a.stackOfShared())], ["target", pathIn(a.stackInA())], ["main", Bun.main]]) {
+            for (const [name, replace] of [["mock.module", mock.module], ["jest.mock", jest.mock]]) {
+              let said: string;
+              try { await replace(path, replacement); said = "replaced"; } catch (e: any) { said = e.constructor.name; }
+              console.log(label, name, said, a.fromA(), b.fromB());
+            }
+          }
+          await mock.module("not-in-the-executable", () => ({ answer: 42 }));
+          console.log((await new Function("return import('not-in-the-executable')")()).answer, (await import("./lazy")).fromLazy(), (await import("./lazy2")).fromLazy2());
+        `,
+        "/a.ts": /* js */ `
+          import { readTable, stackInShared, table, ready } from "./shared";
+          export function fromA() { return readTable() + ":" + table.kept + ":" + ready; }
+          export const stackOfShared = stackInShared;
+          export function stackInA() { return new Error("here").stack!; }
+        `,
+        "/b.ts": /* js */ `
+          import { readTable, table } from "./shared";
+          export function fromB() { return readTable() + ":" + table.other; }
+        `,
+        "/shared.ts": /* js */ `
+          export const ready = await Promise.resolve("ready");
+          export const table = { kept: 1, other: 2 };
+          export function readTable() { return table.kept + table.other; }
+          export function stackInShared() { return new Error("here").stack!; }
+        `,
+        "/lazy.ts": /* js */ `
+          import { readTable } from "./shared";
+          import { readLate } from "./late";
+          export function fromLazy() { return "lazy" + readTable() + readLate(); }
+        `,
+        "/lazy2.ts": /* js */ `
+          import { readLate, late } from "./late";
+          export function fromLazy2() { return "lazy" + readLate() + late.v; }
+        `,
+        "/late.ts": /* js */ `
+          export const late = { v: 1 };
+          export function readLate() { return late.v; }
+        `,
+      },
+      run: usesImage(
+        [
+          ...["internal", "target", "main"].flatMap(label => ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2")),
+          "42 lazy31 lazy11",
+          "",
+        ].join("\n"),
+      ),
+    });
+
+    itBundled("ExportsOfCompiledModulesCannotBeSpiedOn", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          const lazy = await import("./lazy"), user = await import("./user");
+          const { spyOn } = await new Function("return import('bun:test')")();
+          for (const name of ["helper", "table", "box"]) {
+            let said: string;
+            try { spyOn(lazy, name); said = "replaced"; } catch (e: any) { said = e.constructor.name; }
+            console.log(name, said, user.fromUser());
+          }
+          const own = { method() { return 1; } };
+          spyOn(own, "method").mockImplementation(() => 2);
+          console.log(own.method());
+        `,
+        "/lazy.ts": /* js */ `
+          export const table = { kept: 1, other: 2 };
+          export class Box { v = 1; w = 2.5; get() { return this.v + this.w; } }
+          export const box = new Box();
+          export function helper(n: number) { return n * 2; }
+          export function read() { return table.kept + ":" + table.other + ":" + box.get() + ":" + helper(2); }
+        `,
+        "/user.ts": /* js */ `
+          import { read, table, box, helper } from "./lazy";
+          export function fromUser() { return read() + " | " + table.kept + ":" + box.get() + ":" + helper(3); }
+        `,
+      },
+      run: usesImage(["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n"),
+    });
+
+    itBundled("CompiledModulesCannotBeEvicted", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          const load = () => import("./lazy");
+          const first = await load();
+          console.log(first.bump(), first.bump());
+          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const key = Object.keys(require.cache).find(name => name.startsWith(root) && name !== Bun.main)!;
+          let said: string;
+          try { said = String(delete require.cache[key]); } catch (e: any) { said = e.constructor.name; }
+          console.log(said, key in require.cache, (await load()) === first, first.bump());
+          require.cache["/not/in/the/executable.js"] = { exports: 1 } as any;
+          console.log(delete require.cache["/not/in/the/executable.js"], "/not/in/the/executable.js" in require.cache);
+        `,
+        "/lazy.ts": /* js */ `
+          let count = 0;
+          export function bump() { return ++count; }
+        `,
+      },
+      run: usesImage("1 2\nTypeError true true 3\ntrue false\n"),
     });
   }
 
@@ -1573,7 +1869,8 @@ describe("--compile-aot optimizations", () => {
     ["absent-property-is-undefined:b", ["omitsB"], ["passesB"]],
     ["absent-property-is-undefined", [], ["omitsInherited"]],
     ["reads-returned-object-from-registers:returnsPairRead", ["readsReturnedA", "readsReturnedB"], []],
-    ["reads-returned-object-from-registers", [], ["readsReturnedC", "keepsReturned"]],
+    ["reads-returned-object-from-registers:returnsPairKept", ["readsReturnedC"], ["keepsReturned"]],
+    ["materializes-returned-object:returnsPairKept", ["keepsReturned"], ["readsReturnedC"]],
     ["planned-construction", ["Planned", "EitherA", "EitherB"], ["Conditional"]],
     ["direct-construct:Planned", ["constructsPlanned"], []],
     ["direct-construct:Conditional", ["constructsConditional"], []],
@@ -1711,6 +2008,79 @@ describe("--compile-aot with a type table", () => {
     });
   });
 
+  describe("sources that the type table was not made from", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-stale");
+    const withdrawn = join(fixture, "withdrawn");
+    const other = `import { Counter } from "./counter";\nconsole.log((new Counter() as any).half(5));\n`;
+    const counts = (tagged: number, differ: number, unknown: number) =>
+      `type table: ${tagged} sources tagged\ntype table: ${differ} sources differ\ntype table: ${unknown} sources unknown\n`;
+    async function buildAndRunCopy(entry: string, changed: Record<string, string>, table = fixture) {
+      using dir = tempDir("compile-aot-typed-stale", {
+        "src/main.ts": await Bun.file(join(fixture, "src/main.ts")).text(),
+        "src/counter.ts": await Bun.file(join(fixture, "src/counter.ts")).text(),
+        "node_modules/tiny/package.json": JSON.stringify({ name: "tiny", version: "1.0.0", type: "module", main: "index.js" }),
+        "node_modules/tiny/index.js": "export const one = 1;\n",
+        ...changed,
+      });
+      const copy = realpathSync(String(dir));
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", entry, "--outfile", join(copy, "out")],
+        env: {
+          ...bunEnv,
+          BUN_SOUND_TYPES_TAGS: join(table, "tags.bin"),
+          BUN_SOUND_TYPES_ORACLE_ROOT: copy,
+          BUN_AOT_OPTIONS: `useTypeTags=1,useAOTTypedFields=1,aotTypeTablePath=${join(table, "types.bin")}`,
+        },
+        cwd: copy,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildErrors, buildExitCode] = [await build.stderr.text(), await build.exited];
+      if (buildExitCode) return { buildErrors, buildExitCode };
+      await using proc = Bun.spawn({ cmd: [join(copy, "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      return { buildErrors, buildExitCode, stdout: await proc.stdout.text(), exitCode: await proc.exited };
+    }
+
+    test("unchanged sources and a package build and run", async () => {
+      const { buildErrors, ...rest } = await buildAndRunCopy("src/main.ts", {});
+      expect(buildErrors).not.toContain("error");
+      expect(buildErrors).toContain(counts(2, 0, 0));
+      expect(rest).toEqual({ buildExitCode: 0, stdout: "2 3 1\n", exitCode: 0 });
+    });
+
+    test("a source edited after the table was made fails the build", async () => {
+      const edited = (await Bun.file(join(fixture, "src/main.ts")).text()) + "// edited\n";
+      const { buildErrors, buildExitCode } = await buildAndRunCopy("src/main.ts", { "src/main.ts": edited });
+      expect(buildErrors).toContain(counts(1, 1, 0));
+      expect(buildErrors).toContain("was not made from the sources of this bundle");
+      expect(buildErrors).toMatch(/differs: .*src\/main\.ts/);
+      expect(buildErrors).not.toContain("counter.ts");
+      expect(buildExitCode).not.toBe(0);
+    });
+
+    test("a source the table has never seen fails the build", async () => {
+      const { buildErrors, buildExitCode } = await buildAndRunCopy("src/other.ts", { "src/other.ts": other });
+      expect(buildErrors).toContain(counts(1, 0, 1));
+      expect(buildErrors).toMatch(/unknown: .*src\/other\.ts/);
+      expect(buildExitCode).not.toBe(0);
+    });
+
+    test("a table that has withdrawn its claims about the whole program accepts a source it has never seen", async () => {
+      const { buildErrors, ...rest } = await buildAndRunCopy("src/other.ts", { "src/other.ts": other }, withdrawn);
+      expect(buildErrors).not.toContain("error");
+      expect(buildErrors).toContain(counts(1, 0, 1));
+      expect(rest).toEqual({ buildExitCode: 0, stdout: "2.5\n", exitCode: 0 });
+    });
+
+    test("a table that has withdrawn its claims about the whole program still refuses an edited source", async () => {
+      const edited = (await Bun.file(join(fixture, "src/main.ts")).text()) + "// edited\n";
+      const { buildErrors, buildExitCode } = await buildAndRunCopy("src/main.ts", { "src/main.ts": edited }, withdrawn);
+      expect(buildErrors).toContain(counts(1, 1, 0));
+      expect(buildErrors).toMatch(/differs: .*src\/main\.ts/);
+      expect(buildExitCode).not.toBe(0);
+    });
+  });
+
   const cases: [remark: string, appliesTo: string[], doesNotApplyTo: string[]][] = [
     ["typed-field-read:a", ["readsSound"], []],
     ["typed-field-read:b", ["readsSound"], []],
@@ -1736,7 +2106,9 @@ describe("--compile-aot with a type table", () => {
     ["scalar-replaced-object", ["ordersOne", "ordersLoosely", "ordersAsserted", "ordersGeneric", "ordersThrough"], ["keepsOrder"]],
     ["reads-returned-object-from-registers:talliesLoosely", ["readsTally", "destructuresTally"], []],
     ["reads-returned-object-from-registers:talliesInTry", ["readsTallyFromTry", "destructuresTallyFromTry"], []],
-    ["reads-returned-object-from-registers", [], ["keepsTally", "readsKeptTally", "readsTallyMadeInTry", "destructuresTallyMadeInTry"]],
+    ["reads-returned-object-from-registers:talliesToKeep", ["readsKeptTally"], ["keepsTally"]],
+    ["materializes-returned-object:talliesToKeep", ["keepsTally"], ["readsKeptTally"]],
+    ["reads-returned-object-from-registers", [], ["keepsTally", "readsTallyMadeInTry", "destructuresTallyMadeInTry"]],
   ];
 
   test("a value of another type is refused with the property, what is expected and what it got", async () => {
@@ -1759,6 +2131,7 @@ describe("--compile-aot with a type table", () => {
       'a number for the string in an object that is returned in registers: TypeError: Type check failed: property "label": expected string, got number',
       'a string in an object that is returned: TypeError: Type check failed: property "count": expected number, got string',
       "a string in an object that is returned in registers from a try block: -0.5:caught",
+      "an object that the constructor of the class did not make: TypeError: Type check failed: the object does not have the layout of its declared type, and cannot be converted to it: it was not made by the constructor of the class",
       'a string in an object that is made in a try block and returned after it: true, TypeError: Type check failed: property "count": expected number, got string',
       "",
     ]);

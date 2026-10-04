@@ -10,6 +10,7 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/Interpreter.h>
 #include <JavaScriptCore/JSAsyncFunctionGenerator.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromiseReaction.h>
@@ -104,43 +105,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
-    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
-        JSC::JSFunction* asyncFunction = nullptr;
-        if (!dynamicCastValue(generator->next(), &asyncFunction))
-            return;
-        if (asyncFunction->isHostOrPrivateBuiltinFunction())
-            return;
-        JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
-        if (!executable)
-            return;
-        if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
-            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-        } else {
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
-        }
-    };
-
     JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
-        appendFrame(gen);
+        JSC::Interpreter::appendAsyncStackFrame(vm, owner, results, gen);
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;

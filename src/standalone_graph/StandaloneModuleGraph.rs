@@ -371,6 +371,22 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         let &file = self.prelinked_module_files.get(index as usize)?;
         self.files.values().get(file as usize).map(|file| file.name)
     }
+    fn is_compiled_module(&self, name: &[u8]) -> bool {
+        !self.aot_image.is_empty()
+            && !self.prelinked_module_graph.is_empty()
+            && self
+                .find_ref(name)
+                .is_some_and(|file| file.prelinked_index != u32::MAX)
+    }
+    fn is_internal_module(&self, name: &[u8]) -> bool {
+        !self.aot_image.is_empty()
+            && self.find_ref(name).is_some_and(|file| {
+                bun_bundler::prelinked_module_graph::is_entry_point(
+                    self.prelinked_module_graph,
+                    file.prelinked_index,
+                ) == Some(false)
+            })
+    }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
     }

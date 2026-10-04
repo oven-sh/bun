@@ -86,10 +86,10 @@ pub mod mask {
             return if known & OBJECT == 0 { known } else { TOP };
         }
         let mut r = a & b;
-        if b & OBJECT != 0 {
+        if b & PLAIN_OBJECT != 0 {
             r |= a & BRANDABLE;
         }
-        if a & OBJECT != 0 {
+        if a & PLAIN_OBJECT != 0 {
             r |= b & BRANDABLE;
         }
         normalize(r)
@@ -1179,6 +1179,7 @@ pub mod oracle {
         root: Vec<u8>,
         files: HashMap<Vec<u8>, File>,
         keeps_objects: bool,
+        needs_every_source: bool,
     }
 
     static TABLE: OnceLock<Option<Table>> = OnceLock::new();
@@ -1196,11 +1197,54 @@ pub mod oracle {
             .strip_prefix(table.root.as_slice())
             .and_then(|relative| table.files.get(relative));
         let same = file.is_some_and(|f| f.len as usize == contents.len() && f.hash == fnv1a32(contents));
-        note_lookup(table, path, contents, if same { "same" } else if file.is_some() { "differs" } else { "unknown" });
+        let what = if same { "same" } else if file.is_some() { "differs" } else { "unknown" };
+        note_lookup(table, path, contents, what);
+        note_source(path, what);
         if !same {
             return None;
         }
         Some(file?.entries.as_slice())
+    }
+
+    static SOURCES: std::sync::Mutex<Option<HashMap<Vec<u8>, &'static str>>> = std::sync::Mutex::new(None);
+
+    fn note_source(path: &[u8], what: &'static str) {
+        let mut sources = SOURCES.lock().unwrap();
+        let sources = sources.get_or_insert_with(Default::default);
+        if !sources.contains_key(path) {
+            sources.insert(path.to_vec(), what);
+        }
+    }
+
+    fn is_code_of_the_program(path: &[u8]) -> bool {
+        const CODE: [&[u8]; 8] = [b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs"];
+        let is_file = path.first() == Some(&b'/') || path.get(1) == Some(&b':');
+        let is_in_a_package = path.windows(14).any(|part| part == b"/node_modules/" || part == b"\\node_modules\\");
+        is_file && !is_in_a_package && CODE.iter().any(|extension| path.ends_with(extension))
+    }
+
+    pub struct TableCoverage {
+        pub tagged: usize,
+        pub differing: usize,
+        pub unknown: usize,
+        pub refused: Vec<(Vec<u8>, &'static str)>,
+    }
+
+    pub fn take_table_coverage() -> Option<TableCoverage> {
+        let table = TAGS.get()?.as_ref()?;
+        let sources = SOURCES.lock().unwrap().take().unwrap_or_default();
+        let tagged = sources.values().filter(|what| **what == "same").count();
+        let mut not_seen: Vec<(Vec<u8>, &'static str)> = sources
+            .into_iter()
+            .filter(|(path, what)| *what == "differs" || (*what == "unknown" && is_code_of_the_program(path)))
+            .collect();
+        not_seen.sort();
+        let differing = not_seen.iter().filter(|(_, what)| *what == "differs").count();
+        let unknown = not_seen.len() - differing;
+        if !table.needs_every_source {
+            not_seen.retain(|(_, what)| *what == "differs");
+        }
+        Some(TableCoverage { tagged, differing, unknown, refused: not_seen })
     }
 
     fn note_lookup(table: &Table, path: &[u8], contents: &[u8], what: &str) {
@@ -1270,10 +1314,12 @@ pub mod oracle {
             }
             files.insert(name, File { len, hash, entries });
         }
+        let needs_every_source = !word(&mut at).is_some_and(|flags| flags & 1 != 0);
         Some(Table {
             root,
             files,
             keeps_objects: std::env::var_os("BUN_SOUND_TYPES_ORACLE_OBJECTS").is_some(),
+            needs_every_source,
         })
     }
 

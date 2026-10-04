@@ -62,7 +62,7 @@ function scalesInLoop(n: number) { let s = 0; const one = new Scaled(1); for (le
 function scalesLeakedInLoop(n: number) { let s = 0; const one = new Leaked(1); for (let i = 0; i < n; i++) s += one.twiceLeaked().v; return s; }
 const leaked: unknown[] = [new Leaked(3)];
 out.push(scalesInLoop(3), scalesLeakedInLoop(3), (leaked[0] as any).twiceLeaked().v);
-(leaked[0] as any).constructor.prototype.twiceLeaked = function () { return { v: 100 }; };
+(leaked[0] as any).constructor.prototype.twiceLeaked = function () { return new Leaked(100); };
 out.push(scalesLeakedInLoop(3));
 
 interface Optional { a: number; b?: number }
@@ -149,6 +149,7 @@ if (process.env.BREAK_TYPES) {
     ["a number for the string in an object that is returned in registers", () => readsTally(1, JSON.parse("7"))],
     ["a string in an object that is returned", () => readsKeptTally(JSON.parse('"text"'), "a")],
     ["a string in an object that is returned in registers from a try block", () => readsTallyFromTry(JSON.parse('"text"'), "a")],
+    ["an object that the constructor of the class did not make", () => { (leaked[0] as any).constructor.prototype.twiceLeaked = function () { return { v: 100 }; }; return scalesLeakedInLoop(3); }],
     ["a string in an object that is made in a try block and returned after it", () => { try { readsTallyMadeInTry(JSON.parse('"text"'), "a"); } catch (e) { return tallied.includes("noticed") + ", " + e; } }],
   ];
   for (const [what, attempt] of attempts) {

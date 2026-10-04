@@ -167,7 +167,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
-        if (!frame.callee() && frame.hasLineAndColumnInfo()) {
+        if (frame.hasLineAndColumnInfo()) {
             if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject); callerFunction && callerFunction->executable() == frame.ownerExecutable()) {
                 removeCount = i + 1;
                 break;

@@ -1,6 +1,6 @@
 //! `bun check`: type checks a TypeScript project. `bun run --check` and `bun test --check` go through [`check_before`].
 //! `bun build --check` and `Bun.build({ check: true })` run the check inside the bundle, when the bundler has read every
-//! file ([`check_for_build`]).
+//! file ([`check_for_build_command`], [`check_for_bun_build`]).
 
 use bstr::BStr;
 
@@ -466,30 +466,44 @@ fn already_read(sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRea
         .collect()
 }
 
-/// `BundleOptions::type_check` for `bun build --check` and `Bun.build({ check: true })`. The files
-/// of the bundle, `sources`, are not read again. The errors are added to `log`, which the build
-/// reports like its own. It runs on the thread of the bundler and prints nothing.
-pub(crate) fn check_for_build(
+/// `BundleOptions::type_check` for `bun build --check`.
+pub(crate) fn check_for_build_command(
     cwd: &[u8],
     entry_points: &[Box<[u8]>],
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
 ) -> bool {
+    check_for_build(cwd, entry_points, sources, log, true)
+}
+
+/// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
+pub(crate) fn check_for_bun_build(
+    cwd: &[u8],
+    entry_points: &[Box<[u8]>],
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    check_for_build(cwd, entry_points, sources, log, false)
+}
+
+/// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
+/// build reports like its own. It runs on the thread of the bundler.
+fn check_for_build(
+    cwd: &[u8],
+    entry_points: &[Box<[u8]>],
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    log: &mut bun_ast::Log,
+    shows_progress: bool,
+) -> bool {
     let entry_points: Vec<&[u8]> = entry_points.iter().map(|path| &**path).collect();
     let Some((paths, options)) = what_to_check(cwd, &entry_points) else {
         return true;
     };
-    let already_read = already_read(sources);
-    let report = run_quietly(
-        cwd,
-        None,
-        &paths,
-        &options,
-        0,
-        None,
-        already_read,
-        |report| report,
-    );
+    let (already_read, then) = (already_read(sources), |report| report);
+    let report = match shows_progress {
+        true => run(cwd, None, &paths, &options, 0, already_read, then),
+        false => run_quietly(cwd, None, &paths, &options, 0, None, already_read, then),
+    };
     for reported in &report.diagnostics {
         let kind = match reported.category {
             Category::Error => bun_ast::Kind::Err,

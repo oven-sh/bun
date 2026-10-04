@@ -153,7 +153,7 @@ impl BuildCommand {
 
         if ctx.bundler_options.check && ctx.bundler_options.transform_only {
             // Nothing is bundled, so nothing has been read.
-            if !crate::cli::check_command::check_for_build(
+            if !crate::cli::check_command::check_for_build_command(
                 bun_resolver::fs::FileSystem::instance().top_level_dir,
                 &this_transpiler.options.entry_points,
                 &mut core::iter::empty(),
@@ -166,7 +166,8 @@ impl BuildCommand {
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         } else if ctx.bundler_options.check {
-            this_transpiler.options.type_check = Some(crate::cli::check_command::check_for_build);
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
         }
 
         this_transpiler.options.source_map =

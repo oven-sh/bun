@@ -227,6 +227,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getLiteralTypeFromProperties`
     fn get_literal_type_from_properties(&mut self, ty: TypeId, index_flags: IndexFlags) -> TypeId {
+        if !index_flags.is_empty() {
+            return self.get_literal_type_from_properties_uncached(ty, index_flags);
+        }
+        if let Some(known) = self.p.keys_of_properties.get(&mut self.task, &ty) {
+            return known;
+        }
+        let scope = self.begin_scope();
+        let keys = self.get_literal_type_from_properties_uncached(ty, index_flags);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => (self.p.keys_of_properties).insert(&mut self.task, ty, keys, stored),
+            Err(_) => keys,
+        }
+    }
+
+    fn get_literal_type_from_properties_uncached(
+        &mut self,
+        ty: TypeId,
+        index_flags: IndexFlags,
+    ) -> TypeId {
         let include = tf::NUMBER_LIKE
             | tf::ES_SYMBOL_LIKE
             | if index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES) {

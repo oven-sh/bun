@@ -175,6 +175,20 @@ impl<'p, 's> Checker<'p, 's> {
         if let [one] = types {
             return *one;
         }
+        // The contextual type `Commands[T] | undefined` becomes the constraint, a union of
+        // hundreds of object types, next to `undefined`, for every property of an argument.
+        if let [a, b] = *types {
+            if let Some(known) = self.recent_unreduced_unions.get(a.0, b.0) {
+                return TypeId(known);
+            }
+            let union = self.create_unreduced_union(types);
+            self.recent_unreduced_unions.put(a.0, b.0, union.0);
+            return union;
+        }
+        self.create_unreduced_union(types)
+    }
+
+    fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
         for &ty in types {
             self.add_to_union(&mut members, ty);
@@ -1394,16 +1408,10 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let mut common: Vec<TypeId> = Vec::new();
-        for (k, &union) in unions.iter().enumerate() {
+        let mut checked = crate::util::FxHashSet::default();
+        for &union in &unions {
             for &t in self.parts(union) {
-                // Already checked with an earlier union.
-                if unions[..k]
-                    .iter()
-                    .any(|&earlier| self.contains_type(self.parts(earlier), t))
-                {
-                    continue;
-                }
-                if !self.each_union_contains(&unions, t) {
+                if !checked.insert(t) || !self.each_union_contains(&unions, t) {
                     continue;
                 }
                 // `undefined` and the missing type match each other. The missing type is the one
@@ -2007,6 +2015,26 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn sort_types(&self, types: &mut [TypeId]) {
+        // FOR SPEED: the members of `keyof` of a large type, of a template literal type, and the
+        // keywords of a CSS property. The text of each string literal is looked up once, not for
+        // every comparison.
+        if types.len() >= 16 {
+            let atoms = self.atoms();
+            let text = |ty: TypeId| match *self.data(ty) {
+                TypeData::StringLit { value, fresh } => Some((atoms.bytes(value), fresh)),
+                _ => None,
+            };
+            let mut texts: Vec<(Option<(&[u8], bool)>, TypeId)> =
+                types.iter().map(|&ty| (text(ty), ty)).collect();
+            texts.sort_by(|a, b| match (a.0, b.0) {
+                (Some(x), Some(y)) if x != y => x.cmp(&y),
+                _ => self.compare_types(a.1, b.1),
+            });
+            for (ty, sorted) in types.iter_mut().zip(texts) {
+                *ty = sorted.1;
+            }
+            return;
+        }
         types.sort_by(|&a, &b| self.compare_types(a, b));
     }
 

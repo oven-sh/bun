@@ -150,7 +150,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults conditionals
             mapped_param_constraints
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
@@ -312,6 +312,9 @@ pub struct Program<'s> {
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
     union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    /// `get_literal_type_from_properties` without index flags. Instantiations under several
+    /// mappers arrive at one object type.
+    keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
     never_intersections: ById<TypeId, bool, Buffered, &'s Session>,
     /// `getMappedTargetWithSymbol` of a mapped type.
     mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
@@ -463,6 +466,7 @@ impl<'s> Program<'s> {
             never_intersections: ById::new_in(session),
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
+            keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
             plain_global_refs: ById::new_in(session),
@@ -634,6 +638,7 @@ impl<'s> Program<'s> {
                 [((TypeId(u32::MAX), Atom::NONE), TypeId::NEVER); shape::RECENT_PROPS],
             ),
             recent_unions: Default::default(),
+            recent_unreduced_unions: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
             type_arguments_in_instantiation: Vec::new(),
@@ -1152,6 +1157,8 @@ pub struct Checker<'p, 's> {
     recent_intersected_props: Box<[((TypeId, Atom), TypeId); shape::RECENT_PROPS]>,
     /// The most recent results of `union` for two types, the lower id first.
     recent_unions: instantiate::Recent,
+    /// The same for `union_unreduced`, in the order of the arguments.
+    recent_unreduced_unions: instantiate::Recent,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,

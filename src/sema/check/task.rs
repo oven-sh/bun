@@ -318,7 +318,7 @@ pub struct Published {
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
 /// about a declared type parameter or flag a type. An entry of one of these is evaluated inside an evaluation that `relations` or a
 /// table keyed by a node or a symbol records, so a task that finds those entries does not ask for these.
-const TABLES_OF_RECORDS: [&str; 27] = [
+const TABLES_OF_RECORDS: [&str; 28] = [
     "shapes",
     "members",
     "sig_params",
@@ -336,6 +336,7 @@ const TABLES_OF_RECORDS: [&str; 27] = [
     "intersected_props",
     "union_properties",
     "union_objects",
+    "keys_of_properties",
     "conditionals",
     "resolved_return_types",
     "awaited_types",

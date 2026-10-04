@@ -230,7 +230,24 @@ fn main() {
             type AfterFile<'a> = &'a (
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
-            let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
+            // `--file-instructions`, with `--threads=1 --checkers=1`: the instructions since the
+            // previous file was checked, for each file. One checker in program order charges what
+            // several files need to the first of them, as typescript-go's `--singleThreaded` does.
+            let instructions_so_far = std::sync::atomic::AtomicU64::new(0);
+            let note_instructions =
+                |checker: &mut bun_sema::check::Checker<'_, '_>,
+                 file: bun_sema::program::FileId| {
+                    let now = bun_sema_standalone::instructions_and_cycles().0;
+                    let before =
+                        instructions_so_far.swap(now, std::sync::atomic::Ordering::Relaxed);
+                    let path = bun_sema::messages::text(checker.p.files.modules[file.idx()].path);
+                    eprintln!("file {:.4} G {path}", (now - before) as f64 / 1e9);
+                };
+            let after_file = if has("--file-instructions") {
+                Some(&note_instructions as AfterFile<'_>)
+            } else {
+                has("--error-types").then_some(&note_error_types as AfterFile<'_>)
+            };
             // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
             // its absolute path inside that directory.
             let declarations_out =

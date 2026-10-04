@@ -3902,9 +3902,10 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => return declared,
             }
         }
+        // `getBaseConstraintOrType`
         self.map_type(declared, |c, m| {
             let constraint = c.base_constraint(m);
-            if constraint == TypeId::UNKNOWN {
+            if constraint == TypeId::UNKNOWN && !c.has_unknown_base_constraint(m, 0) {
                 m
             } else {
                 constraint

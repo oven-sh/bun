@@ -641,6 +641,7 @@ fn with_printer<'p, T>(
             flags,
             is_transformer: false,
             indent,
+            container_pos: usize::MAX,
             approximate_length: 0,
             truncating: false,
             visited_types: Vec::new(),
@@ -943,6 +944,8 @@ struct Printer<'c, 'p, 's> {
     /// `writer.GetIndent()` for the current line. `None`: everything is printed on one line
     /// (`SingleLineStringWriter`).
     indent: Option<usize>,
+    /// `containerPos`, among the type nodes the transformer reuses. `usize::MAX`: -1.
+    container_pos: usize,
     approximate_length: usize,
     truncating: bool,
     visited_types: Vec<TypeId>,
@@ -2590,7 +2593,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `typeParameterToName`
     fn type_parameter_to_name(&mut self, parameter: TypeId) -> Vec<u8> {
         let raw = self.name_of_type_parameter(parameter);
-        if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS == 0 {
+        // The declaration transformer copies the nodes that are written.
+        if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS == 0 || self.is_transformer {
             return raw;
         }
         if let Some(named) = self
@@ -3354,6 +3358,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let hir = self.c.hir(file);
         let comments = super::spans::get_leading_comment_ranges(&hir.text, pos as usize);
         super::errors_declaration_emit::comments_text(&hir.text, comments, indent)
+    }
+
+    /// `shouldEmitComments` for the nodes of `file` that the declaration transformer reuses.
+    fn should_emit_comments(&self, file: FileId) -> bool {
+        self.is_transformer
+            && !self.c.files().options.remove_comments
+            && self.enclosing_declaration.is_some_and(|it| it.file == file)
     }
 
     /// `node.Pos()`, which is before the leading trivia, of a member, a parameter, a property of
@@ -4307,10 +4318,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             && ends
                 .last()
                 .is_some_and(|&end| after_delimiter(end).is_some());
-        let writes_comments = self.is_transformer
-            && !self.c.files().options.remove_comments
-            && self.enclosing_declaration.is_some_and(|it| it.file == file);
-        let Some(indent) = self.indent.filter(|_| writes_comments) else {
+        let Some(indent) = self.indent.filter(|_| self.should_emit_comments(file)) else {
             let separator = cat!(delimiter, b" ");
             let comma: &[u8] = if has_trailing_comma { b"," } else { b"" };
             return cat!(parts.join(&separator[..]), comma);

@@ -4027,7 +4027,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 }
                 Some(EnumValue::String(value)) => {
                     member.extend_from_slice(b" = ");
-                    member.extend_from_slice(&super::print::quoted(self.name(value), b'"', false));
+                    member.extend_from_slice(&super::print::quoted(self.name(value), b'"', true));
                 }
                 None => {}
             }
@@ -4763,11 +4763,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
         // `IsPrimitiveLiteralValue`: it is emitted verbatim.
         let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
-            // `CreateLiteralConstValue`
             let literal = self.c.type_of_expr(self.file(), e);
-            let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
-            let enclosing = Some(self.enclosing);
-            Ensured::Initializer(self.c.type_to_type_node(literal, enclosing, flags, None))
+            Ensured::Initializer(self.create_literal_const_value(literal))
         } else {
             self.tracker.fallback_stack.push(assignment);
             let ensured = self.ensure_type(assignment, false);
@@ -5346,6 +5343,17 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.c.is_fresh_literal(ty).then_some(ty)
     }
 
+    /// `CreateLiteralConstValue` for a type that is not `TypeFlagsEnumLike`. Its string literal is
+    /// without `EFNoAsciiEscaping`, unlike that of the node builder.
+    fn create_literal_const_value(&mut self, literal: TypeId) -> Vec<u8> {
+        if let TypeData::StringLit { value, .. } = *self.c.data(literal) {
+            return super::print::quoted(self.name(value), b'"', true);
+        }
+        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+        self.c
+            .type_to_type_node(literal, Some(self.enclosing), flags, None)
+    }
+
     /// `ensureType`, `ensureNoInitializer`
     fn ensure_type(&mut self, node: Node, ignores_private: bool) -> Ensured {
         let file = self.file();
@@ -5378,9 +5386,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if !self.writes {
                 return Ensured::Nothing;
             }
-            let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
-            let enclosing = Some(self.enclosing);
-            return Ensured::Initializer(self.c.type_to_type_node(literal, enclosing, flags, None));
+            return Ensured::Initializer(self.create_literal_const_value(literal));
         }
         // An export assignment and a binding element have none.
         if let NodeData::Type(annotation) = hir.data(hir.type_node(node))

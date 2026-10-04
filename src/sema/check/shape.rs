@@ -3579,7 +3579,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let ty = self.type_of_prop(prop, mapper);
-        copy(ty, !is_readonly)
+        copy(ty, is_readonly == readonly)
     }
 
     /// The members of the union `ty` in the order `mapType` visits them.
@@ -3725,11 +3725,10 @@ impl<'p, 's> Checker<'p, 's> {
                 b.add(prop.clone_in(self.arena));
                 continue;
             }
-            // `getSpreadSymbol`: a write-only property reads as `undefined`. It and a readonly
-            // property are recreated.
-            let anew = prop
-                .flags
-                .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
+            // `getSpreadSymbol`: a write-only property reads as `undefined`. It is recreated, and so
+            // is a property that is readonly where the result is not, or the reverse.
+            let anew = prop.flags.contains(PropFlags::WRITE_ONLY)
+                || prop.flags.contains(PropFlags::READONLY) != readonly;
             // A property that is not recreated is the same symbol: a method remains a method.
             let kept = if anew {
                 PropFlags::OPTIONAL
@@ -3806,7 +3805,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 source = Self::copy_of(ty, &[&b.shape.props[i], prop], false, self.arena);
             } else {
-                let anew = is_write_only || prop.flags.contains(PropFlags::READONLY);
+                let anew = is_write_only || prop.flags.contains(PropFlags::READONLY) != readonly;
                 let kept = if anew {
                     PropFlags::OPTIONAL
                 } else {
@@ -4989,6 +4988,30 @@ impl<'p, 's> Checker<'p, 's> {
         let result = self.next_base_constraint(ty);
         self.constraint_stack = around;
         result
+    }
+
+    /// Whether `getBaseConstraintOfType(ty)` is `unknown`. `base_constraint` is `unknown` also for a
+    /// type that has no constraint.
+    pub(super) fn has_unknown_base_constraint(&mut self, ty: TypeId, depth: u32) -> bool {
+        if ty == TypeId::UNKNOWN {
+            return true;
+        }
+        if depth == 10 || self.base_constraint(ty) != TypeId::UNKNOWN {
+            return false;
+        }
+        match self.data(ty) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => self
+                .constraint_of_type_param(ty)
+                .is_some_and(|it| self.has_unknown_base_constraint(it, depth + 1)),
+            TypeData::Union(members) => members
+                .iter()
+                .any(|&it| self.has_unknown_base_constraint(it, depth + 1)),
+            TypeData::Cond { .. } => {
+                let constraint = self.get_constraint_of_conditional_type(ty);
+                self.has_unknown_base_constraint(constraint, depth + 1)
+            }
+            _ => false,
+        }
     }
 
     /// `getNextBaseConstraint`: the same, as part of the constraint computation in progress.

@@ -1506,6 +1506,19 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getConstraintFromConditionalType`, and the base constraint of its result
     /// (`computeBaseConstraint`).
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> TypeId {
+        let constraint = self.get_constraint_of_conditional_type(this);
+        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
+        // object type.
+        let constraint = self.next_base_constraint(constraint);
+        if self.some_type(constraint, |c, m| c.is_deferred(m)) {
+            TypeId::UNKNOWN
+        } else {
+            constraint
+        }
+    }
+
+    /// `getConstraintOfConditionalType`
+    pub(super) fn get_constraint_of_conditional_type(&mut self, this: TypeId) -> TypeId {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
         // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query
         // for lack of capacity on `stack`.
@@ -1530,14 +1543,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.constraint_from_conditional(this)
         };
         self.conditional_constraint_depth -= 1;
-        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
-        // object type.
-        let constraint = self.next_base_constraint(constraint);
-        if self.some_type(constraint, |c, m| c.is_deferred(m)) {
-            TypeId::UNKNOWN
-        } else {
-            constraint
-        }
+        constraint
     }
 
     // ───────────────────────────── mapped types ─────────────────────────────

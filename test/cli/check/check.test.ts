@@ -706,6 +706,27 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("--traceResolution: an `import()` is resolved once more for each `import` or `require` in it", async () => {
+      // typescript-go finds them by searching the text for those words.
+      using dir = project({
+        "a.ts": `export const a = [import("./plain"), import("./require-me"), import(/* import */ "./import-import")];\n`,
+        "plain.ts": `export {};\n`,
+        "require-me.ts": `export {};\n`,
+        "import-import.ts": `export {};\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--traceResolution"]);
+      expect(stdout.split("\n").flatMap(line => line.match(/^======== Resolving module '(.*?)'/)?.[1] ?? [])).toEqual([
+        "./plain",
+        "./require-me",
+        "./require-me",
+        "./import-import",
+        "./import-import",
+        "./import-import",
+        "./import-import",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
     test("extends, with comments and trailing commas", async () => {
       using dir = project({
         "base.json": `{\n  // the options everybody has\n  "compilerOptions": ${JSON.stringify(JSON.parse(tsconfig).compilerOptions)},\n}`,
@@ -791,6 +812,23 @@ describe.concurrent("bun check", () => {
   });
 
   describe("project references", () => {
+    test("a type parameter that shadows another keeps its name in the declaration file", async () => {
+      const compilerOptions = JSON.parse(tsconfig).compilerOptions;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions, files: ["b.ts"], references: [{ path: "./a" }] }),
+        "a/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...compilerOptions, noEmit: false, composite: true, outDir: "dist", rootDir: "src" },
+          include: ["src"],
+        }),
+        "a/src/x.ts": `export interface Box<A> {\n  readonly map: <A>(value: A) => A;\n}\n`,
+        "b.ts": `import type { Box } from "./a/src/x";\nexport const map: Box<1>["map"] = 1;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"b.ts(2,14): error TS2322: Type 'number' is not assignable to type '<A>(value: A) => A'."`,
+      );
+    });
+
     const options = {
       strict: true,
       composite: true,
@@ -12749,6 +12787,260 @@ export { Late };
           Types of property 'tableName' are incompatible.
             Type 'string' is not assignable to type 'number'."
       `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a union is `unknown` where a property is read if the constraint of a generic member is `unknown`", async () => {
+      using dir = project({
+        "a.ts": `type Cond<N> = N extends string ? { type: "a"; n: N } : unknown
+type Other<N> = N extends string ? { type: "b" } | { type: "c" } : never
+type Part<T> = { type: "x" } | Cond<keyof T> | Other<keyof T>
+export function f<T>(part: Part<T>) {
+  return part.type
+}
+type Part2<T> = { type: "x" } | Cond<keyof T>
+export function g<T>(part: Part2<T>) {
+  return part.type
+}
+export function h<T>(part: Cond<keyof T>) {
+  return part.type
+}
+export function i<T>(parts: Array<Part<T>>) {
+  for (const part of parts) {
+    if (part.type === "x") return part
+  }
+  return parts.find((part) => part.type === "x")
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,10): error TS18046: 'part' is of type 'unknown'.
+        a.ts(9,15): error TS2339: Property 'type' does not exist on type 'Part2<T>'.
+          Property 'type' does not exist on type 'Cond<keyof T>'.
+        a.ts(12,15): error TS2339: Property 'type' does not exist on type 'Cond<keyof T>'.
+        a.ts(16,9): error TS18046: 'part' is of type 'unknown'.
+        a.ts(18,31): error TS18046: 'part' is of type 'unknown'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a member with the name of a type parameter of its class or interface comes first", async () => {
+      using dir = project({
+        "a.ts": `export interface Key<out Identifier, out Shape> {
+  readonly first: 1
+  readonly Service: Shape
+  readonly Identifier: Identifier
+  readonly key: string
+  readonly Shape: 2
+}
+export const k: Key<1, 2> = new Set<string>()
+export class C<Zed, Why> {
+  a = 1
+  Why = 2
+  b = 3
+  Zed = 4
+}
+export const c: C<1, 2> = new Set<string>()
+export type Keys = keyof Key<1, 2>
+export const bad: Keys = 0
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,14): error TS2739: Type 'Set<string>' is missing the following properties from type 'Key<1, 2>': Identifier, Shape, first, Service, key
+        a.ts(15,14): error TS2739: Type 'Set<string>' is missing the following properties from type 'C<1, 2>': Zed, Why, a, b
+        a.ts(17,14): error TS2322: Type '0' is not assignable to type 'keyof Key<1, 2>'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a mapped type whose key has a circular constraint reports nothing else about the key", async () => {
+      using dir = project({
+        "a.ts": `export declare const catchTags: {
+  <
+    E,
+    Cases extends
+      & { [K in Extract<E, { _tag: string }>["_tag"]]+?: (error: Extract<E, { _tag: K }>) => any }
+      & (unknown extends E ? {} : { [K in Exclude<Cases, Extract<E, { _tag: string }>["_tag"]>]: never })
+  >(cases: Cases): E
+}
+export type M<Cases extends { [K in Exclude<Cases, "a">]: never }> = Cases
+export type N<Cases extends { a: 1 }> = { [K in Exclude<Cases, "a">]: never }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,7): error TS2313: Type parameter 'Cases' has a circular constraint.
+        a.ts(6,43): error TS2313: Type parameter 'K' has a circular constraint.
+        a.ts(9,29): error TS2313: Type parameter 'Cases' has a circular constraint.
+        a.ts(9,37): error TS2313: Type parameter 'K' has a circular constraint.
+        a.ts(10,49): error TS2322: Type 'Exclude<Cases, "a">' is not assignable to type 'string | number | symbol'.
+          Type '{ a: 1; }' is not assignable to type 'string | number | symbol'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an `infer` type parameter that the extends type does not mention is not inferred when conditional types are compared", async () => {
+      using dir = project({
+        "a.ts": `type Ignore<X> = string;
+type Simple<T, E> = T extends Ignore<infer A> ? [A, E] : E;
+declare const make: <T>(x: T) => Simple<T, 1 | 2>;
+export const wider: <T>(x: T) => Simple<T, 1 | 2 | 3> = make;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS2322: Type '<T>(x: T) => Simple<T, 1 | 2>' is not assignable to type '<T>(x: T) => Simple<T, 1 | 2 | 3>'.
+          Type 'Simple<T, 1 | 2>' is not assignable to type 'Simple<T, 1 | 2 | 3>'.
+            Type '1 | 2 | [unknown, 1 | 2]' is not assignable to type 'Simple<T, 1 | 2 | 3>'.
+              Type '1' is not assignable to type 'Simple<T, 1 | 2 | 3>'.
+                Type '[unknown, 1 | 2]' is not assignable to type '[A, 1 | 2 | 3]'.
+                  Type at position 0 in source is not compatible with type at position 0 in target.
+                    Type 'unknown' is not assignable to type 'A'.
+                      'A' could be instantiated with an arbitrary type which could be unrelated to 'unknown'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a parenthesized list with a colon that turns out not to be the parameters of an arrow function", async () => {
+      using dir = project({
+        "a.ts": `declare const map: any, f: any, name: string
+export const x = (a: any) => map(f(a), (b: any) => ([name]: b }, { ...a) as any)
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,59): error TS1005: ')' expected.
+        a.ts(2,63): error TS1005: ',' expected.
+        a.ts(2,64): error TS1128: Declaration or statement expected.
+        a.ts(2,68): error TS1128: Declaration or statement expected.
+        a.ts(2,71): error TS1434: Unexpected keyword or identifier.
+        a.ts(2,72): error TS1128: Declaration or statement expected.
+        a.ts(2,74): error TS1434: Unexpected keyword or identifier.
+        a.ts(2,77): error TS1434: Unexpected keyword or identifier.
+        a.ts(2,80): error TS1128: Declaration or statement expected.
+        a.ts(3,1): error TS1005: '}' expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a name and type parameters in an object literal are a method", async () => {
+      using dir = project({
+        "a.ts": `export const O = {
+  Complete: <A>(value: A): A => ({ _tag: "Complete"),
+  InputRequired: (fields: number): number => ({
+    _tag: "InputRequired",
+    ...fields
+  })
+}
+
+export type C = NonNullable<
+  string
+>
+
+export interface N<out Version extends string = "a"> {
+  readonly protocolVersion: Version
+  readonly clientInfo: Version extends "a" ? 1
+    : 2 | undefined
+  readonly requestMetadata?:
+    | (Version extends "a" ? C
+      : C | 3)
+    | undefined
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,52): error TS1005: ',' expected.
+        a.ts(2,53): error TS1136: Property assignment expected.
+        a.ts(9,1): error TS1005: ')' expected.
+        a.ts(9,13): error TS1005: ',' expected.
+        a.ts(13,1): error TS1005: ',' expected.
+        a.ts(13,18): error TS1005: ',' expected.
+        a.ts(13,54): error TS1005: '(' expected.
+        a.ts(14,3): error TS1128: Declaration or statement expected.
+        a.ts(15,3): error TS1005: ',' expected.
+        a.ts(15,32): error TS1005: ',' expected.
+        a.ts(15,40): error TS1005: ':' expected.
+        a.ts(17,3): error TS1005: ',' expected.
+        a.ts(18,5): error TS1109: Expression expected.
+        a.ts(18,16): error TS1005: ')' expected.
+        a.ts(18,24): error TS1005: ':' expected.
+        a.ts(19,14): error TS1005: ',' expected.
+        a.ts(20,5): error TS1136: Property assignment expected.
+        a.ts(21,1): error TS1128: Declaration or statement expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the parameters of an arrow function are not parsed as expressions", async () => {
+      using dir = project({
+        "a.ts": `export const annotate = (text: string, ...styles: Array<string<string>>) => {
+  const flat = styles.flat()
+  return \`\${flat.join("")}\${text}\`
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,63): error TS1005: '>' expected.
+        a.ts(1,70): error TS1005: ',' expected.
+        a.ts(1,72): error TS1109: Expression expected.
+        a.ts(1,74): error TS1128: Declaration or statement expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("of two copies of a package the one that is reached first, depth first, is in the program", async () => {
+      using dir = project({
+        "a.ts": `import "x";
+import "y";
+`,
+        "node_modules/x/index.d.ts": `import "z";
+`,
+        "node_modules/x/node_modules/z/index.d.ts": `import "dup";
+`,
+        "node_modules/x/node_modules/z/node_modules/dup/index.ts": `export const n: string = 1;
+`,
+        "node_modules/x/node_modules/z/node_modules/dup/package.json": `{ "name": "dup", "version": "1.0.0", "types": "index.ts" }
+`,
+        "node_modules/x/node_modules/z/package.json": `{ "name": "z", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/x/package.json": `{ "name": "x", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        "node_modules/y/index.d.ts": `import "dup";
+`,
+        "node_modules/y/node_modules/dup/index.ts": `export const n: string = 1;
+`,
+        "node_modules/y/node_modules/dup/package.json": `{ "name": "dup", "version": "1.0.0", "types": "index.ts" }
+`,
+        "node_modules/y/package.json": `{ "name": "y", "version": "1.0.0", "types": "index.d.ts" }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"node_modules/x/node_modules/z/node_modules/dup/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("a `main` that ends in a slash is only looked up as a directory", async () => {
+      using dir = project({
+        "a.ts": `import { a } from "p";
+export const s: string = a;
+`,
+        "node_modules/p/lib.d.ts": `export declare const a: string;
+`,
+        "node_modules/p/lib/index.d.ts": `export declare const a: number;
+`,
+        "node_modules/p/package.json": `{ "name": "p", "version": "1.0.0", "main": "lib/" }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
       expect(exitCode).toBe(1);
     });
 

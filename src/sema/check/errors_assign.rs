@@ -887,6 +887,10 @@ impl Checker<'_, '_> {
             // `getConstraintTypeFromMappedType`: a circular constraint is an error, which is
             // reported elsewhere.
             let param = self.type_param(file, hir[m].param);
+            // `getConstraintOfTypeParameter`
+            if !self.has_non_circular_base_constraint(param) {
+                return;
+            }
             let Some(constraint) = self.constraint_of_type_param(param) else {
                 return;
             };

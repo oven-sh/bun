@@ -24,8 +24,8 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parse::lists::{ListKind, ListStep};
 use crate::parser::{
-    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    AsyncPrefixExpression, AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc,
+    ExprOrLetStmt, FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList,
 };
@@ -47,6 +47,17 @@ enum ArrowAttempt {
     /// `isParenthesizedArrowFunctionExpression` returned false, or the speculative parse failed:
     /// not an arrow function, whatever follows the ")".
     NeverArrow,
+}
+
+/// `mark` in `tryParseParenthesizedArrowFunctionExpression`, taken no earlier than needed: at the
+/// first ":" after an item. Up to there a list of parameters and a list of expressions read the
+/// same. Tolerant mode only.
+struct MarkAtFirstColon<'a> {
+    snapshot: crate::p::ParserSnapshot<'a>,
+    /// The item before the ":" and its index.
+    item: Expr,
+    index: usize,
+    errors: DeferredErrors,
 }
 
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
@@ -875,6 +886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut parameter_modifiers: Vec<(usize, crate::sema::ts_syntax::Modifier)> = Vec::new();
         // "(a, )". Only set in tolerant mode.
         let mut has_trailing_comma = false;
+        let mut first_colon_mark: Option<Box<MarkAtFirstColon<'a>>> = None;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -1004,6 +1016,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 item = Expr::init_identifier(ref_, range.loc);
                 p.lexer.next()?;
                 p.parse_suffix(&mut item, Level::Comma, Some(&mut errors), EFlags::None)?;
+            } else if opts.force_arrow_fn
+                && p.is_tolerant()
+                && !p.lexer.is_log_disabled
+                // Whether these are names depends on the context, which `parse_prefix` knows.
+                && !(p.lexer.token == T::TIdentifier
+                    && AsyncPrefixExpression::find(p.lexer.identifier)
+                        != AsyncPrefixExpression::None)
+            {
+                item = p.parse_name_of_parameter(&mut errors)?;
             } else {
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
                 if matches!(item.data, js_ast::expr::Data::EMissing(_))
@@ -1033,6 +1054,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 && attempt != ArrowAttempt::NeverArrow
             {
                 has_type = true;
+                if type_colon_range.len == 0
+                    && attempt == ArrowAttempt::Undecided
+                    && !opts.force_arrow_fn
+                    && p.is_tolerant()
+                    && !p.lexer.is_log_disabled
+                    // An expression ends sooner at dots, and goes on at the ":" after a "?".
+                    && spread_range.len == 0
+                    && errors.invalid_expr_after_question.map(|r| r.loc.start)
+                        == question_before.map(|r| r.loc.start)
+                {
+                    first_colon_mark = Some(p.mark_at_first_colon(item, items_list.len(), errors));
+                }
                 // Tolerant mode reports the first ":" if this turns out not to be an arrow
                 // function.
                 if type_colon_range.len == 0 || !p.is_tolerant() {
@@ -1132,7 +1165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.lexer.token == T::TCloseParen && p.is_tolerant() && !p.lexer.is_log_disabled;
         }
         p.lexer.list_contexts = saved_contexts;
-        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
+        let mut items: &'a mut [Expr] = items_list.into_bump_slice_mut();
 
         // `parseParenthesizedArrowFunctionExpression`: a speculative parse fails if the list does
         // not end at its ")".
@@ -1305,6 +1338,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
 
             if is_arrow_fn || opts.force_arrow_fn {
+                if let Some(mark) = first_colon_mark.take() {
+                    p.release_parser_snapshot(&mark.snapshot);
+                }
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
 
@@ -1356,6 +1392,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         if attempt == ArrowAttempt::ArrowOrBacktrack {
             return Err(Error::Backtrack);
+        }
+
+        // `tryParseParenthesizedArrowFunctionExpression` rewinds, and the expression that
+        // `parseParenthesizedExpression` then parses ends before the ":".
+        if let Some(mark) = first_colon_mark.take() {
+            let (item, index, errors_before_colon) = p.rewind_to_first_colon(*mark);
+            errors = errors_before_colon;
+            let all_items = core::mem::take(&mut items);
+            items = &mut all_items[..=index];
+            items[index] = item;
+            if p.preserves_type_syntax() {
+                item_ends.truncate(index);
+                item_ends.push(p.lexer.full_start());
+            }
+            spread_range = bun_ast::Range::default();
+            has_trailing_comma = false;
         }
 
         // If we get here, it's not an arrow function so undo the pushing of the
@@ -1469,6 +1521,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Err(crate::Error::SyntaxError)
     }
 
+    /// `mark`, at the ":" after `item`, which is item number `index` of its list. `errors`: those
+    /// deferred so far.
+    #[inline(never)]
+    fn mark_at_first_colon(
+        &mut self,
+        item: Expr,
+        index: usize,
+        errors: DeferredErrors,
+    ) -> Box<MarkAtFirstColon<'a>> {
+        Box::new(MarkAtFirstColon {
+            snapshot: self.parser_snapshot(),
+            item,
+            index,
+            errors,
+        })
+    }
+
+    /// `rewind`, after the list. What `parse_paren_expr_as` restores after its list stays as it is.
+    /// Returns what `mark_at_first_colon` was given.
+    #[cold]
+    #[inline(never)]
+    fn rewind_to_first_colon(
+        &mut self,
+        mark: MarkAtFirstColon<'a>,
+    ) -> (Expr, usize, DeferredErrors) {
+        let MarkAtFirstColon {
+            snapshot,
+            item,
+            index,
+            errors,
+        } = mark;
+        let outer = (self.allow_in, self.fn_or_arrow_data_parse.clone());
+        self.restore_parser_snapshot(snapshot);
+        (self.allow_in, self.fn_or_arrow_data_parse) = outer;
+        (item, index, errors)
+    }
+
     /// `parseParameterEx`: the items of a parenthesized list are the parameters `args`. For each
     /// item: the position and the full start of its first token, its end, whether a "?" follows it,
     /// its type annotation, and the position of the dots before it.
@@ -1541,6 +1630,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // A modifier keyword that cannot be a name is skipped, so that the list makes progress.
         if !has_modifiers && p.is_modifier_kind() {
             p.lexer.next()?;
+        }
+        Ok(name)
+    }
+
+    /// `parseParameterEx` in the head of what is known to be an arrow function, at the name: the
+    /// name or pattern (`parseNameOfParameter`), the "?" and, if no type comes first, the
+    /// initializer. No operator continues the name as it would continue an expression. "this" is
+    /// followed by a type at most.
+    fn parse_name_of_parameter(&mut self, errors: &mut DeferredErrors) -> Result<Expr, Error> {
+        let p = self;
+        let mut name = match p.lexer.token {
+            T::TIdentifier => {
+                let (ref_, loc) = (p.store_name_in_ref(p.lexer.identifier), p.lexer.loc());
+                p.lexer.next()?;
+                let mut identifier = Expr::init_identifier(ref_, loc);
+                // With an escape, the source text is longer than the name.
+                if !ref_.is_source_contents_slice() {
+                    p.finish_expr(&mut identifier);
+                }
+                identifier
+            }
+            T::TThis => return p.parse_prefix(Level::Comma, None, EFlags::None),
+            _ => p.parse_prefix(Level::Comma, Some(&mut *errors), EFlags::None)?,
+        };
+        if p.lexer.token == T::TQuestion {
+            p.note_loc(&mut name.loc, Mark::Optional, p.lexer.loc());
+            p.lexer.next()?;
+            errors.invalid_expr_after_question = Some(p.lexer.range());
+        } else if p.lexer.token == T::TEquals {
+            p.parse_suffix(&mut name, Level::Comma, Some(errors), EFlags::None)?;
         }
         Ok(name)
     }

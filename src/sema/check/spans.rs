@@ -962,24 +962,26 @@ impl<'a, 's> Spans<'a, 's> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// The number of `(` immediately before `pos`, at `floor` or later. Parentheses around a type
-    /// are not stored.
-    fn parens_before(self, floor: usize, pos: usize) -> usize {
-        let (mut at, mut count) = (pos, 0);
-        loop {
-            let end = skip_trivia_back(self.text, at);
-            if end == 0 || end <= floor {
-                return count;
+    /// The positions of the `(` immediately before `pos`, at `floor` or later, from the innermost.
+    /// Parentheses around a type are not stored.
+    fn parens_before(self, floor: usize, pos: usize) -> impl Iterator<Item = usize> {
+        let mut at = pos;
+        std::iter::from_fn(move || {
+            loop {
+                let end = skip_trivia_back(self.text, at);
+                if end == 0 || end <= floor {
+                    return None;
+                }
+                at = end - 1;
+                match self.text[at] {
+                    b'(' => return Some(at),
+                    // A leading operator before a whole type belongs to it, and so does the `!` of
+                    // JSDoc.
+                    b'|' | b'&' | b'!' => {}
+                    _ => return None,
+                }
             }
-            match self.text[end - 1] {
-                b'(' => count += 1,
-                // A leading operator before a whole type belongs to it, and so does the `!` of
-                // JSDoc.
-                b'|' | b'&' | b'!' => {}
-                _ => return count,
-            }
-            at = end - 1;
-        }
+        })
     }
 
     /// `node` in the source, including the enclosing parentheses that open at `floor` or later.
@@ -987,7 +989,7 @@ impl<'a, 's> Spans<'a, 's> {
     /// enclose that type. 0 for a type that is not part of another.
     fn ty_in(self, node: TypeNodeId, floor: usize) -> usize {
         let mut end = self.ty(node);
-        for _ in 0..self.parens_before(floor, self.type_pos(node)) {
+        for _ in self.parens_before(floor, self.type_pos(node)) {
             end = self.eat(end, b")");
         }
         end
@@ -1226,14 +1228,14 @@ impl<'s> Checker<'_, 's> {
         self.spans(file).ty_in(node, start as usize) as u32
     }
 
-    /// The number of `ParenthesizedType` nodes around `node` that open at `floor` or later. 0 where
-    /// the text is not retained.
-    pub(super) fn parenthesized_type_depth(
+    /// Where the `ParenthesizedType` nodes around `node` that open at `floor` or later start, from
+    /// the innermost. None where the text is not retained.
+    pub(super) fn parenthesized_types_around(
         &self,
         file: FileId,
         node: TypeNodeId,
         floor: u32,
-    ) -> usize {
+    ) -> impl Iterator<Item = usize> {
         let spans = self.spans(file);
         spans.parens_before(floor as usize, spans.type_pos(node))
     }

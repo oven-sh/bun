@@ -4,7 +4,7 @@
 //! (`pseudotypenodebuilder.go`, `nodecopy.go`). The same pseudochecker is used to check
 //! `isolatedDeclarations`.
 
-use super::super::errors_declaration_emit::{Element, Writer};
+use super::super::errors_declaration_emit::{Element, Writer, comments_text};
 use super::super::errors_isolated_declarations::{
     Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
@@ -945,9 +945,11 @@ impl<'p> Printer<'_, 'p, '_> {
         }
         self.depth += 1;
         let recovery_scope = self.start_recovery_scope();
-        let visited = self.visit_existing_type_node_worker(file, node);
-        self.depth -= 1;
         let hir = self.c.hir(file);
+        let visited = self.emit_with_leading_comments(file, hir[node].pos, |printer| {
+            printer.visit_existing_type_node_worker(file, node)
+        });
+        self.depth -= 1;
         let mut visited = match visited {
             Some(visited) if !self.had_error() => visited,
             _ if matches!(hir[node].kind, TypeNodeKind::Predicate { .. }) => {
@@ -964,10 +966,58 @@ impl<'p> Printer<'_, 'p, '_> {
                 serialized
             }
         };
-        for _ in 0..self.c.parenthesized_type_depth(file, node, floor) {
+        for start in self.c.parenthesized_types_around(file, node, floor) {
             visited = Node::simple(cat!(b"(", visited.text, b")"));
+            self.emit_leading_comments_of_node(file, start, &mut visited);
         }
         Some(visited)
+    }
+
+    /// `emit`, which emits a node of `file` whose first token is at `start`, between
+    /// `emitLeadingCommentsOfNode` and the part of `emitTrailingCommentsOfNode` that restores
+    /// `containerPos`.
+    fn emit_with_leading_comments(
+        &mut self,
+        file: FileId,
+        start: u32,
+        emit: impl FnOnce(&mut Self) -> Option<Node>,
+    ) -> Option<Node> {
+        let container_pos = self.container_pos;
+        if self.is_transformer {
+            self.container_pos = self.full_start(file, start as usize);
+        }
+        let node = emit(self);
+        self.container_pos = container_pos;
+        let mut node = node?;
+        self.emit_leading_comments_of_node(file, start as usize, &mut node);
+        Some(node)
+    }
+
+    /// `emitLeadingComments` for `node`, which is emitted for a node of `file` whose first token is
+    /// at `start`. It continues a line, and a leading comment follows a line break.
+    fn emit_leading_comments_of_node(&self, file: FileId, start: usize, node: &mut Node) {
+        let Some(indent) = self.indent.filter(|_| self.should_emit_comments(file)) else {
+            return;
+        };
+        let pos = self.full_start(file, start);
+        if pos == self.container_pos {
+            return;
+        }
+        let text = &self.c.hir(file).text[..];
+        let comments = super::spans::get_leading_comment_ranges(text, pos);
+        let comments = comments_text(text, comments, indent);
+        if comments.is_empty() {
+            return;
+        }
+        let comments = cat!(b"\n", b"    ".repeat(indent), comments);
+        for emitted in std::iter::once(&mut node.text).chain(&mut node.in_extends) {
+            *emitted = cat!(comments, emitted);
+        }
+    }
+
+    /// `node.Pos()` of the node of `file` whose first token is at `start`.
+    fn full_start(&self, file: FileId, start: usize) -> usize {
+        super::spans::skip_trivia_back(&self.c.hir(file).text, start)
     }
 
     /// `getModuleSpecifierOverride` for the import type `node` of `file`. `None`: the literal is
@@ -1248,7 +1298,8 @@ impl<'p> Printer<'_, 'p, '_> {
                 };
                 for e in elems.iter() {
                     let elem = hir[e];
-                    let Some(ty) = self.visit_existing_type_node(file, elem.written, 0) else {
+                    let start = elem.start as usize;
+                    let Some(ty) = self.visit_list_element(file, elem.written, 0, start) else {
                         self.indent = outer;
                         return None;
                     };
@@ -1269,11 +1320,11 @@ impl<'p> Printer<'_, 'p, '_> {
                     });
                 }
                 self.indent = outer;
-                match outer.filter(|_| is_on_several_lines && !parts.is_empty()) {
-                    // `MultiLineTupleTypeElements`
+                match outer.filter(|_| is_on_several_lines) {
+                    // `MultiLineTupleTypeElements`. `emitListRange` writes the line terminator of
+                    // an empty list too.
                     Some(level) => {
-                        let writes_comments = !self.c.files().options.remove_comments
-                            && self.enclosing_declaration.is_some_and(|it| it.file == file);
+                        let writes_comments = self.should_emit_comments(file);
                         // `Pos()` of an element: the end of the `[`, or of the comma before it.
                         let mut element_pos = writes_comments.then_some(pos + 1);
                         let mut elements = Vec::with_capacity(parts.len());
@@ -1508,9 +1559,33 @@ impl<'p> Printer<'_, 'p, '_> {
         let hir = self.c.hir(file);
         let mut nodes = Vec::with_capacity(list.len());
         for node in hir.ids(list) {
-            nodes.push(self.visit_existing_type_node(file, node, floor)?);
+            if !self.is_transformer {
+                nodes.push(self.visit_existing_type_node(file, node, floor)?);
+                continue;
+            }
+            let outermost = (self.c.parenthesized_types_around(file, node, floor)).last();
+            let start = outermost.unwrap_or(hir[node].pos as usize);
+            nodes.push(self.visit_list_element(file, node, floor, start)?);
         }
         Some(nodes)
+    }
+
+    /// `visit_existing_type_node` for `node`, which is an element of a list or a part of one. The
+    /// first token of the element is at `start`. `emit_list_items` emits its comments.
+    fn visit_list_element(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        floor: u32,
+        start: usize,
+    ) -> Option<Node> {
+        let container_pos = self.container_pos;
+        if self.is_transformer {
+            self.container_pos = self.full_start(file, start);
+        }
+        let visited = self.visit_existing_type_node(file, node, floor);
+        self.container_pos = container_pos;
+        visited
     }
 
     /// `enterNewScope` for the function-like `f`. Pass the result to `leave_scope`.
@@ -1749,16 +1824,21 @@ impl<'p> Printer<'_, 'p, '_> {
         floor: u32,
     ) -> Option<Node> {
         // `SkipParentheses` skips no `ParenthesizedType`.
-        if self.c.parenthesized_type_depth(file, node, floor) > 0 {
+        if (self.c.parenthesized_types_around(file, node, floor))
+            .next()
+            .is_some()
+        {
             return self.visit_existing_type_node(file, node, floor);
         }
-        match self.c.hir(file)[node].kind {
-            TypeNodeKind::Ref { .. } => self.try_visit_type_reference(file, node),
-            TypeNodeKind::Typeof { .. } => self.try_visit_type_query(file, node),
-            TypeNodeKind::IndexedAccess { .. } => self.try_visit_indexed_access(file, node),
-            TypeNodeKind::Keyof(_) => self.try_visit_key_of(file, node),
-            _ => self.visit_existing_type_node(file, node, floor),
-        }
+        let hir = self.c.hir(file);
+        let visit: fn(&mut Self, FileId, TypeNodeId) -> Option<Node> = match hir[node].kind {
+            TypeNodeKind::Ref { .. } => Self::try_visit_type_reference,
+            TypeNodeKind::Typeof { .. } => Self::try_visit_type_query,
+            TypeNodeKind::IndexedAccess { .. } => Self::try_visit_indexed_access,
+            TypeNodeKind::Keyof(_) => Self::try_visit_key_of,
+            _ => return self.visit_existing_type_node(file, node, floor),
+        };
+        self.emit_with_leading_comments(file, hir[node].pos, |printer| visit(printer, file, node))
     }
 
     /// `tryVisitIndexedAccess`

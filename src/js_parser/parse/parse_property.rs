@@ -1073,6 +1073,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 || opts.is_class
                 || opts.is_async
                 || opts.is_generator
+                // `parseObjectLiteralElement`: a "<" after the name makes a method. `parse_fn` reports the missing "(".
+                || (has_type_parameters && p.is_tolerant())
             {
                 if let Some(modifier) = lone_object_modifier
                     && kind == PropertyKind::Normal

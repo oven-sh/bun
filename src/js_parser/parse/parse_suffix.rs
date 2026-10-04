@@ -1886,6 +1886,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // Stop now if this token is forbidden to follow a TypeScript "as" cast
                 if p.forbid_suffix_after_as_loc.start > -1
                     && p.lexer.loc().start == p.forbid_suffix_after_as_loc.start
+                    // An operand that is missing at this token starts another expression, which
+                    // the operator continues (`parseBinaryExpressionRest`).
+                    && !(matches!(left.data, ExprData::EMissing(_)) && p.is_tolerant())
                 {
                     break;
                 }

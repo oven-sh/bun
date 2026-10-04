@@ -672,6 +672,40 @@ impl Checker<'_, '_> {
         self.hir(file)[first].pos
     }
 
+    /// `declareSymbol`: the type parameters of a class or an interface are among its `members`, so
+    /// a member of an instance that has the name of one is a later declaration of the same symbol.
+    fn type_parameter_merged_with_member(
+        &self,
+        file: FileId,
+        member: MemberId,
+        name: Atom,
+    ) -> Option<(FileId, u32)> {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let (type_params, symbol) = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(c) => (hir[c].type_params, bound.class_symbol[c.idx()]),
+            MemberOwner::Interface(i) => (hir[i].type_params, bound.interface_symbol[i.idx()]),
+            MemberOwner::None | MemberOwner::TypeLiteral(_) => return None,
+        };
+        let own = type_params.iter().find(|&it| hir[it].name == name)?;
+        if hir[member].flags.contains(Flags::STATIC) {
+            return None;
+        }
+        let first = symbol.is_some().then(|| {
+            let declarations = files.decls(files.canonical(files.sym(file, symbol)));
+            declarations.into_iter().find_map(|(file, declaration)| {
+                let hir = self.hir(file);
+                let type_params = match declaration {
+                    Decl::Class(c) => hir[c].type_params,
+                    Decl::Interface(i) => hir[i].type_params,
+                    _ => return None,
+                };
+                let found = type_params.iter().find(|&it| hir[it].name == name)?;
+                Some((file, hir[found].pos))
+            })
+        });
+        Some(first.flatten().unwrap_or((file, hir[own].pos)))
+    }
+
     /// The position of the first declaration of `prop`, in `compareSymbols` order: a property
     /// without a declaration sorts last.
     pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, (bool, u32, u32)) {
@@ -681,7 +715,10 @@ impl Checker<'_, '_> {
                 self.first_declaration_pos_of_literal_property(*file, *literal),
             )),
             PropSource::Symbol(symbol) => match self.files().value_declaration(*symbol) {
-                Some((file, Decl::Member(first))) => Some((file, self.hir(file)[first].name_pos)),
+                Some((file, Decl::Member(first))) => Some(
+                    self.type_parameter_merged_with_member(file, first, prop.name)
+                        .unwrap_or((file, self.hir(file)[first].name_pos)),
+                ),
                 Some((file, Decl::ParameterProperty(first))) => {
                     Some((file, self.hir(file)[first].pos))
                 }

@@ -660,6 +660,19 @@ struct Loaded<'s, 'r> {
     traces: Vec<DiagAndArgs>,
 }
 
+/// What `Files::load` knows about the files it has found, besides the files themselves.
+#[derive(Default)]
+struct Found<'s> {
+    /// By `FileId`: the path, and whether it is a library.
+    paths: Vec<(&'s [u8], bool)>,
+    /// By `FileId`: `parseTaskData.packageId`, as an index into `kept`.
+    packages: Vec<Option<u32>>,
+    /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
+    kept: Vec<Option<FileId>>,
+    /// Whether `collectFiles` has begun.
+    is_collecting: bool,
+}
+
 /// `typeOnlyDeclaration`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TypeOnlyDeclaration {
@@ -2659,7 +2672,8 @@ impl<'s> Files<'s> {
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, &options);
         let mut by_path: ByPath<'s> = map_in(arena);
-        let mut by_package_id: FxHashMap<Vec<u8>, FileId> = FxHashMap::default();
+        let mut by_package_id: FxHashMap<Vec<u8>, u32> = FxHashMap::default();
+        let mut all_found = Found::default();
         let mut modules: Vec<Option<Module>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FileId`: the minimum number of steps into
         // packages (`increaseDepth`) on a path from a root file.
@@ -2670,32 +2684,39 @@ impl<'s> Files<'s> {
                        depth: u32,
                        modules: &mut Vec<Option<Module>>,
                        depths: &mut Vec<u32>,
-                       frontier: &mut Vec<(FileId, &'s [u8], bool)>|
+                       frontier: &mut Vec<(FileId, &'s [u8], bool)>,
+                       found: &mut Found<'s>|
          -> FileId {
             if let Some(&id) = by_path.get(path) {
                 depths[id.idx()] = depths[id.idx()].min(depth);
                 return id;
             }
             let path = slice_in(path, arena);
+            // Of the copies of a package file, the one that `collectFiles` comes to first is in the
+            // program. That is probably the one that is found first, so another one is only read
+            // if it turns out to be the one.
+            let (mut package, mut is_read) = (None, true);
             if !options.retains_duplicate_packages
                 && let Some(package_id) = resolver.package_id(path)
             {
-                match by_package_id.get(&package_id) {
-                    Some(&id) => {
-                        by_path.insert(path, id);
-                        depths[id.idx()] = depths[id.idx()].min(depth);
-                        return id;
-                    }
-                    None => {
-                        by_package_id.insert(package_id, FileId(modules.len() as u32));
-                    }
+                let new = found.kept.len() as u32;
+                let index = *by_package_id.entry(package_id).or_insert(new);
+                if index == new {
+                    found.kept.push(None);
+                } else {
+                    is_read = found.is_collecting && found.kept[index as usize].is_none();
                 }
+                package = Some(index);
             }
             let id = FileId(modules.len() as u32);
             modules.push(None);
             depths.push(depth);
             by_path.insert(path, id);
-            frontier.push((id, path, is_lib));
+            found.paths.push((path, is_lib));
+            found.packages.push(package);
+            if is_read {
+                frontier.push((id, path, is_lib));
+            }
             id
         };
 
@@ -2712,6 +2733,7 @@ impl<'s> Files<'s> {
                 &mut modules,
                 &mut depths,
                 &mut frontier,
+                &mut all_found,
             ));
         }
         let libs_end = starts.len();
@@ -2734,6 +2756,7 @@ impl<'s> Files<'s> {
                     &mut modules,
                     &mut depths,
                     &mut frontier,
+                    &mut all_found,
                 )),
                 Err(code) => {
                     let (reason, args) = root_file_reason(&options, root, host.is_case_sensitive());
@@ -2749,7 +2772,7 @@ impl<'s> Files<'s> {
         } else {
             Vec::new()
         };
-        let automatic_tracer = options.trace_resolution.then(Tracer::default);
+        let mut automatic_tracer = options.trace_resolution.then(Tracer::default);
         // `addAutomaticTypeDirectiveTasks`
         let containing_file = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
         for name in &directives {
@@ -2768,6 +2791,7 @@ impl<'s> Files<'s> {
                         &mut modules,
                         &mut depths,
                         &mut frontier,
+                        &mut all_found,
                     ));
                 }
                 // `*` matches whatever exists.
@@ -2795,88 +2819,236 @@ impl<'s> Files<'s> {
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
         let mut traces: Vec<Vec<DiagAndArgs>> = Vec::new();
-        while !frontier.is_empty() {
-            let batch = std::mem::take(&mut frontier);
-            if is_first {
-                is_first = false;
-                let seeds = batch
+        // `rootTasks`: the root files, the libraries, the automatic type directives (`None`) and
+        // what they resolve to.
+        let root_tasks: Vec<Option<FileId>> = (starts[libs_end..roots_end].iter())
+            .chain(&starts[..libs_end])
+            .map(|&start| Some(start))
+            .chain([None])
+            .chain(starts[roots_end..].iter().map(|&start| Some(start)))
+            .collect();
+        let mut next_root_task = 0;
+        // (file, how many of its edges have been followed)
+        let mut stack: Vec<(FileId, usize)> = Vec::new();
+        let mut seen: Vec<bool> = Vec::new();
+        // `redirectFilesByPath`: a copy of a package file, and the one that is in the program.
+        let mut redirects: Vec<(FileId, FileId)> = Vec::new();
+        // What `traceResolution` logs, in order.
+        let mut log: Vec<DiagAndArgs> = Vec::new();
+        'load: loop {
+            while !frontier.is_empty() {
+                let batch = std::mem::take(&mut frontier);
+                if is_first {
+                    is_first = false;
+                    let seeds = batch
+                        .iter()
+                        .map(|&(_, path, is_lib)| (path, is_lib))
+                        .collect();
+                    ahead = Self::load_ahead(session, host, &resolver, &options, &atoms, seeds);
+                }
+                let results: Vec<Guarded<Option<Box<Loaded>>>> = batch
                     .iter()
-                    .map(|&(_, path, is_lib)| (path, is_lib))
+                    .map(|&(_, path, is_lib)| {
+                        let loaded = ahead.remove(path);
+                        Guarded::new(loaded.filter(|loaded| loaded.module.is_lib == is_lib))
+                    })
                     .collect();
-                ahead = Self::load_ahead(session, host, &resolver, &options, &atoms, seeds);
-            }
-            let results: Vec<Guarded<Option<Box<Loaded>>>> = batch
-                .iter()
-                .map(|&(_, path, is_lib)| {
-                    let loaded = ahead.remove(path);
-                    Guarded::new(loaded.filter(|loaded| loaded.module.is_lib == is_lib))
-                })
-                .collect();
-            // Files that could not be predicted to be part of the program.
-            let missing: Vec<usize> = (0..batch.len())
-                .filter(|&i| results[i].lock().is_none())
-                .collect();
-            let paths: Vec<&[u8]> = missing.iter().map(|&i| batch[i].1).collect();
-            read_and_work(host, &paths, &|at, text| {
-                let (_, path, is_lib) = batch[missing[at]];
-                *results[missing[at]].lock() = Some(Box::new(Self::load_one(
-                    session.arena(),
-                    host,
-                    &resolver,
-                    &options,
-                    &atoms,
-                    path,
-                    is_lib,
-                    text,
-                )));
-            });
-            let _linking = Spent::on(host, Phase::Link);
-            for ((id, _, _), result) in batch.iter().zip(results) {
-                let mut loaded = *result.lock().take().unwrap();
-                // `filesParser.start`: the sub tasks of a file start once, at the lowest depth the file has been reached at by then.
-                let depth = depths[id.idx()];
-                edges.clear();
-                for &(path, is_lib, increases_depth) in &loaded.references {
-                    let target = add(
+                // Files that could not be predicted to be part of the program.
+                let missing: Vec<usize> = (0..batch.len())
+                    .filter(|&i| results[i].lock().is_none())
+                    .collect();
+                let paths: Vec<&[u8]> = missing.iter().map(|&i| batch[i].1).collect();
+                read_and_work(host, &paths, &|at, text| {
+                    let (_, path, is_lib) = batch[missing[at]];
+                    *results[missing[at]].lock() = Some(Box::new(Self::load_one(
+                        session.arena(),
+                        host,
+                        &resolver,
+                        &options,
+                        &atoms,
                         path,
                         is_lib,
-                        depth + u32::from(increases_depth),
-                        &mut modules,
-                        &mut depths,
-                        &mut frontier,
+                        text,
+                    )));
+                });
+                let _linking = Spent::on(host, Phase::Link);
+                for ((id, _, _), result) in batch.iter().zip(results) {
+                    let mut loaded = *result.lock().take().unwrap();
+                    // `filesParser.start`: the sub tasks of a file start once, at the lowest depth the file has been reached at by then.
+                    let depth = depths[id.idx()];
+                    edges.clear();
+                    for &(path, is_lib, increases_depth) in &loaded.references {
+                        let target = add(
+                            path,
+                            is_lib,
+                            depth + u32::from(increases_depth),
+                            &mut modules,
+                            &mut depths,
+                            &mut frontier,
+                            &mut all_found,
+                        );
+                        edges.push(target);
+                        steps.push((*id, target, increases_depth));
+                    }
+                    // The one that `load_one` created is empty, and belongs to another thread.
+                    loaded.module.imports = ArenaHashMap::with_capacity_and_hasher_in(
+                        loaded.imports.len(),
+                        FxBuild::default(),
+                        arena,
                     );
-                    edges.push(target);
-                    steps.push((*id, target, increases_depth));
+                    for &(spec, mode, path, brings_in, increases_depth) in &loaded.imports {
+                        let depth = depth + u32::from(increases_depth);
+                        // `elideOnDepth`, `isJsFileFromNodeModules`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
+                        let is_elided = increases_depth
+                            && is_javascript(path)
+                            && strings::contains(path, b"/node_modules/")
+                            && depth > options.max_node_module_js_depth;
+                        // `shouldAddFile`: with `noResolve` no import adds a file.
+                        if !brings_in || is_elided || options.no_resolve {
+                            only_found.push((*id, spec, mode, path));
+                            continue;
+                        }
+                        let target = add(
+                            path,
+                            false,
+                            depth,
+                            &mut modules,
+                            &mut depths,
+                            &mut frontier,
+                            &mut all_found,
+                        );
+                        loaded.module.imports.insert((spec, mode), target);
+                        edges.push(target);
+                        steps.push((*id, target, increases_depth));
+                    }
+                    loaded.module.edges = slice_in(&edges, arena);
+                    if options.trace_resolution {
+                        traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
+                        traces[id.idx()] = std::mem::take(&mut loaded.traces);
+                    }
+                    modules[id.idx()] = Some(loaded.module);
                 }
-                // The one that `load_one` created is empty, and belongs to another thread.
-                loaded.module.imports = ArenaHashMap::with_capacity_and_hasher_in(
-                    loaded.imports.len(),
-                    FxBuild::default(),
-                    arena,
-                );
-                for &(spec, mode, path, brings_in, increases_depth) in &loaded.imports {
-                    let depth = depth + u32::from(increases_depth);
-                    // `elideOnDepth`, `isJsFileFromNodeModules`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
-                    let is_elided = increases_depth
-                        && is_javascript(path)
-                        && strings::contains(path, b"/node_modules/")
-                        && depth > options.max_node_module_js_depth;
-                    // `shouldAddFile`: with `noResolve` no import adds a file.
-                    if !brings_in || is_elided || options.no_resolve {
-                        only_found.push((*id, spec, mode, path));
+            }
+            // `collectFiles`, as far as it decides which copy of a package file is in the program and
+            // logs. `declaration_order` puts the files in order.
+            all_found.is_collecting = true;
+            seen.resize(modules.len(), false);
+            traces.resize_with(modules.len(), Vec::new);
+            loop {
+                let file = match stack.last_mut() {
+                    Some(top) => {
+                        let edges = modules[top.0.idx()].as_ref().map_or(&[][..], |it| it.edges);
+                        let Some(&edge) = edges.get(top.1) else {
+                            stack.pop();
+                            continue;
+                        };
+                        top.1 += 1;
+                        edge
+                    }
+                    None => {
+                        let Some(&task) = root_tasks.get(next_root_task) else {
+                            break 'load;
+                        };
+                        next_root_task += 1;
+                        let Some(start) = task else {
+                            let automatic = automatic_tracer.take();
+                            log.extend(automatic.map(Tracer::into_traces).unwrap_or_default());
+                            continue;
+                        };
+                        start
+                    }
+                };
+                if seen[file.idx()] {
+                    continue;
+                }
+                let (path, is_lib) = all_found.paths[file.idx()];
+                if let Some(package) = all_found.packages[file.idx()] {
+                    let kept = *all_found.kept[package as usize].get_or_insert(file);
+                    if kept != file {
+                        seen[file.idx()] = true;
+                        redirects.push((file, kept));
+                        // It has been parsed, and what it imports has been resolved.
+                        if options.trace_resolution && modules[file.idx()].is_none() {
+                            let text = host.read_source(path);
+                            let arena = session.arena();
+                            let loaded = Self::load_one(
+                                arena, host, &resolver, &options, &atoms, path, is_lib, text,
+                            );
+                            log.extend(loaded.traces);
+                        }
+                        log.append(&mut traces[file.idx()]);
                         continue;
                     }
-                    let target = add(path, false, depth, &mut modules, &mut depths, &mut frontier);
-                    loaded.module.imports.insert((spec, mode), target);
-                    edges.push(target);
-                    steps.push((*id, target, increases_depth));
                 }
-                loaded.module.edges = slice_in(&edges, arena);
-                if options.trace_resolution {
-                    traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
-                    traces[id.idx()] = std::mem::take(&mut loaded.traces);
+                if modules[file.idx()].is_none() {
+                    // It is the one after all. The step is taken again when it has been read.
+                    match stack.last_mut() {
+                        Some(top) => top.1 -= 1,
+                        None => next_root_task -= 1,
+                    }
+                    frontier.push((file, path, is_lib));
+                    continue 'load;
                 }
-                modules[id.idx()] = Some(loaded.module);
+                seen[file.idx()] = true;
+                log.append(&mut traces[file.idx()]);
+                stack.push((file, 0));
+            }
+        }
+        // Only the files that `collectFiles` came to are in the program, and of a package file only
+        // one copy. The paths of the other copies stand for that one.
+        if !redirects.is_empty() || !seen.iter().all(|&is_seen| is_seen) {
+            let mut is_kept = seen;
+            for &(copy, _) in &redirects {
+                is_kept[copy.idx()] = false;
+            }
+            let mut renumbered: Vec<Option<FileId>> = vec![None; modules.len()];
+            let kept = (0..modules.len()).filter(|&file| is_kept[file]);
+            for (new, old) in kept.enumerate() {
+                renumbered[old] = Some(FileId(new as u32));
+            }
+            for &(copy, kept) in &redirects {
+                renumbered[copy.idx()] = renumbered[kept.idx()];
+                depths[kept.idx()] = depths[kept.idx()].min(depths[copy.idx()]);
+            }
+            // What a file in the program refers to has been come to.
+            let renumber = |file: FileId| renumbered[file.idx()].unwrap_or(file);
+            let mut file = 0;
+            modules.retain_mut(|module| {
+                file += 1;
+                if let Some(module) = module.as_mut().filter(|_| is_kept[file - 1]) {
+                    edges.clear();
+                    edges.extend(module.edges.iter().map(|&edge| renumber(edge)));
+                    module.edges = slice_in(&edges, arena);
+                    for target in module.imports.values_mut() {
+                        *target = renumber(*target);
+                    }
+                }
+                is_kept[file - 1]
+            });
+            let mut file = 0;
+            depths.retain(|_| {
+                file += 1;
+                is_kept[file - 1]
+            });
+            by_path.retain(|_, file| match renumbered[file.idx()] {
+                Some(new) => {
+                    *file = new;
+                    true
+                }
+                None => false,
+            });
+            steps.retain_mut(|(from, to, _)| {
+                let is_in_program = is_kept[from.idx()];
+                (*from, *to) = (renumber(*from), renumber(*to));
+                is_in_program
+            });
+            only_found.retain_mut(|(file, ..)| {
+                let is_in_program = is_kept[file.idx()];
+                *file = renumber(*file);
+                is_in_program
+            });
+            for start in &mut starts {
+                *start = renumber(*start);
             }
         }
         // `pathForLibFileResolutions`, in the order of its keys.
@@ -3173,16 +3345,8 @@ impl<'s> Files<'s> {
         };
         let merging = Spent::on(host, Phase::Merge);
         files.order = slice_in(&files.declaration_order(&starts), arena);
-        if let Some(automatic) = automatic_tracer {
-            // `rootTasks`: the root files, the libraries, the automatic type directives.
-            let mut seen = vec![false; files.modules.len()];
-            let mut all = Vec::new();
-            let before = starts[libs_end..roots_end]
-                .iter()
-                .chain(&starts[..libs_end]);
-            files.collect_traces(before, &mut seen, &mut traces, &mut all);
-            all.extend(automatic.into_traces());
-            files.collect_traces(starts[roots_end..].iter(), &mut seen, &mut traces, &mut all);
+        if options.trace_resolution {
+            let mut all = log;
             all.extend(lib_traces);
             // `packageJsonInfoCache`. `loadSourceFileMetaData` looks for the scope of a file before
             // anything in the file is resolved.
@@ -3918,41 +4082,6 @@ impl<'s> Files<'s> {
             }
         }
         crate::resolve::LIBS.len() + 2
-    }
-
-    /// `collectFiles` logs what the resolutions in a file logged before it descends into the sub tasks
-    /// of the file.
-    fn collect_traces<'a>(
-        &self,
-        starts: impl Iterator<Item = &'a FileId>,
-        seen: &mut [bool],
-        traces: &mut [Vec<DiagAndArgs>],
-        all: &mut Vec<DiagAndArgs>,
-    ) {
-        let mut enter = |file: FileId, stack: &mut Vec<(FileId, usize)>| {
-            if !std::mem::replace(&mut seen[file.idx()], true) {
-                if let Some(traces) = traces.get_mut(file.idx()) {
-                    all.append(traces);
-                }
-                stack.push((file, 0));
-            }
-        };
-        for &start in starts {
-            // (file, how many of its edges have been followed)
-            let mut stack: Vec<(FileId, usize)> = Vec::new();
-            enter(start, &mut stack);
-            while let Some(top) = stack.last_mut() {
-                match self.modules[top.0.idx()].edges.get(top.1) {
-                    Some(&edge) => {
-                        top.1 += 1;
-                        enter(edge, &mut stack);
-                    }
-                    None => {
-                        stack.pop();
-                    }
-                }
-            }
-        }
     }
 
     /// `getProcessedFiles`: the libraries first, sorted (`sortLibs`); then from each starting point depth first, a file after

@@ -4936,8 +4936,13 @@ impl<'p, 's> Checker<'p, 's> {
                     let target_extends = self.cond_extends(target);
                     let mut mapper = MapperId::IDENTITY;
                     // Instantiated from one declaration, both sides have the same `infer` type
-                    // parameters: each maps to itself.
-                    if !source_params.is_empty() && source_extends != target_extends {
+                    // parameters: each that occurs in the extends type maps to itself. For one that
+                    // does not, nothing is inferred.
+                    if !source_params.is_empty()
+                        && (source_extends != target_extends
+                            || (self.params_mentioned_in(source_extends, &source_params))
+                                .contains(&false))
+                    {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,

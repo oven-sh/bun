@@ -2624,6 +2624,10 @@ impl<'h> Resolver<'h> {
                     ending_from_config: look.ending_from_config || has_extension_from_config,
                     ..look
                 };
+                // `HasTrailingDirectorySeparator`: it has no extension, and is not looked up as a file.
+                if let Some(directory) = path.strip_suffix(b"/").filter(|it| !it.is_empty()) {
+                    return self.node_load_module_by_relative_name(directory, true, false, inner);
+                }
                 self.named_file(path, package_file, as_named)
                     .or_else(|| self.node_load_module_by_relative_name(path, false, false, inner))
             };
@@ -2632,7 +2636,8 @@ impl<'h> Resolver<'h> {
             let in_package = match &entry {
                 Some(entry) => entry
                     .strip_prefix(dir)
-                    .and_then(|rest| rest.strip_prefix(b"/")),
+                    .and_then(|rest| rest.strip_prefix(b"/"))
+                    .map(|rest| rest.strip_suffix(b"/").unwrap_or(rest)),
                 None => Some(index),
             };
             if let Some(paths) = version_paths
@@ -3252,7 +3257,11 @@ fn get_package_json_path_field(
         look.trace(6220, &[name]);
         return None;
     }
-    let path = join(dir, value);
+    // `NormalizePath` keeps a trailing separator.
+    let mut path = join(dir, value);
+    if value.ends_with(b"/") && !path.ends_with(b"/") {
+        path.push(b'/');
+    }
     look.trace(6101, &[name, value, &path]);
     Some(path)
 }

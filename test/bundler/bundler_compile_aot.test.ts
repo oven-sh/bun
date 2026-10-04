@@ -703,6 +703,76 @@ describe("bundler", () => {
     expect({ run: keysOf("run"), alone: keysOf("alone") }).toEqual({ run: 2, alone: 1 });
   });
 
+  test("compile/aot/GuessedPlacesOfTheSameNamesBornInAnotherModule", async () => {
+    using dir = tempDir("compile-aot-guessed-places-same-names", {
+      "entry.js": `
+        const { makesPermutedThere, readsPermutedCThere, makesLargerThere, readsLargerCThere, makesLackingThere } = await import("./other.js");
+        function check(actual, expected, what) {
+            if (!Object.is(actual, expected))
+                throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+        }
+
+        function makesPermutedHere(i) { return { permutedA: 0, permutedB: 1, permutedC: i }; }
+        function readsPermutedC(o) { return o.permutedC; }
+        function readsPermutedA(o) { return o.permutedA; }
+        function writesPermutedC(o, v) { o.permutedC = v; }
+        function makesLargerHere(i) { return { largerA: 0, largerB: 1, largerC: i }; }
+        function readsLargerC(o) { return o.largerC; }
+        function makesLackingHere(i) { return { lackingA: 0, lackingB: 1, lackingC: i }; }
+        function readsLackingC(o) { return o.lackingC; }
+
+        for (let i = 0; i < 100; i++) {
+            check(readsPermutedC(makesPermutedHere(i)) + readsPermutedC(makesPermutedThere(i)), 2 * i, "the same names in two orders, read in this module");
+            check(readsPermutedCThere(makesPermutedHere(i)) + readsPermutedCThere(makesPermutedThere(i)), 2 * i, "the same names in two orders, read in the other module");
+            check(readsPermutedA(makesPermutedHere(i)) + readsPermutedA(makesPermutedThere(i)), 0, "the name that both orders have in one slot");
+            for (let o of [makesPermutedHere(i), makesPermutedThere(i)]) {
+                writesPermutedC(o, i + 1);
+                check(readsPermutedC(o), i + 1, "a store to the same names in two orders");
+                check(o.permutedB, 1, "the store leaves the neighbour alone");
+            }
+            check(readsLargerC(makesLargerHere(i)) + readsLargerC(makesLargerThere(i)), 2 * i, "the other module's objects have one name more, read in this module");
+            check(readsLargerCThere(makesLargerHere(i)) + readsLargerCThere(makesLargerThere(i)), 2 * i, "the other module's objects have one name more, read in the other module");
+            check(readsLackingC(makesLackingHere(i)) + readsLackingC(makesLackingThere(i)), 2 * i, "the other module's objects lack one name");
+        }
+        console.log("the values are right");
+      `,
+      "other.js": `
+        export function makesPermutedThere(i) { return { permutedA: 0, permutedC: i, permutedB: 1 }; }
+        export function readsPermutedCThere(o) { return o.permutedC; }
+        export function makesLargerThere(i) { return { largerC: i, largerA: 0, largerB: 1, largerExtra: 2 }; }
+        export function readsLargerCThere(o) { return o.largerC; }
+        export function makesLackingThere(i) { return { lackingC: i, lackingA: 0 }; }
+      `,
+    });
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using app = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([app.stdout.text(), app.exited]);
+    expect([stdout, exitCode]).toEqual(["the values are right\n", 0]);
+    const remarks = new Map<string, Set<string>>();
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+      const [name, remark] = line.split("\t");
+      if (remark && /^(guessed-place:|no-guess:)/.test(remark)) remarks.set(name, (remarks.get(name) ?? new Set()).add(remark));
+    }
+    const guesses = (...names: string[]) => Object.fromEntries(names.map(name => [name, [...(remarks.get(name) ?? [])].sort()]));
+    expect(guesses("readsPermutedC", "writesPermutedC", "readsPermutedCThere", "readsLargerC", "readsPermutedA", "readsLackingC", "readsLargerCThere")).toEqual({
+      readsPermutedC: ["no-guess:same-names-born-in-another-module"],
+      writesPermutedC: ["no-guess:same-names-born-in-another-module"],
+      readsPermutedCThere: ["no-guess:same-names-born-in-another-module"],
+      readsLargerC: ["no-guess:same-names-born-in-another-module"],
+      readsPermutedA: ["guessed-place:permutedA"],
+      readsLackingC: ["guessed-place:lackingC"],
+      readsLargerCThere: ["guessed-place:largerC"],
+    });
+  });
+
   describe("compile/aot/DeclarationsOfLiftedCommonJS", () => {
     const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", main: "index.js" });
     const buildAndRun = async (files: Record<string, string>) => {

@@ -3,9 +3,10 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, tls as tlsCerts } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
+import { Agent as HttpsAgent, createServer as createHttpsServer } from "node:https";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -293,6 +294,60 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocketServer", () => {
+  it.each([false, true])("pauses and resumes reads on accepted sockets (TLS=%s)", async secure => {
+    const server = secure ? createHttpsServer(tlsCerts) : createServer();
+    const wss = new WebSocketServer({ server });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const connection = once(wss, "connection");
+    const agent = secure ? new HttpsAgent({ ca: tlsCerts.cert }) : undefined;
+    const client = new WebSocket(`${secure ? "wss" : "ws"}://127.0.0.1:${(server.address() as AddressInfo).port}`, {
+      agent,
+    });
+    const opened = once(client, "open");
+    const texts = ["first", "second"];
+    const received: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    try {
+      const [peer] = (await connection) as [WebSocket];
+      await opened;
+      peer.on("error", reject);
+      client.on("error", reject);
+      peer.on("message", data => {
+        received.push(data.toString());
+        if (received.length === texts.length) resolve();
+      });
+      expect(peer.isPaused).toBe(false);
+      expect(peer.pause()).toBeUndefined();
+      expect(peer.pause()).toBeUndefined();
+      expect(peer.isPaused).toBe(true);
+      await Promise.all(
+        texts.map(
+          text => new Promise<void>((resolve, reject) => client.send(text, err => (err ? reject(err) : resolve()))),
+        ),
+      );
+      expect(received).toEqual([]);
+      expect(peer.resume()).toBeUndefined();
+      expect(peer.resume()).toBeUndefined();
+      expect(peer.isPaused).toBe(false);
+      await promise;
+      expect(received).toEqual(texts);
+      peer.pause();
+      const closed = once(peer, "close");
+      peer.terminate();
+      await closed;
+      expect(peer.pause()).toBeUndefined();
+      expect(peer.resume()).toBeUndefined();
+      expect(peer.isPaused).toBe(true);
+    } finally {
+      client.terminate();
+      for (const peer of wss.clients) peer.terminate();
+      await new Promise<void>(resolve => wss.close(() => resolve()));
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      agent?.destroy();
+    }
+  });
+
   it("sets websocket prototype properties correctly", async () => {
     const wss = new WebSocketServer({ port: 0 });
     const { resolve, reject, promise } = Promise.withResolvers();

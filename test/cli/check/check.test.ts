@@ -1275,6 +1275,27 @@ const kind: number = Shape.kind;
       `);
     });
 
+    test("an untyped module of a workspace package that has declaration files", async () => {
+      using dir = project({
+        "packages/pkg/package.json": JSON.stringify({
+          name: "@scope/pkg",
+          version: "1.0.0",
+          exports: { ".": { types: "./index.d.ts", default: "./index.js" }, "./untyped": "./untyped.js" },
+        }),
+        "packages/pkg/index.d.ts": `export declare const typed: number;\n`,
+        "packages/pkg/index.js": `export const typed = 1;\n`,
+        "packages/pkg/untyped.js": `export const untyped = 1;\n`,
+        "a.ts": `import { typed } from "@scope/pkg";\nimport { untyped } from "@scope/pkg/untyped";\nexport const both = [typed, untyped];\n`,
+      });
+      mkdirSync(join(String(dir), "node_modules/@scope"), { recursive: true });
+      symlinkSync(join(String(dir), "packages/pkg"), join(String(dir), "node_modules/@scope/pkg"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,25): error TS7016: Could not find a declaration file for module '@scope/pkg/untyped'. '<dir>/packages/pkg/untyped.js' implicitly has an 'any' type.
+          If the '@scope/pkg' package actually exposes this module, try adding a new declaration (.d.ts) file containing \`declare module '@scope/pkg/untyped';\`"
+      `);
+    });
+
     test("paths, exports conditions and JSON", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
@@ -12503,6 +12524,92 @@ export function ownParameterIsNotNarrowedOutside(key: string | null) {
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(24,58): error TS2538: Type 'null' cannot be used as an index type.
         a.ts(29,63): error TS2538: Type 'null' cannot be used as an index type."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a type assertion in an argument of a generic call, to a mapped type over an intersection with what is being declared", async () => {
+      using dir = project({
+        "a.ts": `export {};
+declare function idf<T>(v: T): T;
+class A { static x = idf(null! as Readonly<typeof A & { x: 1 }>); static y = 1 }
+class B { static x = idf<Readonly<typeof B & { x: 1 }>>(null!); static y = 1 }
+class C { static x = idf({ a: null! as Partial<typeof C & { x: string }> }); static y = 1 }
+class D { static x = idf((null! as Readonly<typeof D & { x: 1 }>, 1)); static y = 1 }
+class E { x = idf(null! as Readonly<E & { x: 1 }>); y = 1 }
+namespace N { export const x = idf(null! as Readonly<typeof N & { x: 1 }>); export const y = 1; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,18): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(5,18): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(6,18): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(7,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(8,28): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a class expression in a callback of a generic call whose method refers to the result of the call", async () => {
+      using dir = project({
+        "a.ts": `export {};
+declare class Base { p: {}; m(): {} }
+declare function call<T>(f: () => T): T;
+const a = [1].map(() => class extends Base { m(): (typeof a)[0] | undefined { return undefined; } });
+const b = call(() => class extends Base { p: undefined; m(): typeof b | undefined { return undefined; } });
+const c = call(() => ({ k: class extends Base { m(): typeof c | undefined { return undefined; } } }));
+const d = call(function () { return class extends Base { m(): typeof d | undefined { return undefined; } }; });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,46): error TS2416: Property 'm' in type '(Anonymous class)' is not assignable to the same property in base type 'Base'.
+          Type '() => typeof (Anonymous class) | undefined' is not assignable to type '() => {}'.
+            Type 'typeof (Anonymous class) | undefined' is not assignable to type '{}'.
+              Type 'undefined' is not assignable to type '{}'.
+        a.ts(5,43): error TS2416: Property 'p' in type '(Anonymous class)' is not assignable to the same property in base type 'Base'.
+          Type 'undefined' is not assignable to type '{}'.
+        a.ts(5,43): error TS2612: Property 'p' will overwrite the base property in 'Base'. If this is intentional, add an initializer. Otherwise, add a 'declare' modifier or remove the redundant declaration.
+        a.ts(5,57): error TS2416: Property 'm' in type '(Anonymous class)' is not assignable to the same property in base type 'Base'.
+          Type '() => typeof (Anonymous class) | undefined' is not assignable to type '() => {}'.
+            Type 'typeof (Anonymous class) | undefined' is not assignable to type '{}'.
+              Type 'undefined' is not assignable to type '{}'.
+        a.ts(6,49): error TS2416: Property 'm' in type 'k' is not assignable to the same property in base type 'Base'.
+          Type '() => { k: typeof k; } | undefined' is not assignable to type '() => {}'.
+            Type '{ k: typeof k; } | undefined' is not assignable to type '{}'.
+              Type 'undefined' is not assignable to type '{}'.
+        a.ts(7,58): error TS2416: Property 'm' in type '(Anonymous class)' is not assignable to the same property in base type 'Base'.
+          Type '() => typeof (Anonymous class) | undefined' is not assignable to type '() => {}'.
+            Type 'typeof (Anonymous class) | undefined' is not assignable to type '{}'.
+              Type 'undefined' is not assignable to type '{}'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`@this` whose type refers to `this`", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "allowJs": true, "checkJs": true, "target": "esnext", "module": "esnext", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.js"]}`,
+        "a.js": `class C {
+  k = 1;
+  /** @this {typeof this} */ p() { return this; }
+  /** @this {typeof this.k} */ q() { return this; }
+}
+/** @this {typeof this} */
+function f() { return this; }
+const o = {
+  /** @this {typeof this} */ m() { return this; },
+};
+/** @type {never} */ const r = new C().p();
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.js(3,8): error TS2502: '(Missing)' is referenced directly or indirectly in its own type annotation.
+        a.js(4,8): error TS2502: '(Missing)' is referenced directly or indirectly in its own type annotation.
+        a.js(6,6): error TS2502: '(Missing)' is referenced directly or indirectly in its own type annotation.
+        a.js(9,8): error TS2502: '(Missing)' is referenced directly or indirectly in its own type annotation.
+        a.js(11,28): error TS2322: Type 'any' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });

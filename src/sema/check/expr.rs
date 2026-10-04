@@ -384,7 +384,10 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     self.type_of_expr_uncached(file, e)
                 };
-                if afresh && self.inference_contexts.len() != self.context_free_level {
+                if afresh
+                    && self.inference_contexts.len() != self.context_free_level
+                    && !(self.frames.last()).is_some_and(|it| it.is_stored_by_nested_visit)
+                {
                     self.drop_reported();
                 }
                 let left = self.leave(Query::Expr(file, e));
@@ -401,6 +404,9 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.task.file == Some(file) || !self.is_noted_for_check_file(file, e))
         {
             self.cache_type_of_expr(file, e, ty, stored);
+            if self.may_be_in_flight(Query::Expr(file, e)) {
+                self.note_stored_by_nested_visit(Query::Expr(file, e));
+            }
         }
         if stored.is_some() && is_memoised {
             self.rechecked_exprs.insert((file, e), ty);

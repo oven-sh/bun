@@ -144,6 +144,9 @@ pub struct Module<'s> {
     /// For each of `untyped_imports`: the file it resolves to, and `PackageId.Name` of the package
     /// that file is in.
     pub untyped_import_files: ArenaFew<'s, (Atom, Option<Atom>)>,
+    /// For `GetPackagesMap`: `PackageId.Name` of the resolutions of the file that have one, and
+    /// whether `Extension` is `.d.ts`.
+    pub resolved_packages: ArenaFew<'s, (Atom, bool)>,
     /// `AlternateResult` for those of `untyped_imports` that have one: the file with the types that
     /// is found if the `exports` of the package are ignored.
     pub untyped_import_alternates: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
@@ -3259,6 +3262,16 @@ impl<'s> Files<'s> {
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());
         let mut untyped_import_files = Vec::new();
+        let mut resolved_packages: Vec<(Atom, bool)> = Vec::new();
+        let note_package =
+            |packages: &mut Vec<(Atom, bool)>, resolved: &crate::resolve::ResolvedModule<'_>| {
+                if let Some(name) = resolved.package_name {
+                    let package = (atoms.intern(name), resolved.file_name.ends_with(b".d.ts"));
+                    if !packages.contains(&package) {
+                        packages.push(package);
+                    }
+                }
+            };
         let mut untyped_import_alternates = Vec::new();
         let mut ts_extension_imports = Vec::new();
         let mut project_reference_imports = Vec::new();
@@ -3273,6 +3286,7 @@ impl<'s> Files<'s> {
                     && (options.isolated_modules || hir.has_module_syntax))
             && let Some(resolved) = resolver.resolve_module_name(b"tslib", from, default_mode)
         {
+            note_package(&mut resolved_packages, &resolved);
             let found = resolved.file_name;
             let tslib = known::tslib;
             if is_javascript(found) {
@@ -3293,6 +3307,7 @@ impl<'s> Files<'s> {
             && let Some((spec, runtime)) = runtime
             && let Some(resolved) = resolver.resolve_module_name(&runtime, from, default_mode)
         {
+            note_package(&mut resolved_packages, &resolved);
             let found = resolved.file_name;
             let is_untyped = is_javascript(found);
             if is_untyped {
@@ -3382,6 +3397,7 @@ impl<'s> Files<'s> {
                 let Some(resolved) = resolver.resolve_module_name(text, from, mode) else {
                     continue;
                 };
+                note_package(&mut resolved_packages, &resolved);
                 let increases_depth = resolved.is_external_library_import;
                 // `GetResolutionDiagnostic`, `needAllowJs`: the file is not added, so it is not redirected either.
                 let needs_allow_js = is_javascript(resolved.file_name)
@@ -3524,6 +3540,7 @@ impl<'s> Files<'s> {
             imports: map_in(arena),
             untyped_imports: few(untyped_imports, arena),
             untyped_import_files: few(untyped_import_files, arena),
+            resolved_packages: few(resolved_packages, arena),
             untyped_import_alternates: few(untyped_import_alternates, arena),
             jsx_imports: few(jsx_imports, arena),
             untyped_package_imports: few(untyped_package_imports, arena),

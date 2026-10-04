@@ -891,6 +891,9 @@ struct QueryFrame {
     has_result: bool,
     /// Non-cacheable because an incomplete flow-loop type was read (`taint_from`).
     incomplete_flow: bool,
+    /// It is a `Query::Expr`, and a nested visit of the expression has stored its type since the
+    /// frame was pushed. Every later visit is a cache hit, which reports nothing.
+    is_stored_by_nested_visit: bool,
 }
 
 /// Which diagnostics of a file `check_file` computes.
@@ -1549,6 +1552,7 @@ impl<'p, 's> Checker<'p, 's> {
             reported_from: self.reported.len() as u32,
             has_result: false,
             incomplete_flow,
+            is_stored_by_nested_visit: false,
         });
         true
     }
@@ -2057,7 +2061,13 @@ impl<'p, 's> Checker<'p, 's> {
                             | SymFlags::ENUM_MEMBER,
                     )
             }
-            Query::Pat(file, pat) => matches!(self.hir(file)[pat].kind, PatKind::Ident(_)),
+            // A missing name is an identifier.
+            Query::Pat(file, pat) => {
+                matches!(
+                    self.hir(file)[pat].kind,
+                    PatKind::Ident(_) | PatKind::Missing
+                )
+            }
             // `getDeclaredTypeOfTypeAlias` is the only one to push `TypeSystemPropertyNameDeclaredType`.
             Query::Declared(sym) => self.files().flags(sym).contains(SymFlags::TYPE_ALIAS),
             _ => false,
@@ -2099,6 +2109,16 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 frame.has_result = true;
             }
+        }
+    }
+
+    /// See `QueryFrame::is_stored_by_nested_visit`.
+    #[cold]
+    #[inline(never)]
+    fn note_stored_by_nested_visit(&mut self, q: Query) {
+        let frames = self.frames.iter_mut().zip(&self.stack);
+        for (frame, _) in frames.filter(|x| *x.1 == q) {
+            frame.is_stored_by_nested_visit = true;
         }
     }
 

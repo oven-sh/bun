@@ -2213,6 +2213,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             None => None,
         };
+        // `getPropertiesOfType(modifiersType)`
+        if over_keyof
+            && !self.never_in_progress.is_empty()
+            && let Some(ty) = modifiers_ty
+        {
+            self.create_properties_of_intersection_in_progress(ty);
+        }
         let owner = match modifiers_ty {
             Some(ty) if self.is_union(ty) => Some(self.union_as_object(ty)),
             other => other,

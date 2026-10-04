@@ -5511,6 +5511,29 @@ impl<'p, 's> Checker<'p, 's> {
         self.never_in_progress.pop();
     }
 
+    /// `getPropertiesOfUnionOrIntersectionType(ty)` for an intersection `ty` whose properties
+    /// `getReducedType(ty)` is examining. `resolvedProperties` is not set yet and the property that
+    /// is being created is not in `propertyCache`, so `createUnionOrIntersectionProperty` asks for
+    /// the types of the symbols that it combines once more.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn create_properties_of_intersection_in_progress(&mut self, ty: TypeId) {
+        if self
+            .never_in_progress
+            .iter()
+            .filter(|&&it| it == ty)
+            .count()
+            != 1
+        {
+            return;
+        }
+        self.never_in_progress.push(ty);
+        if self.has_property_in_several_members(ty) {
+            self.may_have_never_reduced_property(ty, false);
+        }
+        self.never_in_progress.pop();
+    }
+
     /// FOR SPEED: whether two members of the intersection `ty` may have a property with the same
     /// name. If not, every property of `ty` comes from one member (`singleProp` of
     /// `createUnionOrIntersectionProperty`), and `isNeverReducedProperty` is false for all of them.

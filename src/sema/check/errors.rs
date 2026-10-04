@@ -370,17 +370,14 @@ impl Checker<'_, '_> {
                 level: 1,
             };
         }
-        // `GetPackagesMap`
-        let (types, own) = (
-            cat!(b"/node_modules/@types/", mangled, b"/"),
-            cat!(b"/node_modules/", package, b"/"),
-        );
+        // `typesPackageExists`, `packageBundlesTypes`
+        let (types_package, atoms) = (cat!(b"@types/", mangled), self.atoms());
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
-        for module in modules {
-            has_types_package |= strings::contains(module.path, &types);
-            has_declarations |= crate::resolve::is_declaration_file_name(module.path)
-                && strings::contains(module.path, &own);
+        for &(name, is_declaration_file) in modules.flat_map(|it| it.resolved_packages.iter()) {
+            let name = atoms.bytes(name);
+            has_types_package |= name == &types_package[..];
+            has_declarations |= is_declaration_file && name == package;
         }
         let (code, args) = if has_types_package {
             (7040, vec![package.to_vec(), mangled])

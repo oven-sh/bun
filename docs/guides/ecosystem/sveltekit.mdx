@@ -13,7 +13,7 @@ mode: center
     Use the official Svelte CLI (`sv`) to scaffold a new SvelteKit project and select **bun** as the package manager:
 
     ```sh terminal icon="terminal"
-    bunx sv create my-app
+    bunx --bun sv create my-app
     ```
 
     Follow the interactive prompts to choose a template (such as *SvelteKit demo* or *Minimal skeleton*) and add TypeScript support:
@@ -85,7 +85,7 @@ mode: center
 
 SvelteKit uses adapters to transform your application into production artifacts tailored to specific target environments.
 
-Starting with **SvelteKit 3**, the framework includes an **official Bun adapter** (`@sveltejs/adapter-bun`). For applications running earlier versions of SvelteKit (v1 or v2), the community-maintained `svelte-adapter-bun` is used.
+Starting with **SvelteKit 3**, the framework includes an **official Bun adapter** (`@sveltejs/adapter-bun`). For SvelteKit 2.4+ in the 2.x series, use the community-maintained `svelte-adapter-bun`.
 
 <Tabs>
   <Tab title="Official Adapter (SvelteKit 3+)">
@@ -220,12 +220,12 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
 
   </Tab>
 
-  <Tab title="Legacy Projects (SvelteKit < 3)">
+  <Tab title="Legacy Projects (SvelteKit 2.4–2.x)">
     <Warning>
-      Use this adapter only if your project runs **SvelteKit 1.x or 2.x**. For SvelteKit 3+, use the official `@sveltejs/adapter-bun` described in the first tab.
+      Use this adapter only if your project runs **SvelteKit 2.4 or later in the 2.x series**. For SvelteKit 3+, use the official `@sveltejs/adapter-bun` described in the first tab.
     </Warning>
 
-    For projects prior to SvelteKit 3, the community-maintained [`svelte-adapter-bun`](https://github.com/gornostay25/svelte-adapter-bun) package is used.
+    For SvelteKit 2.x projects prior to SvelteKit 3, the community-maintained [`svelte-adapter-bun`](https://github.com/gornostay25/svelte-adapter-bun) package is used.
 
     <Steps>
       <Step title="Install community adapter">
@@ -237,7 +237,7 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
 
       </Step>
       <Step title={<span>Configure in <code>svelte.config.js</code></span>}>
-        In SvelteKit 1 and 2, adapter settings reside in `svelte.config.js`:
+        In SvelteKit 2, adapter settings reside in `svelte.config.js`:
 
         ```js svelte.config.js icon="/icons/javascript.svg"
         import adapter from "svelte-adapter-bun"; // [!code ++]
@@ -300,5 +300,5 @@ Deploy your SvelteKit application on Bun across major cloud providers:
 - [Official SvelteKit adapter-bun Documentation](https://svelte.dev/docs/kit/adapter-bun)
 - [SvelteKit v3 Migration Guide](https://svelte.dev/docs/kit/migrating-to-sveltekit-3)
 - [Official SvelteKit Monorepo (`sveltejs/kit`)](https://github.com/sveltejs/kit)
-- [Community `svelte-adapter-bun` Repository (for legacy SvelteKit)](https://github.com/gornostay25/svelte-adapter-bun)
+- [Community `svelte-adapter-bun` Repository (for SvelteKit 2.x)](https://github.com/gornostay25/svelte-adapter-bun)
 - [Bun Executable Compilation Documentation](https://bun.com/docs/bundler/executables)

@@ -1895,40 +1895,17 @@ pub(crate) fn rename_at_w(
     new_path_w: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
-    let src_fd = 'brk: {
-        match bun_sys::open_file_at_windows(
-            old_dir_fd,
-            old_path_w,
-            bun_sys::NtCreateFileOptions {
-                access_mask: win32::SYNCHRONIZE
-                    | win32::GENERIC_WRITE
-                    | win32::DELETE
-                    | win32::FILE_TRAVERSE,
-                disposition: win32::FILE_OPEN,
-                options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
-                ..Default::default()
-            },
-        ) {
-            bun_sys::Result::Err(_) => {
-                // retry, wtihout FILE_TRAVERSE flag
-                match bun_sys::open_file_at_windows(
-                    old_dir_fd,
-                    old_path_w,
-                    bun_sys::NtCreateFileOptions {
-                        access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
-                        disposition: win32::FILE_OPEN,
-                        options: win32::FILE_SYNCHRONOUS_IO_NONALERT
-                            | win32::FILE_OPEN_REPARSE_POINT,
-                        ..Default::default()
-                    },
-                ) {
-                    bun_sys::Result::Err(err2) => return bun_sys::Result::Err(err2),
-                    bun_sys::Result::Ok(fd) => break 'brk fd,
-                }
-            }
-            bun_sys::Result::Ok(fd) => break 'brk fd,
-        }
-    };
+    // FILE_TRAVERSE is FILE_EXECUTE for files and can force synchronous antivirus scans.
+    let src_fd = bun_sys::open_file_at_windows(
+        old_dir_fd,
+        old_path_w,
+        bun_sys::NtCreateFileOptions {
+            access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
+            disposition: win32::FILE_OPEN,
+            options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
+            ..Default::default()
+        },
+    )?;
     let _close = bun_sys::CloseOnDrop::new(src_fd);
 
     move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)

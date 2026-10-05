@@ -1652,3 +1652,58 @@ describe.concurrent("onResolve", () => {
     });
   });
 });
+
+describe.concurrent("bare runtime plugin aliases", () => {
+  it.each(["resolved-key-alias", "@scope/alias", "alias/subpath"])("resolves %s to one ESM record", async alias => {
+    using dir = tempDir("plugin-bare-alias", {
+      "target.mjs": `globalThis.aliasLoads = (globalThis.aliasLoads ?? 0) + 1;
+        export const value = "loaded"; export const marker = {};`,
+      "node_modules/helper-pkg/package.json": JSON.stringify({ name: "helper-pkg", main: "index.cjs" }),
+      "node_modules/helper-pkg/index.cjs": `module.exports = "helper";`,
+      "entry.cjs": `
+        const assert = require("node:assert/strict");
+        const { createRequire } = require("node:module");
+        const path = require("node:path");
+        const fromRoot = createRequire(__filename);
+        const alias = ${JSON.stringify(alias)};
+        const target = __dirname + path.sep + "." + path.sep + "target.mjs";
+        const calls = [];
+        const thrown = new Error("plugin failure");
+        Bun.plugin({
+          name: "bare aliases",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, args => {
+              calls.push(args.path);
+              if (args.path === "throw-alias") throw thrown;
+              if (args.path !== alias) return;
+              assert.equal(fromRoot("helper-pkg"), "helper");
+              assert.equal(fromRoot("path"), path);
+              return { path: target, namespace: "file" };
+            });
+          },
+        });
+        assert.throws(() => fromRoot("throw-alias"), error => error === thrown);
+        assert.equal(fromRoot.resolve("helper-pkg", { paths: [__dirname] }), path.join(__dirname, "node_modules/helper-pkg/index.cjs"));
+        const loaded = fromRoot(alias);
+        assert.equal(loaded.value, "loaded");
+        assert.equal(fromRoot(alias), loaded);
+        (async () => {
+          const imported = await import(alias);
+          assert.equal(imported.marker, loaded.marker);
+          assert.equal(globalThis.aliasLoads, 1);
+          assert.deepEqual(calls, ["throw-alias", alias, alias, alias]);
+          console.log("ok");
+        })().catch(error => { console.error(error); process.exitCode = 1; });
+      `,
+    });
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});

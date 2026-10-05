@@ -4141,6 +4141,14 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload.clone_from(&ctx.preloads);
+        vm.worker_preloads.clone_from(&vm.preload);
+        vm.worker_eval_preloads
+            .clone_from(&ctx.worker_eval_preloads);
+        vm.worker_preload_require_start = ctx.worker_preload_require_start;
+        vm.worker_preload_require_count = ctx.worker_preload_require_count;
+        vm.worker_eval_mode = ctx.worker_eval_mode;
+        vm.preload_require_start = ctx.worker_preload_require_start;
+        vm.preload_require_count = ctx.worker_preload_require_count;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.vitest_globals =
             ctx.test_options.globals == Some(TestGlobals::Vitest);

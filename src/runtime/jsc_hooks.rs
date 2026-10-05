@@ -4497,9 +4497,16 @@ fn module_type_of(
     // regex /\.[jt]s$/
     if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
         // Use the package.json module type if it exists.
-        return package_json
+        let package_module_type = package_json
             .map(|pkg| pkg.module_type)
             .unwrap_or(ModuleType::Unknown);
+        if package_module_type == ModuleType::Unknown
+            && ext == b".js"
+            && bun_paths::strings::path_contains_node_modules_folder(path.text)
+        {
+            return ModuleType::Cjs;
+        }
+        return package_module_type;
     }
     // For JSX/TSX and other extensions, let the file contents decide.
     ModuleType::Unknown
@@ -4922,7 +4929,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     &lr.path,
                     referrer.clone(),
                     concurrent_loader,
-                    lr.package_json,
+                    module_type,
                     aot_package_config,
                     module_loader,
                 )

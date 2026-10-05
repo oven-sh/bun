@@ -583,12 +583,8 @@ impl JSMySQLConnection {
         }
         use my_sql_connection::Status as S;
         match this.connection.get().status {
-            // A close while the connect/handshake is still in flight gets no
-            // socket event (uws skips the on_close dispatch for sockets whose
-            // connect never completed), so the socket-close -> on_close ->
-            // fail chain never runs: fail directly so the JS onclose callback
-            // fires and the status goes terminal instead of staying
-            // Connecting forever.
+            // The socket event this close raises would report a connect that
+            // failed; say what happened first.
             S::Connecting
             | S::Handshaking
             | S::Authenticating
@@ -596,10 +592,7 @@ impl JSMySQLConnection {
             | S::SessionSetup => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }
-            S::Connected | S::Disconnected | S::Failed => {
-                let queries = this.get_queries_array();
-                this.connection_mut().clean_queue_and_close(None, queries);
-            }
+            S::Connected | S::Disconnected | S::Failed => this.clean_queue_and_close(None),
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -662,6 +655,18 @@ impl JSMySQLConnection {
         self.fail_with_js_value(err);
     }
 
+    /// Rejecting a query runs JS and closing the socket raises its close event. Both reach back
+    /// into the connection, so neither runs under a `connection_mut()` borrow.
+    fn clean_queue_and_close(&self, js_reason: Option<JSValue>) {
+        self.connection
+            .get()
+            .queue
+            .clean(js_reason, self.get_queries_array());
+        let socket = self.connection.get().socket();
+        socket.close(uws::CloseKind::Normal);
+        self.connection_mut().discard_write_buffer();
+    }
+
     fn fail_with_js_value(&self, value: JSValue) {
         // Runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
@@ -671,8 +676,7 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            let queries = p.get_queries_array();
-            p.connection_mut().clean_queue_and_close(Some(value), queries);
+            p.clean_queue_and_close(Some(value));
             p.update_reference_type();
         }
         self.stop_timers();
@@ -730,12 +734,32 @@ impl JSMySQLConnection {
         request.resolve(self.get_queries_array(), result);
     }
 
+    /// The client cannot turn one of `request`'s rows into a JS value. The
+    /// packet header frames the row and the packet is skipped whole, so the
+    /// stream is still in step: that fails the request alone, not the
+    /// connection and the requests queued behind it. A VM that is stopping
+    /// fails the connection instead.
+    fn on_undecodable_row(
+        &self,
+        request: &JSMySQLQuery,
+        err: AnyMySQLErrorT,
+    ) -> Result<(), OnResultRowError> {
+        if self.global_object.has_pending_termination_exception() {
+            return Err(OnResultRowError::JSError);
+        }
+        request.reject_undecodable_row(self.get_queries_array(), err);
+        Ok(())
+    }
+
     pub(crate) fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &self,
         request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
+        if request.is_discarding_response() {
+            return Ok(());
+        }
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
         // `MySQLStatement::structure(&mut self) -> &CachedStructure`
@@ -770,37 +794,26 @@ impl JSMySQLConnection {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);
             }
-            self.connection_mut()
-                .queue
-                .mark_current_request_as_finished(request);
-            request.reject(self.get_queries_array(), e);
-            return Ok(());
+            return self.on_undecodable_row(request, e);
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         // `ParentRef::Deref` recovers `&CachedStructure`; `*statement` is live
         // and not mutably borrowed for the duration of this `to_js` call.
         let cached_structure = cached_structure.as_deref();
         // Process row data
-        let row_value = row
-            .to_js(
-                &self.global_object,
-                pending_value,
-                structure,
-                fields_flags,
-                result_mode,
-                cached_structure,
-            )
-            .map_err(|_| OnResultRowError::JSError)?;
+        let Ok(row_value) = row.to_js(
+            &self.global_object,
+            pending_value,
+            structure,
+            fields_flags,
+            result_mode,
+            cached_structure,
+        ) else {
+            return self.on_undecodable_row(request, AnyMySQLErrorT::JSError);
+        };
         // `Row<'_>` has a Drop impl, so its `&statement.columns` borrow lives to
         // end-of-scope; drop it now so `statement.result_count += 1` may take `&mut`.
         drop(row);
-        if let Some(err) = self.global_object.try_take_exception() {
-            self.connection_mut()
-                .queue
-                .mark_current_request_as_finished(request);
-            request.reject_with_js_value(self.get_queries_array(), err);
-            return Ok(());
-        }
         statement.result_count += 1;
 
         if pending_value.is_empty_or_undefined_or_null() {
@@ -957,8 +970,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        // The dispatch trampoline already closed the connecting socket; it is
-        // freed at end-of-tick, so detach before any user-visible callback.
+        // As in `on_close`.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);

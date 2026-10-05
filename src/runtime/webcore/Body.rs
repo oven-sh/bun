@@ -127,8 +127,8 @@ impl Body {
         unsafe { self.value.get_mut() }
     }
 
-    pub(crate) fn len(&self) -> blob::SizeType {
-        self.value_mut().size()
+    pub(crate) fn known_len(&self) -> Option<usize> {
+        self.value_mut().known_size()
     }
 }
 
@@ -764,6 +764,14 @@ impl Value {
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             _ => 0,
+        }
+    }
+
+    /// `None` for a file that does not exist or is not seekable.
+    pub(crate) fn known_size(&mut self) -> Option<usize> {
+        match self.size() {
+            u64::MAX => None,
+            size => Some(size as usize),
         }
     }
 
@@ -1571,9 +1579,7 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if b.store()
-                .is_some_and(|store| !blob::store_reads_repeatably(store))
-            {
+            if b.store().is_some_and(blob::store_yields_bytes_once) {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.
                 self.to_readable_stream(cx)?;

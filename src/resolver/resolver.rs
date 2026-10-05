@@ -970,10 +970,6 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        // SAFETY: `import_path` is caller-interned (DirnameStore/source text)
-        // and outlives the returned MatchResult.
-        // TODO: thread an explicit `'a` through MatchResult instead.
-        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         if source_dir.is_empty() {
             return MatchStatus::NotFound;
         }

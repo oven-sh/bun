@@ -594,6 +594,8 @@ Server.prototype.address = function () {
 };
 
 Server.prototype.listen = function () {
+  // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
+  if (this[serverSymbol]) throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port, host;
   let socketPath;

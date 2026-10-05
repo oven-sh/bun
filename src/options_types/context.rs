@@ -356,7 +356,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 }
 
 pub struct DebugOptions {
-    pub dump_environment_variables: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
@@ -383,7 +382,6 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            dump_environment_variables: false,
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,

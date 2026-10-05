@@ -911,10 +911,10 @@ impl<'s> Checker<'_, 's> {
                 MemberKind::Method => {
                     self.check_grammar_method(file, member.func);
                 }
-                MemberKind::Getter | MemberKind::Setter => {
-                    if !self.check_grammar_function_like_declaration(file, member.func) {
-                        self.check_grammar_accessor(file, member.func);
-                    }
+                MemberKind::Getter | MemberKind::Setter
+                    if !self.check_grammar_function_like_declaration(file, member.func) =>
+                {
+                    self.check_grammar_accessor(file, member.func);
                 }
                 _ => {}
             }
@@ -1534,7 +1534,7 @@ impl<'s> Checker<'_, 's> {
                 }
                 // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
                 if (self.p.call_diagnostics)
-                    .get_ref(&mut self.task, &(file, e))
+                    .get_ref(&self.task, &(file, e))
                     .is_some()
                 {
                     self.check_node_deferred(file, e);

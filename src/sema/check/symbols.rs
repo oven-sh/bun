@@ -149,7 +149,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type of `sym` as a value.
     #[inline]
     pub fn type_of_symbol(&mut self, sym: Sym) -> TypeId {
-        if let Some(known) = self.p.symbol_types.get(&mut self.task, &sym) {
+        if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
             return known;
         }
         self.resolve_type_of_symbol(sym)
@@ -162,7 +162,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
                 return ty;
             }
-            if let Some(known) = self.p.symbol_types.get(&mut self.task, &sym) {
+            if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
                 return known;
             }
         }
@@ -179,11 +179,9 @@ impl<'p, 's> Checker<'p, 's> {
             // Cached here once it is cached there, because every `this.x` queries it. The cached value is copied: `ty` can be
             // provisional while the final type is stored.
             let pat = self.hir(file)[p].pat;
-            let cached = (self.p.pat_types.get(&mut self.task, &(file, pat))).map(|(ty, _)| ty);
+            let cached = (self.p.pat_types.get(&self.task, &(file, pat))).map(|(ty, _)| ty);
             if let (Ok(stored), Some(cached)) = (self.end_scope(scope), cached) {
-                self.p
-                    .symbol_types
-                    .insert(&mut self.task, sym, cached, stored);
+                self.p.symbol_types.insert(&self.task, sym, cached, stored);
             }
             return ty;
         }
@@ -192,7 +190,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut members = SmallVec::new();
         if self.files().flags(sym).intersects(SymFlags::CLASS_MEMBER) {
             members = self.members_of_symbol(sym);
-            if let Some(known) = self.p.symbol_types.get(&mut self.task, &sym) {
+            if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
                 return known;
             }
         }
@@ -238,7 +236,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.left_a_cycle {
             let ty = self.type_of_circular_symbol(sym, Some(ty));
             let stored = self.cycle_result();
-            let kept = self.p.symbol_types.insert(&mut self.task, sym, ty, stored);
+            let kept = self.p.symbol_types.insert(&self.task, sym, ty, stored);
             let flags = self.files().flags(sym);
             if let Some((file, Decl::Member(first))) = value_declaration {
                 if flags.intersects(SymFlags::ACCESSOR) {
@@ -290,7 +288,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match left {
             Ok(stored) => {
-                self.p.symbol_types.insert(&mut self.task, sym, ty, stored);
+                self.p.symbol_types.insert(&self.task, sym, ty, stored);
             }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
@@ -429,7 +427,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let stored = self.cycle_result();
         self.note_result(Query::Symbol(sym));
-        self.p.symbol_types.insert(&mut self.task, sym, ty, stored)
+        self.p.symbol_types.insert(&self.task, sym, ty, stored)
     }
 
     /// `cache_circularity_error_type` for the name `pat`. `false`, and nothing is cached:
@@ -453,7 +451,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.note_result(Query::Pat(file, pat));
         self.p
             .pat_types
-            .insert(&mut self.task, (file, pat), (ty, true), stored);
+            .insert(&self.task, (file, pat), (ty, true), stored);
         true
     }
 
@@ -1720,7 +1718,7 @@ impl<'p, 's> Checker<'p, 's> {
         if pat.is_none() {
             return TypeId::UNRESOLVED;
         }
-        if let Some((known, _)) = self.p.pat_types.get(&mut self.task, &(file, pat)) {
+        if let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat)) {
             return known;
         }
         self.resolve_type_of_pat(file, pat)
@@ -1729,7 +1727,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     fn resolve_type_of_pat(&mut self, file: FileId, pat: PatId) -> TypeId {
         if self.prepare_query_for_pat(file, pat)
-            && let Some((known, _)) = self.p.pat_types.get(&mut self.task, &(file, pat))
+            && let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat))
         {
             return known;
         }
@@ -1765,7 +1763,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // if one was stored.
                 self.p
                     .pat_types
-                    .rewrite(&mut self.task, (file, pat), (ty, true), stored);
+                    .rewrite(&self.task, (file, pat), (ty, true), stored);
             }
             self.report_circularity_error_of_pat(query, file, pat);
             return ty;
@@ -1775,7 +1773,7 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(stored) => {
                 self.p
                     .pat_types
-                    .insert(&mut self.task, (file, pat), (ty, false), stored);
+                    .insert(&self.task, (file, pat), (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Pat(file, pat), u64::from(ty.0), open),
         }
@@ -1789,13 +1787,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn report_on_circular_pat(&mut self, file: FileId, pat: PatId) {
         // The caller has just requested the type, so the first read is a hit.
         let key = (file, pat);
-        let is_circular = (self.p.pat_types.get(&mut self.task, &key))
-            .is_some_and(|(_, flag)| flag)
-            || self
-                .p
-                .circular_initializers
-                .get(&mut self.task, &key)
-                .is_some();
+        let is_circular = (self.p.pat_types.get(&self.task, &key)).is_some_and(|(_, flag)| flag)
+            || self.p.circular_initializers.get(&self.task, &key).is_some();
         if is_circular && self.enter(Query::Pat(file, pat)) {
             self.type_of_pat_uncached(file, pat);
             // The frame stores nothing, so its diagnostics do not belong to the entry of `pat_types`.
@@ -2620,12 +2613,12 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.types().sig(sig) {
             SigData::Decl { file, func, mapper } if !self.is_instantiating(mapper) => {
                 let key = (file, func);
-                if let Some((declared, _)) = self.p.fn_return_types.get(&mut self.task, &key) {
+                if let Some((declared, _)) = self.p.fn_return_types.get(&self.task, &key) {
                     return self.instantiate_result_of_sig(declared, file, func, mapper);
                 }
             }
             SigData::Decl { .. } => {
-                if let Some(resolved) = self.p.resolved_return_types.get(&mut self.task, &sig) {
+                if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
                     return resolved;
                 }
             }
@@ -2967,7 +2960,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// parameters in scope.
     #[inline]
     pub fn return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
-        if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
+        if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
             return known;
         }
         self.resolve_return_type_of_fn(file, func)
@@ -2980,7 +2973,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
                 return ty;
             }
-            if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
+            if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
                 return known;
             }
         }
@@ -2990,7 +2983,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(always)]
     fn resolve_return_type_of_fn_once(&mut self, file: FileId, func: FnId) -> TypeId {
         if self.prepare_query_for_fn(file, func)
-            && let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func))
+            && let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func))
         {
             return known;
         }
@@ -3004,7 +2997,7 @@ impl<'p, 's> Checker<'p, 's> {
                 func,
                 CheckMode::empty(),
             );
-            if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
+            if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
                 return known;
             }
         }
@@ -3028,20 +3021,20 @@ impl<'p, 's> Checker<'p, 's> {
             let any = (TypeId::ANY, true);
             self.p
                 .fn_return_types
-                .rewrite(&mut self.task, (file, func), any, stored);
+                .rewrite(&self.task, (file, func), any, stored);
             self.report_circular_return_type(Some(Query::Return(file, func)), file, func);
             return TypeId::ANY;
         }
         // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it is nil, and
         // the caller gets that value.
-        if let Some((known, _)) = self.p.fn_return_types.get(&mut self.task, &(file, func)) {
+        if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
             return known;
         }
         match left {
             Ok(stored) => {
                 self.p
                     .fn_return_types
-                    .insert(&mut self.task, (file, func), (ty, false), stored);
+                    .insert(&self.task, (file, func), (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }
@@ -3557,7 +3550,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return self.awaited_no_alias_uncached(ty, error);
         }
-        if let Some(kept) = self.p.awaited_types.get(&mut self.task, &ty) {
+        if let Some(kept) = self.p.awaited_types.get(&self.task, &ty) {
             return kept;
         }
         let scope = self.begin_scope();
@@ -3570,9 +3563,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.relation_too_complex
             && self.reliability == 0
         {
-            self.p
-                .awaited_types
-                .insert(&mut self.task, ty, awaited, stored);
+            self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }
         awaited
     }

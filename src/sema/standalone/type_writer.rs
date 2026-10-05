@@ -691,10 +691,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {
-            self.p
-                .flows_too_deep
-                .get(&mut self.task, &(file, e))
-                .is_some()
+            self.p.flows_too_deep.get(&self.task, &(file, e)).is_some()
                 && self.function_or_module_block_of(file, e) == crate::node::Node::FILE
         })
     }

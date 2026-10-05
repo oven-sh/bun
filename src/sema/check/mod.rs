@@ -533,7 +533,8 @@ impl<'s> Program<'s> {
 
     pub fn checker(&self) -> Checker<'_, 's> {
         let arena = self.session.arena();
-        let checker = Checker {
+
+        Checker {
             p: self,
             arena,
             task: Task::new_in(arena),
@@ -712,8 +713,7 @@ impl<'s> Program<'s> {
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
-        };
-        checker
+        }
     }
 }
 
@@ -1719,16 +1719,16 @@ impl<'p, 's> Checker<'p, 's> {
         let is_resolved = match restart_with {
             Some(Query::Symbol(sym)) => {
                 self.type_of_symbol(sym);
-                self.p.symbol_types.get(&mut self.task, &sym).is_some()
+                self.p.symbol_types.get(&self.task, &sym).is_some()
             }
             Some(Query::Declared(sym)) => {
                 self.declared_type(sym);
-                self.p.declared_types.get(&mut self.task, &sym).is_some()
+                self.p.declared_types.get(&self.task, &sym).is_some()
             }
             Some(Query::Return(file, func)) => {
                 self.return_type_of_fn(file, func);
                 let key = (file, func);
-                self.p.fn_return_types.get(&mut self.task, &key).is_some()
+                self.p.fn_return_types.get(&self.task, &key).is_some()
             }
             _ => return false,
         };
@@ -2025,7 +2025,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let (_, node) = self.pending_circular_mapped_props.swap_remove(i);
             let stored = self.cycle_result();
-            (self.p.mapped_types_with_errors).insert(&mut self.task, mapped, (), stored);
+            (self.p.mapped_types_with_errors).insert(&self.task, mapped, (), stored);
             self.circular_mapped_props.push((node, mapped, name));
         } else if self.eager.is_empty()
             && let Some(current) = self.current_node().or(self.current_source_element)
@@ -2485,6 +2485,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `end_scope` for a memo with a test of its own.
     #[inline]
+    #[expect(clippy::needless_pass_by_value, reason = "a scope ends once")]
     fn end_scope_as(&mut self, scope: Scope, is_open: bool) -> Result<Stored, Open> {
         self.lowest_taint = self.lowest_taint.min(scope.outer_taint);
         if is_open {
@@ -2529,7 +2530,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// instantiation went too deep, which is reported again to every caller that gets there.
     #[inline]
     fn non_cacheable_mark(&self) -> (u64, u64) {
-        (self.cycles as u64, self.limits)
+        (self.cycles, self.limits)
     }
 
     /// Stores `raw`, the result of `q`, for which `leave` has just returned `Err(open)`.

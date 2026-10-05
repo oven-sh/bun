@@ -167,7 +167,7 @@ fn begin_in(session: &Session, index: u32, file: FileId) -> Task<'_> {
     task
 }
 
-fn counts(published: Published) -> (u64, u64, u64) {
+fn counts(published: &Published) -> (u64, u64, u64) {
     let sum = |of: fn(&(u64, u64)) -> u64| published.by_table.iter().map(of).sum::<u64>();
     assert_eq!(
         (sum(|it| it.0), sum(|it| it.1)),
@@ -237,7 +237,7 @@ fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
 
     // After the barrier every task sees all of it, under published ids.
     let published = tables.barrier(&mut [tables.finish(&mut first)], &forwards);
-    assert_eq!(counts(published), (6, 6, 0));
+    assert_eq!(counts(&published), (6, 6, 0));
     let reader = Task::new_in(session.arena());
     let keyof = tables.keyof(&reader, TypeId::STRING);
     assert!(!keyof.is_local());
@@ -320,7 +320,7 @@ fn a_published_entry_stays_what_it_is() {
         .rewrite(&later, (A, 1), TypeId::NUMBER, stored());
     assert_eq!(tables.by_node.get(&later, &(A, 1)), Some(TypeId::STRING));
     let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
-    assert_eq!(counts(published), (1, 0, 1));
+    assert_eq!(counts(&published), (1, 0, 1));
     assert_eq!(
         tables.by_node.get(&Task::new_in(session.arena()), &(A, 1)),
         Some(TypeId::STRING)
@@ -404,7 +404,7 @@ fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     }
     // Each key once: 4 in `by_node`, 1 in `set`, and none loses.
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    assert_eq!(counts(published), (5, 5, 0));
+    assert_eq!(counts(&published), (5, 5, 0));
     assert_eq!(
         tables.by_node.get(&Task::new_in(session.arena()), &(B, 1)),
         Some(two)
@@ -459,7 +459,7 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
     use crate::util::FxHashMap;
     const FILES: u32 = 40;
     const NODES: u32 = 30;
-    let is_imported = |file: u32| file % 2 == 0;
+    let is_imported = |file: u32| file.is_multiple_of(2);
     for seed in 1..=8u64 {
         let mut state = seed;
         let mut random = |below: u32| {
@@ -515,7 +515,7 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
         let mut finished = [task.finish_tables(&[&table], Vec::new())];
         let published = publish_tables(&[&table], &mut finished, &forwards, None);
         assert_eq!(
-            counts(published),
+            counts(&published),
             (model.len() as u64, model.len() as u64, 0)
         );
         let reader = Task::new_in(session.arena());
@@ -577,7 +577,7 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
         // `by_node`, `set`, `by_id`, `shapes`, `kept_by_node`, `members`, `by_key`.
         let by_table = [(5, 2), (0, 0), (3, 1), (3, 1), (3, 1), (0, 0), (3, 1)];
         assert_eq!(published.by_table, by_table);
-        assert_eq!(counts(published), (17, 6, 11));
+        assert_eq!(counts(&published), (17, 6, 11));
         let reader = Task::new_in(session.arena());
         assert_eq!(tables.by_node.get(&reader, &(C, 9)), Some(values[0]));
         assert_eq!(tables.by_node.get(&reader, &(C, 8)), Some(values[1]));
@@ -625,7 +625,7 @@ fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
     assert!(finished[0].diagnostics == diagnostics);
     let published = tables.barrier(&mut finished, &forwards);
     assert_eq!(published.digest, 0);
-    assert_eq!(counts(published), (0, 0, 0));
+    assert_eq!(counts(&published), (0, 0, 0));
     assert!(
         tables
             .keyof(&Task::new_in(session.arena()), TypeId::STRING)
@@ -747,7 +747,7 @@ fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
             })
             .collect();
         let published = tables.barrier(&mut finished, &pool);
-        assert_eq!(counts(published), (7, 4, 3));
+        assert_eq!(counts(&published), (7, 4, 3));
         let reader = Task::new_in(session.arena());
         let keyof = tables.keyof(&reader, TypeId::STRING);
         let nested = tables.keyof(&reader, keyof);
@@ -791,7 +791,7 @@ fn an_atom_that_two_tasks_create_is_one_key_after_the_link() {
     assert_eq!(tables.atoms.lookup(b"new at check time"), None);
     tables.link(&mut finished, &forwards);
     let published = publish_tables(&all, &mut finished, &forwards, Some(&tables.atoms));
-    assert_eq!(counts(published), (3, 2, 1));
+    assert_eq!(counts(&published), (3, 2, 1));
     let atom = tables.atoms.lookup(b"new at check time").unwrap();
     assert!(!atom.is_own());
     assert_eq!(
@@ -945,7 +945,7 @@ fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
             .collect();
         let published = tables.barrier(&mut finished, &pool);
         assert!(published.buffered >= FEW_ENTRIES);
-        assert_eq!(counts(published), (6000, 3000, 3000));
+        assert_eq!(counts(&published), (6000, 3000, 3000));
         assert_eq!(tables.by_key.footprint().entries, 3000);
         let (reader, mut of) = (Task::new_in(session.arena()), TypeId::STRING);
         (0..3000)
@@ -1038,7 +1038,7 @@ fn random_tasks_publish_what_the_model_says() {
         // Enough for the pool to be used.
         assert!(published.buffered >= FEW_ENTRIES);
         let stored = (by_node.len() + by_id.len() + by_key.len() + shapes.len()) as u64;
-        assert_eq!(counts(published), (buffered, stored, buffered - stored));
+        assert_eq!(counts(&published), (buffered, stored, buffered - stored));
         let reader = Task::new_in(session.arena());
         let ids = chain(&tables, &reader);
         for (node, value) in by_node {
@@ -1106,7 +1106,7 @@ fn nothing_that_is_bound_is_published() {
     tables.shapes.insert(&task, any, Box::new([free]), stored());
 
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    assert_eq!(counts(published), (4, 4, 0));
+    assert_eq!(counts(&published), (4, 4, 0));
     let entries = tables.all().map(|table| table.slot());
     assert_eq!(entries, [0, 1, 2, 3, 4, 5, 6]);
     assert_eq!(tables.by_node.footprint().entries, 1);
@@ -1140,7 +1140,7 @@ fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
     assert_eq!(table.get(&task, &(B, 5)), Some(TypeId::STRING));
     let mut finished = [task.finish_tables(&[&table], Vec::new())];
     let published = publish_tables(&[&table], &mut finished, &forwards, None);
-    assert_eq!(counts(published), (0, 0, 0));
+    assert_eq!(counts(&published), (0, 0, 0));
 }
 
 // ───────────────────────────── bit storage ─────────────────────────────
@@ -1175,7 +1175,7 @@ fn published_values_of_a_bit_share_a_cell() {
         })
         .collect();
     let published = tables.barrier(&mut finished, &forwards);
-    assert_eq!(counts(published), (12, 6, 6));
+    assert_eq!(counts(&published), (12, 6, 6));
     let reader = Task::new_in(session.arena());
     for file in [A, B, C] {
         for index in 0..100 {

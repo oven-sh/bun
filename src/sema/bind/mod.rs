@@ -1562,7 +1562,7 @@ fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
     map: FxHashMap<K, V>,
     arena: &'s Arena,
 ) -> ArenaHashMap<'s, K, V> {
-    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild::default(), arena);
+    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
     exact.extend(map);
     exact
 }
@@ -1571,7 +1571,7 @@ fn set_to_arena<'s, K: Eq + std::hash::Hash>(
     set: FxHashSet<K>,
     arena: &'s Arena,
 ) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild::default(), arena);
+    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
     exact.extend(set);
     exact
 }

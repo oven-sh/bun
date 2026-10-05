@@ -338,7 +338,7 @@ impl<'p, 's> Checker<'p, 's> {
         // "such that we don't attempt the overflowing operation again"
         if !is_related && !is_too_deep && !is_trial {
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            let entry = self.p.relations.get(&mut self.task, &key);
+            let entry = self.p.relations.get(&self.task, &key);
             is_too_deep = entry.is_some_and(|entry| entry & STACK_DEPTH_OVERFLOW != 0);
         }
         match () {
@@ -642,7 +642,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         };
         // `CachedTypeKindEquivalentBaseType`
-        if let Some(known) = self.p.equivalent_base_types.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
         let scope = self.begin_scope();
@@ -669,11 +669,11 @@ impl<'p, 's> Checker<'p, 's> {
             };
             // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
             // final only if it was computed from the cached base types.
-            let cached = self.p.base_types.get_ref(&mut self.task, &target);
+            let cached = self.p.base_types.get_ref(&self.task, &target);
             (base, cached.map(|it| &it[..]) == Some(&bases[..]))
         };
         match self.end_scope_as(scope, !is_final) {
-            Ok(stored) => (self.p.equivalent_base_types).insert(&mut self.task, ty, base, stored),
+            Ok(stored) => (self.p.equivalent_base_types).insert(&self.task, ty, base, stored),
             Err(_) => base,
         }
     }
@@ -767,7 +767,7 @@ impl<'p, 's> Checker<'p, 's> {
             let constraint = Some(constraint);
             self.p
                 .type_param_constraints
-                .insert(&mut self.task, copy, constraint, stored);
+                .insert(&self.task, copy, constraint, stored);
         }
         let may_extend = self.has_non_circular_base_constraint(copy);
         (self.cycles, self.cycle_at) = cycles;
@@ -1037,7 +1037,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .iter()
                     .position(|p| self.written_name(p.name) == specific)
             })
-            .or_else(|| self.suggested_property(&name, &properties));
+            .or_else(|| self.suggested_property(&name, properties));
         let args = [Arg::Bytes(&name), Arg::Type(error_target)];
         match suggested {
             Some(i) => self.report_error(r, 2551, &[args[0], args[1], Arg::Prop(&properties[i])]),

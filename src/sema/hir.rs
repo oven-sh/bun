@@ -199,7 +199,7 @@ impl<T> Drop for ArenaFew<'_, T> {
     /// Frees the elements. The three words of the list header stay in the arena.
     fn drop(&mut self) {
         if let Some(list) = self.0.take() {
-            *list = ArenaVec::new_in(*list.allocator());
+            *list = ArenaVec::new_in(list.allocator());
         }
     }
 }
@@ -2283,7 +2283,7 @@ impl<'s> File<'s> {
 
     /// The arena that the lists are in.
     pub fn arena(&self) -> &'s Arena {
-        *self.exprs.allocator()
+        self.exprs.allocator()
     }
 }
 

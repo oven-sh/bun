@@ -318,7 +318,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_in_progress {
             if let Some(reported) = reported
                 && (self.p.diagnostics_of_re_resolved_calls)
-                    .get_ref(&mut self.task, &(file, call))
+                    .get_ref(&self.task, &(file, call))
                     .is_none()
             {
                 let (key, stored) = ((file, call), Stored::new());
@@ -848,7 +848,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 if !self.declared_index_infos_in_progress.is_empty() {
                     let key = (file, call);
-                    (self.p.calls_before_signatures).insert(&mut self.task, key, (), Stored::new());
+                    (self.p.calls_before_signatures).insert(&self.task, key, (), Stored::new());
                 }
                 // `invocationError`
                 self.resolve_by_printing(apparent);
@@ -2027,7 +2027,7 @@ impl<'p, 's> Checker<'p, 's> {
             [first, ..] => first,
         };
         let p = self.p;
-        let kept = p.candidate_orders.get_ref(&mut self.task, &first);
+        let kept = p.candidate_orders.get_ref(&self.task, &first);
         if let Some(kept) = kept
             && let Some(ordered) = Self::cached_candidate_order(kept, sigs)
         {
@@ -2042,7 +2042,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let both = self.list_of(sigs.iter().chain(&ordered).copied());
             let kept = (p.candidate_orders)
-                .insert_ref(&mut self.task, first, both, stored)
+                .insert_ref(&self.task, first, both, stored)
                 .1;
             // The entry that remains cached may be a different list with the same first signature.
             if let Some(ordered) = Self::cached_candidate_order(kept, sigs) {

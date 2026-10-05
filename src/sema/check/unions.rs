@@ -1281,13 +1281,13 @@ impl<'p, 's> Checker<'p, 's> {
             is_split,
         );
         let table = &self.p.distributed_intersections;
-        if let Some(known) = table.get(&mut self.task, &key) {
+        if let Some(known) = table.get(&self.task, &key) {
             return known;
         }
         let scope = self.begin_scope();
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => table.insert(&mut self.task, key, result, stored),
+            Ok(stored) => table.insert(&self.task, key, result, stored),
             Err(_) => result,
         }
     }
@@ -2164,7 +2164,7 @@ mod tests {
                     .filter(|p| value.starts_with(p.0))
                     .map(|p| p.1),
             );
-            assert_eq!(found, expected, "{:?}", String::from_utf8_lossy(value));
+            assert_eq!(found, expected, "{:?}", bstr::BStr::new(value));
         }
     }
 }

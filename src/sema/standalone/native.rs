@@ -54,7 +54,7 @@ mod fake_mimalloc {
         }
     }
 
-    unsafe fn global_alloc(size: usize, align: usize, zero: bool) -> *mut c_void {
+    fn global_alloc(size: usize, align: usize, zero: bool) -> *mut c_void {
         let total = size + align.max(16) + HEADER;
         // SAFETY: plain libc allocation.
         let base = unsafe {
@@ -73,8 +73,7 @@ mod fake_mimalloc {
 
     unsafe fn heap_alloc(heap: *mut Heap, size: usize, align: usize, zero: bool) -> *mut c_void {
         if heap == main_heap() {
-            // SAFETY: forwarded.
-            return unsafe { global_alloc(size, align, zero) };
+            return global_alloc(size, align, zero);
         }
         // SAFETY: a heap is used by the thread that created it.
         let heap = unsafe { &mut *heap };
@@ -164,10 +163,12 @@ mod fake_mimalloc {
     extern "C" fn mi_collect(_force: bool) {}
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
+        // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, 16, false) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_zalloc(heap: *mut c_void, size: usize) -> *mut c_void {
+        // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, 16, true) }
     }
     #[unsafe(no_mangle)]
@@ -176,6 +177,7 @@ mod fake_mimalloc {
         size: usize,
         align: usize,
     ) -> *mut c_void {
+        // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, align, false) }
     }
     #[unsafe(no_mangle)]
@@ -184,6 +186,7 @@ mod fake_mimalloc {
         size: usize,
         align: usize,
     ) -> *mut c_void {
+        // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, align, true) }
     }
     #[unsafe(no_mangle)]
@@ -193,6 +196,8 @@ mod fake_mimalloc {
         size: usize,
         align: usize,
     ) -> *mut c_void {
+        // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires. `p` is
+        // null or a block that one of these functions has returned, as mimalloc requires.
         unsafe {
             let new = heap_alloc(heap.cast(), size, align, false);
             if !p.is_null() && !new.is_null() {
@@ -208,30 +213,36 @@ mod fake_mimalloc {
     }
     #[unsafe(no_mangle)]
     extern "C" fn mi_malloc(size: usize) -> *mut c_void {
-        unsafe { global_alloc(size, 16, false) }
+        global_alloc(size, 16, false)
     }
     #[unsafe(no_mangle)]
     extern "C" fn mi_zalloc(size: usize) -> *mut c_void {
-        unsafe { global_alloc(size, 16, true) }
+        global_alloc(size, 16, true)
     }
     #[unsafe(no_mangle)]
     extern "C" fn mi_malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        unsafe { global_alloc(size, align, false) }
+        global_alloc(size, align, false)
     }
     #[unsafe(no_mangle)]
     extern "C" fn mi_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        unsafe { global_alloc(size, align, true) }
+        global_alloc(size, align, true)
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free_size(p: *mut c_void, _size: usize) {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free_size_aligned(p: *mut c_void, _size: usize, _align: usize) {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
@@ -243,6 +254,7 @@ mod fake_mimalloc {
         if p.is_null() {
             0
         } else {
+            // SAFETY: `p` is a block that one of these functions has returned. See `header`.
             unsafe { (*header(p)).size }
         }
     }
@@ -263,6 +275,7 @@ mod fake_mimalloc {
     ) {
         for p in [a, b, c, d, e, f, g, h] {
             if !p.is_null() {
+                // SAFETY: it is not null, so the caller wants a number there.
                 unsafe { *p = 0 };
             }
         }
@@ -275,6 +288,8 @@ unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
     if len == 0 {
         &[]
     } else {
+        // SAFETY: the contract of this function: `p` and `len` are those of a slice that lives for
+        // `'a`.
         unsafe { core::slice::from_raw_parts(p, len) }
     }
 }
@@ -285,10 +300,12 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c == needle)
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
         .iter()
         .rposition(|&c| c == needle)
@@ -296,6 +313,7 @@ unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
         .iter()
         .filter(|&&c| c == needle)
@@ -308,7 +326,9 @@ unsafe extern "C" fn highway_index_of_any_char(
     chars: *const u8,
     chars_len: usize,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     let chars = unsafe { bytes(chars, chars_len) };
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| chars.contains(&c))
 }
 #[unsafe(no_mangle)]
@@ -318,7 +338,9 @@ unsafe extern "C" fn highway_last_index_of_any_char(
     chars: *const u8,
     chars_len: usize,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     let chars = unsafe { bytes(chars, chars_len) };
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
         .iter()
         .rposition(|c| chars.contains(c))
@@ -331,6 +353,7 @@ unsafe extern "C" fn highway_memmem(
     n: *const u8,
     n_len: usize,
 ) -> *const u8 {
+    // SAFETY: the caller passes two slices, each as a pointer and a length.
     let (hay, needle) = unsafe { (bytes(h, h_len), bytes(n, n_len)) };
     if needle.is_empty() {
         return h;
@@ -341,6 +364,7 @@ unsafe extern "C" fn highway_memmem(
     match (0..=hay.len() - needle.len())
         .find(|&i| hay[i] == needle[0] && hay[i..i + needle.len()] == *needle)
     {
+        // SAFETY: `i` is a position in `hay`, which begins at `h`.
         Some(i) => unsafe { h.add(i) },
         None => core::ptr::null(),
     }
@@ -352,6 +376,7 @@ unsafe extern "C" fn highway_memrmem(
     n: *const u8,
     n_len: usize,
 ) -> usize {
+    // SAFETY: the caller passes two slices, each as a pointer and a length.
     let (hay, needle) = unsafe { (bytes(h, h_len), bytes(n, n_len)) };
     if needle.is_empty() {
         return h_len;
@@ -377,6 +402,7 @@ unsafe extern "C" fn highway_memrmem16(
     if h_len < n_len {
         return usize::MAX;
     }
+    // SAFETY: the caller passes two slices, each as a pointer and a length.
     let (hay, needle) = unsafe {
         (
             core::slice::from_raw_parts(h, h_len),
@@ -394,6 +420,7 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_string_literal(
     len: usize,
     quote: u8,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| {
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c)
     })
@@ -403,6 +430,7 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment
     p: *const u8,
     len: usize,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| {
         c == b'*' || c == b'\r' || c == b'\n' || c > 127
     })
@@ -412,8 +440,9 @@ unsafe extern "C" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
     p: *const u8,
     len: usize,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| {
-        c == b'#' || c == b'@' || c < 0x20 || c > 0x7E
+        c == b'#' || c == b'@' || !(0x20..=0x7E).contains(&c)
     })
 }
 #[unsafe(no_mangle)]
@@ -421,6 +450,7 @@ unsafe extern "C" fn highway_index_of_space_or_newline_or_non_ascii(
     p: *const u8,
     len: usize,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c <= b' ' || c > 127)
 }
 #[unsafe(no_mangle)]
@@ -428,9 +458,10 @@ unsafe extern "C" fn highway_contains_newline_or_non_ascii_or_quote(
     p: *const u8,
     len: usize,
 ) -> bool {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
         .iter()
-        .any(|&c| c > 127 || c < 0x20 || c == b'"')
+        .any(|&c| !(0x20..=127).contains(&c) || c == b'"')
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
@@ -438,6 +469,7 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
     len: usize,
     quote: u8,
 ) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| {
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
@@ -453,6 +485,7 @@ unsafe extern "C" fn highway_json_index_chunk(
     _inout_state: *mut u64,
     out_flags: *mut u32,
 ) -> usize {
+    // SAFETY: the caller passes a place for the flags.
     unsafe { *out_flags = 1 << 3 };
     0
 }
@@ -467,10 +500,12 @@ struct SimdutfResult {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__validate_utf8(p: *const u8, len: usize) -> bool {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     core::str::from_utf8(unsafe { bytes(p, len) }).is_ok()
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__validate_ascii(p: *const u8, len: usize) -> bool {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }.is_ascii()
 }
 #[unsafe(no_mangle)]
@@ -478,6 +513,7 @@ unsafe extern "C" fn simdutf__validate_ascii_with_errors(
     p: *const u8,
     len: usize,
 ) -> SimdutfResult {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     match unsafe { bytes(p, len) }.iter().position(|&c| c > 127) {
         // simdutf's TOO_LARGE
         Some(at) => SimdutfResult {
@@ -490,16 +526,20 @@ unsafe extern "C" fn simdutf__validate_ascii_with_errors(
         },
     }
 }
-fn utf16_units(p: *const u16, len: usize) -> &'static [u16] {
+unsafe fn utf16_units<'a>(p: *const u16, len: usize) -> &'a [u16] {
     if len == 0 {
         &[]
     } else {
+        // SAFETY: the contract of this function: `p` and `len` are those of a slice that lives for
+        // `'a`.
         unsafe { core::slice::from_raw_parts(p, len) }
     }
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__utf8_length_from_utf16le(p: *const u16, len: usize) -> usize {
-    char::decode_utf16(utf16_units(p, len).iter().copied())
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let units = unsafe { utf16_units(p, len) };
+    char::decode_utf16(units.iter().copied())
         .map(|c| c.map_or(3, char::len_utf8))
         .sum()
 }
@@ -508,12 +548,15 @@ unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
     p: *const u16,
     len: usize,
 ) -> usize {
-    char::decode_utf16(utf16_units(p, len).iter().copied())
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let units = unsafe { utf16_units(p, len) };
+    char::decode_utf16(units.iter().copied())
         .map(|c| c.map_or(3, char::len_utf8))
         .sum()
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__utf16_length_from_utf8(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
         .iter()
         .map(|&c| usize::from((c & 0xC0) != 0x80) + usize::from(c >= 0xF0))
@@ -527,7 +570,9 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
 ) -> SimdutfResult {
     let mut written = 0;
     let mut read = 0;
-    for c in char::decode_utf16(utf16_units(p, len).iter().copied()) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let units = unsafe { utf16_units(p, len) };
+    for c in char::decode_utf16(units.iter().copied()) {
         let Ok(c) = c else {
             // simdutf's SURROGATE
             return SimdutfResult {
@@ -537,6 +582,8 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
         };
         let mut buffer = [0u8; 4];
         let encoded = c.encode_utf8(&mut buffer);
+        // SAFETY: the caller has reserved room for the longest possible result, as simdutf
+        // requires.
         unsafe {
             core::ptr::copy_nonoverlapping(encoded.as_ptr(), out.add(written), encoded.len())
         };
@@ -581,7 +628,7 @@ fn width_of(c: char) -> usize {
 unsafe extern "C" fn Bun__visibleWidthExcludeANSI_utf8(p: *const u8, len: usize) -> usize {
     // SAFETY: the caller passes a slice.
     let bytes = unsafe { core::slice::from_raw_parts(p, len) };
-    String::from_utf8_lossy(bytes).chars().map(width_of).sum()
+    bstr::ByteSlice::chars(bytes).map(width_of).sum()
 }
 
 #[unsafe(no_mangle)]
@@ -718,6 +765,7 @@ extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
 /// The longest prefix of `p` that is a decimal number, as `WTF::parseDouble` parses it.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut usize) -> f64 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
     let mut end = 0;
     let digits = |from: usize| {
@@ -740,6 +788,7 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
         }
     }
     if !has_digits {
+        // SAFETY: the caller passes a place for the count.
         unsafe { *counted = 0 };
         return 0.0;
     }
@@ -753,6 +802,7 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
             end = exponent_end;
         }
     }
+    // SAFETY: the caller passes a place for the count.
     unsafe { *counted = end };
     core::str::from_utf8(&text[..end])
         .ok()

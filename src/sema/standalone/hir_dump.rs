@@ -54,7 +54,7 @@ struct Dump<'a, 's> {
     atoms: &'a dyn Intern,
     out: String,
     /// Every visited node: its vector and its index.
-    seen: std::collections::HashSet<(&'static str, u32)>,
+    seen: bun_sema::util::FxHashSet<(&'static str, u32)>,
 }
 
 /// Also returns the unreachable nodes, which code that iterates over a whole vector still visits:

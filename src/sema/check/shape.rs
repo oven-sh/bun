@@ -392,7 +392,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args.actual()
             {
                 Some(actual) => Some(actual),
-                None => (p.resolved_type_arguments.get_ref(&mut self.task, &ty)).map(|it| &it[..]),
+                None => (p.resolved_type_arguments.get_ref(&self.task, &ty)).map(|it| &it[..]),
             },
             _ => None,
         }
@@ -438,10 +438,10 @@ impl<'p, 's> Checker<'p, 's> {
             let errors = self.list_of(std::iter::repeat_n(TypeId::ERROR, declared.len()));
             let stored = (self.end_scope_as(scope, false)).unwrap_or_else(|_| self.cycle_result());
             let p = self.p;
-            let resolved: &'p [TypeId] =
-                (p.resolved_type_arguments
-                    .insert_ref(&mut self.task, ty, errors, stored))
-                .1;
+            let resolved: &'p [TypeId] = (p
+                .resolved_type_arguments
+                .insert_ref(&self.task, ty, errors, stored))
+            .1;
             let at = (
                 file,
                 self.hir(file)[node].pos,
@@ -471,7 +471,7 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(stored) => {
                 let p = self.p;
                 (p.resolved_type_arguments
-                    .insert_ref(&mut self.task, ty, instantiated, stored))
+                    .insert_ref(&self.task, ty, instantiated, stored))
                 .1
             }
             Err(_) => self.provisional_type_arguments(ty, &instantiated),
@@ -629,7 +629,7 @@ impl<'p, 's> Checker<'p, 's> {
         build: impl FnOnce(&mut Self) -> Shape<'s>,
         meanwhile: impl FnOnce(&mut Self) -> Shape<'s>,
     ) -> Built<'p> {
-        if let Some(kept) = self.p.shapes.handle(&mut self.task, &key) {
+        if let Some(kept) = self.p.shapes.handle(&self.task, &key) {
             return Built {
                 resolved: self.p.shapes.at(&self.task, kept),
                 kept: Some(kept),
@@ -656,8 +656,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(raw) = self.provisional(Query::Shape(key)) {
             // SAFETY: a pointer returned by `provisional_shape`. `check_file` clears `provisional` before it calls `release_provisional_shapes`.
+            let resolved = unsafe { &*(raw as usize as *const Resolved) };
             return Built {
-                resolved: unsafe { &*(raw as usize as *const Resolved) },
+                resolved,
                 kept: None,
             };
         }
@@ -681,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
                 shape.index.shrink_to_fit();
                 let resolved = Resolved::new(shape);
                 let (kept, resolved) =
-                    (self.p.shapes).insert_ref(&mut self.task, key, resolved, stored);
+                    (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
                 Built {
                     resolved,
                     kept: Some(kept),
@@ -711,7 +712,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `members` for a type that was not queried recently.
     fn members_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        if let Some(known) = self.p.members.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.members.get(&self.task, &ty) {
             if !self.unresolved_members.is_empty()
                 && let Some(declared) = self.declared_members_if_unresolved(ty, known.mapper)
             {
@@ -781,7 +782,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (built, mapper) = built?;
         if let (Some(shape), Ok(stored)) = (built.kept, ended) {
             let entry = CachedMembers { shape, mapper };
-            self.p.members.insert(&mut self.task, ty, entry, stored);
+            self.p.members.insert(&self.task, ty, entry, stored);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
                 resolved: Some(built.resolved),
                 ty,
@@ -1977,7 +1978,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `class`. `undefined` if it has no `extends` clause, the error type if the expression depends
     /// on the class (2506) or its type is not a constructor type (2507).
     pub(super) fn base_constructor_type_of_class(&mut self, class: Sym) -> TypeId {
-        if let Some(known) = self.p.base_constructor_types.get(&mut self.task, &class) {
+        if let Some(known) = self.p.base_constructor_types.get(&self.task, &class) {
             return known;
         }
         // Encloses the resolution frame: `isConstructorType` is evaluated after
@@ -1986,7 +1987,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((file, c)) = self.extending_declaration(class) else {
             return match self.end_scope(scope) {
                 Ok(stored) => (self.p.base_constructor_types).insert(
-                    &mut self.task,
+                    &self.task,
                     class,
                     TypeId::UNDEFINED,
                     stored,
@@ -2020,7 +2021,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self
                 .p
                 .base_constructor_types
-                .insert(&mut self.task, class, error, stored);
+                .insert(&self.task, class, error, stored);
         }
         let ty = if constructor == self.null_widening()
             || self.has_any_flag(constructor)
@@ -2055,8 +2056,8 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(stored) => self
                 .p
                 .base_constructor_types
-                .insert(&mut self.task, class, ty, stored),
-            Err(_) => (self.p.base_constructor_types.get(&mut self.task, &class)).unwrap_or(ty),
+                .insert(&self.task, class, ty, stored),
+            Err(_) => (self.p.base_constructor_types.get(&self.task, &class)).unwrap_or(ty),
         }
     }
 
@@ -2161,7 +2162,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// parameters.
     pub fn base_types(&mut self, sym: Sym) -> List<'p, TypeId> {
         let p = self.p;
-        if let Some(known) = p.base_types.get_ref(&mut self.task, &sym) {
+        if let Some(known) = p.base_types.get_ref(&self.task, &sym) {
             return List::Kept(known);
         }
         if !self.enter(Query::Bases(sym)) {
@@ -2224,10 +2225,10 @@ impl<'p, 's> Checker<'p, 's> {
         let bases = match left {
             Ok(stored) => {
                 let bases = self.list(&bases);
-                List::Kept(p.base_types.insert_ref(&mut self.task, sym, bases, stored))
+                List::Kept(p.base_types.insert_ref(&self.task, sym, bases, stored))
             }
             // See `base_types_in_progress`.
-            Err(_) => match p.base_types.get_ref(&mut self.task, &sym) {
+            Err(_) => match p.base_types.get_ref(&self.task, &sym) {
                 Some(known) => List::Kept(known),
                 None => List::Own(bases),
             },
@@ -2288,8 +2289,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.base_types(first);
                 self.resolution_start = resolution_start;
                 let p = self.p;
-                let known = p.base_types.get_ref(&mut self.task, &sym);
-                known.map_or(List::default(), |known| List::Kept(known))
+                let known = p.base_types.get_ref(&self.task, &sym);
+                known.map_or_else(List::default, |known| List::Kept(known))
             }
             _ => List::default(),
         }
@@ -3971,7 +3972,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let recent = self.recent_intersected_props[at];
                 if recent.0 == key {
                     recent.1
-                } else if let Some(known) = self.p.intersected_props.get(&mut self.task, &key) {
+                } else if let Some(known) = self.p.intersected_props.get(&self.task, &key) {
                     self.recent_intersected_props[at] = (key, known);
                     known
                 } else {
@@ -3988,7 +3989,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if let Ok(stored) = self.end_scope_by_counters(scope) {
                         self.p
                             .intersected_props
-                            .insert(&mut self.task, key, all, stored);
+                            .insert(&self.task, key, all, stored);
                     }
                     all
                 }
@@ -4018,7 +4019,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `optional_property`, cached per type.
     pub(super) fn cached_optional_property(&mut self, ty: TypeId) -> TypeId {
-        if let Some(known) = self.p.optional_properties.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.optional_properties.get(&self.task, &ty) {
             return known;
         }
         let scope = self.begin_scope();
@@ -4038,7 +4039,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !asks && let Ok(stored) = ended {
             self.p
                 .optional_properties
-                .insert(&mut self.task, ty, optional, stored);
+                .insert(&self.task, ty, optional, stored);
         }
         optional
     }
@@ -4153,7 +4154,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ThisAssignmentDeclaration::Constructor(func) => {
                 // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                let initial = inherited(self).unwrap_or_else(|| TypeId::UNDEFINED);
+                let initial = inherited(self).unwrap_or(TypeId::UNDEFINED);
                 let first = UntypedProperty::Assignment(value_declaration);
                 self.flow_type_in_constructor_from(file, func, name, initial, first)
             }
@@ -4698,7 +4699,7 @@ impl<'p, 's> Checker<'p, 's> {
                         None
                     };
                     // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                    let initial = inherited.unwrap_or_else(|| TypeId::UNDEFINED);
+                    let initial = inherited.unwrap_or(TypeId::UNDEFINED);
                     let mut has_flow_container = false;
                     if !member.flags.contains(Flags::STATIC) {
                         if let Some(constructor) = hir[c].members.iter().find(|&m| {
@@ -5108,7 +5109,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !may_have_one {
             return ty;
         }
-        if let Some((known, _)) = self.p.constraints.get(&mut self.task, &ty) {
+        if let Some((known, _)) = self.p.constraints.get(&self.task, &ty) {
             return known;
         }
         if let Some(raw) = self.provisional(Query::Constraint(ty)) {
@@ -5325,18 +5326,18 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
             // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
-            let known = self.p.constraints.get(&mut self.task, &ty);
+            let known = self.p.constraints.get(&self.task, &ty);
             let known = known.map_or(TypeId::UNKNOWN, |(known, _)| known);
             self.p
                 .constraints
-                .rewrite(&mut self.task, ty, (known, true), Stored::new());
+                .rewrite(&self.task, ty, (known, true), Stored::new());
             return TypeId::UNKNOWN;
         }
         match left {
             Ok(stored) => {
                 self.p
                     .constraints
-                    .insert(&mut self.task, ty, (result, false), stored);
+                    .insert(&self.task, ty, (result, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Constraint(ty), u64::from(result.0), open),
         }
@@ -5541,7 +5542,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `is_never_intersection` for an intersection.
     fn is_empty_intersection(&mut self, ty: TypeId) -> bool {
-        if let Some(known) = self.p.never_intersections.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.never_intersections.get(&self.task, &ty) {
             return known;
         }
         // `ObjectFlagsIsNeverIntersectionComputed` is set before the properties are examined, so a recursive query gets `false`.
@@ -5561,7 +5562,7 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(stored) => self
                 .p
                 .never_intersections
-                .insert(&mut self.task, ty, is_never, stored),
+                .insert(&self.task, ty, is_never, stored),
             Err(_) => is_never,
         }
     }
@@ -5947,7 +5948,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnionOrIntersectionProperty` for a union.
     pub(super) fn union_property(&mut self, union: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
-        let holder = match self.p.union_properties.get(&mut self.task, &(union, name)) {
+        let holder = match self.p.union_properties.get(&self.task, &(union, name)) {
             Some(kept) => kept,
             None => {
                 let scope = self.begin_scope();
@@ -5960,7 +5961,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Ok(stored) = self.end_scope_by_counters(scope) {
                     self.p
                         .union_properties
-                        .insert(&mut self.task, (union, name), holder, stored);
+                        .insert(&self.task, (union, name), holder, stored);
                 }
                 holder
             }
@@ -6233,7 +6234,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             &p.call_signatures
         };
-        if let Some(known) = kept.get_ref(&mut self.task, &ty) {
+        if let Some(known) = kept.get_ref(&self.task, &ty) {
             let known: &'p [SigId] = known;
             self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
@@ -6246,7 +6247,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Ok(stored) = ended
         {
             let signatures = signatures.into();
-            let known: &'p [SigId] = kept.insert_ref(&mut self.task, ty, signatures, stored).1;
+            let known: &'p [SigId] = kept.insert_ref(&self.task, ty, signatures, stored).1;
             self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
         }

@@ -229,15 +229,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// The cached type of `e`.
     #[inline]
     pub(super) fn cached_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        self.p.expr_types.get(&mut self.task, &(file, e))
+        self.p.expr_types.get(&self.task, &(file, e))
     }
 
     /// `links.resolvedType = c.checkExpressionEx(..)`: of two nested visits of `e` the outer one assigns last.
     #[inline]
     fn cache_type_of_expr(&mut self, file: FileId, e: ExprId, ty: TypeId, stored: Stored) {
-        self.p
-            .expr_types
-            .rewrite(&mut self.task, (file, e), ty, stored);
+        self.p.expr_types.rewrite(&self.task, (file, e), ty, stored);
     }
 
     /// Whether evaluating `e` has a side effect on the checker that a pass of `check_file` of
@@ -494,7 +492,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.hir(f)[func].ret.is_none()
                 && !self.stack[..depth].contains(&self.stack[i])
             {
-                (self.p.circular_returns).insert(&mut self.task, (f, func), (), Stored::new());
+                (self.p.circular_returns).insert(&self.task, (f, func), (), Stored::new());
                 self.report_circular_return_type(Some(Query::Return(f, func)), f, func);
             }
         }
@@ -1162,7 +1160,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getFlowTypeOfProperty`
         let (class, _) = self.class_of_member_fn(file, container)?;
         let inherited = self.type_of_property_in_base_class(file, class, name);
-        Some(inherited.unwrap_or_else(|| TypeId::UNDEFINED))
+        Some(inherited.unwrap_or(TypeId::UNDEFINED))
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`, `getPrivateIdentifierPropertyOfType`: the
@@ -1990,7 +1988,7 @@ impl<'p, 's> Checker<'p, 's> {
         // later caller. The two differ after a circularity that goes through a call. A reference in the variable's own initializer
         // is never the first caller: the declaration is.
         let declared = if self.cycles != cycles_before
-            && let Some(cached) = self.p.symbol_types.get(&mut self.task, &sym)
+            && let Some(cached) = self.p.symbol_types.get(&self.task, &sym)
             && cached != declared
             && self.is_in_own_initializer(file, e, sym)
         {
@@ -2381,15 +2379,11 @@ impl<'p, 's> Checker<'p, 's> {
         p: ParamId,
         declared: TypeNodeId,
     ) -> TypeId {
-        if let Some(known) = self
-            .p
-            .type_node_types
-            .get(&mut self.task, &(file, declared))
-        {
+        if let Some(known) = self.p.type_node_types.get(&self.task, &(file, declared)) {
             return known;
         }
         let pat = self.hir(file)[p].pat;
-        if let Some((known, _)) = self.p.pat_types.get(&mut self.task, &(file, pat)) {
+        if let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat)) {
             return known;
         }
         if !self.enter(Query::Pat(file, pat)) {
@@ -2407,7 +2401,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (error, stored) = (TypeId::ERROR, self.cycle_result());
         self.p
             .pat_types
-            .rewrite(&mut self.task, (file, pat), (error, true), stored);
+            .rewrite(&self.task, (file, pat), (error, true), stored);
         let (start, end) = self.get_error_range_for_node(file, self.hir(file).node(p));
         // The parameter of a `@this` tag has no name.
         let name: &[u8] = match self.hir(file)[pat].kind {
@@ -2761,9 +2755,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `getSpreadType` of a generic type returns `getIntersectionType`, which propagates the flag.
             if let TypeData::Intersection(parts) = c.data(m) {
                 let parts: SmallVec<[TypeId; 4]> = parts
-                    .to_vec()
-                    .into_iter()
-                    .map(|part| c.with_propagated_non_inferrable_flag(part))
+                    .iter()
+                    .map(|&part| c.with_propagated_non_inferrable_flag(part))
                     .collect();
                 return c.intersection(&parts);
             }
@@ -3669,8 +3662,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && let returned = self.sig_return(contextual_signature)
                 && self.has_type_variables(returned)
             {
-                if let Some(cached) = (self.p.context_free_types).get(&mut self.task, &(file, func))
-                {
+                if let Some(cached) = (self.p.context_free_types).get(&self.task, &(file, func)) {
                     return cached;
                 }
                 let ret = self.return_type_of_fn_uncached(file, func, check_mode);
@@ -3794,13 +3786,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if contextual_signature.is_some()
             && f.ret.is_none()
-            && (self.p.fn_return_types.get(&mut self.task, &(file, func))).is_none()
+            && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
             // `if signature.resolvedReturnType == nil`: the first value stays.
             if let Ok(stored) = self.leave(Query::ReturnAtFirstLook(file, func)) {
-                (self.p.fn_return_types).insert(&mut self.task, (file, func), (ty, false), stored);
+                (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
                 self.note_result(Query::Return(file, func));
             }
         }
@@ -3866,7 +3858,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `context_checked_here` is a subset of `Program::context_checked`.
         self.context_checking.iter().any(|c| c.0 == (file, func))
             || self.context_checked_under_taint(file, func).is_some()
-            || (self.p.context_checked.get(&mut self.task, &(file, func))).is_some()
+            || (self.p.context_checked.get(&self.task, &(file, func))).is_some()
                 && (self.inference_contexts.is_empty()
                     || self.context_checked_here.contains(&(file, func))
                     || !self
@@ -3886,7 +3878,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(in_progress) => Some(in_progress.1),
             None => match self.context_checked_under_taint(file, func) {
                 Some(assigned) => Some(assigned),
-                None => self.p.context_checked.get(&mut self.task, &(file, func)),
+                None => self.p.context_checked.get(&self.task, &(file, func)),
             },
         }
     }
@@ -4604,7 +4596,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type of a property of an object literal, as a mutable location.
     pub(super) fn type_of_literal_prop(&mut self, file: FileId, p: PropId) -> TypeId {
-        if let Some(known) = self.p.literal_prop_types.get(&mut self.task, &(file, p)) {
+        if let Some(known) = self.p.literal_prop_types.get(&self.task, &(file, p)) {
             return known;
         }
         if let Some(raw) = self.provisional(Query::LiteralProp(file, p)) {
@@ -4621,9 +4613,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.type_of_literal_prop_uncached(file, p);
         match self.leave(Query::LiteralProp(file, p)) {
             // Of two nested visits of `p` the outer one assigns last, as for an expression.
-            Ok(stored) => {
-                (self.p.literal_prop_types).rewrite(&mut self.task, (file, p), ty, stored)
-            }
+            Ok(stored) => (self.p.literal_prop_types).rewrite(&self.task, (file, p), ty, stored),
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
                 ty

@@ -230,13 +230,13 @@ impl<'p, 's> Checker<'p, 's> {
         if !index_flags.is_empty() {
             return self.get_literal_type_from_properties_uncached(ty, index_flags);
         }
-        if let Some(known) = self.p.keys_of_properties.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.keys_of_properties.get(&self.task, &ty) {
             return known;
         }
         let scope = self.begin_scope();
         let keys = self.get_literal_type_from_properties_uncached(ty, index_flags);
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.keys_of_properties).insert(&mut self.task, ty, keys, stored),
+            Ok(stored) => (self.p.keys_of_properties).insert(&self.task, ty, keys, stored),
             Err(_) => keys,
         }
     }
@@ -1180,7 +1180,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let q = Query::Cond(file, node, mapper);
         if alias.is_none()
-            && let Some(known) = (self.p.conditionals).get(&mut self.task, &(file, node, mapper))
+            && let Some(known) = (self.p.conditionals).get(&self.task, &(file, node, mapper))
         {
             return known;
         }
@@ -1195,7 +1195,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
         match (self.leave(q), alias) {
             (Ok(stored), None) => {
-                (self.p.conditionals).insert(&mut self.task, (file, node, mapper), ty, stored)
+                (self.p.conditionals).insert(&self.task, (file, node, mapper), ty, stored)
             }
             (Err(open), None) => {
                 self.cache_provisionally(q, u64::from(ty.0), open);
@@ -1516,10 +1516,11 @@ impl<'p, 's> Checker<'p, 's> {
         if root_mapper == own {
             return Err(declared);
         }
-        if is_distributive && let Some(value) = self.types().map(root_mapper, root_check) {
-            if self.is_union(value) || value.is_never() {
-                return Err(declared);
-            }
+        if is_distributive
+            && let Some(value) = self.types().map(root_mapper, root_check)
+            && (self.is_union(value) || value.is_never())
+        {
+            return Err(declared);
         }
         Ok(((root_file, root, root_mapper), true))
     }
@@ -1579,7 +1580,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfTypeParameter` for the parameter of the mapped type at `node`.
     fn constraint_of_mapped_param(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
-        if let Some(known) = (self.p.mapped_param_constraints).get(&mut self.task, &(file, node)) {
+        if let Some(known) = (self.p.mapped_param_constraints).get(&self.task, &(file, node)) {
             return known;
         }
         let scope = self.begin_scope();
@@ -1587,7 +1588,7 @@ impl<'p, 's> Checker<'p, 's> {
         let constraint = self.constraint_of_type_param(param);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             return (self.p.mapped_param_constraints).insert(
-                &mut self.task,
+                &self.task,
                 (file, node),
                 constraint,
                 stored,
@@ -2186,7 +2187,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The properties available on a value of the union `ty` without knowing which member it is:
     /// `getPropertiesOfUnionOrIntersectionType`, and the index signatures common to all members.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
-        if let Some(known) = self.p.union_objects.get(&mut self.task, &ty) {
+        if let Some(known) = self.p.union_objects.get(&self.task, &ty) {
             return known;
         }
         let scope = self.begin_scope();
@@ -2221,7 +2222,7 @@ impl<'p, 's> Checker<'p, 's> {
         shape.index.extend(self.union_index_infos(parts));
         let object = self.synth(shape);
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.union_objects).insert(&mut self.task, ty, object, stored),
+            Ok(stored) => (self.p.union_objects).insert(&self.task, ty, object, stored),
             Err(_) => object,
         }
     }
@@ -2339,7 +2340,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`getTypeOfInstantiatedSymbol`). `strips` is `CheckFlagsStripOptional`.
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
         let q = Query::MappedProp(of, prop.name);
-        let known = (self.p.mapped_prop_types).get(&mut self.task, &(of, prop.name));
+        let known = (self.p.mapped_prop_types).get(&self.task, &(of, prop.name));
         // `TypeFlagsAny`: no type variables, so it is the same under every mapper.
         if let Some(known) = known
             && self.has_any_flag(known)
@@ -2369,7 +2370,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `mappedType.containsError = true`
             let stored = self.cycle_result();
-            (self.p.mapped_types_with_errors).insert(&mut self.task, of, (), stored);
+            (self.p.mapped_types_with_errors).insert(&self.task, of, (), stored);
             return TypeId::ERROR;
         }
         let mapped = self.mapped_decl(file, node);
@@ -2389,7 +2390,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.left_a_cycle {
             let stored = self.cycle_result();
             let kept = (self.p.mapped_prop_types).insert(
-                &mut self.task,
+                &self.task,
                 (of, prop.name),
                 TypeId::ERROR,
                 stored,
@@ -2401,7 +2402,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match left {
             Ok(stored) if !is_copy => {
-                (self.p.mapped_prop_types).insert(&mut self.task, (of, prop.name), ty, stored)
+                (self.p.mapped_prop_types).insert(&self.task, (of, prop.name), ty, stored)
             }
             Err(open) if !is_copy => {
                 self.cache_provisionally(q, u64::from(ty.0), open);

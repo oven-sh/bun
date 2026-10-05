@@ -414,7 +414,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn cached_outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
         let p = self.p;
-        if let Some(known) = p.outer_type_params.get_ref(&mut self.task, &(file, scope)) {
+        if let Some(known) = p.outer_type_params.get_ref(&self.task, &(file, scope)) {
             return known;
         }
         let bound = self.bound(file);
@@ -453,7 +453,7 @@ impl<'p, 's> Checker<'p, 's> {
         let own = own.iter().map(|o| o.1);
         let result = self.list_of(outer.iter().copied().chain(own).chain(this));
         p.outer_type_params
-            .insert_ref(&mut self.task, (file, scope), result, Stored::new())
+            .insert_ref(&self.task, (file, scope), result, Stored::new())
     }
 
     /// Maps every type parameter in scope to itself.
@@ -461,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
         if scope.is_none() || self.declares_no_type_params(file) {
             return MapperId::IDENTITY;
         }
-        if let Some(kept) = self.p.identity_mappers.get(&mut self.task, &(file, scope)) {
+        if let Some(kept) = self.p.identity_mappers.get(&self.task, &(file, scope)) {
             return kept;
         }
         let params = self.type_params_in_scope(file, scope);
@@ -471,7 +471,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.types()
                 .mapper(params.iter().map(|&p| (p, p)).collect())
         };
-        (self.p.identity_mappers).insert(&mut self.task, (file, scope), mapper, Stored::new())
+        (self.p.identity_mappers).insert(&self.task, (file, scope), mapper, Stored::new())
     }
 
     /// `getOuterTypeParameters`: also those that a context sensitive function enclosing `scope` has
@@ -498,7 +498,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             at = s.parent;
         }
-        let known = (self.p.identity_mappers_with_adopted).get(&mut self.task, &(file, scope));
+        let known = (self.p.identity_mappers_with_adopted).get(&self.task, &(file, scope));
         if let Some(kept) = known {
             return kept;
         }
@@ -513,7 +513,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         match self.end_scope_by_counters(computation) {
             Ok(stored) => (self.p.identity_mappers_with_adopted).insert(
-                &mut self.task,
+                &self.task,
                 (file, scope),
                 mapper,
                 stored,
@@ -1273,7 +1273,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
-        if let Some(kept) = self.p.type_param_constraints.get(&mut self.task, &param) {
+        if let Some(kept) = self.p.type_param_constraints.get(&self.task, &param) {
             return kept;
         }
         if param == TypeId::MARKER_SUB {
@@ -1294,7 +1294,7 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     self.p
                         .type_param_constraints
-                        .insert(&mut self.task, param, constraint, stored);
+                        .insert(&self.task, param, constraint, stored);
                 }
                 constraint
             }
@@ -1568,7 +1568,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if !omit_type_references {
-            if let Some(known) = self.p.inferred_constraints.get(&mut self.task, &param) {
+            if let Some(known) = self.p.inferred_constraints.get(&self.task, &param) {
                 return known;
             }
             if let Some(raw) = self.provisional(Query::InferredConstraint(param)) {
@@ -1658,7 +1658,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Ok(stored) => {
                     self.p
                         .inferred_constraints
-                        .insert(&mut self.task, param, constraint, stored);
+                        .insert(&self.task, param, constraint, stored);
                 }
                 Err(open) => {
                     let raw = constraint.map_or(0, |ty| u64::from(ty.0) + 1);
@@ -1671,7 +1671,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultFromTypeParameter`
     pub fn default_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
-        if let Some(kept) = self.p.type_param_defaults.get(&mut self.task, &param) {
+        if let Some(kept) = self.p.type_param_defaults.get(&self.task, &param) {
             return kept;
         }
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
@@ -1685,7 +1685,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.p
                 .type_param_defaults
-                .insert(&mut self.task, param, default, stored);
+                .insert(&self.task, param, default, stored);
         }
         default
     }
@@ -1794,7 +1794,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type that `sym` denotes in a type position.
     #[inline]
     pub fn declared_type(&mut self, sym: Sym) -> TypeId {
-        if let Some((known, _)) = self.p.declared_types.get(&mut self.task, &sym) {
+        if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
             return known;
         }
         self.resolve_declared_type(sym)
@@ -1807,7 +1807,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
                 return ty;
             }
-            if let Some((known, _)) = self.p.declared_types.get(&mut self.task, &sym) {
+            if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
                 return known;
             }
         }
@@ -1838,19 +1838,19 @@ impl<'p, 's> Checker<'p, 's> {
                 self.add_diagnostic_of(Some(Query::Declared(sym)), err);
             }
             // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
-            let known = self.p.declared_types.get(&mut self.task, &sym);
+            let known = self.p.declared_types.get(&self.task, &sym);
             let ty = known.map_or(TypeId::ERROR, |(known, _)| known);
             return self
                 .p
                 .declared_types
-                .rewrite(&mut self.task, sym, (ty, true), stored)
+                .rewrite(&self.task, sym, (ty, true), stored)
                 .0;
         }
         match left {
             Ok(stored) => {
                 self.p
                     .declared_types
-                    .insert(&mut self.task, sym, (ty, false), stored);
+                    .insert(&self.task, sym, (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Declared(sym), u64::from(ty.0), open),
         }
@@ -2021,7 +2021,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         member: EnumMemberId,
     ) -> Evaluated {
-        if let Some(known) = self.p.enum_values.get(&mut self.task, &(file, member)) {
+        if let Some(known) = self.p.enum_values.get(&self.task, &(file, member)) {
             return known;
         }
         if !self.enter(Query::Enum(file, member)) {
@@ -2031,7 +2031,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Ok(stored) = self.leave(Query::Enum(file, member)) {
             self.p
                 .enum_values
-                .insert(&mut self.task, (file, member), value, stored);
+                .insert(&self.task, (file, member), value, stored);
         }
         value
     }
@@ -2225,7 +2225,7 @@ impl<'p, 's> Checker<'p, 's> {
         if node.is_none() {
             return TypeId::UNRESOLVED;
         }
-        if let Some(known) = self.p.type_node_types.get(&mut self.task, &(file, node)) {
+        if let Some(known) = self.p.type_node_types.get(&self.task, &(file, node)) {
             return known;
         }
         self.resolve_type_from_node(file, node)
@@ -2835,7 +2835,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getDeclaredTypeOfTypeAlias`: a circular alias (2456) never gets its type parameters.
         let is_cycle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
             self.declared_type(sym);
-            let declared = self.p.declared_types.get(&mut self.task, &sym);
+            let declared = self.p.declared_types.get(&self.task, &sym);
             declared.is_some_and(|(_, is_circular)| is_circular)
         };
         let (least, most) = if is_cycle {
@@ -3575,14 +3575,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => {}
         }
-        if let Some(kept) = self.p.sig_type_params.get_ref(&mut self.task, &sig) {
+        if let Some(kept) = self.p.sig_type_params.get_ref(&self.task, &sig) {
             return List::Kept(kept);
         }
         let scope = self.begin_scope();
         let params = self.sig_type_params_of_declaration(sig);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let params = self.list(&params);
-            let kept = (self.p.sig_type_params).insert_ref(&mut self.task, sig, params, stored);
+            let kept = (self.p.sig_type_params).insert_ref(&self.task, sig, params, stored);
             return List::Kept(kept.1);
         }
         List::Own(params)
@@ -3687,7 +3687,7 @@ impl<'p, 's> Checker<'p, 's> {
         let crate::bind::FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return true;
         };
-        if let Some(known) = (self.p.untyped_signatures_in_js).get(&mut self.task, &(file, func)) {
+        if let Some(known) = (self.p.untyped_signatures_in_js).get(&self.task, &(file, func)) {
             return known;
         }
         let is_untyped = (self.contextual_type(file, e, ContextFlags::empty())).is_none();
@@ -3714,11 +3714,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(declared) = self.default_construct_base_sig(sig)
             && let SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } =
                 *self.types().sig(declared)
-            && self
-                .p
-                .sig_params
-                .get_ref(&mut self.task, &declared)
-                .is_none()
+            && self.p.sig_params.get_ref(&self.task, &declared).is_none()
         {
             for p in self.hir(file)[func].params.iter().take(count) {
                 self.type_of_param(file, p);
@@ -3750,13 +3746,13 @@ impl<'p, 's> Checker<'p, 's> {
                 file, func, mapper, ..
             } => (*file, *func, *mapper),
         };
-        if let Some(kept) = self.p.sig_params.get_ref(&mut self.task, &sig) {
+        if let Some(kept) = self.p.sig_params.get_ref(&self.task, &sig) {
             return self.cached_sig_params(sig, kept);
         }
         let scope = self.begin_scope();
         let params = self.sig_params_of_declaration(file, func, mapper);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
-            let kept = (self.p.sig_params).insert_ref(&mut self.task, sig, params.into(), stored);
+            let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
             return self.cached_sig_params(sig, kept.1);
         }
         List::Own(params.to_vec())
@@ -3864,7 +3860,7 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         resolve: impl FnOnce(&mut Self) -> TypeId,
     ) -> TypeId {
-        if let Some(resolved) = self.p.resolved_return_types.get(&mut self.task, &sig) {
+        if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
             return resolved;
         }
         if let Some(raw) = self.provisional(Query::ReturnOfSignature(sig)) {
@@ -3884,17 +3880,17 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
                 self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
             }
-            return (self.p.resolved_return_types).insert(&mut self.task, sig, TypeId::ANY, stored);
+            return (self.p.resolved_return_types).insert(&self.task, sig, TypeId::ANY, stored);
         }
         // `if sig.resolvedReturnType == nil`
-        if let Some(resolved) = self.p.resolved_return_types.get(&mut self.task, &sig) {
+        if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
             return resolved;
         }
         match left {
             Ok(stored) => {
                 self.p
                     .resolved_return_types
-                    .insert(&mut self.task, sig, ty, stored);
+                    .insert(&self.task, sig, ty, stored);
             }
             Err(open) => {
                 self.cache_provisionally(Query::ReturnOfSignature(sig), u64::from(ty.0), open);

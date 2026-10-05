@@ -328,7 +328,7 @@ impl<'a> RegExpParser<'a> {
                     },
                     pos,
                     end - pos,
-                    || vec![super::sink::number_text(groups as usize)],
+                    || vec![super::sink::number_text(groups)],
                 );
             }
         }

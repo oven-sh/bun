@@ -1,28 +1,26 @@
 use bun_sema::atom::Interner;
+use bun_sema::messages::text;
+use bun_sema::resolve::Host;
+use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file};
+use bun_threading::Guarded;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Every file under `dir` that the front end reads, including those in `node_modules`.
-fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Ok(meta) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if meta.is_dir() {
-            collect_sources(&path, out);
-        } else if [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
-            .iter()
-            .any(|e| name.ends_with(e))
-        {
-            out.push(path);
-        }
+fn collect_sources(disk: &dyn Host, dir: &str, out: &mut Vec<String>) {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
+    ];
+    let (files, directories) = disk.entries(dir.as_bytes());
+    let is_source = |name: &&Vec<u8>| EXTENSIONS.iter().any(|it| name.ends_with(it));
+    out.extend((files.iter().filter(is_source)).map(|name| format!("{dir}/{}", text(name))));
+    for name in &directories {
+        collect_sources(disk, &format!("{dir}/{}", text(name)), out);
     }
+}
+
+fn variable(name: &bun_core::ZStr) -> Option<String> {
+    bun_core::getenv_z(name).map(text)
 }
 
 /// `--timing`: the ten tables whose shared parts use the most memory. Without `--keep` the tasks of
@@ -31,7 +29,7 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
     let mut tables = program.table_footprints();
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
     for (name, footprint) in tables.iter().take(10) {
-        eprintln!(
+        error_line!(
             "table {name}: {:.1} MB touched, {} entries, {} kept",
             footprint.touched as f64 / (1u64 << 20) as f64,
             footprint.entries,
@@ -42,9 +40,9 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
 
 /// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
-    if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
+    if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
         let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| m.path).collect();
-        let _ = std::fs::write(to, paths.join(&b"\n"[..]));
+        write_file(&to, &paths.join(&b"\n"[..]));
     }
 }
 
@@ -60,19 +58,19 @@ fn main() {
         // hir <files or directories> --print: the HIR the front end produces for each file. For
         // detecting whether a change to the front end changes any HIR.
         Some("hir") => {
-            let mut files = Vec::new();
+            let mut files: Vec<String> = Vec::new();
+            let disk = bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
             for arg in args[1..].iter().filter(|a| !a.starts_with("--")) {
-                let path = PathBuf::from(arg);
-                if path.is_dir() {
-                    collect_sources(&path, &mut files)
+                if disk.is_dir(arg.as_bytes()) {
+                    collect_sources(&disk, arg.trim_end_matches('/'), &mut files)
                 } else {
-                    files.push(path)
+                    files.push(arg.clone())
                 }
             }
             let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
             if let Some(list) = flag("--list=") {
-                let list = std::fs::read_to_string(list).unwrap();
-                files.extend(list.lines().map(PathBuf::from));
+                let list = text(&read_file(list).unwrap());
+                files.extend(lines(&list).map(str::to_owned));
             }
             files.sort();
             let session = bun_sema::session::Session::new();
@@ -81,7 +79,7 @@ fn main() {
             // to measure parsing and lowering alone.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
                 let threads = flag("--threads=").and_then(|n| n.parse().ok());
-                let read = |file: &PathBuf| std::fs::read(file).unwrap_or_default();
+                let read = |file: &String| read_file(file).unwrap_or_default();
                 let texts: Vec<Vec<u8>> = files.iter().map(read).collect();
                 let before = bun_sema_standalone::instructions_and_cycles().0;
                 for _ in 0..repeat {
@@ -89,25 +87,24 @@ fn main() {
                         threads.unwrap_or(1),
                         files.len(),
                         |i| {
-                            let path = files[i].to_string_lossy();
                             let arena = session.arena();
                             drop(bun_sema_standalone::parse(
-                                arena, &path, &texts[i], &atoms, false,
+                                arena, &files[i], &texts[i], &atoms, false,
                             ));
                         },
                     );
                 }
                 let after = bun_sema_standalone::instructions_and_cycles().0;
                 let a_pass = (after - before) as f64 / 1e9 / repeat as f64;
-                return eprintln!("{} files: {a_pass:.3} G instructions a pass", files.len());
+                return error_line!("{} files: {a_pass:.3} G instructions a pass", files.len());
             }
-            let lines = std::sync::Mutex::new(Vec::<String>::new());
+            let dumped = Guarded::new(Vec::<String>::new());
             bun_sema_standalone::for_each_parallel(4, files.len(), |i| {
-                let Ok(text) = std::fs::read(&files[i]) else {
+                let Some(text) = read_file(&files[i]) else {
                     return;
                 };
-                let path = files[i].to_string_lossy();
-                let file = bun_sema_standalone::parse(session.arena(), &path, &text, &atoms, false);
+                let path = &files[i];
+                let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
                 // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
                     return;
@@ -117,8 +114,8 @@ fn main() {
                     let mut file = file;
                     file.text = text.into();
                     let nodes = bun_sema_standalone::hir_dump::nodes(&file);
-                    let line = format!("=== {}\n{nodes}", files[i].display());
-                    return lines.lock().unwrap().push(line);
+                    let line = format!("=== {path}\n{nodes}");
+                    return dumped.lock().push(line);
                 }
                 let (dump, orphans) =
                     bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
@@ -127,20 +124,20 @@ fn main() {
                     if orphans.is_empty() {
                         return;
                     }
-                    format!("{}\t{}", files[i].display(), orphans.join(" | "))
+                    format!("{path}\t{}", orphans.join(" | "))
                 } else {
-                    format!("=== {}\n{dump}", files[i].display())
+                    format!("=== {path}\n{dump}")
                 };
-                lines.lock().unwrap().push(line);
+                dumped.lock().push(line);
             });
-            let mut lines = lines.into_inner().unwrap();
-            lines.sort();
-            for line in &lines {
-                println!("{line}");
+            let mut dumped = std::mem::take(&mut *dumped.lock());
+            dumped.sort();
+            for line in &dumped {
+                output_line!("{line}");
             }
             if args.iter().any(|a| a == "--quiet") {
                 let (instructions, _) = bun_sema_standalone::instructions_and_cycles();
-                eprintln!("instructions {:.3} G", instructions as f64 / 1e9);
+                error_line!("instructions {:.3} G", instructions as f64 / 1e9);
             }
         }
         Some("cli") => {
@@ -162,7 +159,7 @@ fn main() {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
+            let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
             // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
@@ -178,9 +175,9 @@ fn main() {
             // The HIRs of all files are live at that point.
             let peak_memory_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             if let (true, Some(progress)) = (is_timed, progress.clone()) {
-                let noted = instructions_of_loading.clone();
-                let noted_peak = peak_memory_of_loading.clone();
-                std::thread::spawn(move || {
+                let noted = Arc::clone(&instructions_of_loading);
+                let noted_peak = Arc::clone(&peak_memory_of_loading);
+                let _ = std::thread::Builder::new().spawn(move || {
                     use std::sync::atomic::Ordering::Relaxed;
                     while progress.to_check.load(Relaxed) == 0 {
                         std::thread::sleep(std::time::Duration::from_micros(200));
@@ -190,7 +187,7 @@ fn main() {
                 });
             }
             if let (true, Some(progress)) = (shows_progress, progress.clone()) {
-                std::thread::spawn(move || {
+                let _ = std::thread::Builder::new().spawn(move || {
                     let style = Style {
                         layout: Layout::Pretty,
                         color: true,
@@ -199,31 +196,33 @@ fn main() {
                         width: bun_sema_standalone::terminal_width(),
                         show_all: false,
                     };
-                    for tick in 0.. {
+                    let mut tick = 0;
+                    loop {
                         let mut line = Vec::new();
                         bun_sema_driver::format::write_progress(&mut line, &progress, &style, tick);
                         let _ = std::io::stderr().write_all(&line);
                         std::thread::sleep(std::time::Duration::from_millis(80));
+                        tick += 1;
                     }
                 });
             }
             // `--error-types`: the nodes whose type is the error type, in files without errors. Path, line, column, kind of node.
-            let error_types: std::sync::Mutex<Vec<(String, usize, usize, String)>> =
-                Default::default();
+            let error_types: Guarded<Vec<(String, usize, usize, String)>> =
+                Guarded::new(Vec::new());
             let note_error_types =
                 |checker: &mut bun_sema::check::Checker<'_, '_>,
                  file: bun_sema::program::FileId| {
                     let found = checker.error_types_at_locations(file);
                     let module = &checker.p.files.modules[file.idx()];
-                    let text = &module.hir.text;
-                    let mut error_types = error_types.lock().unwrap();
+                    let source = &module.hir.text;
+                    let mut error_types = error_types.lock();
                     for (start, kind) in found {
-                        let before = &text[..(start as usize).min(text.len())];
+                        let before = &source[..(start as usize).min(source.len())];
                         let line_start = bun_core::strings::last_index_of_char(before, b'\n')
                             .map_or(0, |n| n + 1);
                         let line = bun_core::strings::count_char(before, b'\n') + 1;
                         let column = before.len() - line_start + 1;
-                        let path = bun_sema::messages::text(module.path);
+                        let path = text(module.path);
                         error_types.push((path, line, column, kind));
                     }
                 };
@@ -240,8 +239,8 @@ fn main() {
                     let now = bun_sema_standalone::instructions_and_cycles().0;
                     let before =
                         instructions_so_far.swap(now, std::sync::atomic::Ordering::Relaxed);
-                    let path = bun_sema::messages::text(checker.p.files.modules[file.idx()].path);
-                    eprintln!("file {:.4} G {path}", (now - before) as f64 / 1e9);
+                    let path = text(checker.p.files.modules[file.idx()].path);
+                    error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
                 };
             let after_file = if has("--file-instructions") {
                 Some(&note_instructions as AfterFile<'_>)
@@ -256,12 +255,9 @@ fn main() {
                 let path = format!(
                     "{}{}",
                     declarations_out.unwrap(),
-                    String::from_utf8_lossy(path)
+                    bun_sema::messages::text(path)
                 );
-                if let Some(directory) = std::path::Path::new(&path).parent() {
-                    let _ = std::fs::create_dir_all(directory);
-                }
-                let _ = std::fs::write(path, text);
+                write_file(&path, text);
             };
             // For tuning the constants of the plan without rebuilding. To be removed once the
             // constants are chosen.
@@ -329,14 +325,14 @@ fn main() {
             };
             // A binary without the flag ignores it silently. A script that tests start orders looks for this line.
             if request.order != 1 {
-                eprintln!("order {}", request.order);
+                error_line!("order {}", request.order);
             }
             for round in 1..=number("--repeat=", 0) {
                 let started = std::time::Instant::now();
                 let (errors, checked) = bun_sema_driver::check_then(&request, |report| {
                     (report.diagnostics.len(), started.elapsed())
                 });
-                eprintln!(
+                error_line!(
                     "repeat {round}: {errors} errors, {:.3} s to the report, {:.3} s with the memory given back, {} MB held",
                     checked.as_secs_f64(),
                     started.elapsed().as_secs_f64(),
@@ -347,7 +343,7 @@ fn main() {
                 // Memory that the allocator caches for future allocations is not memory retained by
                 // the checks.
                 bun_alloc::mimalloc::mi_collect(true);
-                eprintln!(
+                error_line!(
                     "after the allocator gave back what is free: {} MB held",
                     bun_sema_standalone::current_memory() >> 20
                 );
@@ -378,18 +374,18 @@ fn main() {
                 let mut out = Vec::new();
                 write_diagnostics(&mut out, &report, &style);
                 let _ = std::io::stdout().write_all(&out);
-                let mut error_types = std::mem::take(&mut *error_types.lock().unwrap());
+                let mut error_types = std::mem::take(&mut *error_types.lock());
                 error_types
                     .retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));
                 error_types.sort();
                 for (path, line, column, kind) in &error_types {
-                    println!("{path}({line},{column}): ERROR-TYPE {kind}");
+                    output_line!("{path}({line},{column}): ERROR-TYPE {kind}");
                 }
                 let mut summary = Vec::new();
                 write_summary(&mut summary, &report, &style);
                 let _ = std::io::stderr().write_all(&summary);
                 if has("--timing") {
-                    eprintln!(
+                    error_line!(
                         "loaded {} files in {:.3}s, checked {} in {:.3}s, peak {:.2} GB",
                         report.files_loaded,
                         report.load_time.as_secs_f64(),
@@ -402,21 +398,21 @@ fn main() {
                     let phases: Vec<String> = phases
                         .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
                         .collect();
-                    eprintln!("load: {}", phases.join(", ").to_lowercase());
+                    error_line!("load: {}", phases.join(", ").to_lowercase());
                     let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
-                    eprintln!(
+                    error_line!(
                         "instructions {:.2} G, cycles {:.2} G",
                         instructions as f64 / 1e9,
                         cycles as f64 / 1e9
                     );
                     let loading =
                         instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
-                    eprintln!(
+                    error_line!(
                         "instructions of checking {:.2} G",
                         instructions.saturating_sub(loading) as f64 / 1e9
                     );
                     let peak = peak_memory_of_loading.load(std::sync::atomic::Ordering::Relaxed);
-                    eprintln!(
+                    error_line!(
                         "peak of loading {:.2} GB",
                         peak as f64 / (1u64 << 30) as f64
                     );
@@ -433,7 +429,7 @@ fn main() {
                     };
                     // fan/r7/tools/oracle.py reads these lines. It compares the counts between
                     // runs: they are deterministic for a given program.
-                    eprintln!(
+                    error_line!(
                         "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
                         plan_options.step_growth,
                         plan_options.warm_up_files,
@@ -441,22 +437,22 @@ fn main() {
                         plan_options.chunk_bytes,
                         plan_options.min_tasks
                     );
-                    eprintln!("steps: {}", report.steps.len());
-                    eprintln!("tasks: {}", count(|step| step.tasks as u64));
-                    eprintln!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));
-                    eprintln!("seconds in link: {:.3}", seconds(|step| step.in_link));
-                    eprintln!(
+                    error_line!("steps: {}", report.steps.len());
+                    error_line!("tasks: {}", count(|step| step.tasks as u64));
+                    error_line!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));
+                    error_line!("seconds in link: {:.3}", seconds(|step| step.in_link));
+                    error_line!(
                         "seconds in publishes: {:.3}",
                         seconds(|step| step.in_publish)
                     );
-                    eprintln!("seconds idle at barriers: {:.3}", seconds(|step| step.idle));
-                    eprintln!("entries buffered: {}", count(|step| step.entries.buffered));
-                    eprintln!(
+                    error_line!("seconds idle at barriers: {:.3}", seconds(|step| step.idle));
+                    error_line!("entries buffered: {}", count(|step| step.entries.buffered));
+                    error_line!(
                         "entries published: {}",
                         count(|step| step.entries.published)
                     );
-                    eprintln!("entries lost: {}", count(|step| step.entries.lost));
-                    eprintln!(
+                    error_line!("entries lost: {}", count(|step| step.entries.lost));
+                    error_line!(
                         "records linked: {}, joined: {}",
                         count(|step| step.records.linked.iter().sum::<usize>() as u64),
                         count(|step| step.records.joined.iter().sum::<usize>() as u64)
@@ -472,11 +468,11 @@ fn main() {
                         };
                         format!("{name} {} / {}", sum(|it| &it.linked), sum(|it| &it.joined))
                     });
-                    eprintln!(
+                    error_line!(
                         "records linked / joined by kind: {}",
                         by_kind.collect::<Vec<String>>().join(", ")
                     );
-                    eprintln!(
+                    error_line!(
                         "generic relation entries not published: {}",
                         count(|step| step.generic_relation_entries_not_published)
                     );
@@ -492,7 +488,7 @@ fn main() {
                                 .sum()
                         })
                         .collect();
-                    eprintln!(
+                    error_line!(
                         "foreign evaluations: {} inference, {} type syntax",
                         foreign[..8].iter().sum::<u64>(),
                         foreign[8..].iter().sum::<u64>()
@@ -500,10 +496,10 @@ fn main() {
                     let by_kind: Vec<String> = (kinds.iter().zip(&foreign))
                         .map(|(kind, count)| format!("{kind} {count}"))
                         .collect();
-                    eprintln!("foreign evaluations by kind: {}", by_kind.join(", "));
+                    error_line!("foreign evaluations by kind: {}", by_kind.join(", "));
                     let by_step = report.steps.iter().map(|step| step.entries.published);
                     let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
-                    eprintln!("entries published by step: {}", by_step.join(" "));
+                    error_line!("entries published by step: {}", by_step.join(" "));
                     // The ten tables with the most duplicated work.
                     let names = bun_sema::check::task::table_names();
                     let mut by_table = vec![(0u64, 0u64); names.len()];
@@ -518,10 +514,10 @@ fn main() {
                         std::cmp::Reverse(buffered - published)
                     });
                     for (name, (buffered, published)) in by_table.iter().take(10) {
-                        eprintln!("lost {name}: {} of {buffered}", buffered - published);
+                        error_line!("lost {name}: {} of {buffered}", buffered - published);
                     }
                     for (number, step) in report.steps.iter().enumerate() {
-                        eprintln!(
+                        error_line!(
                             "step {number}: {} tasks, {} files, {:.3} s, link {:.3}, publish {:.3}, idle {:.3}, entries {} / {} / {}, records {} / {}, digest {:016x}",
                             step.tasks,
                             step.files,
@@ -538,16 +534,17 @@ fn main() {
                         );
                         if step.ranges != 0 {
                             let [cycle, limit, nesting] = step.ranges_by_obstacle;
-                            eprintln!(
+                            error_line!(
                                 "  ranges checked ahead {}, not published {}; met a cycle {cycle}, a limit {limit}, a cut at nested types {nesting}",
-                                step.ranges, step.ranges_dropped
+                                step.ranges,
+                                step.ranges_dropped
                             );
                         }
                         for (elapsed, files, path) in &step.slowest_tasks {
-                            eprintln!(
+                            error_line!(
                                 "  task {:.3} s, {files} files, from {}",
                                 elapsed.as_secs_f64(),
-                                String::from_utf8_lossy(path)
+                                text(path)
                             );
                         }
                     }
@@ -561,6 +558,6 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        _ => eprintln!("usage: bun-sema cli | baselines | hir"),
+        _ => error_line!("usage: bun-sema cli | baselines | hir"),
     }
 }

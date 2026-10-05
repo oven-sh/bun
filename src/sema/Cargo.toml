@@ -28,3 +28,4 @@ bitflags.workspace = true
 bun_sema_standalone = { path = "standalone" }
 
 [lints]
+workspace = true

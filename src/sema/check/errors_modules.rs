@@ -167,7 +167,7 @@ impl Checker<'_, '_> {
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
             // `check_source_file` has checked every reference that tsgo checks.
-            if self.p.flows_too_deep.get(&mut self.task, &(file, e)).is_none()
+            if self.p.flows_too_deep.get(&self.task, &(file, e)).is_none()
                 || bound.is_unchecked(i)
                 // `checkWithStatement` does not check the body.
                 || hir.is_in_with(hir[e].pos)

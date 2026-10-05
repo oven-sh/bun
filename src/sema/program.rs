@@ -369,7 +369,7 @@ impl<'s> SymbolMap<'s> {
         let count = symbols.size_hint().0;
         let mut table = SymbolMap {
             entries: ArenaVec::with_capacity_in(count, arena),
-            places: ArenaHashMap::with_capacity_and_hasher_in(count, FxBuild::default(), arena),
+            places: ArenaHashMap::with_capacity_and_hasher_in(count, FxBuild, arena),
         };
         for (name, symbol) in symbols {
             table.insert(name, symbol);
@@ -2720,7 +2720,7 @@ impl<'s> Files<'s> {
         // Owns the paths that are only needed until every file is found. They are freed together
         // below, before the first file is checked: in `session` they would stay until the end.
         let resolving = Session::new();
-        let resolver = Resolver::new(&resolving, host, &options);
+        let resolver = Resolver::new(&resolving, host, options);
         let mut by_path: ByPath<'s> = map_in(arena);
         let mut by_package_id: FxHashMap<Vec<u8>, u32> = FxHashMap::default();
         let mut all_found = Found::default();
@@ -2777,8 +2777,8 @@ impl<'s> Files<'s> {
         // `processAllProgramFiles`: without root files there are no libraries and no automatic type directives.
         let has_root_files = !roots.is_empty();
         for lib in options.libs.iter().filter(|_| has_root_files) {
-            let lib = lib_file_stem(host, &options, lib);
-            let (path, is_lib) = lib_path(&resolver, &options, lib);
+            let lib = lib_file_stem(host, options, lib);
+            let (path, is_lib) = lib_path(&resolver, options, lib);
             starts.push(add(
                 &path,
                 is_lib,
@@ -2793,7 +2793,7 @@ impl<'s> Files<'s> {
         let mut program_errors = Vec::new();
         for root in roots {
             // `addRootFileTask`
-            let found = referenced_file(host, &options, root, b"").map(|found| {
+            let found = referenced_file(host, options, root, b"").map(|found| {
                 match options.parse_file_redirect(&found) {
                     Some(output) => host.is_file(output).then(|| output.to_vec()),
                     None => Some(found),
@@ -2812,16 +2812,16 @@ impl<'s> Files<'s> {
                     &mut all_found,
                 )),
                 Err(code) => {
-                    let (reason, args) = root_file_reason(&options, root, host.is_case_sensitive());
+                    let (reason, args) = root_file_reason(options, root, host.is_case_sensitive());
                     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-                    let problem = reference_problem(&options, code, root);
+                    let problem = reference_problem(options, code, root);
                     program_errors.push(problem.with(1, 1430, &[]).with(2, reason, &args));
                 }
             }
         }
         let roots_end = starts.len();
         let directives = if has_root_files {
-            automatic_type_directives(host, &resolver, &options)
+            automatic_type_directives(host, &resolver, options)
         } else {
             Vec::new()
         };
@@ -2897,7 +2897,7 @@ impl<'s> Files<'s> {
                         .iter()
                         .map(|&(_, path, is_lib)| (path, is_lib))
                         .collect();
-                    ahead = Self::load_ahead(session, host, &resolver, &options, &atoms, seeds);
+                    ahead = Self::load_ahead(session, host, &resolver, options, &atoms, seeds);
                 }
                 let results: Vec<Guarded<Option<Box<Loaded>>>> = batch
                     .iter()
@@ -2917,7 +2917,7 @@ impl<'s> Files<'s> {
                         session.arena(),
                         host,
                         &resolver,
-                        &options,
+                        options,
                         &atoms,
                         path,
                         is_lib,
@@ -2946,7 +2946,7 @@ impl<'s> Files<'s> {
                     // The one that `load_one` created is empty, and belongs to another thread.
                     loaded.module.imports = ArenaHashMap::with_capacity_and_hasher_in(
                         loaded.imports.len(),
-                        FxBuild::default(),
+                        FxBuild,
                         arena,
                     );
                     for &(spec, mode, path, brings_in, increases_depth) in &loaded.imports {
@@ -3029,7 +3029,7 @@ impl<'s> Files<'s> {
                             let text = host.read_source(path);
                             let arena = session.arena();
                             let loaded = Self::load_one(
-                                arena, host, &resolver, &options, &atoms, path, is_lib, text,
+                                arena, host, &resolver, options, &atoms, path, is_lib, text,
                             );
                             log.extend(loaded.traces);
                         }
@@ -3112,7 +3112,7 @@ impl<'s> Files<'s> {
         let mut lib_traces = Vec::new();
         if options.trace_resolution && options.lib_replacement && has_root_files {
             let mut libs: Vec<Vec<u8>> = (options.libs.iter())
-                .map(|lib| lib_file_stem(host, &options, lib).to_vec())
+                .map(|lib| lib_file_stem(host, options, lib).to_vec())
                 .collect();
             for module in modules.iter().flatten().filter(|_| !options.no_lib) {
                 for &(kind, value, ..) in &module.hir.references {
@@ -3120,14 +3120,14 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     let name = lib_name(atoms.bytes(value));
-                    let name = lib_file_stem(host, &options, &name);
-                    if host.is_file(&lib_file(&options, name)) {
+                    let name = lib_file_stem(host, options, &name);
+                    if host.is_file(&lib_file(options, name)) {
                         libs.push(name.to_vec());
                     }
                 }
             }
             let mut lookups: Vec<_> = (libs.iter())
-                .map(|lib| library_name_and_resolve_from(&options, lib))
+                .map(|lib| library_name_and_resolve_from(options, lib))
                 .map(|(name, from)| match host.is_case_sensitive() {
                     true => (from.clone(), name, from),
                     false => (to_file_name_lower_case(&from), name, from),
@@ -3316,7 +3316,7 @@ impl<'s> Files<'s> {
         let mut include_errors = Vec::new();
         let (output_path_errors, common_source_directory) = output_path_errors(
             host,
-            &options,
+            options,
             &atoms,
             &modules,
             &by_path,
@@ -4111,7 +4111,7 @@ impl<'s> Files<'s> {
         if !module.path.ends_with(b".tsx") && !module.path.ends_with(b".jsx") {
             return None;
         }
-        let runtime = jsx_runtime_of(&self.options, &module.hir, &self.atoms)?;
+        let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;
         self.atoms.lookup(&runtime)
     }
 
@@ -4239,7 +4239,7 @@ impl<'s> Files<'s> {
             // The first declaration of a name owns it. What a later file declares under the name of
             // a module is merged into the module.
             if !augmentations {
-                for (name, symbol) in self.modules[file].bound.umd_globals.to_vec() {
+                for &(name, symbol) in self.modules[file].bound.umd_globals.iter() {
                     if !self.globals.contains_key(name) {
                         self.globals.insert(
                             name,
@@ -4255,8 +4255,8 @@ impl<'s> Files<'s> {
         let mut augmentations: Vec<(FileId, Atom, Sym)> = Vec::new();
         for &id in self.order {
             let file = id.idx();
-            for (name, symbol, is_augmentation) in self.modules[file].bound.ambient_modules.to_vec()
-            {
+            for at in 0..self.modules[file].bound.ambient_modules.len() {
+                let (name, symbol, is_augmentation) = self.modules[file].bound.ambient_modules[at];
                 let sym = Sym {
                     file: id,
                     id: symbol,
@@ -4961,12 +4961,12 @@ impl<'s> Files<'s> {
     pub fn source_file_from_reference(&self, origin: FileId, written: &[u8]) -> Option<FileId> {
         let name = referenced_path(written, self.module(origin).path);
         if has_extension(&name) {
-            if unsupported_extension_error(&self.options, &name).is_some() {
+            if unsupported_extension_error(self.options, &name).is_some() {
                 return None;
             }
             return self.by_path.get(&name[..]).copied();
         }
-        let mut extensions = supported_extensions(&self.options)[0].iter();
+        let mut extensions = supported_extensions(self.options)[0].iter();
         extensions.find_map(|it| {
             self.by_path
                 .get(&[&name[..], &it[..]].concat()[..])
@@ -4977,7 +4977,7 @@ impl<'s> Files<'s> {
     /// `GetOutputPathsFor(file).DeclarationFilePath()`
     pub fn declaration_file_path(&self, file: FileId) -> Vec<u8> {
         declaration_emit_output_file_path(
-            &self.options,
+            self.options,
             self.module(file).path,
             self.common_source_directory,
             self.is_case_sensitive,
@@ -6102,7 +6102,7 @@ impl<'a, 's> AliasResolver<'a, 's> {
 
 impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     fn arena(&self) -> &'s Arena {
-        *self.arena.get_or_init(|| self.files.thread_arena())
+        self.arena.get_or_init(|| self.files.thread_arena())
     }
 
     fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {

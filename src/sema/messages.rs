@@ -26,7 +26,7 @@ impl Category {
 /// Bytes as text, for the tools that write baselines.
 #[cfg(feature = "baselines")]
 pub fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
+    bstr::BStr::new(bytes).to_string()
 }
 
 /// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its

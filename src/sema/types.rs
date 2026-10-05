@@ -2066,15 +2066,16 @@ impl<'p, 's> Types<'p, 's> {
     /// `intern` for a type with lists. Nothing is allocated if the type exists.
     #[inline]
     pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
-        self.intern_borrowed((key, None))
+        self.intern_borrowed(key, None)
     }
 
     /// `intern_with`, likewise.
     pub fn intern_key_with(&self, key: TypeKey<'_>, provenance: ProvenanceKey<'_>) -> TypeId {
-        self.intern_borrowed((key, (!provenance.is_default()).then_some(provenance)))
+        self.intern_borrowed(key, (!provenance.is_default()).then_some(provenance))
     }
 
-    fn intern_borrowed(&self, key: (TypeKey<'_>, Option<ProvenanceKey<'_>>)) -> TypeId {
+    fn intern_borrowed(&self, key: TypeKey<'_>, provenance: Option<ProvenanceKey<'_>>) -> TypeId {
+        let key = (key, provenance);
         // They have no lists, and `intern` treats them specially.
         if let (TypeKey::Data(data), None) = key
             && matches!(
@@ -2743,7 +2744,7 @@ macro_rules! clone_in_is_copy {
         impl CloneIn for $name {
             type In<'t> = $name;
             #[inline]
-            fn clone_in<'t>(&self, _: &'t Arena) -> $name {
+            fn clone_in(&self, _: &Arena) -> $name {
                 *self
             }
         }
@@ -3408,7 +3409,7 @@ fn number<V: Send + Sync>(
                 for &position in &task.positions[from..to] {
                     let position = position as usize;
                     let hash = task.records[position].1;
-                    let first = *first.entry(hash).or_insert(place(t, position));
+                    let first = *first.entry(hash).or_insert_with(|| place(t, position));
                     firsts[t][position].store(first, Ordering::Relaxed);
                 }
             }

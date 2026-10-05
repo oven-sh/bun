@@ -295,8 +295,8 @@ impl OrderDependent<'_> {
                 || self.void_targets & bit != 0 && is(own, 1) != is(serial, 1)
                 || self.inferred & bit != 0 && is(own, 2) != is(serial, 2)
         }) || self.failed != 0
-            && (some(&self.variances, &|it| it & 24 != 0) != some(serial, &|it| it & 24 != 0)
-                || some(&self.variances, &|it| is(it, 0)) != some(serial, &|it| is(it, 0)))
+            && (some(self.variances, &|it| it & 24 != 0) != some(serial, &|it| it & 24 != 0)
+                || some(self.variances, &|it| is(it, 0)) != some(serial, &|it| is(it, 0)))
     }
 }
 

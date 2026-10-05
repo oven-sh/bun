@@ -34,12 +34,12 @@ pub type ArenaHashSet<'a, K> = hashbrown::HashSet<K, FxBuild, &'a Arena>;
 
 #[inline]
 pub fn map_in<K, V>(arena: &Arena) -> ArenaHashMap<'_, K, V> {
-    ArenaHashMap::with_hasher_in(FxBuild::default(), arena)
+    ArenaHashMap::with_hasher_in(FxBuild, arena)
 }
 
 #[inline]
 pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
-    ArenaHashSet::with_hasher_in(FxBuild::default(), arena)
+    ArenaHashSet::with_hasher_in(FxBuild, arena)
 }
 
 /// Owns the arena of every thread that has allocated for one check.
@@ -267,7 +267,7 @@ mod tests {
             let spawned: Vec<_> = (1..5)
                 .map(|len| {
                     let (session, counted) = (&session, &counted);
-                    scope.spawn(move || session.keep(vec![counted.clone(); len]))
+                    scope.spawn(move || session.keep(vec![std::sync::Arc::clone(counted); len]))
                 })
                 .collect();
             spawned.into_iter().map(|it| it.join().unwrap()).collect()

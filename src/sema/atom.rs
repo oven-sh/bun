@@ -474,10 +474,8 @@ impl<'s> Interner<'s> {
 #[cfg(feature = "baselines")]
 fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     match bytes {
-        [0xFE, rest @ ..] => {
-            std::borrow::Cow::Owned(format!("__{}", String::from_utf8_lossy(rest)))
-        }
-        bytes => String::from_utf8_lossy(bytes),
+        [0xFE, rest @ ..] => std::borrow::Cow::Owned(format!("__{}", bstr::BStr::new(rest))),
+        bytes => std::borrow::Cow::Owned(crate::messages::text(bytes)),
     }
 }
 

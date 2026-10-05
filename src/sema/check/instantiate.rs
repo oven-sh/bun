@@ -157,7 +157,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(kept) = self.recent_composed.get(first.0, second.0) {
             return MapperId(kept);
         }
-        if let Some(kept) = self.p.composed.get(&mut self.task, &(first, second)) {
+        if let Some(kept) = self.p.composed.get(&self.task, &(first, second)) {
             self.recent_composed.put(first.0, second.0, kept.0);
             return kept;
         }
@@ -198,8 +198,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
-                let kept =
-                    (self.p.composed).insert(&mut self.task, (first, second), composed, stored);
+                let kept = (self.p.composed).insert(&self.task, (first, second), composed, stored);
                 // As for `recent_instantiations`.
                 if first.is_local() || second.is_local() || !kept.is_local() {
                     self.recent_composed.put(first.0, second.0, kept.0);
@@ -371,7 +370,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `serial`: of the activation of `mapper`, or 0 if it is not active.
     #[inline(never)]
     fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId, serial: u32) -> TypeId {
-        if let Some(known) = self.p.instantiations.get(&mut self.task, &(ty, mapper)) {
+        if let Some(known) = self.p.instantiations.get(&self.task, &(ty, mapper)) {
             self.recent_instantiations
                 .put_tagged(ty.0, mapper.0, known.0, serial);
             return known;
@@ -410,8 +409,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hit_the_limit = self.instantiation_limit_hits != hits_before;
         match self.end_scope_by_counters(scope) {
             Ok(stored) if !hit_the_limit => {
-                let kept =
-                    (self.p.instantiations).insert(&mut self.task, (ty, mapper), result, stored);
+                let kept = (self.p.instantiations).insert(&self.task, (ty, mapper), result, stored);
                 // The table stores nothing task-local under a shared key.
                 if ty.is_local() || mapper.is_local() || !result.is_local() {
                     self.recent_instantiations
@@ -844,12 +842,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let arguments = self.instantiate(arguments, mapper);
         let key = self.single_signature_key(ty, arguments);
-        if let Some(first) = self.p.instantiations.get(&mut self.task, &key) {
+        if let Some(first) = self.p.instantiations.get(&self.task, &key) {
             return first;
         }
         match stored {
             Ok(stored) if instantiated != ty => {
-                (self.p.instantiations).insert(&mut self.task, key, instantiated, stored)
+                (self.p.instantiations).insert(&self.task, key, instantiated, stored)
             }
             _ => instantiated,
         }

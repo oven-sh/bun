@@ -371,25 +371,24 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(target_parts)
                 if !target_parts
                     .iter()
-                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t)) =>
-            {
+                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t))
                 // From `string[] & { extra: any }` to `string[] & T`: `{ extra: any }` for `T`. But
                 // to `string[] & Iterable<T>` the `string[]` stays, and yields `string` for `T`.
-                if !self.is_union(source) {
-                    let mut sources: Parts = match self.data(source) {
-                        TypeData::Intersection(parts) => SmallVec::from_slice(parts),
-                        _ => smallvec![source],
-                    };
-                    let mut targets: Parts = SmallVec::from_slice(target_parts);
-                    self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
-                        s == t || c.is_identical(s, t)
-                    });
-                    if sources.is_empty() || targets.is_empty() {
-                        return;
-                    }
-                    source = self.intersection(&sources);
-                    target = self.intersection(&targets);
+                && !self.is_union(source) =>
+            {
+                let mut sources: Parts = match self.data(source) {
+                    TypeData::Intersection(parts) => SmallVec::from_slice(parts),
+                    _ => smallvec![source],
+                };
+                let mut targets: Parts = SmallVec::from_slice(target_parts);
+                self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
+                    s == t || c.is_identical(s, t)
+                });
+                if sources.is_empty() || targets.is_empty() {
+                    return;
                 }
+                source = self.intersection(&sources);
+                target = self.intersection(&targets);
             }
             _ => {}
         }
@@ -621,7 +620,7 @@ impl<'p, 's> Checker<'p, 's> {
         sources: &[TypeId],
         targets: &[TypeId],
     ) {
-        if let Some(known) = self.p.variances.get_ref(&mut self.task, &of) {
+        if let Some(known) = self.p.variances.get_ref(&self.task, &of) {
             self.note_inferred_by_variances(of, sources.len().min(targets.len()));
             return self.infer_from_type_arguments(n, sources, targets, known);
         }
@@ -1367,16 +1366,17 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 let slice = self.slice_tuple(source_elems, source_flags, start_length, end_length);
                 self.infer_with_priority(n, slice, element_types[start_length], priority);
-            } else if middle_length == 1 && element_flags[start_length].contains(ElemFlags::REST) {
-                if let Some(rest) = self.element_type_of_slice(
+            } else if middle_length == 1
+                && element_flags[start_length].contains(ElemFlags::REST)
+                && let Some(rest) = self.element_type_of_slice(
                     source_elems,
                     source_flags,
                     start_length,
                     end_length,
                     false,
-                ) {
-                    self.infer_types(n, rest, element_types[start_length]);
-                }
+                )
+            {
+                self.infer_types(n, rest, element_types[start_length]);
             }
         }
         for i in 0..end_length {
@@ -2202,7 +2202,7 @@ impl<'p, 's> Checker<'p, 's> {
         of: TypeId,
     ) -> Option<TypeId> {
         let key = (source, target, of);
-        if let Some(cached) = self.p.reverse_mapped_cache.get(&mut self.task, &key) {
+        if let Some(cached) = self.p.reverse_mapped_cache.get(&self.task, &key) {
             return Some(cached.unwrap_or(TypeId::UNKNOWN));
         }
         let scope = self.begin_scope();
@@ -2241,7 +2241,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.reverse_mapped_cache).insert(&mut self.task, key, result, stored),
+            Ok(stored) => (self.p.reverse_mapped_cache).insert(&self.task, key, result, stored),
             Err(_) => result,
         }
     }

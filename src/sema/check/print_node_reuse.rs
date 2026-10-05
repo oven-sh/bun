@@ -174,9 +174,9 @@ impl<'p> Printer<'_, 'p, '_> {
         // annotated type.
         let (p, key) = (self.c.p, (file, func));
         if matches!(pt, Pseudo::Direct(_))
-            && ((p.fn_return_types.get(&mut self.c.task, &key))
+            && ((p.fn_return_types.get(&self.c.task, &key))
                 .is_some_and(|(_, is_circular)| is_circular)
-                || p.circular_returns.get(&mut self.c.task, &key).is_some())
+                || p.circular_returns.get(&self.c.task, &key).is_some())
         {
             return None;
         }
@@ -571,7 +571,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let head = self.pseudo_signature_head(file, *func, params);
                 let returns = self.pseudo_type_to_node(file, returns);
                 self.leave_scope(outer_scope);
-                Node::function(cat!(head, b" => "), returns)
+                Node::function(&cat!(head, b" => "), returns)
             }
             Pseudo::Tuple(elements) => {
                 let mut parts = Vec::with_capacity(elements.len());
@@ -1418,7 +1418,7 @@ impl<'p> Printer<'_, 'p, '_> {
                     FnKind::ConstructorType => b"new ",
                     _ => b"",
                 };
-                Node::function(cat!(keywords, head, b" => "), returned)
+                Node::function(&cat!(keywords, head, b" => "), returned)
             }
             TypeNodeKind::Object(members) => {
                 let scope = self.c.bound(file).type_scope[node.idx()];

@@ -1400,6 +1400,7 @@ dependencies = [
 name = "bun_sema_standalone"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_alloc",
  "bun_core",
  "bun_js_parser",

@@ -724,7 +724,7 @@ impl Checker<'_, '_> {
             PropSource::Symbol(symbol) => match self.files().value_declaration(*symbol) {
                 Some((file, Decl::Member(first))) => Some(
                     self.type_parameter_merged_with_member(file, first, prop.name)
-                        .unwrap_or((file, self.hir(file)[first].name_pos)),
+                        .unwrap_or_else(|| (file, self.hir(file)[first].name_pos)),
                 ),
                 Some((file, Decl::ParameterProperty(first))) => {
                     Some((file, self.hir(file)[first].pos))

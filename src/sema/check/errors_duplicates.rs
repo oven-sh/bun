@@ -375,7 +375,7 @@ impl Checker<'_, '_> {
             parts.iter().flat_map(of_part).collect()
         };
         for refused in &files.refused_merges {
-            let (there, added) = (&refused.target_parts[..], &refused.source_parts[..]);
+            let (there, added) = (refused.target_parts, refused.source_parts);
             if !there.iter().chain(added).any(|part| part.file == file) {
                 continue;
             }

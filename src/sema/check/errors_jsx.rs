@@ -287,7 +287,7 @@ impl Checker<'_, '_> {
         self.resolved_signature(file, e);
         let list = hir[first].pos..self.end_of_type_argument_list(file, type_args);
         (self.p.call_diagnostics)
-            .get_ref(&mut self.task, &(file, e))
+            .get_ref(&self.task, &(file, e))
             .is_some_and(|reported| reported.iter().any(|d| list.contains(&d.start)))
     }
 
@@ -491,14 +491,14 @@ impl Checker<'_, '_> {
             return None;
         }
         // Cache: queried once per attribute and per child.
-        if let Some(cached) = (self.p.jsx_attributes_types).get(&mut self.task, &(file, j)) {
+        if let Some(cached) = (self.p.jsx_attributes_types).get(&self.task, &(file, j)) {
             return Some(cached);
         }
         let signature = self.resolved_signature(file, e).sig?;
         let ty = self.jsx_effective_first_argument(file, e, signature);
         // Cacheable only if computed from the cached signature.
         if self.p.calls.get(&self.task, &(file, e)) == Some(Some(signature)) {
-            (self.p.jsx_attributes_types).insert(&mut self.task, (file, j), ty);
+            (self.p.jsx_attributes_types).insert(&self.task, (file, j), ty);
         }
         Some(ty)
     }

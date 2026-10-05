@@ -16,3 +16,4 @@ bun_paths.workspace = true
 bstr.workspace = true
 
 [lints]
+workspace = true

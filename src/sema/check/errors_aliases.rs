@@ -318,7 +318,7 @@ impl Checker<'_, '_> {
         (is_untyped
             && self.is_context_sensitive_function_or_method(file, func, owner)
             && !self.is_immediately_invoked(file, func)
-            && (self.p.pat_types.get(&mut self.task, &(file, pat))).is_none())
+            && (self.p.pat_types.get(&self.task, &(file, pat))).is_none())
         .then_some((func, pat))
     }
 

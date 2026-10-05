@@ -736,7 +736,7 @@ impl Node {
     }
 
     /// A function type or a constructor type. `head`: all that precedes its return type.
-    fn function(head: Vec<u8>, returned: Node) -> Node {
+    fn function(head: &[u8], returned: Node) -> Node {
         // `emitReturnType`, `emitTypeNode`: in the `extends` clause of a conditional type, a
         // conditional type and an `infer` type with a constraint are parenthesized.
         let in_extends = if returned.precedence == CONDITIONAL
@@ -1893,7 +1893,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 NodeData::Expr(e) => self.entity_name_text(file, e),
                 _ => None,
             }
-            .map_or(b"(Missing)".to_vec(), |name| cat!(b"[", name, b"]")),
+            .map_or_else(|| b"(Missing)".to_vec(), |name| cat!(b"[", name, b"]")),
             // The kind decides where there is no text, in the default library. A JSON file has
             // `StringLiteral` for every name, even a bare word.
             (Kind::StringLiteral, _) if hir.text.is_empty() => {
@@ -3233,7 +3233,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     fn object_type_to_node(&mut self, ty: TypeId) -> Node {
         let with_errors = &self.c.p.mapped_types_with_errors;
         if self.c.mapped_origin(ty).is_some()
-            && (self.c.is_generic(ty) || with_errors.get(&mut self.c.task, &ty).is_some())
+            && (self.c.is_generic(ty) || with_errors.get(&self.c.task, &ty).is_some())
         {
             return self.mapped_type_to_node(ty);
         }
@@ -4914,7 +4914,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// A function type or a constructor type.
     fn signature_to_node(&mut self, signature: SigId, kind: SignatureKind) -> Node {
         let (head, returned) = self.signature_to_parts(signature, kind, b"", false);
-        Node::function(head, returned)
+        Node::function(&head, returned)
     }
 
     // ───────────────────────────── mapped and conditional types ─────────────────────────────

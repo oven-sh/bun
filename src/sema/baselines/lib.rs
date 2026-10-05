@@ -4,6 +4,7 @@
 //! the same driver as `bun check`. The output is written in the format of the `.errors.txt`
 //! baselines committed there, for comparison with them.
 
+use bun_core::strings;
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
@@ -11,26 +12,92 @@ use bun_sema::messages::text;
 use bun_sema::resolve::{Host, Options, join, to_file_name_lower_case};
 use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
+use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
 
 /// `println!` and `eprintln!`, which nothing in Bun uses. The streams of the standard library keep
 /// the output capture of its panic hook alive, and so its backtrace printer, which imports the
 /// unwinder from libgcc_s.
+#[macro_export]
 macro_rules! output_line {
     ($($arguments:tt)*) => {
-        write_line(bun_sys::File::stdout(), format_args!($($arguments)*))
+        $crate::write_line(bun_core::Fd::stdout(), format_args!($($arguments)*))
     };
 }
+#[macro_export]
 macro_rules! error_line {
     ($($arguments:tt)*) => {
-        write_line(bun_sys::File::from_fd(bun_core::Fd::stderr()), format_args!($($arguments)*))
+        $crate::write_line(bun_core::Fd::stderr(), format_args!($($arguments)*))
     };
 }
 
-fn write_line(to: bun_sys::File, line: std::fmt::Arguments<'_>) {
-    let _ = to.write_all(format!("{line}\n").as_bytes());
+pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
+    let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
+}
+
+pub fn read_file(path: &str) -> Option<Vec<u8>> {
+    bun_sys::File::read_from(bun_core::Fd::cwd(), path.as_bytes()).ok()
+}
+
+/// Returns whether it is written. Its directory is created if there is none.
+pub fn write_file(path: &str, contents: &[u8]) -> bool {
+    let _ = bun_sys::mkdir_recursive(&path.as_bytes()[..rfind(path, "/").unwrap_or(0)]);
+    let path = bun_core::ZBox::from_bytes(path);
+    bun_sys::File::write_file(bun_core::Fd::cwd(), &path, contents).is_ok()
+}
+
+// The searches of `str`, with Bun's. What is searched for is ASCII, so the text can be cut there.
+
+fn find(text: &str, what: &str) -> Option<usize> {
+    strings::index_of(text.as_bytes(), what.as_bytes())
+}
+
+fn rfind(text: &str, what: &str) -> Option<usize> {
+    strings::last_index_of(text.as_bytes(), what.as_bytes())
+}
+
+fn contains(text: &str, what: &str) -> bool {
+    strings::contains(text.as_bytes(), what.as_bytes())
+}
+
+fn split<'a>(text: &'a str, at: &'a str) -> impl Iterator<Item = &'a str> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let text = rest?;
+        let found = find(text, at);
+        rest = found.map(|found| &text[found + at.len()..]);
+        Some(&text[..found.unwrap_or(text.len())])
+    })
+}
+
+/// `str::lines`
+pub fn lines(text: &str) -> impl Iterator<Item = &str> {
+    let all = (!text.is_empty()).then(|| split(text.strip_suffix('\n').unwrap_or(text), "\n"));
+    (all.into_iter().flatten()).map(|line| line.strip_suffix('\r').unwrap_or(line))
+}
+
+fn replace(text: &str, what: &str, with: &str) -> String {
+    split(text, what).collect::<Vec<_>>().join(with)
+}
+
+/// What follows the last `/`.
+fn base_name(path: &str) -> &str {
+    rfind(path, "/").map_or(path, |at| &path[at + 1..])
+}
+
+fn replace_in_bytes(text: &[u8], what: &[u8], with: &[u8]) -> Vec<u8> {
+    strings::split(text, what).collect::<Vec<_>>().join(with)
+}
+
+/// Where `what` is in `text`. The places do not overlap.
+fn places<'a>(text: &'a [u8], what: &'a [u8]) -> impl Iterator<Item = usize> + 'a {
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        let at = from + strings::index_of(&text[from..], what)?;
+        from = at + what.len();
+        Some(at)
+    })
 }
 
 /// `srcFolder`
@@ -167,7 +234,7 @@ struct OwnedBundle {
 impl OwnedBundle {
     /// `None` if the file cannot be read or is malformed.
     fn read(path: &str) -> Option<OwnedBundle> {
-        let bytes = Box::into_raw(std::fs::read(path).ok()?.into_boxed_slice());
+        let bytes = Box::into_raw(read_file(path)?.into_boxed_slice());
         // SAFETY: `bytes` comes from `Box::into_raw`. It is freed below, or in `drop` after `bundle`.
         let Some(bundle) = Bundle::parse(unsafe { &*bytes }) else {
             // SAFETY: as above, and nothing refers to it.
@@ -269,7 +336,7 @@ impl Virtual {
     fn on_disk(&self, path: &[u8]) -> Option<Vec<u8>> {
         self.mounted.iter().find_map(|(prefix, real)| {
             let rest = path.strip_prefix(prefix.as_slice())?;
-            (rest.is_empty() || rest.starts_with(b"/")).then(|| [&real[..], &rest[..]].concat())
+            (rest.is_empty() || rest.starts_with(b"/")).then(|| [&real[..], rest].concat())
         })
     }
 
@@ -401,7 +468,7 @@ impl Host for Virtual {
 /// `decodeBytes`: the text of a file, decoded according to its byte order mark.
 fn decode(bytes: &[u8]) -> Vec<u8> {
     let utf16 = |rest: &[u8], big: bool| {
-        let units = rest.chunks_exact(2).map(|pair| {
+        let units = rest.as_chunks::<2>().0.iter().map(|pair| {
             if big {
                 u16::from_be_bytes([pair[0], pair[1]])
             } else {
@@ -447,10 +514,7 @@ fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
     // `[^\r\n]*`
     let value = value.trim_ascii_start();
     let value_end = bun_core::strings::index_of_any(value, b"\r\n").unwrap_or(value.len());
-    Some((
-        String::from_utf8_lossy(&rest[..end]).to_lowercase(),
-        &value[..value_end],
-    ))
+    Some((text(&rest[..end]).to_lowercase(), &value[..value_end]))
 }
 
 /// `lineDelimiter.Split`
@@ -487,16 +551,16 @@ fn units_of(code: &[u8], file_name: &str) -> Parsed {
         if let Some((option, value)) = option_in(line) {
             // `linkRegex`
             if option == "link"
-                && let Some(arrow) = value.windows(2).position(|w| w == b"->")
+                && let Some(arrow) = strings::index_of(value, b"->")
             {
-                let text = |b: &[u8]| String::from_utf8_lossy(trim(b)).into_owned();
-                links.push((text(&value[arrow + 2..]), text(&value[..arrow])));
+                let (target, link) = (trim(&value[arrow + 2..]), trim(&value[..arrow]));
+                links.push((text(target), text(link)));
                 continue;
             }
-            let value = String::from_utf8_lossy(trim(value)).into_owned();
+            let value = text(trim(value));
             if option != "filename" {
                 if option == "symlink" && !name.is_empty() {
-                    for link in value.split(',').map(str::trim).filter(|l| !l.is_empty()) {
+                    for link in split(&value, ",").map(str::trim).filter(|l| !l.is_empty()) {
                         links.push((link.to_owned(), name.clone()));
                     }
                 }
@@ -518,7 +582,7 @@ fn units_of(code: &[u8], file_name: &str) -> Parsed {
         }
     }
     if units.is_empty() && name.is_empty() {
-        name = file_name.rsplit('/').next().unwrap_or(file_name).to_owned();
+        base_name(file_name).clone_into(&mut name);
     }
     units.push(Unit { name, content });
     Parsed { units, links }
@@ -530,7 +594,7 @@ fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
     for line in bun_core::strings::split(code, b"\n") {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         if let Some((name, value)) = option_in(line) {
-            let value = String::from_utf8_lossy(trim(value)).into_owned();
+            let value = text(trim(value));
             let value = value.strip_suffix(';').unwrap_or(&value).to_owned();
             settings.insert(name, value);
         }
@@ -544,7 +608,7 @@ fn the_one_value(option: &str, value: &str) -> String {
         return value.to_owned();
     };
     let (mut includes, mut excludes, mut star) = (Vec::new(), Vec::new(), false);
-    for item in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+    for item in split(value, ",").map(str::trim).filter(|s| !s.is_empty()) {
         if item == "*" {
             star = true;
         } else if let Some(excluded) = item.strip_prefix(['-', '!']) {
@@ -564,8 +628,7 @@ fn the_one_value(option: &str, value: &str) -> String {
 
 /// `removeTestPathPrefixes`
 fn without_prefixes(text: &str, lib_dir: &str) -> String {
-    // Only ASCII is removed.
-    String::from_utf8(without_prefixes_in_bytes(text.as_bytes(), lib_dir)).unwrap()
+    bun_sema::messages::text(&without_prefixes_in_bytes(text.as_bytes(), lib_dir))
 }
 
 fn without_prefixes_in_bytes(text: &[u8], lib_dir: &str) -> Vec<u8> {
@@ -596,7 +659,7 @@ fn without_prefixes_in_bytes(text: &[u8], lib_dir: &str) -> Vec<u8> {
 
 /// `isDefaultLibraryFile`
 fn is_default_library(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = base_name(path);
     name.starts_with("lib.") && name.ends_with(".d.ts")
 }
 
@@ -611,7 +674,7 @@ fn category_name(category: Category) -> &'static str {
 
 /// `utf8.RuneCountInString`
 fn runes(bytes: &[u8]) -> usize {
-    String::from_utf8_lossy(bytes).chars().count()
+    bstr::ByteSlice::chars(bytes).count()
 }
 
 const RESET: &str = "\u{1b}[0m";
@@ -667,7 +730,7 @@ fn write_code_snippet(out: &mut String, d: &Diagnostic, color: &str, indent: &st
             .source
             .get((i + 1).saturating_sub(d.source_line as usize))
             .map_or_else(String::new, |line| text(line));
-        let line = line.trim_end().replace('\t', " ");
+        let line = replace(line.trim_end(), "\t", " ");
         out.push_str(&format!(
             "{indent}{GUTTER}{:>width$}{RESET} {line}\n",
             i + 1
@@ -811,7 +874,7 @@ fn render(
         }
     };
     let error_text = |out: &mut Vec<u8>, new_line: &mut dyn FnMut(&mut Vec<u8>), d: &Diagnostic| {
-        for line in clean(&text(&d.text)).split('\n').filter(|l| !l.is_empty()) {
+        for line in split(&clean(&text(&d.text)), "\n").filter(|l| !l.is_empty()) {
             new_line(out);
             out.extend_from_slice(
                 format!(
@@ -879,7 +942,7 @@ fn render(
                     let from = (relative.max(0) as usize).min(line.len());
                     new_line(&mut out);
                     out.extend_from_slice(b"    ");
-                    for c in String::from_utf8_lossy(&line[..from]).chars() {
+                    for c in bstr::ByteSlice::chars(&line[..from]) {
                         if matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ') {
                             out.push(c as u8);
                         } else {
@@ -1046,28 +1109,28 @@ fn type_or_symbol_baseline(
 /// to say about the output. This is `baseline` from the first declaration file, without what it
 /// says about JavaScript files. `None`: `baseline` does not begin with `ts_code`.
 fn after_the_javascript<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]> {
-    use bstr::ByteSlice;
     let js_code = baseline.strip_prefix(ts_code)?.strip_prefix(b"\r\n\r\n")?;
     let about_them = [
         &b"\r\n\r\n//// [DtsFileErrors]\r\n"[..],
         b"\r\n\r\n!!!! File ",
     ];
-    let end = (about_them.iter().filter_map(|it| js_code.find(it))).min();
+    let end = (about_them
+        .iter()
+        .filter_map(|it| strings::index_of(js_code, it)))
+    .min();
     let end = end.unwrap_or(js_code.len());
     // `jsCode.WriteString("\r\n\r\n")` precedes the first one.
-    let first = js_code[..end].find_iter(b"\r\n\r\n//// [").find(|&at| {
+    let first = places(&js_code[..end], b"\r\n\r\n//// [").find(|&at| {
         let name = &js_code[at + 10..end];
-        let name = name
-            .find_byteset(b"]\r\n")
-            .map(|end| (&name[..end], &name[end..]));
+        let name = strings::index_of_any(name, b"]\r\n").map(|end| (&name[..end], &name[end..]));
         name.is_some_and(|(name, rest)| {
             rest.starts_with(b"]\r\n") && bun_sema::resolve::is_declaration_file_name(name)
         })
     });
     // `compareResultFileSets` of the declaration files comes before that of the JavaScript files.
-    let about_javascript = js_code[end..].find_iter(b"\r\n\r\n!!!! File ").find(|&at| {
+    let about_javascript = places(&js_code[end..], b"\r\n\r\n!!!! File ").find(|&at| {
         let name = &js_code[end + at + 14..];
-        let name = &name[..name.find_byte(b' ').unwrap_or(name.len())];
+        let name = &name[..strings::index_of_char_usize(name, b' ').unwrap_or(name.len())];
         !bun_sema::resolve::is_declaration_file_name(name)
     });
     let last = about_javascript.map_or(js_code.len(), |at| end + at);
@@ -1095,7 +1158,7 @@ fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
         bun_sema_driver::host::show_drives(&mut line);
         let is_missing = |file: &[u8]| [b"File '", file, b"' does not exist."].concat();
         let is_found = |file: &[u8]| [b"Found 'package.json' at '", file, b"'."].concat();
-        let sanitized = if line.contains_str("'7.0.2'") {
+        let sanitized = if strings::contains(&line, b"'7.0.2'") {
             line.replacen("'7.0.2'", "'FakeTSVersion'", 1)
         } else if let Some(start) =
             line.strip_suffix(b"' does not exist according to earlier cached lookups.")
@@ -1175,17 +1238,16 @@ fn first_difference(ours: &[u8], expected: &[u8]) -> Option<String> {
 
 /// The lines before the first empty line: one error each, with its elaboration below it.
 fn top_of(text: &str) -> &str {
-    text.find("\n\n\n").map_or(text, |end| &text[..end])
+    find(text, "\n\n\n").map_or(text, |end| &text[..end])
 }
 
 /// Where and what, of each error in `top`.
 fn heads(top: &str) -> Vec<String> {
-    let mut heads: Vec<String> = top
-        .lines()
+    let mut heads: Vec<String> = lines(top)
         .filter(|line| !line.starts_with(' ') && !line.is_empty())
         .filter_map(|line| {
-            let at = line.find(" TS")?;
-            let code_end = line[at + 3..].find(':')? + at + 3;
+            let at = find(line, " TS")?;
+            let code_end = find(&line[at + 3..], ":")? + at + 3;
             Some(line[..code_end].to_owned())
         })
         .collect();
@@ -1237,7 +1299,7 @@ fn errors_of_both_programs(pre: Report, mut post: Report) -> Report {
 }
 
 fn without_related(text: &str) -> String {
-    text.lines()
+    lines(text)
         .filter(|line| !line.starts_with("!!! related "))
         .collect::<Vec<_>>()
         .join("\n")
@@ -1301,7 +1363,7 @@ impl Setup<'_> {
     fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
         match self.bundle {
             Some(bundle) => bundle.read(path.as_bytes()).map(Cow::Borrowed),
-            None => std::fs::read(path).ok().map(Cow::Owned),
+            None => read_file(path).map(Cow::Owned),
         }
     }
 
@@ -1313,28 +1375,25 @@ impl Setup<'_> {
                 bundle
                     .under(dir.as_bytes())
                     .filter(|rest| rest.ends_with(b".ts") || rest.ends_with(b".tsx"))
-                    .map(|rest| format!("{dir}/{}", String::from_utf8_lossy(rest))),
+                    .map(|rest| format!("{dir}/{}", text(rest))),
             ),
-            None => files_under(dir, &mut found),
+            None => {
+                let disk =
+                    bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
+                files_under(&disk, dir, &mut found);
+            }
         }
         found.sort_unstable();
         found
     }
 }
 
-fn files_under(dir: &str, found: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let path = entry.path().to_string_lossy().into_owned();
-        if entry.path().is_dir() {
-            files_under(&path, found);
-        } else if path.ends_with(".ts") || path.ends_with(".tsx") {
-            found.push(path);
-        }
+fn files_under(disk: &dyn Host, dir: &str, found: &mut Vec<String>) {
+    let (files, directories) = disk.entries(dir.as_bytes());
+    let is_test = |name: &&Vec<u8>| name.ends_with(b".ts") || name.ends_with(b".tsx");
+    found.extend((files.iter().filter(is_test)).map(|name| format!("{dir}/{}", text(name))));
+    for name in &directories {
+        files_under(disk, &format!("{dir}/{}", text(name)), found);
     }
 }
 
@@ -1443,14 +1502,14 @@ fn run_one(
     // `makeUnitsFromTest`: the first `tsconfig.json` or `jsconfig.json` is the configuration,
     // parsed against a file system that contains only the files of the test.
     let config_at = units.iter().position(|unit| {
-        let name = unit.name.replace('\\', "/");
-        let name = name.rsplit('/').next().unwrap_or(&name).to_lowercase();
+        let name = replace(&unit.name, "\\", "/");
+        let name = base_name(&name).to_lowercase();
         name == "tsconfig.json" || name == "jsconfig.json"
     });
     let config_cwd = settings
         .get("currentdirectory")
         .filter(|s| !s.is_empty())
-        .map_or(SRC.to_owned(), |dir| absolute(dir, "/"));
+        .map_or_else(|| SRC.to_owned(), |dir| absolute(dir, "/"));
     let mut named_by_config: Option<Vec<Vec<u8>>> = None;
     let mut config_unit = None;
     if let Some(at) = config_at {
@@ -1485,9 +1544,10 @@ fn run_one(
         }
         None => {
             let last = units.last().unwrap();
-            let refers = |needle: &[u8]| last.content.windows(needle.len()).any(|w| w == needle);
-            let has_reference = last.content.windows(14).any(|w| {
-                w.starts_with(b"reference") && w[9].is_ascii_whitespace() && &w[10..] == b"path"
+            let refers = |needle: &[u8]| strings::contains(&last.content, needle);
+            let has_reference = places(&last.content, b"reference").any(|at| {
+                let rest = &last.content[at + 9..];
+                rest.first().is_some_and(u8::is_ascii_whitespace) && rest[1..].starts_with(b"path")
             });
             if settings
                 .get("noimplicitreferences")
@@ -1518,28 +1578,26 @@ fn run_one(
             absolute(target, &cwd).as_bytes(),
         );
     }
-    let mut files: Vec<String> = roots
+    let mut files: Vec<Vec<u8>> = roots
         .iter()
         .map(|unit| absolute(&unit.name, &cwd))
         .filter(|name| !name.ends_with(".json") && !name.ends_with(".tsbuildinfo"))
+        .map(String::into_bytes)
         .collect();
     let no_lib = reported
         .iter()
         .any(|o| o.0 == b"noLib" && matches!(o.1, Json::Bool(true)));
     if let Some(lib_files) = settings.get("libfiles") {
-        for lib in lib_files
-            .split(',')
+        for lib in split(lib_files, ",")
             .map(str::trim)
             .filter(|l| !l.is_empty())
         {
             if lib == "lib.d.ts" && !no_lib {
                 continue;
             }
-            files.push(format!("{LIB}/{lib}"));
+            files.push(format!("{LIB}/{lib}").into_bytes());
         }
     }
-
-    let files: Vec<Vec<u8>> = files.into_iter().map(String::into_bytes).collect();
 
     // `CompileFiles`: the default options of a test, unless it overrides them.
     let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
@@ -1570,8 +1628,8 @@ fn run_one(
         if declaration_files.is_some() {
             project.errors.clear();
         }
-        project.files = files.clone();
-        project.options.files = files.clone();
+        project.files.clone_from(&files);
+        project.options.files.clone_from(&files);
         // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
         project.options.file_specs.clear();
         project.options.include_specs.clear();
@@ -1589,7 +1647,7 @@ fn run_one(
     // What is found in each file. An invalid task is retried, so a file can be visited twice: the
     // last visit replaces the first, in place.
     type Sections = Vec<(bun_sema::program::FileId, Vec<Walked>)>;
-    let sections: Mutex<Sections> = Mutex::new(Vec::new());
+    let sections: Guarded<Sections> = Guarded::new(Vec::new());
     let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
                       file: bun_sema::program::FileId,
                       path: &str| {
@@ -1601,8 +1659,8 @@ fn run_one(
             let source_text = text.get(start..end)?;
             let line = starts.partition_point(|&s| s as usize <= start) - 1;
             // `lineDelimiter.ReplaceAllString(result.sourceText, "")`
-            let source_text = bstr::ByteSlice::replace(source_text, "\r\n", "");
-            let source_text = bstr::ByteSlice::replace(&source_text[..], "\n", "");
+            let source_text = replace_in_bytes(source_text, b"\r\n", b"");
+            let source_text = replace_in_bytes(&source_text, b"\n", b"");
             Some((line, source_text, type_or_symbol))
         };
         let types = checker.types_at_locations(file).into_iter();
@@ -1615,14 +1673,14 @@ fn run_one(
             types,
             symbols: symbols.collect(),
         };
-        let mut sections = sections.lock().unwrap();
+        let mut sections = sections.lock();
         let section = sections.iter_mut().find(|it| it.0 == file).unwrap();
         section.1.push(walked);
     };
     let write_types = |checker: &mut bun_sema::check::Checker<'_, '_>,
                        file: bun_sema::program::FileId| {
         {
-            let mut sections = sections.lock().unwrap();
+            let mut sections = sections.lock();
             match sections.iter_mut().find(|it| it.0 == file) {
                 Some(section) => section.1.clear(),
                 None => sections.push((file, Vec::new())),
@@ -1633,7 +1691,7 @@ fn run_one(
         // `GetSourceFile` of a path in `redirectFilesByPath` returns the retained copy of the
         // package: the harness walks it once more, alongside the text of that unit.
         let mut copies: Vec<String> = Vec::new();
-        if path.contains("/node_modules/") {
+        if contains(&path, "/node_modules/") {
             let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
             copies.extend(
                 same_file
@@ -1663,8 +1721,8 @@ fn run_one(
     let (out_dir, allow_js) = (project.options.out_dir.clone(), project.options.allow_js);
     // Of each declaration file: the place of its source in the program, whether `getOutputPath`
     // finds it, its name and its text.
-    let dts: Mutex<Vec<(u32, bool, Vec<u8>, Vec<u8>)>> = Mutex::new(Vec::new());
-    let common_source_directory: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+    let dts: Guarded<Vec<(u32, bool, Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
+    let common_source_directory: Guarded<Option<Vec<u8>>> = Guarded::new(None);
     let write_dts = |checker: &mut bun_sema::check::Checker<'_, '_>,
                      file: bun_sema::program::FileId| {
         // `emitDeclarationFile`
@@ -1674,7 +1732,7 @@ fn run_one(
         let files = &checker.p.files;
         let (path, output) = (files.module(file).path, files.declaration_file_path(file));
         let common = files.common_source_directory;
-        *common_source_directory.lock().unwrap() = common.map(<[u8]>::to_vec);
+        *common_source_directory.lock() = common.map(<[u8]>::to_vec);
         // `getOutputPath`, which looks in `outDir` for what is in `declarationDir`.
         let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
         let looked_up = match common.filter(|it| moves && !it.is_empty()) {
@@ -1710,7 +1768,7 @@ fn run_one(
             }
         }
         let is_found = looked_up.as_ref() == Some(&output);
-        let mut written = dts.lock().unwrap();
+        let mut written = dts.lock();
         written.retain(|it| it.0 != place as u32);
         written.push((place as u32, is_found, output, text));
     };
@@ -1770,7 +1828,7 @@ fn run_one(
             errors_of_both_programs(pre, post)
         }
     };
-    let sections = sections.into_inner().unwrap();
+    let sections = std::mem::take(&mut *sections.lock());
     let mut found: Vec<Walked> = sections.into_iter().flat_map(|it| it.1).collect();
     let mut walked = Vec::new();
     for unit in roots.iter().chain(&others) {
@@ -1783,11 +1841,12 @@ fn run_one(
     // `tsSources`
     let sources: Vec<Vec<u8>> = (others.iter().chain(&roots))
         .map(|unit| {
-            let name = unit.name.rsplit(['/', '\\']).next().unwrap_or_default();
+            let name = base_name(&unit.name);
+            let name = rfind(name, "\\").map_or(name, |at| &name[at + 1..]);
             [b"//// [", name.as_bytes(), b"]\r\n", &unit.content[..]].concat()
         })
         .collect();
-    let mut declarations = dts.into_inner().unwrap();
+    let mut declarations = std::mem::take(&mut *dts.lock());
     // `HandleNoEmitOnError`
     if no_emit_on_error && !report.diagnostics.is_empty() {
         declarations.clear();
@@ -1813,14 +1872,18 @@ fn run_one(
     // `prepareDeclarationCompilationContext`
     let has_errors = !report.diagnostics.is_empty();
     let declaration_files = (declaration && !has_errors && !declarations.is_empty()).then(|| {
-        let common = common_source_directory.into_inner().unwrap();
+        let common = common_source_directory.lock().take();
         // `findResultCodeFile`
         let find_result_code_file = |name: &str| {
             let moved = match (&common, out_dir.is_empty()) {
                 (Some(common), false) => {
                     // `EnsureTrailingDirectorySeparator`
                     let common = format!("{}/", text(common).trim_end_matches('/'));
-                    join(&out_dir, name.replacen(&common, "", 1).as_bytes())
+                    let rest = match find(name, &common) {
+                        Some(at) => [&name[..at], &name[at + common.len()..]].concat(),
+                        None => name.to_owned(),
+                    };
+                    join(&out_dir, rest.as_bytes())
                 }
                 _ => name.as_bytes().to_vec(),
             };
@@ -1899,7 +1962,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
         let Some(configured) = KINDS.iter().find_map(|kind| name.strip_suffix(kind)) else {
             continue;
         };
-        let (stem, configuration) = match configured.strip_suffix(')').map(|c| (c, c.rfind('('))) {
+        let (stem, configuration) = match configured.strip_suffix(')').map(|c| (c, rfind(c, "("))) {
             Some((inner, Some(open))) => (&inner[..open], &inner[open + 1..]),
             _ => (configured, ""),
         };
@@ -1908,7 +1971,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
             .or_default()
             .insert(configuration);
     }
-    let outcomes = Mutex::new(Vec::new());
+    let outcomes = Guarded::new(Vec::new());
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..setup.threads.max(1) {
@@ -1920,9 +1983,9 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(path) = tests.get(i) else { break };
-                    let base = path.rsplit('/').next().unwrap();
+                    let base = base_name(path);
                     if SKIPPED.contains(&base)
-                        || setup.only.is_some_and(|only| !path.contains(only))
+                        || setup.only.is_some_and(|only| !contains(path, only))
                         || i % setup.every.max(1) != setup.first
                     {
                         continue;
@@ -1940,13 +2003,12 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                     };
                     for configuration in known {
                         let mut settings = settings.clone();
-                        let varied: Vec<(&str, &str)> = configuration
-                            .split(',')
-                            .filter_map(|pair| pair.split_once('='))
+                        let varied: Vec<(&str, &str)> = split(configuration, ",")
+                            .filter_map(|pair| find(pair, "=").map(|at| (&pair[..at], &pair[at + 1..])))
                             .collect();
                         for (name, value) in settings.iter_mut() {
                             match varied.iter().find(|v| v.0 == name) {
-                                Some(&(_, chosen)) => *value = chosen.to_owned(),
+                                Some(&(_, chosen)) => chosen.clone_into(value),
                                 None => *value = the_one_value(name, value),
                             }
                         }
@@ -1978,16 +2040,15 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         };
                         let ran = run_one(also, &settings, None);
                         // `tests/cases/compiler/a.ts`
-                        let header = path.rfind("/tests/cases/").map_or(&path[..], |at| &path[at + 1..]);
+                        let header = rfind(path, "/tests/cases/").map_or(&path[..], |at| &path[at + 1..]);
                         let mut others: Vec<(Kind, Option<String>)> = Vec::new();
                         let compare = |kind: Kind, ours: &[u8], expected: &[u8]| {
                             let difference = first_difference(ours, expected);
                             if let (Some(out), Some(_)) = (setup.out, &difference) {
                                 let dir = format!("{out}/{}", suite.name);
-                                let _ = std::fs::create_dir_all(&dir);
                                 let path = format!("{dir}/{configured}.{}", kind.extension());
-                                let _ = std::fs::write(&path, ours);
-                                let _ = std::fs::write(format!("{path}.expected"), expected);
+                                write_file(&path, ours);
+                                write_file(&format!("{path}.expected"), expected);
                             }
                             (kind, difference)
                         };
@@ -2016,7 +2077,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                             let types = walked.types.iter().cloned().map(|mut it| {
                                                 if it.2 == bun_sema::check::type_writer::ERROR_TYPE_TEXT
                                                 {
-                                                    it.2 = name.to_owned();
+                                                    name.clone_into(&mut it.2);
                                                 }
                                                 it
                                             });
@@ -2096,7 +2157,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                         ours.extend_from_slice(
                                             b"\r\n\r\n//// [DtsFileErrors]\r\n\r\n\r\n",
                                         );
-                                        ours.extend(bstr::ByteSlice::replace(&errors[..], "\n", "\r\n"));
+                                        ours.extend(replace_in_bytes(&errors, b"\n", b"\r\n"));
                                     }
                                     // `compareResultFileSets(&withoutChecking.DTS, &result.DTS)`
                                     let mut without_checking = settings.clone();
@@ -2150,14 +2211,12 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             Ok(Some(Ran { report, inputs, .. })) => {
                                 let expected = setup
                                     .read(&format!("{}/{configured}.errors.txt", suite.baselines))
-                                    .map(|bytes| {
-                                        String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
-                                    })
+                                    .map(|bytes| replace(&text(&bytes), "\r\n", "\n"))
                                     .unwrap_or_default();
                                 let ours = if report.diagnostics.is_empty() {
                                     String::new()
                                 } else {
-                                    String::from_utf8_lossy(&render(
+                                    text(&render(
                                         &report.diagnostics,
                                         &inputs,
                                         setup.lib_dir,
@@ -2165,25 +2224,21 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                             .get("pretty")
                                             .is_some_and(|v| v.eq_ignore_ascii_case("true")),
                                     ))
-                                    .into_owned()
                                 };
                                 let level = level_of(&ours, &expected);
                                 if let Some(out) = setup.out
                                     && level != Level::All
                                 {
                                     let dir = format!("{out}/{}", suite.name);
-                                    let _ = std::fs::create_dir_all(&dir);
-                                    let _ = std::fs::write(
-                                        format!("{dir}/{configured}.errors.txt"),
-                                        &ours,
-                                    );
+                                    let path = format!("{dir}/{configured}.errors.txt");
+                                    write_file(&path, ours.as_bytes());
                                 }
                                 let note = if level == Level::Differs {
                                     let (a, b) = (heads(top_of(&ours)), heads(top_of(&expected)));
                                     let only_in = |x: &[String], y: &[String]| {
                                         x.iter()
                                             .filter(|h| !y.contains(h))
-                                            .map(|h| h.rsplit(' ').next().unwrap_or(h).to_owned())
+                                            .map(|h| rfind(h, " ").map_or(&h[..], |at| &h[at + 1..]))
                                             .collect::<Vec<_>>()
                                             .join(",")
                                     };
@@ -2199,14 +2254,14 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 }
                             }
                         };
-                        outcomes.lock().unwrap().push(outcome);
+                        outcomes.lock().push(outcome);
                     }
                 }
             });
             spawned.unwrap();
         }
     });
-    let mut outcomes = outcomes.into_inner().unwrap();
+    let mut outcomes = std::mem::take(&mut *outcomes.lock());
     outcomes.sort_by(|a, b| a.name.cmp(&b.name));
     outcomes
 }
@@ -2215,16 +2270,16 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
 /// silently hang the whole run: after ten minutes the run aborts and reports which test it was.
 struct Watched(usize);
 
-static IN_PROGRESS: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());
+static IN_PROGRESS: Guarded<Vec<Option<(String, std::time::Instant)>>> = Guarded::new(Vec::new());
 
 impl Watched {
     fn new(name: &str) -> Watched {
         static WATCHDOG: std::sync::Once = std::sync::Once::new();
         WATCHDOG.call_once(|| {
-            std::thread::spawn(|| {
+            let _ = std::thread::Builder::new().spawn(|| {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
-                    for (name, since) in IN_PROGRESS.lock().unwrap().iter().flatten() {
+                    for (name, since) in IN_PROGRESS.lock().iter().flatten() {
                         if since.elapsed() > std::time::Duration::from_secs(600) {
                             error_line!("STUCK: {name} has been under way for ten minutes. The run ends here.");
                             std::process::abort();
@@ -2233,7 +2288,7 @@ impl Watched {
                 }
             });
         });
-        let mut in_progress = IN_PROGRESS.lock().unwrap();
+        let mut in_progress = IN_PROGRESS.lock();
         let entry = Some((name.to_owned(), std::time::Instant::now()));
         match in_progress.iter().position(Option::is_none) {
             Some(free) => {
@@ -2250,7 +2305,7 @@ impl Watched {
 
 impl Drop for Watched {
     fn drop(&mut self) {
-        IN_PROGRESS.lock().unwrap()[self.0] = None;
+        IN_PROGRESS.lock()[self.0] = None;
     }
 }
 
@@ -2264,10 +2319,7 @@ impl Drop for Watched {
 /// of the other baselines that are compared, and the first of those that do not. Returns whether
 /// all match byte for byte.
 pub fn run_from_command_line(args: &[&[u8]]) -> bool {
-    let args: Vec<String> = args
-        .iter()
-        .map(|arg| String::from_utf8_lossy(arg).into_owned())
-        .collect();
+    let args: Vec<String> = args.iter().map(|arg| text(arg)).collect();
     let flag = |name: &str| {
         args.iter()
             .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
@@ -2306,7 +2358,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     };
     let mut all = Vec::new();
     for spec in args.iter().filter(|a| !a.starts_with("--")) {
-        let [name, cases, baselines, names] = spec.split('=').collect::<Vec<_>>()[..] else {
+        let [name, cases, baselines, names] = split(spec, "=").collect::<Vec<_>>()[..] else {
             error_line!("not <name>=<tests>=<baselines>=<names>: {spec}");
             return false;
         };
@@ -2314,8 +2366,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             error_line!("cannot read {names}");
             return false;
         };
-        let listed = String::from_utf8_lossy(&listed);
-        let names: Vec<String> = listed.lines().map(str::to_owned).collect();
+        let names: Vec<String> = lines(&text(&listed)).map(str::to_owned).collect();
         let suite = Suite {
             name,
             cases,
@@ -2388,7 +2439,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
                 )
             })
             .collect();
-        if std::fs::write(&path, lines.join("\n") + "\n").is_err() {
+        if !write_file(&path, (lines.join("\n") + "\n").as_bytes()) {
             error_line!("cannot write {path}");
             return false;
         }

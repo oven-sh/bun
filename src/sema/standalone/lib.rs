@@ -7,6 +7,8 @@ pub mod native;
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::session::Arena;
+#[cfg(unix)]
+use core::mem::MaybeUninit;
 
 /// Parses `text` with default options. The extension of `path` determines the file kind.
 pub fn parse<'s>(
@@ -23,8 +25,9 @@ pub fn parse<'s>(
 /// Runs `work(i)` for every `i` below `count` on `threads` threads. Their stack size is `BUN_SEMA_STACK_MB`, 256 by default. The threads of
 /// `bun check` have `bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE` (4 MB; 18 MB on Windows).
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
-    let megabytes = std::env::var("BUN_SEMA_STACK_MB").ok();
-    let stack = megabytes.and_then(|n| n.parse().ok()).unwrap_or(256usize) << 20;
+    let megabytes = bun_core::getenv_z(bun_core::zstr!("BUN_SEMA_STACK_MB"));
+    let megabytes = megabytes.and_then(|n| core::str::from_utf8(n).ok()?.parse().ok());
+    let stack = megabytes.unwrap_or(256usize) << 20;
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..threads.max(1) {
@@ -53,7 +56,7 @@ pub fn instructions_and_cycles() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
@@ -70,7 +73,7 @@ pub fn terminal_width() -> usize {
     #[cfg(unix)]
     // SAFETY: all zeros is a valid `winsize`, which the call fills in.
     unsafe {
-        let mut size: libc::winsize = core::mem::zeroed();
+        let mut size: libc::winsize = MaybeUninit::zeroed().assume_init();
         if libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) == 0 {
             return usize::from(size.ws_col);
         }
@@ -84,7 +87,7 @@ pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
@@ -100,7 +103,7 @@ pub fn current_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
         // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
@@ -128,7 +131,7 @@ pub fn peak_rss() -> u64 {
         rest: [0; 13],
     };
     // SAFETY: `usage` has the layout of `struct rusage` on 64-bit macOS and Linux, and outlives the call.
-    if unsafe { getrusage(0, &mut usage) } != 0 {
+    if unsafe { getrusage(0, &raw mut usage) } != 0 {
         return 0;
     }
     // Bytes on macOS, kilobytes on Linux.

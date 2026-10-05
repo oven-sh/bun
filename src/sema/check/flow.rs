@@ -2482,15 +2482,13 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let kept = &self.p.key_properties;
-        if let Some(known) = kept.get_ref(&mut self.task, &ty) {
+        if let Some(known) = kept.get_ref(&self.task, &ty) {
             return known.as_ref();
         }
         let (found, stored) = self.run_memoizable(|c| c.compute_key_property_name_and_map(ty));
         // An incomplete result is not used: the caller compares with every member of the union
         // instead.
-        kept.insert_ref(&mut self.task, ty, found, stored?)
-            .1
-            .as_ref()
+        kept.insert_ref(&self.task, ty, found, stored?).1.as_ref()
     }
 
     /// `computeKeyPropertyNameAndMap`
@@ -4155,11 +4153,7 @@ impl<'p, 's> Checker<'p, 's> {
         pat: PatId,
     ) -> bool {
         // `NodeCheckFlagsInitializerIsUndefinedComputed`
-        if let Some(cached) = self
-            .p
-            .initializer_is_undefined
-            .get(&mut self.task, &(file, p))
-        {
+        if let Some(cached) = self.p.initializer_is_undefined.get(&self.task, &(file, p)) {
             return cached;
         }
         let q = Query::InitializerIsUndefined(file, p);

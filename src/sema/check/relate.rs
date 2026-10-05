@@ -905,13 +905,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `global_ref` without type arguments.
     #[inline]
     pub(super) fn plain_global_ref(&mut self, name: Atom) -> TypeId {
-        if let Some(known) = self.p.plain_global_refs.get(&mut self.task, &name) {
+        if let Some(known) = self.p.plain_global_refs.get(&self.task, &name) {
             return known;
         }
         let scope = self.begin_scope();
         let global = self.global_ref(name, &[]);
         match self.end_scope_as(scope, false) {
-            Ok(stored) => (self.p.plain_global_refs).insert(&mut self.task, name, global, stored),
+            Ok(stored) => (self.p.plain_global_refs).insert(&self.task, name, global, stored),
             Err(_) => global,
         }
     }
@@ -1019,7 +1019,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.p.relations.get(&mut self.task, &key.0) {
+            if let Some(entry) = self.p.relations.get(&self.task, &key.0) {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -1123,7 +1123,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self
                 .p
                 .relations
-                .get(&mut self.task, &key)
+                .get(&self.task, &key)
                 .is_some_and(|entry| entry & COMPLEXITY_OVERFLOW != 0)
             {
                 self.relation_too_complex = true;
@@ -1697,8 +1697,7 @@ impl<'p, 's> Checker<'p, 's> {
         // value afterwards. The read always hits: every caller passes a type of a kind that has an
         // entry.
         !self.constraints_marked_circular.contains(&t)
-            && !(self.p.constraints.get(&mut self.task, &t))
-                .is_some_and(|(_, is_circular)| is_circular)
+            && !(self.p.constraints.get(&self.task, &t)).is_some_and(|(_, is_circular)| is_circular)
     }
 
     /// `getBaseConstraintOfType`. `None`: there is none.
@@ -2255,7 +2254,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         self.variances_in_progress.contains(&sym)
-            || self.p.variances.get(&mut self.task, &sym).is_some()
+            || self.p.variances.get(&self.task, &sym).is_some()
     }
 
     /// Whether `checkTypeParameterDeferred` has come to a declaration of the type parameter `param`
@@ -2390,7 +2389,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getVariances`, `getAliasVariances`: how instantiations of `sym` relate, given how their
     /// type arguments relate. Empty while the computation is in progress.
     pub(super) fn variances_of(&mut self, sym: Sym) -> &'s [u8] {
-        if let Some(known) = self.p.variances.get(&mut self.task, &sym) {
+        if let Some(known) = self.p.variances.get(&self.task, &sym) {
             return known;
         }
         self.variances_worker(sym)
@@ -2404,10 +2403,7 @@ impl<'p, 's> Checker<'p, 's> {
             let scope = self.begin_scope();
             let variances: &'s [u8] = &[COVARIANT];
             return match self.end_scope_as(scope, false) {
-                Ok(stored) => self
-                    .p
-                    .variances
-                    .insert(&mut self.task, sym, variances, stored),
+                Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
                 Err(_) => variances,
             };
         }
@@ -2420,10 +2416,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(variances) = serial {
             let scope = self.begin_scope();
             return match self.end_scope_as(scope, false) {
-                Ok(stored) => self
-                    .p
-                    .variances
-                    .insert(&mut self.task, sym, variances, stored),
+                Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
                 Err(_) => variances,
             };
         }
@@ -2512,9 +2505,7 @@ impl<'p, 's> Checker<'p, 's> {
         let variances = match self.end_scope(scope) {
             Ok(stored) => {
                 self.variances_measured.push((sym, variances));
-                self.p
-                    .variances
-                    .insert(&mut self.task, sym, variances, stored)
+                self.p.variances.insert(&self.task, sym, variances, stored)
             }
             Err(_) => {
                 if self.cuts() != cuts {
@@ -2603,7 +2594,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `variances_of`, as a list.
     fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
-        match self.p.variances.get_ref(&mut self.task, &sym) {
+        match self.p.variances.get_ref(&self.task, &sym) {
             Some(known) => List::Kept(known),
             None => List::Kept(self.variances_worker(sym)),
         }
@@ -2988,7 +2979,7 @@ impl<'p, 's> Checker<'p, 's> {
                         let properties = self.properties_of_type(error_target);
                         let written = self.atoms().bytes(prop.name);
                         suggestion = self
-                            .suggested_property(written, &properties)
+                            .suggested_property(written, properties)
                             .map(|i| Arg::Atom(properties[i].name));
                     }
                     match suggestion {
@@ -3761,7 +3752,7 @@ impl<'p, 's> Checker<'p, 's> {
             missed,
         } = self.recursive_relation_key(r, source, sd, target, td, state);
         if !missed
-            && let Some(entry) = self.p.relations.get(&mut self.task, &key)
+            && let Some(entry) = self.p.relations.get(&self.task, &key)
             // A cached failure is recomputed to produce its error elaboration.
             && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
         {
@@ -3904,7 +3895,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
-        self.p.relations.insert(&mut self.task, key, entry, stored);
+        self.p.relations.insert(&self.task, key, entry, stored);
     }
 
     /// `resetMaybeStack`
@@ -4053,7 +4044,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn target_with_symbol_of_mapped(&mut self, of: TypeId) -> TypeId {
-        if let Some(known) = self.p.mapped_targets.get(&mut self.task, &of) {
+        if let Some(known) = self.p.mapped_targets.get(&self.task, &of) {
             return known;
         }
         let scope = self.begin_scope();
@@ -4101,7 +4092,7 @@ impl<'p, 's> Checker<'p, 's> {
             t = target;
         }
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.mapped_targets).insert(&mut self.task, of, t, stored),
+            Ok(stored) => (self.p.mapped_targets).insert(&self.task, of, t, stored),
             Err(_) => t,
         }
     }
@@ -4531,10 +4522,8 @@ impl<'p, 's> Checker<'p, 's> {
             (
                 TypeData::StringMapping { kind: sk, ty: s },
                 TypeData::StringMapping { kind: tk, ty: t },
-            ) => {
-                if sk == tk {
-                    return Some(self.is_related_to(r, *s, *t, REC_BOTH));
-                }
+            ) if sk == tk => {
+                return Some(self.is_related_to(r, *s, *t, REC_BOTH));
             }
             _ => {}
         }
@@ -5074,22 +5063,20 @@ impl<'p, 's> Checker<'p, 's> {
                 // constraint, and too much would be related.
                 if !matches!(self.data(target), TypeData::Cond { .. })
                     && self.has_non_circular_base_constraint(source)
+                    && let Some(distributive) = self.constraint_of_distributive_conditional(source)
                 {
-                    if let Some(distributive) = self.constraint_of_distributive_conditional(source)
-                    {
-                        if REPORT {
-                            r.restore_error_state(&shared.save_error_state);
-                        }
-                        let result = self.is_related_to_ex::<REPORT>(
-                            r,
-                            distributive,
-                            target,
-                            REC_SOURCE,
-                            STATE_NONE,
-                        );
-                        if result.holds() {
-                            return result;
-                        }
+                    if REPORT {
+                        r.restore_error_state(&shared.save_error_state);
+                    }
+                    let result = self.is_related_to_ex::<REPORT>(
+                        r,
+                        distributive,
+                        target,
+                        REC_SOURCE,
+                        STATE_NONE,
+                    );
+                    if result.holds() {
+                        return result;
                     }
                 }
             }

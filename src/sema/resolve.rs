@@ -968,6 +968,33 @@ impl Tracer {
     }
 }
 
+/// What a lookup has found besides the path: the fields of `resolutionState` and of `resolved` that
+/// are written during the search.
+#[derive(Default)]
+struct Outcome {
+    /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
+    /// finds, so the cell is set at most once.
+    using_ts_extension: Cell<bool>,
+    /// `resolved.extension` is `.d.css.ts`, `.d.json.ts` or similar, for which
+    /// `GetResolutionDiagnostic` requires `allowArbitraryExtensions`.
+    /// Set like `using_ts_extension`.
+    arbitrary_extension: Cell<bool>,
+    /// `resolvedPackageDirectory`: the `package.json` of a package with the requested name has been
+    /// found.
+    found_package: Cell<bool>,
+    /// `IsExternalLibraryImport`
+    is_external: Cell<bool>,
+    /// `resolved.packageId` stays empty: `nodeLoadModuleByRelativeName` sets it for a file, and
+    /// `loadNodeModuleFromDirectory` does not.
+    lacks_package_id: Cell<bool>,
+    /// `PackageDirectory` of the `packageInfo` that `getPackageId` is called with, before symlinks
+    /// are resolved. Empty until a file is found.
+    package_directory: RefCell<Vec<u8>>,
+    /// `resolved.path` before symlinks are resolved, which `getPackageId` is called with. Only kept
+    /// for the log.
+    found_at: RefCell<Vec<u8>>,
+}
+
 /// `resolutionState`: the parameters of a lookup.
 #[derive(Copy, Clone)]
 struct Look<'a> {
@@ -993,27 +1020,7 @@ struct Look<'a> {
     /// `candidateEndingIsFromConfig`: the extension of the candidate comes from `paths`, `typesVersions` or a `package.json` field, not
     /// from the specifier.
     ending_from_config: bool,
-    /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
-    /// finds, so the cell is set at most once.
-    using_ts_extension: &'a Cell<bool>,
-    /// `resolved.extension` is `.d.css.ts`, `.d.json.ts` or similar, for which
-    /// `GetResolutionDiagnostic` requires `allowArbitraryExtensions`.
-    /// Set like `using_ts_extension`.
-    arbitrary_extension: &'a Cell<bool>,
-    /// `resolvedPackageDirectory`: the `package.json` of a package with the requested name has been
-    /// found.
-    found_package: &'a Cell<bool>,
-    /// `IsExternalLibraryImport`
-    is_external: &'a Cell<bool>,
-    /// `resolved.packageId` stays empty: `nodeLoadModuleByRelativeName` sets it for a file, and
-    /// `loadNodeModuleFromDirectory` does not.
-    lacks_package_id: &'a Cell<bool>,
-    /// `PackageDirectory` of the `packageInfo` that `getPackageId` is called with, before symlinks
-    /// are resolved. Empty until a file is found.
-    package_directory: &'a RefCell<Vec<u8>>,
-    /// `resolved.path` before symlinks are resolved, which `getPackageId` is called with. Only kept
-    /// for the log.
-    found_at: &'a RefCell<Vec<u8>>,
+    outcome: &'a Outcome,
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
@@ -1288,7 +1295,7 @@ const KNOWN_EXTENSIONS: [&[u8]; 12] = [
 pub(crate) fn known_extension(path: &[u8]) -> &'static [u8] {
     KNOWN_EXTENSIONS
         .into_iter()
-        .find(|e| path.len() > e.len() && path.ends_with(*e))
+        .find(|e| path.len() > e.len() && path.ends_with(e))
         .unwrap_or(b"")
 }
 
@@ -1415,12 +1422,10 @@ impl<'h> Resolver<'h> {
     }
 
     /// `getOriginalAndResolvedFileName`: the real path of `found`.
-    fn followed(&self, found: Vec<u8>, look: Look) -> Vec<u8> {
-        let real = self.real_path(&found, look);
+    fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
+        let real = self.real_path(found, look);
         if real != found {
-            self.links
-                .lock()
-                .push((self.keep(&found), self.keep(&real)));
+            self.links.lock().push((self.keep(found), self.keep(&real)));
         }
         real
     }
@@ -1598,21 +1603,8 @@ impl<'h> Resolver<'h> {
         {
             return known;
         }
-        let (using_ts_extension, arbitrary_extension) = (Cell::new(false), Cell::new(false));
-        let (found_package, is_external) = (Cell::new(false), Cell::new(false));
-        let lacks_package_id = Cell::new(false);
-        let (package_directory, found_at) = (RefCell::new(Vec::new()), RefCell::new(Vec::new()));
-        let look = self.look(
-            mode,
-            true,
-            &using_ts_extension,
-            &arbitrary_extension,
-            &found_package,
-            &is_external,
-            &lacks_package_id,
-            &package_directory,
-            &found_at,
-        );
+        let outcome = Outcome::default();
+        let look = self.look(mode, true, &outcome);
         let look = Look { tracer, ..look };
         look.trace(6086, &[spec, from]);
         self.trace_resolution_using_project_reference(look);
@@ -1626,9 +1618,9 @@ impl<'h> Resolver<'h> {
         look.trace(if is_specified { 6087 } else { 6088 }, &[kind]);
         let found = self.resolve_node_like(spec, from, look);
         let found = found.map(|(path, alternate_result)| {
-            let package_name = match lacks_package_id.get() {
+            let package_name = match outcome.lacks_package_id.get() {
                 true => None,
-                false => self.package_name(&package_directory.borrow()),
+                false => self.package_name(&outcome.package_directory.borrow()),
             };
             if tracer.is_some() {
                 match self.package_id_text(look) {
@@ -1642,9 +1634,9 @@ impl<'h> Resolver<'h> {
             ResolvedModule {
                 is_project_reference_redirect: source.is_some(),
                 file_name: self.keep(&source.unwrap_or(path)),
-                using_ts_extension: using_ts_extension.get(),
-                has_arbitrary_extension: arbitrary_extension.get(),
-                is_external_library_import: is_external.get(),
+                using_ts_extension: outcome.using_ts_extension.get(),
+                has_arbitrary_extension: outcome.arbitrary_extension.get(),
+                is_external_library_import: outcome.is_external.get(),
                 alternate_result: alternate_result.map(|types| self.keep(&types)),
                 package_name,
             }
@@ -1667,8 +1659,8 @@ impl<'h> Resolver<'h> {
 
     /// `PackageId.String` of the file that `look` has found. `None`: `PackageId.Name` is empty.
     fn package_id_text(&self, look: Look) -> Option<Vec<u8>> {
-        let directory = look.package_directory.borrow().clone();
-        if look.lacks_package_id.get() || directory.is_empty() {
+        let directory = look.outcome.package_directory.borrow().clone();
+        if look.outcome.lacks_package_id.get() || directory.is_empty() {
             return None;
         }
         let package = self.package(&directory)?;
@@ -1682,10 +1674,14 @@ impl<'h> Resolver<'h> {
             self.keep(&self.read_package_json_peer_dependencies(&directory, &package.json, look))
         });
         // `PackageName`
-        Some(match look.found_at.borrow().get(directory.len() + 1..) {
-            None | Some(b"") => [name, b"@", version, peers].concat(),
-            Some(sub_module_name) => [name, b"/", sub_module_name, b"@", version, peers].concat(),
-        })
+        Some(
+            match look.outcome.found_at.borrow().get(directory.len() + 1..) {
+                None | Some(b"") => [name, b"@", version, peers].concat(),
+                Some(sub_module_name) => {
+                    [name, b"/", sub_module_name, b"@", version, peers].concat()
+                }
+            },
+        )
     }
 
     /// `resolveNodeLike`: `ResolvedFileName` and `AlternateResult`.
@@ -1712,58 +1708,40 @@ impl<'h> Resolver<'h> {
         // Whether types would be found if the `exports` of the package were ignored. The answer is
         // only used for JavaScript. For other files without types the search is only logged.
         let is_untyped = || match look.tracer {
-            Some(_) => !has_ts_implementation_extension(&path) || look.arbitrary_extension.get(),
+            Some(_) => {
+                !has_ts_implementation_extension(&path) || look.outcome.arbitrary_extension.get()
+            }
             None => is_javascript(&path),
         };
-        if !(look.found_package.get()
+        if !(look.outcome.found_package.get()
             && !look.is_config_lookup
             && self.options.resolve_package_json_exports
             && !look.ignores_exports
             && (look.typescript || look.declarations)
             && !is_relative(spec)
-            && look.is_external.get()
+            && look.outcome.is_external.get()
             && look.import
             && is_untyped())
         {
             return Some((path, None));
         }
         look.trace(6277, &[]);
-        let [using_ts_extension, arbitrary_extension, found_package] =
-            [(); 3].map(|()| Cell::new(false));
-        let (is_external, lacks_package_id) = (Cell::new(false), Cell::new(false));
-        let (package_directory, found_at) = (RefCell::default(), RefCell::default());
+        let outcome = Outcome::default();
         let without_exports = Look {
             ignores_exports: true,
-            using_ts_extension: &using_ts_extension,
-            arbitrary_extension: &arbitrary_extension,
-            found_package: &found_package,
-            is_external: &is_external,
-            lacks_package_id: &lacks_package_id,
-            package_directory: &package_directory,
-            found_at: &found_at,
+            outcome: &outcome,
             ..look.for_types()
         };
         let types = self.resolve_with(spec, from, without_exports);
         // `features` has lost `NodeResolutionFeaturesExports` for good: if the name is a target of
         // `imports`, the `resolveNodeLike` of the specifier does not search again.
-        look.found_package.set(false);
-        Some((path, types.filter(|_| is_external.get())))
+        look.outcome.found_package.set(false);
+        Some((path, types.filter(|_| outcome.is_external.get())))
     }
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
     /// resolves to declaration files only.
-    fn look<'a>(
-        &self,
-        mode: ResolutionMode,
-        is_module: bool,
-        using_ts_extension: &'a Cell<bool>,
-        arbitrary_extension: &'a Cell<bool>,
-        found_package: &'a Cell<bool>,
-        is_external: &'a Cell<bool>,
-        lacks_package_id: &'a Cell<bool>,
-        package_directory: &'a RefCell<Vec<u8>>,
-        found_at: &'a RefCell<Vec<u8>>,
-    ) -> Look<'a> {
+    fn look<'a>(&self, mode: ResolutionMode, is_module: bool, outcome: &'a Outcome) -> Look<'a> {
         let like_node = self.options.resolves_like_node;
         Look {
             tracer: None,
@@ -1778,13 +1756,7 @@ impl<'h> Resolver<'h> {
             is_config_lookup: false,
             depth: 0,
             ending_from_config: false,
-            using_ts_extension,
-            arbitrary_extension,
-            found_package,
-            is_external,
-            lacks_package_id,
-            package_directory,
-            found_at,
+            outcome,
             ignores_exports: false,
         }
     }
@@ -1797,23 +1769,23 @@ impl<'h> Resolver<'h> {
         let follows_links = !self.options.preserve_symlinks && !is_relative(spec);
         let real = |found: Vec<u8>| {
             let is_in_package = strings::contains(&found, b"/node_modules/");
-            look.is_external.set(is_in_package);
-            let is_known = !look.package_directory.borrow().is_empty();
+            look.outcome.is_external.set(is_in_package);
+            let is_known = !look.outcome.package_directory.borrow().is_empty();
             if !is_known && let Some(directory) = parse_node_module_from_path(&found) {
-                look.package_directory.replace(directory.to_vec());
+                look.outcome.package_directory.replace(directory.to_vec());
             }
             // `resolved.originalPath != ""`: a target of `imports` names a module, and resolving
             // that has followed a symlink. To follow again changes nothing but the log.
             let mut is_followed = false;
             if look.tracer.is_some() {
-                let mut found_at = look.found_at.borrow_mut();
+                let mut found_at = look.outcome.found_at.borrow_mut();
                 match found_at.is_empty() {
                     true => found_at.clone_from(&found),
                     false => is_followed = *found_at != found,
                 }
             }
             if follows_links && is_in_package && !is_followed {
-                self.followed(found, look)
+                self.followed(&found, look)
             } else {
                 found
             }
@@ -1972,29 +1944,19 @@ impl<'h> Resolver<'h> {
         let version = package.json.get(b"version")?.as_str()?;
         let declared = package.json.get(b"name")?.as_str()?;
         let peers = *package.peer_dependencies.get_or_init(|| {
-            let (ignored, unused) = (Cell::new(false), RefCell::default());
-            let look = self.look(
-                ResolutionMode::None,
-                false,
-                &ignored,
-                &ignored,
-                &ignored,
-                &ignored,
-                &ignored,
-                &unused,
-                &unused,
-            );
+            let outcome = Outcome::default();
+            let look = self.look(ResolutionMode::None, false, &outcome);
             self.keep(&self.read_package_json_peer_dependencies(directory, &package.json, look))
         });
         Some([declared, b"@", version, peers, b"/", subpath].concat())
     }
 
     /// `resolved.packageId = getPackageId(..)` with the `package.json` in `directory`, which has
-    /// been looked up. The id is made from `look.package_directory` when it is needed. What
+    /// been looked up. The id is made from `look.outcome.package_directory` when it is needed. What
     /// making it logs is logged here.
     fn get_package_id(&self, directory: &[u8], look: Look) {
-        look.lacks_package_id.set(false);
-        look.package_directory.replace(directory.to_vec());
+        look.outcome.lacks_package_id.set(false);
+        look.outcome.package_directory.replace(directory.to_vec());
         if look.tracer.is_some()
             && let Some(package) = self.package(directory)
             && package.json.get(b"name").and_then(Json::as_str).is_some()
@@ -2073,19 +2035,8 @@ impl<'h> Resolver<'h> {
     ) -> Option<(Vec<u8>, bool)> {
         let from_dir = dirname::<Posix>(from);
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
-        let (ignored, lacks_package_id) = (Cell::new(false), Cell::new(false));
-        let (directory, found_at) = (RefCell::default(), RefCell::default());
-        let look = self.look(
-            mode,
-            false,
-            &ignored,
-            &ignored,
-            &ignored,
-            &ignored,
-            &lacks_package_id,
-            &directory,
-            &found_at,
-        );
+        let outcome = Outcome::default();
+        let look = self.look(mode, false, &outcome);
         let look = Look { tracer, ..look };
         // `GetEffectiveTypeRoots`
         let from_config = self.options.type_roots.is_some();
@@ -2126,14 +2077,14 @@ impl<'h> Resolver<'h> {
         };
         let is_external = strings::contains(&found, b"/node_modules/");
         if tracer.is_some() {
-            found_at.replace(found.clone());
+            outcome.found_at.replace(found.clone());
         }
         let source = self.source_of_project_reference_redirect(&found);
         // The real path of a file that its source replaces is only logged.
         let found = if self.options.preserve_symlinks || source.is_some() && tracer.is_none() {
             found
         } else {
-            self.followed(found, look)
+            self.followed(&found, look)
         };
         // `traceTypeReferenceDirectiveResult`
         if tracer.is_some() {
@@ -2181,7 +2132,7 @@ impl<'h> Resolver<'h> {
             if self.is_dir(&candidate)
                 && let Some(found) = self.package_entry(&candidate, look)
             {
-                look.lacks_package_id.set(true);
+                look.outcome.lacks_package_id.set(true);
                 return Some(found);
             }
         }
@@ -2211,7 +2162,7 @@ impl<'h> Resolver<'h> {
             };
             // `tryLoadModuleUsingPaths` returns what `tryFile` finds as it is.
             self.very_file(target, &path, look)
-                .inspect(|_| look.lacks_package_id.set(true))
+                .inspect(|_| look.outcome.lacks_package_id.set(true))
                 .or_else(|| match filled.ends_with(b"/") {
                     true => self.directory(&path, look),
                     false => self.file_or_directory(&path, look),
@@ -2317,7 +2268,7 @@ impl<'h> Resolver<'h> {
                 look.trace(6093, &[target, &filled]);
                 let path = join(dir, &filled);
                 self.very_file(target, &path, look)
-                    .inspect(|_| look.lacks_package_id.set(true))
+                    .inspect(|_| look.outcome.lacks_package_id.set(true))
                     .or_else(|| load(&path, !known_extension(target).is_empty()))
             })
     }
@@ -2412,7 +2363,7 @@ impl<'h> Resolver<'h> {
             return self.directory_entry(path, None, true, look);
         }
         let found = self.package_entry(path, look)?;
-        look.lacks_package_id.set(true);
+        look.outcome.lacks_package_id.set(true);
         Some(found)
     }
 
@@ -2551,7 +2502,7 @@ impl<'h> Resolver<'h> {
         // `RemoveFileExtension`: `.d.ts` is removed as a whole.
         let extension = SUPPORTED_DECLARATION_EXTENSIONS
             .into_iter()
-            .find(|e| name.ends_with(*e))
+            .find(|e| name.ends_with(e))
             .unwrap_or_else(|| &name[dot..]);
         look.trace(6132, &[path, extension]);
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
@@ -2576,7 +2527,7 @@ impl<'h> Resolver<'h> {
             _ => {
                 return if look.declarations {
                     let found = self.try_file(&[stem, b".d", written, b".ts"].concat(), look)?;
-                    look.arbitrary_extension.set(true);
+                    look.outcome.arbitrary_extension.set(true);
                     Some(found)
                 } else {
                     None
@@ -2601,10 +2552,11 @@ impl<'h> Resolver<'h> {
                 written,
                 b".ts" | b".d.ts" | b".tsx" | b".mts" | b".d.mts" | b".cts" | b".d.cts"
             );
-            look.using_ts_extension
+            look.outcome
+                .using_ts_extension
                 .set(!look.ending_from_config && is_ts_extension);
             // `.d.json.ts`
-            look.arbitrary_extension.set(written == b".json");
+            look.outcome.arbitrary_extension.set(written == b".json");
             return Some(found);
         }
         if look.js
@@ -2631,7 +2583,8 @@ impl<'h> Resolver<'h> {
         if look.typescript && is_implementation || look.declarations && is_declaration {
             let found = self.try_file(path, look)?;
             // A trailing `*` matches a part of the specifier that includes the extension.
-            look.using_ts_extension
+            look.outcome
+                .using_ts_extension
                 .set(package_json_value.ends_with(b"*"));
             return Some(found);
         }
@@ -2815,7 +2768,7 @@ impl<'h> Resolver<'h> {
             // the package declares `exports`.
             if exports.is_none() {
                 if let Some(found) = self.file(&candidate, look) {
-                    look.lacks_package_id.set(true);
+                    look.outcome.lacks_package_id.set(true);
                     return Found::File(found);
                 }
                 if let Some(found) = self.directory_entry(&candidate, Some(nested), true, look) {
@@ -2828,7 +2781,7 @@ impl<'h> Resolver<'h> {
             self.get_package_json_info(&package_dir, look);
         }
         if package.is_some() {
-            look.found_package.set(true);
+            look.outcome.found_package.set(true);
         }
         // The `exports` of a package are exhaustive: no file lookup, no directory lookup, no
         // `typesVersions`. `"exports": null` counts as absent.
@@ -3248,25 +3201,14 @@ pub fn resolve_config(
         ..Default::default()
     };
     let resolver = Resolver::new(session, host, &options);
-    let [a, b, c, d, e] = [(); 5].map(|()| Cell::new(false));
-    let (directory, found_at) = (RefCell::default(), RefCell::default());
+    let outcome = Outcome::default();
     let look = Look {
         typescript: false,
         declarations: false,
         js: false,
         json: true,
         is_config_lookup: true,
-        ..resolver.look(
-            ResolutionMode::Require,
-            true,
-            &a,
-            &b,
-            &c,
-            &d,
-            &e,
-            &directory,
-            &found_at,
-        )
+        ..resolver.look(ResolutionMode::Require, true, &outcome)
     };
     resolver.resolve_with(module_name, containing_file, look)
 }

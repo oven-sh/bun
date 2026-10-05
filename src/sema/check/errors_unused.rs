@@ -93,7 +93,7 @@ impl Checker<'_, '_> {
         let mut syntax_errors: Vec<u32> = parse_errors.map(|d| d.start).collect();
         syntax_errors.sort_unstable();
         let mut u = Unused {
-            files: &self.p.files,
+            files: self.p.files,
             file,
             hir,
             bound,

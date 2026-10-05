@@ -45,7 +45,7 @@ impl Alloc for Global {
 impl<'s> Alloc for &'s Session {
     type Shared = &'s [u32];
     fn share(&self, list: &[u32]) -> &'s [u32] {
-        let session: &'s Session = *self;
+        let session: &'s Session = self;
         session.arena().alloc_slice_copy(list)
     }
 }
@@ -1442,7 +1442,7 @@ fn finish_indirect<'s, D: Dense<Value = Handle>, T: Follow + Send + Sync + 's>(
             let places = &finishing.held.iter().find(|it| it.0 == held).unwrap().1;
             match places[number as usize] {
                 0 => return,
-                place => *field = Handle(place - 1 | LOCAL),
+                place => *field = Handle((place - 1) | LOCAL),
             }
         }
         if let Some(key) = handles.hand_over(key, &value, finishing) {

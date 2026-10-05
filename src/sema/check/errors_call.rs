@@ -113,7 +113,7 @@ impl Checker<'_, '_> {
         if let Some(reported) = self
             .p
             .diagnostics_of_re_resolved_calls
-            .get_ref(&mut self.task, &(file, e))
+            .get_ref(&self.task, &(file, e))
         {
             self.reported.extend_from_slice(reported);
         }
@@ -134,7 +134,7 @@ impl Checker<'_, '_> {
         let reduced = self.reduced(apparent);
         // tsgo reports what the call found when it was resolved.
         let found_none = (self.p.calls_before_signatures)
-            .get(&mut self.task, &(file, e))
+            .get(&self.task, &(file, e))
             .is_some();
         let call_sigs = if found_none {
             List::default()
@@ -817,7 +817,7 @@ impl Checker<'_, '_> {
 
     /// The errors `resolveCall` reported for the call `e` in its final resolution.
     pub(super) fn report_call_resolution(&mut self, file: FileId, e: ExprId) {
-        if let Some(reported) = self.p.call_diagnostics.get_ref(&mut self.task, &(file, e)) {
+        if let Some(reported) = self.p.call_diagnostics.get_ref(&self.task, &(file, e)) {
             self.reported.extend_from_slice(reported);
         }
     }

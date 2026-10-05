@@ -825,6 +825,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [...outputs, ...types],
     rule: "codegen_bun",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    // For builtin-output-check.ts. Unlike the install stamp, the package keeps its mtime when an install leaves it alone.
+    implicitInputs: [resolve(cfg.cwd, "node_modules", "typescript")],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

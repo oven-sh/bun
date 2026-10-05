@@ -6,7 +6,7 @@ function escapeRegex(str: string) {
 
 function createStopRegex(allow_comma: boolean) {
   return new RegExp(
-    "((?:[(,=;:{]|return|\\=\\>)\\s*)\\/[^\\/\\*]|\\/\\*|\\/\\/|['\"}`\\)" +
+    "['\"}`\\)\\/" +
       (allow_comma ? "," : "") +
       "]|(?<!\\$)\\brequire\\(|(" +
       function_replacements.map(x => escapeRegex(x) + "\\(").join("|") +
@@ -16,6 +16,10 @@ function createStopRegex(allow_comma: boolean) {
 
 const stop_regex_comma = createStopRegex(true);
 const stop_regex_no_comma = createStopRegex(false);
+
+// A `/` divides after a token that can end an expression. After `)` or `}` only a parser can tell, so those divide too.
+const regex_can_follow =
+  /(?:^|[([{,;:?=&|^~*%<>]|\.\.\.|(?<![\w$)\]])!|(?<!\+)\+|(?<!-)-|(?<![.#\w$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|default|await|yield))$/;
 
 /**
  * Slices a string until it hits a }, but keeping in mind JS comments,
@@ -34,36 +38,43 @@ export function sliceSourceCode(
   let bracketCount = 0;
   let i = 0;
   let result = "";
+  // The end of the source consumed so far, comments and trailing whitespace left out. It decides what a `/` is.
+  let before = "";
   while (contents.length) {
     const match = contents.match(endOnComma && bracketCount <= 1 ? stop_regex_comma : stop_regex_no_comma);
     i = match?.index ?? contents.length;
-    if (match?.[2]) {
-      i += match[2].length - 1;
+    if (match?.[1]) {
+      i += match[1].length - 1;
     }
-    bracketCount += [...contents.slice(0, i).matchAll(/[({]/g)].length;
-    const chunk = replace ? applyReplacements(contents, i) : [contents.slice(0, i), contents.slice(i)];
+    const code = contents.slice(0, i);
+    bracketCount += [...code.matchAll(/[({]/g)].length;
+    const chunk = replace ? applyReplacements(contents, i) : [code, contents.slice(i)];
     result += chunk[0];
     contents = chunk[1] as string;
     if (chunk[2]) {
-      continue;
-    }
-    if (match?.[1]) {
-      if (match[1].startsWith("(") || match[1].startsWith(",")) {
-        bracketCount++;
-      }
-      const { result: result2, rest } = sliceRegularExpressionSourceCode(
-        contents.slice(match?.[1].length + 1),
-        replace,
-      );
-      result += contents.slice(0, match?.[1].length + 1) + result2;
-      contents = rest;
+      before = ")";
       continue;
     }
     if (!contents.length) break;
+    if (contents.startsWith("/")) {
+      // A comment keeps `before` and a lone `/` reads it. Every other stop replaces it.
+      before = (before + code).trimEnd().slice(-16);
+    }
     if (contents.startsWith("/*")) {
-      i = contents.slice(2).indexOf("*/") + 2;
+      i = contents.indexOf("*/", 2) + 2;
+      if (i === 1) throw new Error("Comment did not end");
     } else if (contents.startsWith("//")) {
-      i = contents.slice(2).indexOf("\n") + 2;
+      i = contents.indexOf("\n", 2);
+      if (i === -1) i = contents.length;
+    } else if (contents.startsWith("/")) {
+      if (regex_can_follow.test(before)) {
+        const { result: result2, rest } = sliceRegularExpressionSourceCode(contents.slice(1), replace);
+        result += "/" + result2;
+        contents = rest;
+        before = "/";
+        continue;
+      }
+      i = 1;
     } else if (contents.startsWith("'")) {
       i = getEndOfBasicString(contents.slice(1), "'") + 2;
     } else if (contents.startsWith('"')) {
@@ -72,6 +83,7 @@ export function sliceSourceCode(
       const { result: result2, rest } = sliceTemplateLiteralSourceCode(contents.slice(1), replace);
       result += "`" + result2;
       contents = rest;
+      before = "`";
       i = 0;
       continue;
     } else if (contents.startsWith("}")) {
@@ -106,11 +118,12 @@ export function sliceSourceCode(
       i = 1;
     } else if (contents.startsWith("require(")) {
       if (replaceRequire) {
-        const staticSpecifier = contents.match(/\brequire\(["']([^"']+)["']\)/);
+        const staticSpecifier = contents.match(/^require\(["']([^"']+)["']\)/);
         if (staticSpecifier) {
           const specifier = staticSpecifier[1];
           result += replaceRequire(specifier);
           contents = contents.slice(staticSpecifier[0].length);
+          before = ")";
           continue;
         } else {
           throw new Error("Require with dynamic specifier not supported here.");
@@ -121,6 +134,9 @@ export function sliceSourceCode(
     } else {
       console.error(contents.slice(0, 100));
       throw new Error("TODO");
+    }
+    if (!contents.startsWith("/*") && !contents.startsWith("//")) {
+      before = contents[i - 1];
     }
     result += contents.slice(0, i);
     contents = contents.slice(i);
@@ -133,11 +149,15 @@ function sliceTemplateLiteralSourceCode(contents: string, replace: boolean) {
   let i = 0;
   let result = "";
   while (contents.length) {
-    i = contents.match(/`|\${/)!.index!;
+    i = contents.match(/\\|`|\${/)!.index!;
     result += contents.slice(0, i);
     contents = contents.slice(i);
     if (!contents.length) break;
-    if (contents.startsWith("`")) {
+    if (contents.startsWith("\\")) {
+      result += contents.slice(0, 2);
+      contents = contents.slice(2);
+      continue;
+    } else if (contents.startsWith("`")) {
       result += "`";
       contents = contents.slice(1);
       break;
@@ -158,7 +178,7 @@ function sliceRegularExpressionSourceCode(contents: string, replace: boolean) {
   let i = 0;
   let result = "";
   while (contents.length) {
-    i = contents.match(/\/(?!\/|\*)|\\|\[/)!.index!;
+    i = contents.match(/[/\\[]/)!.index!;
     result += contents.slice(0, i);
     contents = contents.slice(i);
     if (!contents.length) break;
@@ -174,9 +194,10 @@ function sliceRegularExpressionSourceCode(contents: string, replace: boolean) {
       contents = contents.slice(1);
       continue;
     } else if (contents.startsWith("[")) {
-      let end = contents.match(/(?<!\\)]/)!.index!;
-      result += contents.slice(0, end + 1);
-      contents = contents.slice(end + 1);
+      // An escape is a pair, so the `]` in `[/\\]` closes the class.
+      const end = contents.match(/^\[(?:\\[^]|[^\]\\])*\]/)![0].length;
+      result += contents.slice(0, end);
+      contents = contents.slice(end);
       continue;
     } else {
       throw new Error("TODO");

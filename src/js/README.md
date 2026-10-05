@@ -99,6 +99,10 @@ The `$` for private names is actually a lie, and in JSC it actually uses `@`; th
 
 The preprocessor is smart enough to not replace `$` in strings, comments, regex, etc. However, it is not a real JS parser and instead a recursive regex-based nightmare, so may hit some edge cases. Yell at Chloe if it breaks.
 
+The preprocessor decides from the token before a `/` whether it starts a regex literal or divides. It reads these wrong: a regex literal right after `)`, `}`, `extends`, a division, a prefix `++` or `--`, or a `!` with no space before it (`return!/x/`), and a division right after a name spelled `of` or a non-ASCII name that ends like a reserved word. After a misread it can replace a `$` inside a literal, or leave a `$name` in code as it is.
+
+The build parses the preprocessed text with the TypeScript parser (`src/codegen/builtin-output-check.ts`). It fails with the file and line when a `$` inside a literal was replaced, and when code was left as written: a `$name`, a `require()`, an `export default`, a `new TypeError` or a `throw new RangeError`. It does not see an `$assert(...)` that was not expanded, or an `extends Array` that was not rewritten. To fix a report, move the regex literal to its own statement (`const re = /.../;`), or put the left side of the division in parentheses.
+
 The module is then printed like:
 
 ```ts

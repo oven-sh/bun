@@ -217,6 +217,17 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
+    pub preload_require_start: Cell<usize>,
+    pub preload_require_count: Cell<usize>,
+    /// Effective execArgv preloads retained after this VM runs them, so child
+    /// workers can inherit the same startup contract.
+    pub worker_preloads: JsCell<Vec<Box<[u8]>>>,
+    /// The require-style subset of `worker_preloads` that Node also applies
+    /// before eval Worker source.
+    pub worker_eval_preloads: JsCell<Vec<Box<[u8]>>>,
+    pub worker_preload_require_start: Cell<usize>,
+    pub worker_preload_require_count: Cell<usize>,
+    pub worker_eval_mode: Cell<bun_options_types::context::WorkerEvalMode>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the

@@ -745,10 +745,15 @@ impl InitCommand {
             if !minimal && is_type_script_entry_point(&fields.entry_point) {
                 let mut scripts = dependency_map(object, b"scripts");
                 if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
                     scripts
                         .data
                         .as_e_object_mut()
-                        .put_string(&bump, b"typecheck", b"bun check")?;
+                        .put_string(&bump, b"typecheck", command)?;
                     object.put(&bump, b"scripts", scripts)?;
                 }
             }

@@ -39,6 +39,8 @@ type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
+    /// Of the script in package.json. Empty: it is not one.
+    name: Box<[u8]>,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
@@ -166,7 +168,12 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            envp = crate::cli::check_command::with_package_script(
+                unsafe { &mut *env_ptr },
+                &self.config.name,
+                &self.config.cwd,
+                |env| env.map.create_null_delimited_env_map(),
+            )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             unsafe {
@@ -763,6 +770,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                name: pre_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -776,6 +784,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                name: Box::from(raw_name),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -788,6 +797,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label,
+                name: post_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -821,6 +831,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         };
         configs.push(ScriptConfig {
             label,
+            name: Box::default(),
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),

@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 // `bun check` reads `lib.*.d.ts` from the `typescript` package installed in the project.
 const typescript = dirname(require.resolve("typescript/package.json"));
@@ -1185,8 +1185,9 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         }),
         "tsconfig.app.json": JSON.stringify({
           compilerOptions: { ...options, jsx: "preserve", allowImportingTsExtensions: true, emitDeclarationOnly: true },
-          include: ["src"],
+          include: ["src", "test"],
         }),
+        "test/t.ts": `export const t: number = "1";\n`,
         "tsconfig.node.json": JSON.stringify({ compilerOptions: options, include: ["vite.config.ts"] }),
         "src/jsx.d.ts": `declare namespace JSX {\n  interface Element {}\n  interface IntrinsicElements {\n    div: {};\n  }\n}\n`,
         "src/App.tsx": `export const App: number = 1;\n`,
@@ -1216,11 +1217,13 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         check(dir, ["src/main.tsx", "vite.config.ts"]),
         check(dir, ["scripts"]),
         check(dir, ["examples"]),
+        check(dir, ["src", "src/main.tsx"]),
         run(String(dir), ["--check", "src/main.tsx"]),
       ]);
       const some = `${main}\n${other("vite.config.ts")}`;
-      const whole = `${some}\nworker.js(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
-      expect(results.slice(0, 9).map(it => it.stdout)).toEqual([
+      const worker = `worker.js(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+      const whole = `${main}\n${other("test/t.ts")}\n${other("vite.config.ts")}\n${worker}`;
+      expect(results.slice(0, 10).map(it => it.stdout)).toEqual([
         whole,
         whole,
         main,
@@ -1230,11 +1233,13 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         some,
         other("scripts/s.ts"),
         other("examples/x/e.ts"),
+        main,
       ]);
       // As much work, too.
       expect(results[1].stderr).toBe(results[0].stderr);
-      expect(results[9].stderr).toContain("TS2322");
-      expect(results[9].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
+      expect(results[9].stderr).toBe(results[3].stderr);
+      expect(results[10].stderr).toContain("TS2322");
+      expect(results[10].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
     });
 
     test("path arguments: each is checked with the compiler options of its own project", async () => {
@@ -13994,6 +13999,11 @@ describe.concurrent("--check", () => {
         scripts: { "check": `${bun} run check:types`, "check:types": `${bun} check --pretty false` },
       }),
     });
+    // Before the script, which is part of running it.
+    using before = project({
+      ...files,
+      "package.json": JSON.stringify({ scripts: { precheck: `${bun} check --pretty false`, check: "echo no" } }),
+    });
     // The script of another package is a script all the same.
     using nested = project({
       ...files,
@@ -14001,8 +14011,9 @@ describe.concurrent("--check", () => {
       "sub/package.json": JSON.stringify({ scripts: { check: "echo the script of sub ran" } }),
     });
     const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
-    const inScripts = await Promise.all([wrapped, aggregate, nested].map(dir => run(String(dir), ["check"])));
+    const inScripts = await Promise.all([wrapped, aggregate, before, nested].map(dir => run(String(dir), ["check"])));
     expect(inScripts.map(it => [it.stdout, it.exitCode])).toEqual([
+      [error, 1],
       [error, 1],
       [error, 1],
       ["the script of sub ran", 0],
@@ -14020,6 +14031,9 @@ describe.concurrent("--check", () => {
       // `bun run` looks for the script where it is, since what follows the name is for the script.
       run(String(unscripted), ["check", "--cwd", String(scripted)]),
     ]);
+    // It is about scripts, and there is none.
+    const ifPresent = await run(String(unscripted), ["--if-present", "check"]);
+    expect([ifPresent.stdout, ifPresent.exitCode]).toEqual(["", 0]);
     expect([script, below, elsewhere].map(it => [it.stdout, it.exitCode])).toEqual([
       ["the script ran", 0],
       ["the script ran", 0],
@@ -14106,14 +14120,60 @@ describe.concurrent("--check", () => {
       "src/index.ts": `import { a } from "@/lib";\nconsole.log("ran", a);\n`,
     });
     const override = ["--tsconfig-override", "tsconfig.build.json"];
-    const [without, ran, built] = await Promise.all([
+    const [without, alone, ran, built] = await Promise.all([
       run(String(dir), ["--check", "src/index.ts"]),
+      run(String(dir), [...override, "--check"]),
       run(String(dir), [...override, "--check", "src/index.ts"]),
       run(String(dir), ["build", "--check", ...override, "src/index.ts", "--outdir", "out"]),
     ]);
     expect(without.stderr).toContain("TS2307");
-    expect(ran.stderr + built.stderr).not.toContain("TS2307");
-    expect([ran.stdout, ran.exitCode, built.exitCode]).toEqual(["ran 1", 0, 0]);
+    expect(alone.stdout + ran.stderr + built.stderr).not.toContain("TS2307");
+    expect([alone.exitCode, ran.stdout, ran.exitCode, built.exitCode]).toEqual([0, "ran 1", 0, 0]);
+  });
+
+  test("the `check` scripts of several packages are scripts, and each runs once", async () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    const files = {
+      // It has no `check` script of its own.
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        scripts: { check: `${bun} check && echo ran >> ran.txt`, other: "echo other" },
+      }),
+      "packages/a/a.ts": `export const a: number = 1;\n`,
+    };
+    const cases = [
+      [".", ["--workspaces", "check"]],
+      [".", ["--filter=*", "check"]],
+      [".", ["-F", "*", "check"]],
+      ["packages/a", ["run", "--parallel", "check", "other"]],
+      ["packages/a", ["run", "--sequential", "check", "other"]],
+    ] as const;
+    const seen = await Promise.all(
+      cases.map(async ([cwd, cmd]) => {
+        using dir = project(files);
+        const { exitCode, stderr } = await run(join(String(dir), cwd), [...cmd]);
+        const ran = join(String(dir), "packages", "a", "ran.txt");
+        return [exitCode, stderr.includes("Unknown flag"), existsSync(ran) ? readFileSync(ran, "utf8").trim() : ""];
+      }),
+    );
+    expect(seen).toEqual(cases.map(() => [0, false, "ran"]));
+  });
+
+  // What separates the entries of PATH is a character like any other in the name of a directory.
+  test("a `check` script that is the type checker, in a directory with a delimiter in its name", async () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    const name = `a${delimiter}b`;
+    using dir = project({
+      [`${name}/package.json`]: JSON.stringify({ scripts: { check: `${bun} check --pretty false` } }),
+      [`${name}/tsconfig.json`]: tsconfig,
+      [`${name}/a.ts`]: `export const a: number = "1";\n`,
+    });
+    const { stdout, exitCode } = await run(join(String(dir), name), ["check"]);
+    expect([stdout, exitCode]).toEqual([
+      `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+      1,
+    ]);
   });
 
   test("--check with --filter, --parallel or --sequential checks the project before the scripts", async () => {

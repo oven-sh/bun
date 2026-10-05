@@ -223,6 +223,15 @@ pub(crate) fn is_package_script() -> bool {
         if arg == b"check" {
             break;
         }
+        // These are about scripts: those of several packages, whatever this one has, or none.
+        if matches!(
+            arg,
+            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+        ) || arg.starts_with(b"--filter")
+            || arg.starts_with(b"-F")
+        {
+            return true;
+        }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
             Some(rest) => rest.strip_prefix(b"="),
@@ -246,10 +255,8 @@ pub(crate) fn is_package_script() -> bool {
     };
     // In that script, and in what it runs, it is the type checker: `"check": "bun check"`.
     let is_running = match env_var::BUN_INTERNAL_CHECK_SCRIPTS::get() {
-        Some(running) => {
-            let mut running = running.split(|&byte| byte == bun_paths::DELIMITER);
-            running.any(|it| it == bun_core::strings::without_trailing_slash(dir))
-        }
+        Some(running) => running_package_scripts(running)
+            .any(|it| it == bun_core::strings::without_trailing_slash(dir)),
         // Another package manager may run it.
         None => env_var::npm_lifecycle_event::get() == Some(b"check".as_slice()),
     };
@@ -271,16 +278,49 @@ pub(crate) fn is_package_script() -> bool {
         .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
 }
 
-/// `bun run` is about to run the `check` script of the package in `dir`, with `env`. See
-/// `is_package_script`.
-pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, dir: &[u8]) {
-    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
-    let mut running = env.get(key).unwrap_or_default().to_vec();
-    if !running.is_empty() {
-        running.push(bun_paths::DELIMITER);
+/// The entries of `BUN_INTERNAL_CHECK_SCRIPTS`. Each is a length, `:` and as many bytes, since a
+/// path can have any byte in it.
+fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
+    core::iter::from_fn(move || {
+        let colon = bun_core::strings::index_of_char_usize(running, b':')?;
+        let len: usize = core::str::from_utf8(&running[..colon]).ok()?.parse().ok()?;
+        let (entry, rest) = running[colon + 1..].split_at_checked(len)?;
+        running = rest;
+        Some(entry)
+    })
+}
+
+/// Makes `env` that of the script `name` of the package in `dir`. See `is_package_script`.
+pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir: &[u8]) {
+    use std::io::Write;
+    // `bun run check` runs all three.
+    if !matches!(name, b"check" | b"precheck" | b"postcheck") {
+        return;
     }
-    running.extend_from_slice(bun_core::strings::without_trailing_slash(dir));
+    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
+    let dir = bun_core::strings::without_trailing_slash(dir);
+    let mut running = env.get(key).unwrap_or_default().to_vec();
+    let _ = write!(running, "{}:", dir.len());
+    running.extend_from_slice(dir);
     env.map.put(key, &running).expect("unreachable");
+}
+
+/// `note_package_script` for as long as `with` takes: `env` is that of other scripts too.
+pub(crate) fn with_package_script<R>(
+    env: &mut bun_dotenv::Loader,
+    name: &[u8],
+    dir: &[u8],
+    with: impl FnOnce(&mut bun_dotenv::Loader) -> R,
+) -> R {
+    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
+    let before = env.get(key).map(<[u8]>::to_vec);
+    note_package_script(env, name, dir);
+    let result = with(env);
+    match before {
+        Some(before) => env.map.put(key, &before).expect("unreachable"),
+        None => env.map.remove(key),
+    }
+    result
 }
 
 /// The directory where `bun add -g` installs packages.
@@ -479,7 +519,10 @@ impl CheckCommand {
     /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
     /// those of `bun`, which has read them.
     pub(crate) fn exec_without_arguments() -> ! {
-        Self::exec_with(&Options::default())
+        Self::exec_with(&Options {
+            project: tsconfig_override().map(<[u8]>::to_vec),
+            ..Default::default()
+        })
     }
 
     fn exec_with(options: &Options) -> ! {
@@ -772,13 +815,19 @@ pub(crate) fn check_project_before() -> bool {
     check_and_report(&[], &[]).is_ok()
 }
 
+/// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.
+fn tsconfig_override() -> Option<&'static [u8]> {
+    bun_options_types::context::try_get()?
+        .args
+        .tsconfig_override
+        .as_deref()
+}
+
 fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> Report {
     let cwd = working_directory();
-    // `--tsconfig-override`: what is run is resolved with it, in place of every other.
-    let context = bun_options_types::context::try_get();
     let mut report = run(
         &cwd,
-        context.and_then(|ctx| ctx.args.tsconfig_override.as_deref()),
+        tsconfig_override(),
         paths,
         compiler_options,
         0,

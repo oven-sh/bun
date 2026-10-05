@@ -37,6 +37,12 @@ bun check   # runs "biome check"
 bun --check # type checks the project
 ```
 
+With `--filter` or `--workspaces`, `check` is the script of each package, like any other name.
+
+```bash terminal icon="terminal"
+bun --filter '*' check # runs the "check" script of every package
+```
+
 ## Install TypeScript's library files
 
 The `typescript` package ships the `lib.*.d.ts` files that declare `Array`, `Promise`, and the rest of the language's built-in types. `bun check` reads those files from your project, so your editor and `bun check` see the same declarations.

@@ -1009,6 +1009,17 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             (files.into_iter()).for_each(|(owner, file)| add(owner, Extent::Project, file));
         }
     }
+    // A file that is named besides a directory that has it.
+    let in_directories: FxHashSet<Vec<u8>> = (by_project.iter())
+        .filter(|it| it.1 == Extent::Graph)
+        .flat_map(|it| it.2.iter().cloned())
+        .collect();
+    for (_, extent, files) in &mut by_project {
+        if *extent == Extent::Project {
+            files.retain(|file| !in_directories.contains(file));
+        }
+    }
+    by_project.retain(|it| !it.2.is_empty());
     if by_project.is_empty() {
         report.diagnostics.push(Diagnostic {
             text: [
@@ -1445,6 +1456,10 @@ fn check_with_references(
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
     }
+    let is_read_by_a_program = |index: usize| {
+        (0..count)
+            .any(|by| !is_left_out[by] && !roots[by].is_empty() && references[by].contains(&index))
+    };
     // Under `noEmit` nothing is emitted, and a `.d.ts` next to a `.js` source would be resolved
     // in its place.
     let writes_declaration_files =
@@ -1550,8 +1565,8 @@ fn check_with_references(
             Some((Extent::Project, files)) if project.config_path == root_config_path => {
                 Some(files)
             }
-            // What another project reads is built whole.
-            Some((Extent::Graph, files)) if !is_read_later(index) => {
+            // What another program reads is built whole. A solution has no program.
+            Some((Extent::Graph, files)) if !is_read_by_a_program(index) => {
                 Some(files).filter(|named| !roots[index].iter().all(|file| is_among(named, file)))
             }
             _ => None,

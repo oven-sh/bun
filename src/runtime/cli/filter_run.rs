@@ -105,6 +105,8 @@ impl<'a> ProcessHandle<'a> {
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
             let env_ptr = state.env;
+            // The guard below borrows `env_ptr`.
+            let env_of_script = env_ptr;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
             // Copy to owned — `original_path` borrows env.map which is
@@ -119,7 +121,14 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            let envp = crate::cli::check_command::with_package_script(
+                unsafe { &mut *env_of_script },
+                &handle.config.script_name,
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                    &handle.config.package_json_path,
+                ),
+                |env| env.map.create_null_delimited_env_map(),
+            )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             break 'brk unsafe {

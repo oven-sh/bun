@@ -4,7 +4,7 @@ use crate::hir::ExprId;
 use crate::json::{Json, TsConfigSourceFile};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Element {
+pub(crate) enum Element {
     String,
     /// `IsFilePath`
     FilePath,
@@ -14,7 +14,7 @@ enum Element {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Kind {
+pub(crate) enum Kind {
     Boolean,
     String,
     /// `IsFilePath`
@@ -282,9 +282,81 @@ fn nearest(name: &[u8]) -> Option<&'static [u8]> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
     /// For an unknown option, whether to suggest only a different letter case, as TypeScript 7 does.
-    CompilerOptions { as_typescript_does: bool },
+    CompilerOptions {
+        as_typescript_does: bool,
+    },
     /// `tsconfigRootOptionsMap`. What it does not have is not an error.
     Root,
+    TypeAcquisition,
+}
+
+/// `typeAcquisitionDecls`
+const TYPE_ACQUISITION_OPTIONS: [(&[u8], Kind); 4] = [
+    (b"enable", Kind::Boolean),
+    (b"include", Kind::List(Element::String)),
+    (b"exclude", Kind::List(Element::String)),
+    (b"disableFilenameBasedTypeAcquisition", Kind::Boolean),
+];
+
+/// `*CommandLineOption`, as far as `convertToJson` reads it.
+#[derive(Copy, Clone)]
+pub(crate) enum Declaration {
+    /// `tsconfigRootOptionsMap`
+    Root,
+    Of(&'static [u8], Kind),
+}
+
+impl Declaration {
+    /// `ElementOptions.Get(key)`, if that is its name.
+    pub(crate) fn element(self, key: &[u8]) -> Option<Declaration> {
+        let named = |names: &[&'static [u8]]| names.iter().copied().find(|name| *name == key);
+        match self {
+            Declaration::Root => {
+                let name = named(&[
+                    b"files",
+                    b"include",
+                    b"exclude",
+                    b"references",
+                    b"extends",
+                    b"compileOnSave",
+                    b"compilerOptions",
+                    b"typeAcquisition",
+                ])?;
+                Some(Declaration::Of(name, kind_of_root(name)?))
+            }
+            Declaration::Of(b"compilerOptions", Kind::Object) => {
+                let option = OPTIONS.get_ascii_case_insensitive(key)?;
+                (option.0 == key).then_some(Declaration::Of(option.0, option.1))
+            }
+            Declaration::Of(b"typeAcquisition", Kind::Object) => {
+                let mut options = TYPE_ACQUISITION_OPTIONS.iter();
+                let option = options.find(|option| option.0 == key)?;
+                Some(Declaration::Of(option.0, option.1))
+            }
+            Declaration::Of(..) => None,
+        }
+    }
+
+    /// `Name`
+    pub(crate) fn name(self) -> &'static [u8] {
+        match self {
+            Declaration::Root => b"undefined",
+            Declaration::Of(name, _) => name,
+        }
+    }
+
+    /// `getCompilerOptionValueTypeString`
+    pub(crate) fn takes(self) -> &'static [u8] {
+        match self {
+            Declaration::Root | Declaration::Of(_, Kind::Object) => b"object",
+            Declaration::Of(_, Kind::Boolean) => b"boolean",
+            Declaration::Of(_, Kind::String | Kind::FilePath) => b"string",
+            Declaration::Of(_, Kind::Number) => b"number",
+            Declaration::Of(_, Kind::OneOf(..)) => b"enum",
+            Declaration::Of(_, Kind::List(_)) => b"Array",
+            Declaration::Of(_, Kind::ListOrElement) => b"string or Array",
+        }
+    }
 }
 
 /// `tsconfigRootOptionsMap`
@@ -316,7 +388,8 @@ pub fn problems(
     };
     let mut out = Vec::new();
     for (name, value) in options {
-        if within != In::Root && COMMAND_LINE_ONLY_OPTIONS.contains(name) {
+        if matches!(within, In::CompilerOptions { .. }) && COMMAND_LINE_ONLY_OPTIONS.contains(name)
+        {
             out.push(Problem {
                 name: name.clone(),
                 index: None,
@@ -334,21 +407,29 @@ pub fn problems(
         let kind = match within {
             In::Root => kind_of_root(name),
             In::CompilerOptions { .. } => kind_of(name),
+            In::TypeAcquisition => (TYPE_ACQUISITION_OPTIONS.iter())
+                .find(|option| option.0 == &name[..])
+                .map(|option| option.1),
         };
         let Some(kind) = kind else {
-            let In::CompilerOptions { as_typescript_does } = within else {
-                continue;
-            };
-            let suggestion = if as_typescript_does {
-                OPTIONS
-                    .get_ascii_case_insensitive(name)
-                    .map(|option| option.0)
-            } else {
-                nearest(name)
+            let (suggestion, with, without) = match within {
+                In::Root => continue,
+                In::TypeAcquisition => {
+                    let mut options = TYPE_ACQUISITION_OPTIONS.iter();
+                    let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
+                    (other_case.map(|option| option.0), 17018, 17010)
+                }
+                In::CompilerOptions {
+                    as_typescript_does: true,
+                } => {
+                    let other_case = OPTIONS.get_ascii_case_insensitive(name);
+                    (other_case.map(|option| option.0), 5025, 5023)
+                }
+                In::CompilerOptions { .. } => (nearest(name), 5025, 5023),
             };
             let (code, args) = match suggestion {
-                Some(suggestion) => (5025, vec![name.clone(), suggestion.to_vec()]),
-                None => (5023, vec![name.clone()]),
+                Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),
+                None => (without, vec![name.clone()]),
             };
             out.push(Problem {
                 name: name.clone(),
@@ -399,7 +480,12 @@ pub fn problems(
                         b"plugins" => b"plugin".to_vec(),
                         _ => name.clone(),
                     };
+                    // `convertArrayLiteralExpressionToJson` leaves out what is `null`, so an element
+                    // has its index among the others. Its node is looked up by it all the same.
+                    let mut among_others = 0;
                     for (index, item) in items.iter().enumerate() {
+                        let at = among_others;
+                        among_others += usize::from(*item != Json::Null);
                         let (code, args) = match (element, item) {
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
@@ -423,7 +509,7 @@ pub fn problems(
                             index: Some(index),
                             code,
                             args,
-                            span: elements.get(index).map(|&element| file.span(element)),
+                            span: elements.get(at).map(|&element| file.span(element)),
                         });
                     }
                 }

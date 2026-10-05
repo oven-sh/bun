@@ -3,6 +3,7 @@
 
 use crate::atom::Interner;
 use crate::check::spans::Spans;
+use crate::config_options::Declaration;
 use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKey, PropKind, StmtKind, UnOp,
     is_parenthesized, start_of,
@@ -123,7 +124,7 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
             _ if is_parenthesized(hir, e) => 1328,
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
             ExprKind::String(_) if is_double_quoted(start) => return,
-            ExprKind::String(_) => 1327,
+            ExprKind::String(_) if spans.text.get(start as usize) != Some(&b'`') => 1327,
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
@@ -246,12 +247,71 @@ impl<'s> TsConfigSourceFile<'s> {
         (start_of(&self.hir, e), Spans::of(&self.hir).expr(e) as u32)
     }
 
+    /// `Loc`: from the end of the token before it.
+    fn loc(&self, start: u32, end: usize) -> (u32, u32) {
+        let pos = crate::check::spans::skip_trivia_back(&self.hir.text, start as usize);
+        (pos as u32, end as u32)
+    }
+
+    /// `KindNoSubstitutionTemplateLiteral`
+    fn is_template(&self, e: ExprId) -> bool {
+        self.hir.text.get(start_of(&self.hir, e) as usize) == Some(&b'`')
+    }
+
+    /// The errors of `convertPropertyValueToJson` for `e`, which is converted for `option`: the
+    /// code, the arguments and the span.
+    pub(crate) fn conversion_errors(
+        &self,
+        e: ExprId,
+        option: Option<Declaration>,
+        errors: &mut Vec<(u32, Vec<Vec<u8>>, (u32, u32))>,
+    ) {
+        let (hir, spans) = (&self.hir, Spans::of(&self.hir));
+        match hir[e].kind {
+            _ if is_parenthesized(hir, e) => {}
+            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
+            ExprKind::String(_) if !self.is_template(e) => return,
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } if matches!(hir[operand].kind, ExprKind::Number(_)) => return,
+            // `convertArrayLiteralExpressionToJson`
+            ExprKind::Array(_) => {
+                return (self.elements(e))
+                    .for_each(|element| self.conversion_errors(element, option, errors));
+            }
+            // `convertObjectLiteralExpressionToJson`
+            ExprKind::Object(props) => {
+                for p in props.iter() {
+                    let (PropKind::Init, key) = (hir[p].kind, hir[p].key) else {
+                        errors.push((1136, Vec::new(), self.loc(hir[p].start, spans.prop(p))));
+                        continue;
+                    };
+                    let of_key = match key {
+                        PropKey::Name(key) => {
+                            option.and_then(|it| it.element(self.atoms.bytes(key)))
+                        }
+                        _ => None,
+                    };
+                    self.conversion_errors(hir[p].value, of_key, errors);
+                }
+                return;
+            }
+            _ => {}
+        }
+        let (code, args) = match option {
+            Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
+            None => (1328, Vec::new()),
+        };
+        errors.push((code, args, self.loc(start_of(hir, e), spans.expr(e))));
+    }
+
     /// `convertPropertyValueToJson`. A value that is not in the expected format becomes `null`,
     /// which is preserved in an array.
     pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
         let hir = &self.hir;
         match hir[e].kind {
-            _ if is_parenthesized(hir, e) => Json::Null,
+            _ if is_parenthesized(hir, e) || self.is_template(e) => Json::Null,
             ExprKind::True => Json::Bool(true),
             ExprKind::False => Json::Bool(false),
             ExprKind::String(text) => Json::String(self.atoms.bytes(text).to_vec()),

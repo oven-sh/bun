@@ -648,6 +648,103 @@ differential(
   timeout,
 );
 
+// Every kind of value that is not JSON, and lists with `null` in them, in every kind of place.
+differential(
+  "what is not JSON in a configuration file",
+  async () => {
+    const values = [
+      "tru",
+      "undefined",
+      "`es5`",
+      "true + 1",
+      "f()",
+      "-x",
+      "+1",
+      "-1",
+      "'single'",
+      "1n",
+      "/re/",
+      "NaN",
+      "(1)",
+      "new X",
+      "a.b",
+      "!0",
+      "void 0",
+      "x => x",
+      "[tru]",
+      "{ a }",
+      "[,]",
+      "[1, tru, 'q']",
+      `{ "a": tru }`,
+      "null",
+      "[null]",
+      `[null, "q"]`,
+      `["q", null, 1]`,
+      "[]",
+    ];
+    // Not the `path` of a reference: TypeScript 7.0.2 crashes unless it is a string.
+    const places: ((value: string) => string)[] = [
+      value => `{ "compilerOptions": { "strict": ${value} } }`,
+      value => `{ "compilerOptions": { "target": ${value} } }`,
+      value => `{ "compilerOptions": { "outDir": ${value} } }`,
+      value => `{ "compilerOptions": { "maxNodeModuleJsDepth": ${value} } }`,
+      value => `{ "compilerOptions": { "lib": ${value} } }`,
+      value => `{ "compilerOptions": { "types": ${value} } }`,
+      value => `{ "compilerOptions": { "lib": ["es5", ${value}] } }`,
+      value => `{ "compilerOptions": { "types": [${value}] } }`,
+      value => `{ "compilerOptions": { "paths": ${value} } }`,
+      value => `{ "compilerOptions": { "paths": { "a": ${value} } } }`,
+      value => `{ "compilerOptions": { "paths": { "a": [${value}] } } }`,
+      value => `{ "compilerOptions": { "qqqqqq": ${value} } }`,
+      value => `{ "compilerOptions": ${value} }`,
+      value => `{ "typeAcquisition": { "enable": ${value}, "include": [${value}] } }`,
+      value => `{ "typeAcquisition": { "qqqqqq": ${value}, "Enable": ${value}, "exclude": ${value} } }`,
+      value => `{ "typingOptions": { "enable": ${value} } }`,
+      value => `{ "include": ${value} }`,
+      value => `{ "include": ["a.ts", ${value}] }`,
+      value => `{ "files": ${value} }`,
+      value => `{ "files": ["a.ts", ${value}] }`,
+      value => `{ "extends": ${value} }`,
+      value => `{ "extends": [${value}] }`,
+      value => `{ "references": ${value} }`,
+      value => `{ "references": [${value}] }`,
+      value => `{ "compileOnSave": ${value} }`,
+      value => `{ "qqqqqq": ${value} }`,
+      // After a comment and a line break: an error is at the end of the token before the value.
+      value => `{\n  "compilerOptions": {\n    "strict": // why\n      /* so */ ${value}\n  }\n}`,
+      value =>
+        `{ "compilerOptions": { "target": /* a */ /* b */${value} , "lib": [ /* c */ ${value} /* d */ , // e\n ${value} ] } }`,
+      value => `{\r\n  "compilerOptions": {\r\n    "strict":\r\n\t${value}\r\n  }\r\n}`,
+      value => value,
+    ];
+    // Along the diagonals: each place and each value is in it.
+    const step = isDebug || isASAN ? 12 : 3;
+    const cases = places.flatMap((place, i) => values.filter((_, j) => (i + j) % step === 0).map(place));
+    using dir = tempDir(
+      "bun-check-differential",
+      Object.fromEntries(
+        cases.flatMap((text, i) => [
+          [`c${i}/tsconfig.json`, text + "\n"],
+          [`c${i}/a.ts`, `export {};\n`],
+        ]),
+      ),
+    );
+    const root = String(dir);
+    const results: { text: string; bun: string[]; tsc: string[] }[] = [];
+    await inTurns([...cases.entries()], async ([i, text]) => {
+      // With `references`, `bun check` is `tsc -b`.
+      const project = text.includes(`"references"`) ? ["-b", `c${i}`] : ["-p", `c${i}`];
+      const [bun, typescript] = await Promise.all([
+        linesOf([bunExe(), "check", "-p", `c${i}`], root, root),
+        linesOf([tsc!, ...project, "--noEmit", "--pretty", "false"], root, root),
+      ]);
+      results.push({ text, bun, tsc: typescript });
+    });
+    expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  },
+  timeout,
+);
+
 // What is relative is relative to the file that it is written in.
 differential(
   "paths in a configuration file that is extended",

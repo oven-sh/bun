@@ -2,7 +2,7 @@
 //!
 //! A port of `internal/tsoptions/tsconfigparsing.go` and `internal/vfs/vfsmatch/vfsmatch.go`.
 
-use crate::config_options::{In, converted, is_file_path};
+use crate::config_options::{Declaration, In, converted, is_file_path};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, contains_path, is_same_path, join, known_extension,
@@ -296,6 +296,15 @@ fn parse_config(
             Json::Object(Vec::new())
         }
     };
+    if let Some(root) = file.root {
+        let mut not_json = Vec::new();
+        file.conversion_errors(root, Some(Declaration::Root), &mut not_json);
+        errors.extend(not_json.into_iter().map(|(code, args, span)| ConfigError {
+            args,
+            at: Some(at(span)),
+            ..ConfigError::new(code, &[])
+        }));
+    }
     // The node of the value that `name` is set to.
     let value_of = |name: &[u8]| Some(file.initializer(file.property(file.root?, name, b"")?));
     let base = dirname::<Posix>(path);
@@ -332,7 +341,10 @@ fn parse_config(
         }));
         let mut specified = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
-            if is_omitted(key, None) {
+            // `convertArrayLiteralExpressionToJson`: a list of nothing but `null` is no list.
+            let is_null = |it: &Json| *it == Json::Null;
+            let is_no_list = |items: &[Json]| !items.is_empty() && items.iter().all(is_null);
+            if is_omitted(key, None) || value.as_array().is_some_and(is_no_list) {
                 continue;
             }
             let value = match converted(key, value, |index| is_omitted(key, Some(index))) {
@@ -367,6 +379,18 @@ fn parse_config(
             ..ConfigError::new(problem.code, &[])
         }));
     }
+    if let Some(options) = json.get(b"typeAcquisition").and_then(Json::as_object)
+        && let Some(written) = value_of(b"typeAcquisition")
+    {
+        let problems =
+            crate::config_options::problems(&file, written, options, In::TypeAcquisition);
+        errors.extend(problems.into_iter().map(|problem| ConfigError {
+            code: problem.code,
+            args: problem.args,
+            at: problem.span.map(at),
+            ..ConfigError::new(problem.code, &[])
+        }));
+    }
     own.files = List::of(json.get(b"files"));
     own.include = List::of(json.get(b"include"));
     own.exclude = List::of(json.get(b"exclude"));
@@ -388,8 +412,9 @@ fn parse_config(
         });
     let extends: Vec<(usize, Vec<u8>)> = match json.get(b"extends") {
         Some(Json::String(one)) => vec![(0, one.clone())],
-        Some(Json::Array(many)) => many
-            .iter()
+        // `convertArrayLiteralExpressionToJson` leaves out what is `null`, so the index is the one
+        // among the others. The node is looked up by it all the same.
+        Some(Json::Array(many)) => (many.iter().filter(|it| **it != Json::Null))
             .enumerate()
             .filter_map(|(i, e)| Some((i, e.as_str()?.to_vec())))
             .collect(),

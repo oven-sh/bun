@@ -11,7 +11,8 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, Spent, ancestors, inside, join, to_file_name_lower_case,
+    Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside, join,
+    to_file_name_lower_case, to_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::{FxHashMap, ShardedMap};
@@ -183,12 +184,32 @@ pub struct Disk {
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
     pub bundled_libs: Option<BundledLibs>,
+    /// `Host::script_kind`, by `tspath.Path`.
+    pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
+    pub(crate) before_read: Option<BeforeRead>,
+    pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as
 /// UTF-8 without a byte order mark. Such a file is not opened. Several programs may read it.
 /// `bun build --check` passes what the bundler has read.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
+
+/// Called with the path of a file, in the checker's format, right before the file is read, on the
+/// thread that reads it. A caller that starts to watch the file there sees every change to what is
+/// checked.
+pub type BeforeRead = Box<dyn Fn(&[u8]) + Send + Sync>;
+
+/// `Host::scripts_of_page`. The paths are in the checker's format.
+pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
+
+/// What the caller of a check has for its host.
+#[derive(Default)]
+pub struct Provided {
+    pub already_read: AlreadyRead,
+    pub before_read: Option<BeforeRead>,
+    pub scripts_of_page: Option<ScriptsOfPage>,
+}
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
 /// them. Such a file need not be on the disk (`files` of `Bun.build`), and it is found, listed and
@@ -347,6 +368,9 @@ impl Disk {
             unreadable: bun_threading::Guarded::new(Vec::new()),
             times: Default::default(),
             bundled_libs: None,
+            script_kinds: Vec::new(),
+            before_read: None,
+            scripts_of_page: None,
         }
     }
 
@@ -672,6 +696,9 @@ impl Host for Disk {
             let (libs, name) = self.bundled(path)?;
             return (libs.read)(name);
         }
+        if let Some(before_read) = &self.before_read {
+            before_read(path);
+        }
         let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return bun_sys::File::read_from(Fd::cwd(), to_native(path))
@@ -757,6 +784,18 @@ impl Host for Disk {
     fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
     }
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
+        let scripts = self.scripts_of_page.as_ref().map(|of| of(page));
+        scripts.unwrap_or_default()
+    }
+    fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
+        if self.script_kinds.is_empty() {
+            return None;
+        }
+        let path = to_path(path, self.case_sensitive);
+        let found = self.script_kinds.iter().find(|it| it.0 == *path);
+        found.map(|it| it.1)
+    }
     fn parse<'s>(
         &self,
         arena: &'s Arena,
@@ -769,6 +808,7 @@ impl Host for Disk {
         let (file, parsing) = bun_js_parser::sema::summarize(
             arena,
             path,
+            self.script_kind(path),
             text,
             atoms,
             options.experimental_decorators,

@@ -775,6 +775,44 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
+    /// `--check`: whether the main module at `path` and what it imports have no type errors.
+    /// `loader`: that of `boot`. `arguments`: those of the program.
+    fn check_main(
+        ctx: &ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        arguments: &[Box<[u8]>],
+        before_read: Option<bun_sema_driver::host::BeforeRead>,
+    ) -> bool {
+        use crate::cli::check_command::{EntryPoint, check_before};
+        let main = EntryPoint {
+            path,
+            loader: Some(Self::loader_of_main(ctx, path, loader)),
+            // `[eval]`, `[stdin]`
+            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+        };
+        // src/js/internal/html.ts serves every argument that is a page.
+        let is_page = |path: &&[u8]| path.ends_with(b".html");
+        let more = arguments.iter().map(|it| &it[..]).filter(is_page);
+        let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
+        let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
+        check_before(&entry_points, before_read)
+    }
+
+    /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
+    fn loader_of_main(ctx: &ContextData, path: &[u8], loader: Option<Loader>) -> Loader {
+        use bun_bundler::options::loaders_from_transform_options;
+        let by_name = || {
+            let loaders = ctx.args.loaders.as_ref();
+            let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
+            crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
+        };
+        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
+        // `[eval]`, `[stdin]`, and a name that says nothing.
+        named.unwrap_or(Loader::Tsx)
+    }
+
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
@@ -946,19 +984,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        let mut checked = None;
-        if ctx.runtime_options.check {
-            // src/js/internal/html.ts serves every argument that is a page.
-            let is_page = |path: &&[u8]| path.ends_with(b".html");
-            let more = ctx.passthrough.iter().map(|it| &it[..]).filter(is_page);
-            let more = more.filter(|_| is_page(&&entry_path[..]));
-            let entry_points: Vec<&[u8]> = std::iter::once(&entry_path[..]).chain(more).collect();
-            let found = crate::cli::check_command::check_before(&entry_points);
-            if ctx.debug.hot_reload != cli::command::HotReload::None {
-                checked = Some(found);
-            } else if found.has_errors {
-                Global::exit(1);
-            }
+        // The code of the REPL is not the user's.
+        let is_checked =
+            ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
+        // `Run::start` does it then, once there is a file watcher.
+        let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
+        if is_checked
+            && !watches
+            && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
+        {
+            Global::exit(1);
         }
 
         // `bun_jsc::initialize`
@@ -1121,7 +1156,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
-            checked,
+            unchecked: (is_checked && watches).then_some(loader),
         }
         .start()
     }
@@ -1241,7 +1276,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
-            checked: None,
+            unchecked: None,
         }
         .start()
     }
@@ -1262,9 +1297,9 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
-    /// `--check` under `--watch`. With errors the program is not run, and the process waits for a
-    /// change.
-    checked: Option<crate::cli::check_command::CheckedBefore>,
+    /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
+    /// process waits for a change.
+    unchecked: Option<Option<Loader>>,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1314,7 +1349,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
-            checked,
+            unchecked,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1447,7 +1482,14 @@ impl Run<'_> {
             }
         }
 
-        let has_type_errors = checked.as_ref().is_some_and(|found| found.has_errors);
+        let has_type_errors = unchecked.is_some_and(|loader| {
+            let watching = crate::cli::check_command::watching(vm);
+            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
+        });
+        if has_type_errors {
+            // It is not read if the options are wrong.
+            vm.add_main_to_watcher_if_needed();
+        }
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
@@ -1490,10 +1532,6 @@ impl Run<'_> {
                 }
             }
             Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
-        }
-        // After what is run, which the module loader has added.
-        for path in checked.iter().flat_map(|found| &found.files) {
-            vm.add_to_watcher_if_needed(path);
         }
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A

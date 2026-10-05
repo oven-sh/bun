@@ -165,6 +165,7 @@ describe.concurrent("bun check", () => {
     });
     using unlisted = project({ "a.ts": `import "unlisted";\n`, "package.json": JSON.stringify(manifest) });
     using plugAndPlay = project({ "a.ts": source, "package.json": JSON.stringify(manifest), ".pnp.cjs": "" });
+    using olderPlugAndPlay = project({ "a.ts": source, "package.json": JSON.stringify(manifest), ".pnp.js": "" });
     // In a workspace, what a package lists may be installed at the root.
     using workspace = project({
       "packages/a/a.ts": `import "react";\nimport "@scope/a";\n`,
@@ -190,11 +191,24 @@ describe.concurrent("bun check", () => {
     });
     // It is not Bun's to declare.
     using dom = project({ "a.ts": `export const a = document;\n` });
-    const projects = [none, one, unlisted, plugAndPlay, workspace, listed, notListed, used, ofAPackage, dom];
+    const projects = [
+      none,
+      one,
+      unlisted,
+      plugAndPlay,
+      olderPlugAndPlay,
+      workspace,
+      listed,
+      notListed,
+      used,
+      ofAPackage,
+      dom,
+    ];
     const results = await Promise.all(projects.map(dir => check(dir)));
     expect(results.map(it => note(it.stderr))).toEqual([
       ["note: 3 dependencies in package.json are not installed. Run: bun install"],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      [],
       [],
       [],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
@@ -14452,21 +14466,26 @@ describe.concurrent("--check", () => {
     expect(sameFlag.stderr).toBe(command.stderr);
   });
 
-  // Runs `bun` until the test ends. `until` waits for a condition on what it has printed, and does `between` while it
-  // does not hold: a file is written again, because a write can come before the file is watched.
-  const watching = (dir: { toString(): string }, cmd: readonly string[]) => {
+  // Runs `bun` until the test ends. `until` does `first`, once, and waits for a condition on what `bun` has printed. A
+  // file that is written again and again would start the check again and again.
+  // `printed` is called at once with all that it has printed.
+  type Output = { stdout: string; stderr: string };
+  const watching = (dir: { toString(): string }, cmd: readonly string[], printed = (_: Output) => {}) => {
     const proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const output = { stdout: "", stderr: "" };
+    const output: Output = { stdout: "", stderr: "" };
     const read = async (name: "stdout" | "stderr") => {
-      for await (const chunk of proc[name]) output[name] += Buffer.from(chunk).toString();
+      for await (const chunk of proc[name]) {
+        output[name] += Buffer.from(chunk).toString();
+        printed(output);
+      }
     };
     const closed = Promise.all([read("stdout"), read("stderr")]);
     return {
       output,
-      async until(has: () => boolean, between: () => Promise<unknown> = async () => {}) {
+      async until(has: () => boolean, first: () => Promise<unknown> = async () => {}) {
+        await first();
         while (!has()) {
           expect(proc.exitCode).toBeNull();
-          await between();
           await Bun.sleep(50);
         }
       },
@@ -14496,6 +14515,26 @@ describe.concurrent("--check", () => {
       () => bun.output[stream].includes(expected),
       () => Bun.write(join(String(dir), "imported.ts"), `export const n: number = 1;\n`),
     );
+  });
+
+  // The file watcher knows a file before the check reads it. The file is written once.
+  test.each([
+    [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
+    [["test", "--watch", "--check", "a.test.ts"], "stderr", "1 pass"],
+  ] as const)("bun %j sees a fix that is saved as soon as the errors are printed", async (cmd, stream, expected) => {
+    using dir = project({
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "imported.ts": `export const n: number = "1";\n`,
+      "a.ts": `import { n } from "./imported";\nconsole.log("ran", n);\n`,
+      "a.test.ts": `import { test } from "bun:test";\nimport { n } from "./imported";\ntest("a", () => void n);\n`,
+    });
+    let isFixed = false;
+    await using bun = watching(dir, cmd, output => {
+      if (isFixed || !output.stderr.includes("Found 1 error")) return;
+      isFixed = true;
+      writeFileSync(join(String(dir), "imported.ts"), `export const n: number = 1;\n`);
+    });
+    await bun.until(() => bun.output[stream].includes(expected));
   });
 
   // The file that changes only has types, so nothing loads it when the program runs.
@@ -14618,14 +14657,155 @@ describe.concurrent("--check", () => {
     );
   });
 
-  test("bun --check -e: there is no file to check", async () => {
-    using dir = project({});
-    const { stdout, exitCode } = await run(String(dir), [
-      "--check",
-      "-e",
-      `const n: number = "1"; console.log("ran", n)`,
+  test("what precedes `check` is for `bun`, like what BUN_OPTIONS has", async () => {
+    using dir = project({ "a.ts": `export const a: number = "1";\n` });
+    const root = String(dir);
+    const results = await Promise.all([
+      run(root, ["check"], { BUN_OPTIONS: "--smol" }),
+      run(root, ["check", "a.ts"], { BUN_OPTIONS: "--silent --no-install" }),
+      run(root, ["--silent", "check"]),
+      run(root, ["--bun", "check", "--pretty", "false"]),
+      // `check` is not a path.
+      run(root, ["--strict", "check"]),
     ]);
-    expect([stdout, exitCode]).toEqual(["ran 1", 0]);
+    const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    expect(results.map(it => [it.stdout, it.exitCode])).toEqual(results.map(() => [error, 1]));
+    const after = await run(root, ["check", "--smol"]);
+    expect([after.stderr.split("\n")[0], after.exitCode]).toEqual([`error: Unknown flag "--smol"`, 1]);
+  });
+
+  test("a page that is imported stands for its scripts", async () => {
+    const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
+    const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
+    const server = (from: string) => `import it from "${from}";\nconsole.log("ran", typeof it);\n`;
+    const wrong = `export const c: number = "1";\n`;
+    const options = JSON.parse(tsconfig).compilerOptions;
+    using direct = project({
+      "html.d.ts": html,
+      "index.html": page("./client.ts"),
+      "client.ts": `import "./deep";\n`,
+      "deep.ts": wrong,
+      "server.ts": server("./index.html"),
+      "unrelated.ts": wrong,
+    });
+    using nested = project({
+      "html.d.ts": html,
+      "web/index.html": page("./app.tsx"),
+      "web/app.tsx": wrong,
+      "routes.ts": `import page from "./web/index.html";\nexport default { "/": page };\n`,
+      "server.ts": server("./routes"),
+    });
+    // The page is not in the project of the server. In its own, a parameter needs no type, and there is a `document`.
+    using separate = project({
+      "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["server.ts", "*.d.ts"] }),
+      "html.d.ts": html,
+      "web/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, strict: false, lib: ["esnext", "dom"] } }),
+      "web/index.html": page("./app.ts"),
+      "web/app.ts": `function f(x) {\n  return x;\n}\nexport const c: number = f(document.title) + "";\n`,
+      "server.ts": server("./web/index.html"),
+    });
+    using fine = project({
+      "html.d.ts": html,
+      "index.html": page("./client.ts") + page("https://example.com/a.js"),
+      "client.ts": `export const c: number = 1;\n`,
+      "server.ts": server("./index.html"),
+      "unrelated.ts": wrong,
+    });
+    const errors = (text: string) =>
+      [...text.matchAll(/^(\S+\(\d+,\d+\)): error (TS\d+)/gm)].map(it => `${it[1]} ${it[2]}`);
+    const commands: [{ toString(): string }, string[], string[]][] = [
+      [direct, ["--check", "server.ts"], ["deep.ts(1,14) TS2322"]],
+      [direct, ["check", "server.ts"], ["deep.ts(1,14) TS2322"]],
+      [nested, ["--check", "server.ts"], ["web/app.tsx(1,14) TS2322"]],
+      [separate, ["--check", "server.ts"], ["web/app.ts(4,14) TS2322"]],
+      [fine, ["--check", "server.ts"], []],
+    ];
+    const results = await Promise.all(commands.map(([dir, cmd]) => run(String(dir), cmd)));
+    expect(results.map(it => [errors(it.stdout + "\n" + it.stderr), it.stdout.includes("ran"), it.exitCode])).toEqual(
+      commands.map(([, , found]) => [found, !found.length, found.length ? 1 : 0]),
+    );
+    const built = await run(String(direct), ["build", "--check", "--target=bun", "server.ts", "--outdir", "out"]);
+    expect(built.stderr).toContain("TS2322");
+    expect(built.stderr).toContain("deep.ts:1:14");
+    expect(built.stderr).not.toContain("unrelated.ts");
+    expect(built.exitCode).toBe(1);
+  });
+
+  test("--conditions are those of the check too", async () => {
+    using dir = project({
+      "a.ts": `import { which } from "custom";\nconsole.log("ran", which);\n`,
+      "node_modules/custom/package.json": JSON.stringify({
+        name: "custom",
+        version: "1.0.0",
+        exports: { ".": { mine: "./mine.ts", default: "./default.ts" } },
+      }),
+      "node_modules/custom/mine.ts": `export const which = "mine";\nexport const wrong: number = "1";\n`,
+      "node_modules/custom/default.ts": `export const which = "default";\n`,
+    });
+    const [without, mine] = await Promise.all([
+      run(String(dir), ["--check", "a.ts"]),
+      run(String(dir), ["--check", "--conditions=mine", "a.ts"]),
+    ]);
+    expect([without.stdout, without.exitCode]).toEqual(["ran default", 0]);
+    expect(mine.stderr).toContain("node_modules/custom/mine.ts(2,14): error TS2322");
+    expect([mine.stdout, mine.exitCode]).toEqual(["", 1]);
+  });
+
+  // It is checked as what Bun runs it as.
+  test("an entry point whose name does not say what it is: no extension, -e, -p, stdin", async () => {
+    const wrong = `const n: number = "1";\nconsole.log("ran", n);\nexport {};\n`;
+    using dir = project({
+      "own": `#!/usr/bin/env bun\n${wrong}`,
+      "importing": `import { b } from "./wrong";\nconsole.log("ran", b);\n`,
+      "wrong.ts": `export const b: number = "1";\n`,
+      "fine": `import { g } from "./right";\nconsole.log("ran", g);\n`,
+      "right.ts": `export const g: number = 1;\n`,
+      "odd.extension": wrong,
+      // Not a type assertion.
+      "with-jsx": `export const e = <div />;\n`,
+      "mapped.script": `const n = 1;\nn.nope;\nconsole.log("ran");\nexport {};\n`,
+    });
+    const root = String(dir);
+    const errors = (stderr: string) =>
+      [...stderr.matchAll(/^(\S+\(\d+,\d+\)): error (TS\d+)/gm)].map(it => `${it[1]} ${it[2]}`);
+    const commands: [string[], string, string[]][] = [
+      [["--check", "own"], "", ["own(2,7) TS2322"]],
+      [["--check", "./own"], "", ["own(2,7) TS2322"]],
+      [["--check", join(root, "own")], "", ["own(2,7) TS2322"]],
+      [["run", "--check", "own"], "", ["own(2,7) TS2322"]],
+      [["--check", "importing"], "", ["wrong.ts(1,14) TS2322"]],
+      [["--check", "fine"], "ran 1", []],
+      [["--check", "odd.extension"], "", ["odd.extension(1,7) TS2322"]],
+      [["--check", "with-jsx"], "", ["with-jsx(1,18) TS7026", "with-jsx(1,18) TS17004"]],
+      [["--check", "--loader", ".script:js", "mapped.script"], "ran", []],
+      [["--check", "--loader", ".script:ts", "mapped.script"], "", ["mapped.script(2,3) TS2339"]],
+      [["--check", "-e", wrong], "", ["[eval](1,7) TS2322"]],
+      [["--check", "-e", `const n: number = 1; console.log("ran", n)`], "ran 1", []],
+      [["--check", "-e", `import { b } from "./wrong"; console.log("ran", b)`], "", ["wrong.ts(1,14) TS2322"]],
+      [["--check", "-p", "1 + 1"], "2", []],
+      [["--check", "-p", "(1 as number).nope"], "", ["[eval](1,15) TS2339"]],
+    ];
+    const results = await Promise.all(commands.map(([cmd]) => run(root, cmd)));
+    expect(results.map((it, i) => [commands[i][0], it.stdout, errors(it.stderr), it.exitCode])).toEqual(
+      commands.map(([cmd, stdout, found]) => [cmd, stdout, found, found.length ? 1 : 0]),
+    );
+
+    const piped = async (text: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--check", "-"],
+        cwd: root,
+        env,
+        stdin: new Blob([text]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return [stdout.trim(), errors(stderr), exitCode];
+    };
+    expect(await Promise.all([piped(wrong), piped(`console.log("ran");\n`)])).toEqual([
+      ["", ["[stdin](1,7) TS2322"], 1],
+      ["ran", [], 0],
+    ]);
   });
 
   // These take a shorter way to the file, on which less is set up.

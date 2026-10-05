@@ -1579,7 +1579,9 @@ pub(crate) mod command {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        super::check_command::CheckCommand::exec(&argv[2.min(argv.len())..])
+        // After the flags of `bun`, and those of `BUN_OPTIONS`.
+        let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
+        super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
     }
 
     #[cold]

@@ -105,6 +105,18 @@ pub trait Host: Sync {
     fn is_case_sensitive(&self) -> bool {
         true
     }
+    /// The language of a file whose name does not tell it. Such a file is a source file whatever
+    /// its name is. typescript-go's language server has the language of an open file from the
+    /// editor (`LanguageKindToScriptKind`), and loads it under `allowNonTsExtensions`. `None`:
+    /// `GetScriptKindFromFileName`.
+    fn script_kind(&self, _path: &[u8]) -> Option<ScriptKind> {
+        None
+    }
+    /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
+    /// that imports the page refers to them.
+    fn scripts_of_page(&self, _page: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -306,6 +318,21 @@ impl Options {
             Some(index) => &self.referenced_sources[outputs[index].1 as usize].1,
             None => path,
         }
+    }
+}
+
+/// `core.ScriptKind`, of source code.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ScriptKind {
+    Js,
+    Jsx,
+    Ts,
+    Tsx,
+}
+
+impl ScriptKind {
+    pub fn is_javascript(self) -> bool {
+        matches!(self, ScriptKind::Js | ScriptKind::Jsx)
     }
 }
 

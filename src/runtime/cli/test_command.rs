@@ -2275,17 +2275,6 @@ impl TestCommand {
             }
         }
 
-        let mut checked = None;
-        if ctx.runtime_options.check {
-            let paths: Vec<&[u8]> = test_files.iter().map(|path| &**path).collect();
-            let found = crate::cli::check_command::check_before(&paths);
-            if ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None {
-                checked = Some(found);
-            } else if found.has_errors {
-                Global::exit(1);
-            }
-        }
-
         // Normally the watcher is only enabled when there are test files to
         // run; `bun test --watch` with nothing matching should still exit.
         // With --changed we always want to keep watching as long as any test
@@ -2332,9 +2321,17 @@ impl TestCommand {
             }
         }
 
-        if let Some(found) = checked.as_ref().filter(|found| found.has_errors) {
+        // After the file watcher is enabled: see `watching`.
+        let has_type_errors = ctx.runtime_options.check && {
+            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+        };
+        if has_type_errors {
             // No test is run.
-            (found.files.iter()).for_each(|path| vm.add_to_watcher_if_needed(path));
+            if !vm.is_watcher_enabled() {
+                Global::exit(1);
+            }
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -2399,11 +2396,6 @@ impl TestCommand {
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
-        }
-
-        // Those that only have types. After the tests, like the files above.
-        for path in checked.iter().flat_map(|found| &found.files) {
-            vm.add_to_watcher_if_needed(path);
         }
 
         let write_snapshots_success = jest::Jest::runner()

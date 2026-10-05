@@ -19,7 +19,16 @@ pub fn parse<'s>(
     experimental_decorators: bool,
 ) -> hir::File<'s> {
     let path = path.as_bytes();
-    bun_js_parser::sema::summarize(arena, path, text, atoms, experimental_decorators, false).0
+    bun_js_parser::sema::summarize(
+        arena,
+        path,
+        None,
+        text,
+        atoms,
+        experimental_decorators,
+        false,
+    )
+    .0
 }
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads. Their stack size is `BUN_SEMA_STACK_MB`, 256 by default. The threads of

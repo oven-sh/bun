@@ -624,9 +624,8 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        // Also if `on_calling_thread` unwinds: the tasks point into this frame.
-        scopeguard::defer! { group.wait(); }
         on_calling_thread();
+        group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 

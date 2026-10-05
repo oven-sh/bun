@@ -23,9 +23,10 @@ use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
+pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
     Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
-    is_javascript, is_same_path, join, output_declaration_file_name, to_path,
+    is_javascript, is_relative, is_same_path, join, output_declaration_file_name, to_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -438,6 +439,10 @@ pub struct Request<'a> {
     /// `paths` are the entry points of what is then run or bundled. JavaScript among them is loaded
     /// for what it imports, whatever `allowJs` says. Its own errors are those of `checkJs`.
     pub are_entry_points: bool,
+    /// `Host::script_kind` of those of `paths` whose names do not tell what they are run as.
+    pub script_kinds: &'a [(Vec<u8>, ScriptKind)],
+    /// `--conditions` of what is run or bundled, besides `customConditions`.
+    pub conditions: &'a [Box<[u8]>],
     /// Compiler options given on the command line. They override the configuration file, also of referenced projects.
     pub compiler_options: &'a [CompilerOption],
     /// `0`: the number of cores.
@@ -551,10 +556,10 @@ pub struct Report {
     pub has_bun_types_installed: bool,
     /// The dependencies of a `package.json` that an error is about and that no `node_modules` has.
     pub not_installed: Vec<Vec<u8>>,
+    /// The scripts of pages that checked files import, which are not in the program of those files.
+    scripts_elsewhere: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
-    /// The configuration files of the projects that were checked.
-    pub config_paths: Vec<Vec<u8>>,
     /// `listFiles`, `listFilesOnly`: the files of the program, in program order.
     pub listed_files: Vec<Vec<u8>>,
     /// `traceResolution`: the lines, in order.
@@ -593,8 +598,8 @@ impl Report {
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
-        self.config_paths.extend(other.config_paths);
         self.listed_files.extend(other.listed_files);
+        self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
@@ -722,13 +727,13 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
 /// has been checked. If `then` returns, the caches of the threads are dropped too, and the free
 /// memory is returned to the system.
 pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
-    check_already_read_then(request, host::AlreadyRead::default(), then)
+    check_provided_then(request, host::Provided::default(), then)
 }
 
-/// `check_then`, for a caller that has read some of the files.
-pub fn check_already_read_then<R>(
+/// `check_then`, for a caller that has read some of the files, or that watches them.
+pub fn check_provided_then<R>(
     request: &Request,
-    already_read: host::AlreadyRead,
+    provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
     let threads = match request.threads {
@@ -738,10 +743,17 @@ pub fn check_already_read_then<R>(
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
-    let mut disk = host::Disk::with_already_read(threads, already_read, &project);
+    let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
+    disk.before_read = provided.before_read;
+    disk.scripts_of_page = provided.scripts_of_page;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
+    let script_kinds = request.script_kinds.iter().map(|(path, kind)| {
+        let path = disk.as_written(&join(&cwd, path));
+        (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
+    });
+    disk.script_kinds = script_kinds.collect();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -819,8 +831,9 @@ fn dependencies_not_installed(
         let Some(manifest) = { manifest }.find(|path| host.is_file(path)) else {
             continue;
         };
-        // Yarn Plug'n'Play installs no `node_modules`.
-        if ancestors(from).any(|dir| host.is_file(&join(dir, b".pnp.cjs"))) {
+        // Yarn Plug'n'Play installs no `node_modules`. Before Yarn 3 the file is `.pnp.js`.
+        let is_there = |dir, name: &[u8]| host.is_file(&join(dir, name));
+        if ancestors(from).any(|dir| is_there(dir, b".pnp.cjs") || is_there(dir, b".pnp.js")) {
             continue;
         }
         let text = host.read(&manifest);
@@ -1012,6 +1025,22 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
 }
 
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
+    let mut report = check_paths(disk, request);
+    // Each is checked in its own project, like a file that is named, and once.
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    loop {
+        let mut scripts = std::mem::take(&mut report.scripts_elsewhere);
+        scripts.retain(|script| seen.insert(script.clone()));
+        if scripts.is_empty() {
+            return report;
+        }
+        let paths = &scripts[..];
+        report.merge(check_paths(disk, &Request { paths, ..*request }));
+        sort_and_deduplicate(&mut report.diagnostics);
+    }
+}
+
+fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
@@ -1056,7 +1085,8 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         explicit.clone().or_else(nearest)
     };
     let mut projects = Projects {
-        counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
+        counts_javascript: request.are_entry_points
+            && paths.iter().any(|it| is_javascript_file(disk, it)),
         ..Default::default()
     };
     if paths.is_empty() {
@@ -1226,7 +1256,7 @@ fn check_project_of(
     request: &Request,
     projects: &mut Projects,
     of: OfProject<'_>,
-    mut report: Report,
+    report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
@@ -1241,9 +1271,6 @@ fn check_project_of(
         }
     };
     let is_case_sensitive = disk.is_case_sensitive();
-    // Here, for a solution: it has no program of its own.
-    report.config_paths.push(project.config_path.clone());
-    (report.config_paths).extend(project.extended_config_paths.iter().cloned());
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project {
             // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
@@ -1274,7 +1301,8 @@ fn check_project_of(
     let named = (named.as_ref()).map(|(extent, files)| (*extent, files.as_slice()));
     // After the configuration file is read: what it includes and whether its options agree with each
     // other is as `bun check` finds it.
-    let names_javascript = |it: (Extent, &[Vec<u8>])| it.1.iter().any(|file| is_javascript(file));
+    let names_javascript =
+        |it: (Extent, &[Vec<u8>])| it.1.iter().any(|file| is_javascript_file(disk, file));
     if request.are_entry_points && named.is_some_and(names_javascript) {
         project.options.allow_js = true;
     }
@@ -1298,6 +1326,12 @@ fn check_project_of(
             None,
         )
     }
+}
+
+/// `is_javascript`, unless the host knows better than the name.
+fn is_javascript_file(disk: &host::Disk, path: &[u8]) -> bool {
+    let by_name = || is_javascript(path);
+    (disk.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
 }
 
 /// `named` is sorted. It has, and `file` is, a `tspath.Path`.
@@ -1930,8 +1964,8 @@ fn check_named_files(
         n => n,
     };
     project.options.current_directory = host::from_native(request.cwd);
-    report.config_paths.push(project.config_path.clone());
-    (report.config_paths).extend(project.extended_config_paths.iter().cloned());
+    let conditions = request.conditions.iter().map(|it| it.to_vec());
+    project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
     let of_configuration = |error: &ConfigError| {
         let mut reported = global(error.code, &error.args);
@@ -2068,6 +2102,7 @@ fn check_named_files(
         })
         .map(|i| FileId(i as u32))
         .collect();
+    let mut scripts_elsewhere = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
@@ -2078,7 +2113,20 @@ fn check_named_files(
             is_reached[i] = true;
         }
         while let Some(i) = to_follow.pop() {
-            for edge in modules[i].edges {
+            // A page stands for its scripts.
+            let specifiers = modules[i].bound.specifiers.iter();
+            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
+            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
+            let directory = dirname::<Posix>(modules[i].file_name());
+            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+            let scripts = scripts.filter_map(|script| {
+                let here = program.files.by_path.get(&script);
+                if here.is_none() {
+                    scripts_elsewhere.push(script);
+                }
+                here
+            });
+            for edge in modules[i].edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
                 }
@@ -2086,6 +2134,7 @@ fn check_named_files(
         }
         is_reached
     });
+    report.scripts_elsewhere = scripts_elsewhere;
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
     }

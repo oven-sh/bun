@@ -1793,6 +1793,8 @@ fn run_one(
             task_clock: None,
             plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
+            script_kinds: &[],
+            conditions: &[],
             stops_like_tsc: false,
             uses_typescript_wording: true,
             loaded: None,

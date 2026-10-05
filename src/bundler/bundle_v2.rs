@@ -2527,9 +2527,13 @@ pub mod bv2_impl {
             // which is not of the project.
             let mut named: Vec<usize> = Vec::new();
             let mut is_named = vec![false; sources.len()];
-            let mut pending: Vec<usize> = (self.graph.entry_points.iter().rev())
-                .map(|entry_point| entry_point.get() as usize)
+            // A page that a server imports is in the graph like one that is an entry point.
+            let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
+            let entry_points = self.graph.entry_points.iter();
+            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
+                .chain(pages)
                 .collect();
+            pending.reverse();
             while let Some(index) = pending.pop() {
                 if std::mem::replace(&mut is_named[index], true) {
                     continue;

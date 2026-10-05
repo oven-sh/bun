@@ -68,7 +68,9 @@ bun --check src/index.ts
 
 You don't need a `tsconfig.json`. Without one, `bun check` uses [default compiler options](#without-a-tsconfigjson) and includes `@types/bun` if you have installed it.
 
-You don't need the `typescript` package either. The declarations of `Array`, `Promise`, the DOM, and the rest of TypeScript's `lib.*.d.ts` files are built into Bun. Your editor may still need the package.
+You don't need the `typescript` package either. The declarations of `Array`, `Promise`, the DOM, and the rest of TypeScript's `lib.*.d.ts` files are built into Bun.
+
+Your editor doesn't use `bun check`. It runs its own copy of TypeScript. To keep the two in agreement, [install the version of TypeScript that `bun check` matches](#bun-check-and-my-editor-disagree).
 
 ## Replace `tsc`
 
@@ -314,9 +316,11 @@ What Bun checks depends on what you run.
 | You run                                               | Bun checks                                            |
 | ----------------------------------------------------- | ----------------------------------------------------- |
 | A TypeScript or JavaScript file                       | The file and everything it imports                    |
+| A file without an extension, `-e`, `-p`, or stdin     | The code and everything it imports                    |
 | `bun test`                                            | The test files and everything they import             |
 | `bun build`                                           | The entry points and everything they import           |
 | An HTML file                                          | The local scripts in `<script src>` and their imports |
+| A file that imports an HTML file                      | Also the local scripts of that page                   |
 | A `package.json` script                               | The whole project, like `bun check`                   |
 | An executable from `node_modules/.bin` or your `PATH` | The whole project                                     |
 | A shell script                                        | The whole project                                     |
@@ -328,10 +332,26 @@ bun --check ./scripts/deploy.sh
 bun --check index.html about.html
 ```
 
-- `--check` does not cover the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point. `bun check` covers them if your `tsconfig.json` includes them.
+`--check` follows static imports. It does not cover a file that your code loads in another way:
+
+- a worker, as in `new Worker("./worker.ts")`
+- `import(name)`, where the name is computed
+- `require()` in a TypeScript file
+- a process that your code starts
+- the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point
+
+`bun check` covers all of these if your `tsconfig.json` includes them.
+
+`bun --check index.html` checks once, before the development server starts. The server does not check again when you edit a file.
+
+A few more details:
+
 - `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
 - Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
+- Bun runs a file without an extension as TSX, for example a script that starts with `#!/usr/bin/env bun`. The same goes for `-e`, `-p`, and code from stdin. `--check` checks that code as TSX too. Errors in it appear at `[eval]` or `[stdin]`. If `--loader` maps the extension of the entry point, the check follows that.
+- A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.
 - With `--tsconfig-override`, the check uses that `tsconfig.json`.
+- With `--conditions`, the check resolves packages with those conditions too.
 
 ### Watch mode
 
@@ -343,6 +363,8 @@ bun test --watch --check
 ```
 
 `--hot --check` restarts the process like `--watch`, so that Bun checks the code again before it runs.
+
+If you save a file while a check is running, Bun stops that check and starts again with the new contents.
 
 ### `bun build`
 
@@ -399,6 +421,12 @@ bun --check # type checks the project
 ```
 
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
+
+<Warning>
+  A version of Bun that has no type checker runs `"check": "bun check"` again and again, without end. That includes an
+  older `bun` in `node_modules/.bin`, which scripts find first. If not everyone on your team has upgraded, name the
+  script `typecheck`.
+</Warning>
 
 With `--filter` or `--workspaces`, `check` always means the `check` script of each package.
 
@@ -530,11 +558,17 @@ Your `package.json` has a `check` script. Use `bun --check`. See [If `package.js
 
 ### `bun check` and my editor disagree
 
-Your editor uses the version of `typescript` in your project. `bun check` behaves like TypeScript 7 and uses TypeScript 7's `lib.*.d.ts` files, whichever version you have installed. Upgrade the package so that both follow the same rules:
+Your editor runs its own copy of TypeScript: the `typescript` package in your project, or a version that ships with the editor. `bun check` matches one exact version of TypeScript and uses that version's `lib.*.d.ts` files, whichever version you have installed. `process.versions.typescript` is that version.
+
+Install the same version so that both follow the same rules:
 
 ```bash terminal icon="terminal"
-bun add -d typescript@latest
+bun add -d typescript@$(bun -p process.versions.typescript)
 ```
+
+Then tell your editor to use the version in your project. In VS Code, run **TypeScript: Select TypeScript Version** from the Command Palette and choose **Use Workspace Version**.
+
+Run the command again after you upgrade Bun, because a new version of Bun can match a newer TypeScript.
 
 If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
 

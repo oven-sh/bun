@@ -1953,6 +1953,10 @@ fn referenced_file(
     name: &[u8],
     from: &[u8],
 ) -> Result<Vec<u8>, u32> {
+    // `allowNonTsExtensions`
+    if host.script_kind(name).is_some() && host.is_file(name) {
+        return Ok(name.to_vec());
+    }
     // With an extension, it is that file or none.
     if has_extension(name) {
         if let Some(code) = unsupported_extension_error(options, name) {

@@ -463,10 +463,12 @@ impl ThreadCaches {
 }
 
 /// The type checker's input for the TypeScript file `text` at `path`. Its lists are in `arena`,
-/// which is the arena that the calling thread has in the session of `atoms`.
+/// which is the arena that the calling thread has in the session of `atoms`. `script_kind`: see
+/// `Host::script_kind`.
 pub fn summarize<'s>(
     arena: &'s bun_alloc::Arena,
     path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
     text: &[u8],
     atoms: &bun_sema::atom::Interner<'s>,
     experimental_decorators: bool,
@@ -474,11 +476,17 @@ pub fn summarize<'s>(
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
     // How long `parse_stmts_up_to` took. The rest is lowering.
     let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
-    let is_declaration_file = bun_sema::resolve::is_declaration_file_name(path);
-    let is_js = bun_sema::resolve::is_javascript(path);
-    let is_json = path.ends_with(b".json");
+    use bun_sema::resolve::ScriptKind;
+    let by_name = script_kind.is_none();
+    let is_declaration_file = by_name && bun_sema::resolve::is_declaration_file_name(path);
+    let is_js = script_kind.map_or_else(
+        || bun_sema::resolve::is_javascript(path),
+        ScriptKind::is_javascript,
+    );
+    let is_json = by_name && path.ends_with(b".json");
+    let is_tsx = script_kind.map_or_else(|| path.ends_with(b".tsx"), |it| it == ScriptKind::Tsx);
     // `getLanguageVariant`: JSX is enabled in all JavaScript files.
-    let loader = if is_js || path.ends_with(b".tsx") {
+    let loader = if is_js || is_tsx {
         bun_ast::Loader::Tsx
     } else {
         bun_ast::Loader::Ts

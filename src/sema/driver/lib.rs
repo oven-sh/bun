@@ -414,6 +414,18 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
         .collect()
 }
 
+/// The version of TypeScript that the type checker is a port of.
+pub use bun_sema::resolve::VERSION_C as TYPESCRIPT_VERSION;
+
+/// Where TypeScript's `lib.*.d.ts` files are.
+#[derive(Copy, Clone)]
+pub enum Libs<'a> {
+    /// In the executable.
+    Bundled(host::BundledLibs),
+    /// In a directory, as a native path.
+    Directory(&'a [u8]),
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as a native path.
@@ -430,11 +442,7 @@ pub struct Request<'a> {
     pub compiler_options: &'a [CompilerOption],
     /// `0`: the number of cores.
     pub threads: usize,
-    /// The directory of TypeScript's `lib.*.d.ts` files, if it should not be discovered
-    /// automatically.
-    pub lib_dir: Option<&'a [u8]>,
-    /// The `node_modules` of the global install, which is searched for them last.
-    pub global_node_modules: Option<&'a [u8]>,
+    pub libs: Libs<'a>,
     /// Updated during the check, for a caller that displays progress.
     pub progress: Option<&'a Progress>,
     /// Of all loaded files, only those whose path contains this are checked. For investigating one
@@ -728,7 +736,10 @@ pub fn check_already_read_then<R>(
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
-    let disk = host::Disk::with_already_read(threads, already_read, &project);
+    let mut disk = host::Disk::with_already_read(threads, already_read, &project);
+    if let Libs::Bundled(libs) = request.libs {
+        disk.bundled_libs = Some(libs);
+    }
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -1896,31 +1907,10 @@ fn check_named_files(
         .filter(|error| error.is_about_options)
         .map(of_configuration)
         .collect();
-    let lib_dir = match request.lib_dir {
-        Some(dir) => Some(host::from_native(dir)),
-        None => host::find_lib_dir(
-            host,
-            &project.options.base_dir,
-            request
-                .global_node_modules
-                .map(host::from_native)
-                .as_deref(),
-        ),
+    project.options.lib_dir = match request.libs {
+        Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
+        Libs::Directory(dir) => host::from_native(dir),
     };
-    match lib_dir {
-        Some(dir) => project.options.lib_dir = dir,
-        None if project.options.no_lib => {}
-        None => {
-            report.diagnostics.push(Diagnostic {
-                text: b"Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and \
-                       everything else that is built in. It comes with the typescript package: bun add -d typescript"
-                    .to_vec(),
-                code: 0,
-                ..global(6053, &[""; 0])
-            });
-            return report;
-        }
-    }
     report.has_bun_types_installed = project
         .options
         .effective_type_roots()

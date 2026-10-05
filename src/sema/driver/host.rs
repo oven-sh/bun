@@ -21,48 +21,27 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// The directory of TypeScript's `lib.*.d.ts` files for a project in `dir`: the `typescript`
-/// package the project has installed, which is also where its editor reads them from. TypeScript 7
-/// ships them in a platform-specific package. The global install is searched last.
-pub fn find_lib_dir(
-    host: &dyn Host,
-    dir: &[u8],
-    global_node_modules: Option<&[u8]>,
-) -> Option<Vec<u8>> {
-    let in_node_modules = |node_modules: &[u8]| -> Option<Vec<u8>> {
-        let plain = [node_modules, b"/typescript/lib"].concat();
-        if host.is_file(&[&plain[..], b"/lib.es5.d.ts"].concat()) {
-            return Some(plain);
-        }
-        let for_the_platform = |node_modules: &[u8]| -> Option<Vec<u8>> {
-            let scope = [node_modules, b"/@typescript"].concat();
-            let (_, mut packages) = host.entries(&scope);
-            // The platform-specific package belongs to `typescript` itself. Other packages may be
-            // older versions under another name.
-            packages.sort_by_key(|name| {
-                !(name.starts_with(b"typescript-") || name.starts_with(b"native-preview-"))
-            });
-            packages
-                .into_iter()
-                .map(|package| [&scope[..], b"/", &package[..], b"/lib"].concat())
-                .find(|lib| host.is_file(&[&lib[..], b"/lib.es5.d.ts"].concat()))
-        };
-        for_the_platform(node_modules).or_else(|| {
-            // An isolated install places a package's dependencies next to the package, and
-            // `node_modules/typescript` is a symlink to it.
-            let package = [node_modules, b"/typescript"].concat();
-            let real = host.realpath(&package);
-            (real != package).then(|| for_the_platform(dirname::<Posix>(&real)))?
-        })
-    };
-    ancestors(dir)
-        .find_map(|dir| in_node_modules(&join(dir, b"node_modules")))
-        .or_else(|| global_node_modules.and_then(in_node_modules))
+/// TypeScript's `lib.*.d.ts` files in the executable, by name.
+#[derive(Copy, Clone)]
+pub struct BundledLibs {
+    pub has: fn(&[u8]) -> bool,
+    pub read: fn(&[u8]) -> Option<Cow<'static, [u8]>>,
+}
+
+/// `bundled.LibPath()`, in the checker's path format: the directory that `BundledLibs` are in.
+/// It is on no disk.
+pub const BUNDLED_LIBS: &[u8] = b"/bundled:///libs";
+
+/// `bundled.IsBundled`
+pub fn is_bundled(path: &[u8]) -> bool {
+    path.starts_with(b"/bundled:")
 }
 
 /// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
+/// `/bundled:///libs/a` becomes `bundled:///libs/a`, which is how typescript-go prints it.
 pub fn to_native(path: &[u8]) -> &[u8] {
     match path {
+        _ if is_bundled(path) => &path[1..],
         [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
         [b'/', b'\\', b'\\', ..] if cfg!(windows) => &path[1..],
         _ => path,
@@ -202,6 +181,8 @@ pub struct Disk {
     in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
+    /// What is in `BUNDLED_LIBS`.
+    pub bundled_libs: Option<BundledLibs>,
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as
@@ -365,7 +346,16 @@ impl Disk {
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
             times: Default::default(),
+            bundled_libs: None,
         }
+    }
+
+    /// The name of the file at `path` in `bundled_libs`, if it is there.
+    fn bundled<'a>(&self, path: &'a [u8]) -> Option<(BundledLibs, &'a [u8])> {
+        let name = path.strip_prefix(BUNDLED_LIBS)?.strip_prefix(b"/")?;
+        self.bundled_libs
+            .filter(|libs| (libs.has)(name))
+            .map(|libs| (libs, name))
     }
 
     /// An idle reader whose last read was from `directory`, or else a new one, or the least
@@ -678,6 +668,10 @@ impl Host for Disk {
             return Some(Cow::Owned(text.clone()));
         }
         let _reading = Spent::on(self, Phase::Read);
+        if is_bundled(path) {
+            let (libs, name) = self.bundled(path)?;
+            return (libs.read)(name);
+        }
         let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return bun_sys::File::read_from(Fd::cwd(), to_native(path))
@@ -722,18 +716,27 @@ impl Host for Disk {
         std::mem::take(&mut *self.unreadable.lock())
     }
     fn is_file(&self, path: &[u8]) -> bool {
+        if is_bundled(path) {
+            return self.bundled(path).is_some();
+        }
         match self.find(path) {
             Some(found) => matches!(found, Some((_, false))),
             None => self.ask_whether_directory(path) == Some(false),
         }
     }
     fn is_dir(&self, path: &[u8]) -> bool {
+        if is_bundled(path) {
+            return path == BUNDLED_LIBS && self.bundled_libs.is_some();
+        }
         match self.find(path) {
             Some(found) => matches!(found, Some((_, true))),
             None => self.ask_whether_directory(path) == Some(true),
         }
     }
     fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        if is_bundled(path) {
+            return path.to_vec();
+        }
         self.real_path_of(path)
     }
     fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
@@ -742,6 +745,10 @@ impl Host for Disk {
         files
     }
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        // Nothing lists them.
+        if is_bundled(path) {
+            return (Vec::new(), Vec::new());
+        }
         match self.directory(path) {
             Directory::Listed(listing) => (listing.files.clone(), listing.directories.clone()),
             _ => (Vec::new(), Vec::new()),

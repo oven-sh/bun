@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -11,9 +12,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 
-// `bun check` reads `lib.*.d.ts` from the `typescript` package installed in the project.
-const typescript = dirname(require.resolve("typescript/package.json"));
+// The directory of the `lib.*.d.ts` files of the `typescript7` package, which has them in a package for the platform.
+const typescript7 = (() => {
+  try {
+    const paths = [dirname(require.resolve("typescript7/package.json"))];
+    const name = `@typescript/typescript-${process.platform}-${process.arch}`;
+    return join(dirname(require.resolve(`${name}/package.json`, { paths })), "lib");
+  } catch {
+    // There is none for this system.
+  }
+})();
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -32,18 +42,13 @@ const withResolveJsonModule = JSON.stringify({
   compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, resolveJsonModule: true },
 });
 
-function project(files: Record<string, string>, { withTypeScript = true } = {}) {
-  const dir = tempDir("bun-check", {
+function project(files: Record<string, string>) {
+  return tempDir("bun-check", {
     "tsconfig.json": tsconfig,
     // Avoids loading the DOM and Node.js type definitions, which keeps the tests fast.
     "console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
     ...files,
   });
-  if (withTypeScript) {
-    mkdirSync(join(String(dir), "node_modules"), { recursive: true });
-    symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
-  }
-  return dir;
 }
 
 // Whether the file system takes `A` for `a`, where the projects of these tests are.
@@ -65,8 +70,6 @@ const env = {
   npm_package_json: undefined,
   BUN_INTERNAL_CHECK_SCRIPTS: undefined,
   NO_COLOR: "1",
-  // Prevent fallback to globally installed packages.
-  BUN_INSTALL_GLOBAL_DIR: "/nowhere",
 };
 
 async function run(cwd: string, cmd: string[], extra: Record<string, string | undefined> = {}) {
@@ -145,42 +148,88 @@ describe.concurrent("bun check", () => {
     expect(colored.exitCode).toBe(1);
   });
 
-  test("the typescript package may be installed globally", async () => {
-    using dir = project({ "index.ts": `const wrong: string = 1;\n` }, { withTypeScript: false });
-    using globalDir = tempDir("bun-check-global", {});
-    mkdirSync(join(String(globalDir), "node_modules"), { recursive: true });
-    symlinkSync(typescript, join(String(globalDir), "node_modules", "typescript"), "junction");
-    const { stdout, exitCode } = await check(dir, [], { BUN_INSTALL_GLOBAL_DIR: String(globalDir) });
-    expect(stdout).toMatchInlineSnapshot(
-      `"index.ts(1,7): error TS2322: Type 'number' is not assignable to type 'string'."`,
-    );
-    expect(exitCode).toBe(1);
-  });
-
-  test("a global install is looked for where `bun add -g` installs", async () => {
-    const files = { "index.ts": `const wrong: string = 1;\n` };
-    using cacheHome = tempDir("bun-check-cache-home", {});
-    using globalDir = tempDir("bun-check-global-dir", {});
-    const install = (nodeModules: string) => {
-      mkdirSync(nodeModules, { recursive: true });
-      symlinkSync(typescript, join(nodeModules, "typescript"), "junction");
-    };
-    install(join(String(cacheHome), ".bun", "install", "global", "node_modules"));
-    install(join(String(globalDir), "node_modules"));
-    using plain = project(files, { withTypeScript: false });
-    using withBunfig = project(
-      { ...files, "bunfig.toml": `[install]\nglobalDir = ${JSON.stringify(String(globalDir))}\n` },
-      { withTypeScript: false },
-    );
-    const unset = { BUN_INSTALL_GLOBAL_DIR: undefined, BUN_INSTALL: undefined };
-    const results = await Promise.all([
-      check(plain, [], { ...unset, XDG_CACHE_HOME: String(cacheHome) }),
-      check(withBunfig, [], { ...unset, XDG_CACHE_HOME: "/nowhere" }),
-    ]);
-    for (const { stdout, exitCode } of results) {
-      expect(stdout).toBe("index.ts(1,7): error TS2322: Type 'number' is not assignable to type 'string'.");
+  // `lib.*.d.ts` are in the executable, so they are those of the TypeScript that the type checker is a port of.
+  describe("TypeScript's library files", () => {
+    test("nothing has to be installed, and no configuration file is needed", async () => {
+      using dir = tempDir("bun-check", {
+        "index.ts": `const all: Promise<number[]> = Promise.all([1]);\nexport const first: string = [1].at(0);\nexport { all };\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "index.ts(2,14): error TS2322: Type 'number | undefined' is not assignable to type 'string'.
+          Type 'undefined' is not assignable to type 'string'."
+      `);
       expect(exitCode).toBe(1);
-    }
+    });
+
+    test("those of an installed typescript package are not read", async () => {
+      const older = `interface Array<T> {}\n`;
+      using dir = project({
+        "index.ts": `export const first: string = [1].at(0);\n`,
+        "node_modules/typescript/package.json": `{ "name": "typescript", "version": "5.0.0" }`,
+        "node_modules/typescript/lib/lib.es5.d.ts": older,
+        "node_modules/typescript/lib/lib.esnext.d.ts": older,
+      });
+      const { stdout } = await check(dir, ["--listFiles"]);
+      expect(stdout).toContain("index.ts(1,14): error TS2322: Type 'number | undefined'");
+      expect(stdout).not.toContain("node_modules");
+    });
+
+    // The default `target` needs the newest of them, with the DOM.
+    test("without `target` and `lib`", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [] } }`,
+        "console.d.ts": "",
+        "index.ts": `export const wrong: number = document.title;\nconsole.log(new Set([1]).union(new Set([2])));\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`index.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a declaration in one of them is shown where it is", async () => {
+      using dir = project({ "index.ts": `export const a = [1].lenght;\n` });
+      const { stdout } = await check(dir, ["--pretty"]);
+      expect(stdout).toContain("TS2551: Property 'lenght' does not exist on type 'number[]'. Did you mean 'length'?");
+      expect(stdout).toMatch(/at bundled:\/\/\/libs\/lib\.es5\.d\.ts:\d+:\d+/);
+    });
+
+    test.skipIf(!typescript7)("process.versions.typescript is their version", () => {
+      expect(process.versions.typescript).toBe(require("typescript7/package.json").version);
+    });
+
+    // A worker has no DOM, and its library is stored as what it adds to that of the DOM.
+    test("the library of a worker", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [], "lib": ["esnext", "webworker"] } }`,
+        "console.d.ts": "",
+        "index.ts": `export const wrong: number = self.name;\nexport const missing = document;\nimportScripts("a.js");\n`,
+      });
+      const { stdout } = await check(dir, ["--listFiles"]);
+      expect(stdout).toContain(`index.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(stdout).toContain(`index.ts(2,24): error TS2584: Cannot find name 'document'.`);
+      expect(stdout).toContain("bundled:///libs/lib.webworker.d.ts");
+      expect(stdout).not.toContain("bundled:///libs/lib.dom.d.ts");
+    });
+
+    // scripts/update-typescript-libs.ts writes the file.
+    test.skipIf(!typescript7)("are those of TypeScript 7, byte for byte", () => {
+      const bundle = readFileSync(join(import.meta.dir, "../../../src/runtime/cli/typescript_libs.bin"));
+      const dictionaries = [undefined, "lib.es5.d.ts", "lib.dom.d.ts"].map(
+        name => name && readFileSync(join(typescript7!, name)),
+      );
+      const bundled = Array.from({ length: bundle.readUInt32LE(0) }, (_, i) => {
+        const record = bundle.subarray(4 + i * 52);
+        const [at, length, dictionary] = [40, 44, 48].map(field => record.readUInt32LE(field));
+        const text = zstdDecompressSync(bundle.subarray(at, at + length), { dictionary: dictionaries[dictionary] });
+        return [record.toString("latin1", 1, 1 + record[0]), text] as const;
+      });
+      const published = readdirSync(typescript7!).filter(name => /^lib(\..+)?\.d\.ts$/.test(name));
+      expect(bundled.map(it => it[0])).toEqual(published.sort());
+      expect(
+        bundled.filter(([name, text]) => !readFileSync(join(typescript7!, name)).equals(text)).map(it => it[0]),
+      ).toEqual([]);
+    });
   });
 
   // The progress line is drawn by a thread of its own, and only for a person at a terminal.
@@ -747,8 +796,6 @@ describe.concurrent("bun check", () => {
         "imported.ts": `export {};\n`,
         "other/globals.d.ts": `declare const elsewhere: number;\n`,
       });
-      mkdirSync(join(String(dir), "node_modules"));
-      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const [all, named, listed] = await Promise.all([
         check(dir),
         check(dir, ["a.ts"]),
@@ -756,7 +803,7 @@ describe.concurrent("bun check", () => {
       ]);
       expect(all.stdout).toBe("");
       expect(named.stdout).toBe(`a.ts(2,18): error TS2304: Cannot find name 'elsewhere'.`);
-      const own = listed.stdout.split("\n").filter(line => !line.includes("/typescript/lib/lib."));
+      const own = listed.stdout.split("\n").filter(line => !line.startsWith("bundled:///libs/lib."));
       expect(own.map(line => line.replace(/^\S*\//, ""))).toEqual(["imported.ts", "a.ts"]);
     });
 
@@ -777,8 +824,6 @@ describe.concurrent("bun check", () => {
         "packages/my-application/a.ts": `export const a: string = 1;\n`,
         "packages/lib/b.ts": `export const b: string = 1;\n`,
       });
-      mkdirSync(join(String(dir), "node_modules"));
-      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const { stdout } = await check(join(String(dir), "packages", "my-application"), ["../lib"]);
       expect(stdout).toBe(`../lib/b.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
@@ -789,8 +834,6 @@ describe.concurrent("bun check", () => {
         "pkg/tsconfig.json": tsconfig,
         "pkg/a.ts": `export const a: string = 1;\n`,
       });
-      mkdirSync(join(String(dir), "node_modules"));
-      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       symlinkSync(String(dir), join(String(dir), "pkg", "up"), "junction");
       const { stdout } = await check(dir, ["."]);
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
@@ -925,8 +968,8 @@ describe.concurrent("bun check", () => {
       });
       const [after, only] = await Promise.all([check(dir, ["--listFiles"]), check(dir, ["--listFilesOnly"])]);
       // Lib files are listed first. A file is listed after its imports.
-      const listed = (stdout: string) => stdout.split("\n").filter(line => !line.includes("/typescript/lib/lib."));
-      expect(after.stdout).toContain("/typescript/lib/lib.es5.d.ts");
+      const listed = (stdout: string) => stdout.split("\n").filter(line => !line.startsWith("bundled:///libs/lib."));
+      expect(after.stdout.split("\n")).toContain("bundled:///libs/lib.es5.d.ts");
       expect(listed(after.stdout).map(line => line.replace(/^\S*\//, ""))).toEqual([
         "a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.",
         "b.ts",
@@ -1013,8 +1056,6 @@ describe.concurrent("bun check", () => {
 
     test("without a tsconfig.json", async () => {
       using dir = tempDir("bun-check", { "a.ts": `export const a: string = 1;\n` });
-      mkdirSync(join(String(dir), "node_modules"));
-      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const { stdout, exitCode } = await check(dir, ["a.ts"]);
       expect(stdout).toMatchInlineSnapshot(
         `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
@@ -1051,8 +1092,6 @@ describe.concurrent("bun check", () => {
         "tools/index.ts": implicitAny,
         "scripts/build.ts": implicitAny,
       });
-      mkdirSync(join(String(dir), "node_modules"));
-      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const [{ stdout, stderr, exitCode }, here, packages] = await Promise.all([
         check(dir),
         check(dir, ["."]),
@@ -3090,10 +3129,15 @@ export const wrong: number = { a: make() };
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      // In the order of the paths: the library is in node_modules.
-      expect(stdout.replace(/^.*\/(lib\.[a-z0-9.]+\.d\.ts)\(\d+,\d+\)/gm, "$1(N,N)")).toMatchInlineSnapshot(`
-        "globals.d.ts(2,12): error TS2687: All declarations of 'length' must have identical modifiers.
-        lib.es5.d.ts(N,N): error TS2687: All declarations of 'length' must have identical modifiers."
+      expect(
+        stdout
+          .split("\n")
+          .sort()
+          .join("\n")
+          .replace(/\(\d+,\d+\)/g, "(N,N)"),
+      ).toMatchInlineSnapshot(`
+        "bundled:///libs/lib.es5.d.ts(N,N): error TS2687: All declarations of 'length' must have identical modifiers.
+        globals.d.ts(N,N): error TS2687: All declarations of 'length' must have identical modifiers."
       `);
       expect(exitCode).toBe(1);
     });
@@ -6557,6 +6601,7 @@ export { linked, inLinked, ownName, ownImports, relative };
         "packages/pkg/index.js": `exports.a = 1;\n`,
         "packages/pkg/sub.js": `exports.a = 1;\n`,
       });
+      mkdirSync(join(String(dir), "node_modules"));
       symlinkSync(join(String(dir), "packages", "pkg"), join(String(dir), "node_modules", "pkg"), "junction");
       const { stdout, exitCode } = await check(dir);
       expect(stdout.replace(/\. '[^']*' implicitly/g, ". '<file>' implicitly")).toMatchInlineSnapshot(`
@@ -13883,16 +13928,6 @@ export function f<T>(rest: T) {
   });
 
   describe("startup errors", () => {
-    test("TypeScript's lib files are not installed", async () => {
-      using dir = project({ "a.ts": `export const a = 1;\n` }, { withTypeScript: false });
-      const { stdout, stderr, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"error: Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and everything else that is built in. It comes with the typescript package: bun add -d typescript"`,
-      );
-      expect(stderr).toMatchInlineSnapshot(`"Found 1 error, checked 0 files [time]"`);
-      expect(exitCode).toBe(1);
-    });
-
     test("invalid tsconfig.json", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "strict": "yes", "target": "es1", "nonsense": true } }`,
@@ -13939,11 +13974,8 @@ export function f<T>(rest: T) {
     });
 
     test("missing path arguments are reported before the project is loaded", async () => {
-      // The invalid tsconfig.json and the missing lib files are never read.
-      using dir = project(
-        { "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` },
-        { withTypeScript: false },
-      );
+      // The invalid tsconfig.json is never read.
+      using dir = project({ "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` });
       const { stdout, stderr, exitCode } = await check(dir, ["nope.ts", "src/nope"]);
       expect(stdout).toMatchInlineSnapshot(`
         "error TS6053: File '<dir>/nope.ts' not found.
@@ -14271,22 +14303,6 @@ describe.concurrent("@types/bun", () => {
     `);
     expect(exitCode).toBe(1);
   });
-});
-
-test("TypeScript 7 with the isolated linker: finds the lib files next to the real package directory", async () => {
-  using dir = project({ "index.ts": `export const first: string = [1].at(0);\n` }, { withTypeScript: false });
-  const store = join(String(dir), "node_modules", ".bun", "typescript@7.0.0", "node_modules");
-  mkdirSync(join(store, "typescript"), { recursive: true });
-  mkdirSync(join(store, "@typescript", "typescript-any-platform"), { recursive: true });
-  await Bun.write(join(store, "typescript", "package.json"), `{ "name": "typescript", "version": "7.0.0" }`);
-  symlinkSync(join(typescript, "lib"), join(store, "@typescript", "typescript-any-platform", "lib"), "junction");
-  symlinkSync(join(store, "typescript"), join(String(dir), "node_modules", "typescript"), "junction");
-  const { stdout, exitCode } = await check(dir);
-  expect(stdout).toMatchInlineSnapshot(`
-    "index.ts(1,14): error TS2322: Type 'number | undefined' is not assignable to type 'string'.
-      Type 'undefined' is not assignable to type 'string'."
-  `);
-  expect(exitCode).toBe(1);
 });
 
 describe.concurrent("--check", () => {

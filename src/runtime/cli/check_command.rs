@@ -359,16 +359,6 @@ pub(crate) fn with_package_script<R>(
     result
 }
 
-/// The directory where `bun add -g` installs packages.
-fn global_node_modules() -> Option<Vec<u8>> {
-    use bun_install::package_manager_real::package_manager_options::global_dir_path;
-    let install = bun_options_types::context::try_get().and_then(|ctx| ctx.install.as_deref());
-    let explicit = install.and_then(|install| install.global_dir.as_deref());
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let dir = global_dir_path(explicit.unwrap_or(b""), &mut buf.0)?;
-    Some([dir, b"/node_modules"].concat())
-}
-
 /// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
 /// user to notice.
 fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
@@ -463,20 +453,30 @@ fn run_quietly(
     already_read: AlreadyRead,
     then: impl FnOnce(Report) -> Report,
 ) -> Report {
-    let global = global_node_modules();
+    let request = request(cwd, project, paths, compiler_options, threads, progress);
+    bun_sema_driver::check_already_read_then(&request, already_read, then)
+}
+
+fn request<'a>(
+    cwd: &'a [u8],
+    project: Option<&'a [u8]>,
+    paths: Paths<'a>,
+    compiler_options: &'a [CompilerOption],
+    threads: usize,
+    progress: Option<&'a Progress>,
+) -> Request<'a> {
     let (paths, are_entry_points) = match paths {
         Paths::Arguments(paths) => (paths, false),
         Paths::EntryPoints(paths) => (paths, true),
     };
-    let request = Request {
+    Request {
         cwd,
         project,
         paths,
         are_entry_points,
         compiler_options,
         threads,
-        lib_dir: None,
-        global_node_modules: global.as_deref(),
+        libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         progress,
         only: None,
         order: 1,
@@ -490,8 +490,7 @@ fn run_quietly(
         checked: None,
         after_file: None,
         declaration_file_emitted: None,
-    };
-    bun_sema_driver::check_already_read_then(&request, already_read, then)
+    }
 }
 
 /// Where a report is printed.
@@ -669,8 +668,10 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
     let options: Vec<CompilerOption> = options.into_iter().collect();
     let report = check_and_report(&paths, &options);
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::is_bundled;
     use bun_sema_driver::host::to_native;
-    let is_installed = |path: &&Vec<u8>| bun_core::strings::contains(path, b"/node_modules/");
+    let is_installed =
+        |path: &&Vec<u8>| is_bundled(path) || bun_core::strings::contains(path, b"/node_modules/");
     let loaded = report
         .listed_files
         .iter()

@@ -3578,7 +3578,8 @@ pub(crate) fn mangle_scoped(name: &[u8]) -> Vec<u8> {
 /// declarations for different versions.
 const TYPESCRIPT_VERSION: [u64; 3] = [7, 0, 2];
 /// `core.Version`
-const VERSION: &[u8] = b"7.0.2";
+pub const VERSION_C: &core::ffi::CStr = c"7.0.2";
+const VERSION: &[u8] = VERSION_C.to_bytes();
 /// `core.VersionMajorMinor`
 const VERSION_MAJOR_MINOR: &[u8] = b"7.0";
 

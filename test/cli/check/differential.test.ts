@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // Small programs generated as cross products, checked by `bun check` and by TypeScript 7, which have to agree. No
@@ -47,7 +47,6 @@ const env = {
   REPL_ID: undefined,
   GITHUB_ACTIONS: undefined,
   NO_COLOR: "1",
-  BUN_INSTALL_GLOBAL_DIR: "/nowhere",
 };
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
@@ -66,8 +65,6 @@ async function checkBoth(declarations: string[], functions: string[]) {
   const sample = functions.filter((_, index) => index % every === 0);
   const source = [...declarations, ...sample.map((body, index) => `export async function f${index}${body}`)];
   using dir = tempDir("bun-check-differential", { "tsconfig.json": tsconfig, "a.ts": source.join("\n") + "\n" });
-  mkdirSync(join(String(dir), "node_modules", "@typescript"), { recursive: true });
-  symlinkSync(dirname(dirname(tsc!)), join(String(dir), "node_modules", "@typescript", "typescript-local"), "junction");
   const [theirs, ours] = await Promise.all([
     errorsOf([tsc!, "-p", ".", "--pretty", "false"], String(dir)),
     errorsOf([bunExe(), "check"], String(dir)),
@@ -549,13 +546,6 @@ async function linesOf(cmd: string[], cwd: string, root: string) {
     .sort();
 }
 
-function withTypeScript(files: Record<string, string>) {
-  const dir = tempDir("bun-check-differential", files);
-  mkdirSync(join(String(dir), "node_modules", "@typescript"), { recursive: true });
-  symlinkSync(dirname(dirname(tsc!)), join(String(dir), "node_modules", "@typescript", "typescript-local"), "junction");
-  return dir;
-}
-
 /** `run` for each of `items`, a few at a time. */
 async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
@@ -629,7 +619,8 @@ differential(
       ...Object.entries(values).flatMap(([name, all]) => all.map(value => ({ compilerOptions: { [name]: value } }))),
       ...Object.entries(others).flatMap(([name, all]) => all.map(value => ({ [name]: value }))),
     ].filter((_, i) => i % everyProject === 0);
-    using dir = withTypeScript(
+    using dir = tempDir(
+      "bun-check-differential",
       Object.fromEntries(
         cases.flatMap((options, i) => [
           [
@@ -834,7 +825,7 @@ aboutCase(
         files[`alone/${name}/${config}`] = casingConfig(more, alone[name].top);
       for (const [path, text] of Object.entries(alone[name].files)) files[`alone/${name}/${path}`] = text;
     }
-    using dir = withTypeScript(files);
+    using dir = tempDir("bun-check-differential", files);
     const root = String(dir);
 
     // Which package id a path gets, and with it which copy of a package file is kept, is a race between the threads of
@@ -896,7 +887,7 @@ aboutCase(
       files[`${index}/app/a.ts`] =
         `import { T } from "${imported}";\nexport const t: T = new T();\nexport const bad: string = 1;\n`;
     });
-    using dir = withTypeScript(files);
+    using dir = tempDir("bun-check-differential", files);
     const root = String(dir);
     const different: Record<string, object> = {};
     await inTurns([...combinations.keys()], async index => {

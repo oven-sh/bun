@@ -690,6 +690,9 @@ it("process.versions", async () => {
   // Node.js exposes the bundled SQLite version here; Bun should too.
   expect(process.versions).toHaveProperty("sqlite");
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
+
+  // The version of TypeScript that `bun check` behaves like.
+  expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);
 });
 
 it("process.config", () => {

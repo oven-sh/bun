@@ -299,8 +299,12 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--threads="))
                     .and_then(|t| t.parse().ok())
                     .unwrap_or(0),
-                lib_dir: lib_dir.as_deref().map(str::as_bytes),
-                global_node_modules: None,
+                libs: bun_sema_driver::Libs::Directory(
+                    lib_dir
+                        .as_deref()
+                        .expect("BUN_SEMA_TS_LIB: the directory of the lib.*.d.ts files")
+                        .as_bytes(),
+                ),
                 progress: progress.as_deref(),
                 only: args
                     .iter()

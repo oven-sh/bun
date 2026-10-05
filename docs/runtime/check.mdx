@@ -31,14 +31,13 @@ bun --check src/index.ts
 [`bun init`](/runtime/templating/init) does all of this for you. In an existing project, follow these steps.
 
 <Steps>
-  <Step title="Install the type declarations">
+  <Step title="Install Bun's type declarations">
 
     ```bash terminal icon="terminal"
-    bun add -d typescript @types/bun
+    bun add -d @types/bun
     ```
 
-    - `typescript` declares the types that are built into the language, such as `Array` and `Promise`.
-    - [`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
+    [`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
 
   </Step>
   <Step title="List them in tsconfig.json">
@@ -68,6 +67,8 @@ bun --check src/index.ts
 </Steps>
 
 You don't need a `tsconfig.json`. Without one, `bun check` uses [default compiler options](#without-a-tsconfigjson) and includes `@types/bun` if you have installed it.
+
+You don't need the `typescript` package either. The declarations of `Array`, `Promise`, the DOM, and the rest of TypeScript's `lib.*.d.ts` files are built into Bun. Your editor may still need the package.
 
 ## Replace `tsc`
 
@@ -523,31 +524,13 @@ declare module "*.module.css" {
 
 `@types/bun` already declares `.txt`, `.toml`, and `.html` imports.
 
-### Cannot find TypeScript's standard library
-
-`bun check` reads the declarations of `Array`, `Promise`, and the other built-in types from the `typescript` package. Install it:
-
-```bash terminal icon="terminal"
-bun add -d typescript
-```
-
-Bun looks in `node_modules` in the project directory, then in each parent directory, then in the packages you installed with `bun add -g`.
-
-### Cannot find global type 'String', or cannot read 'lib.es2025.full.d.ts'
-
-The `typescript` package in your project is older than 6.0, and `tsconfig.json` sets no `target`. The default `target` of TypeScript 7 needs declarations that older packages don't have. Upgrade the package:
-
-```bash terminal icon="terminal"
-bun add -d typescript@latest
-```
-
 ### `bun check` runs a script instead of the type checker
 
 Your `package.json` has a `check` script. Use `bun --check`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
 
 ### `bun check` and my editor disagree
 
-Your editor uses the version of `typescript` in your project. `bun check` behaves like TypeScript 7. Upgrade the package so that both follow the same rules:
+Your editor uses the version of `typescript` in your project. `bun check` behaves like TypeScript 7 and uses TypeScript 7's `lib.*.d.ts` files, whichever version you have installed. Upgrade the package so that both follow the same rules:
 
 ```bash terminal icon="terminal"
 bun add -d typescript@latest
@@ -569,12 +552,19 @@ Option names are not case-sensitive. `--target=es2022` is the same as `--target 
 
 ## Differences from `tsc`
 
-`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. These differences are intentional:
+`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. `process.versions.typescript` is the exact version.
+
+```bash terminal icon="terminal"
+bun -p process.versions.typescript
+```
+
+These differences are intentional:
 
 - **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
 - **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A misspelled compiler option gets a suggestion.** For `"strct": true`, `bun check` reports `TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?`. `tsc` reports `TS5023: Unknown compiler option 'strct'.`
+- **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
 - **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.
 

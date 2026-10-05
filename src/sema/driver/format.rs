@@ -65,6 +65,10 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
+    // It has another root.
+    if crate::host::is_bundled(path) {
+        return crate::host::to_native(path).into();
+    }
     if style.is_case_sensitive || path.starts_with(from) {
         return relative_normalized::<Posix, true>(from, path).into();
     }

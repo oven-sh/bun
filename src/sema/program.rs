@@ -1772,13 +1772,9 @@ fn lib_file(options: &Options, lib: &[u8]) -> Vec<u8> {
 }
 
 /// `GetLibFileName`: the `N` of the `lib.N.d.ts` that contains the library `lib`, a result of
-/// `lib_name`. The library directory of a TypeScript version that has not moved the library yet has
-/// it under the name itself.
-fn lib_file_stem<'a>(host: &dyn Host, options: &Options, lib: &'a [u8]) -> &'a [u8] {
-    match crate::resolve::LIB_FALLBACKS.get(lib) {
-        Some(&moved_to) if !host.is_file(&lib_file(options, lib)) => moved_to,
-        _ => lib,
-    }
+/// `lib_name`.
+fn lib_file_stem(lib: &[u8]) -> &[u8] {
+    crate::resolve::LIB_FALLBACKS.get(lib).map_or(lib, |it| *it)
 }
 
 /// `ForEachDynamicImportOrRequireCall`: it looks at each `import` and `require` in the text, and
@@ -2299,7 +2295,7 @@ impl Included<'_, '_> {
                     ReferenceKind::Lib if of_program.no_lib => (None, 1405),
                     ReferenceKind::Lib => {
                         let name = lib_name(value);
-                        let name = lib_file_stem(host, of_program, &name);
+                        let name = lib_file_stem(&name);
                         let is_there = host.is_file(&lib_file(of_program, name));
                         let found =
                             is_there.then(|| lib_path(program_resolver, of_program, name).0);
@@ -2395,7 +2391,7 @@ impl Included<'_, '_> {
         }
         for (&start, lib) in libs.iter().zip(&options.libs) {
             let reason = || {
-                let stem = lib_file_stem(host, options, lib);
+                let stem = lib_file_stem(lib);
                 let entry = [b"lib.", stem, b".d.ts"].concat();
                 let reason = IncludeReason::LibFile(options.specifies_lib.then_some(entry));
                 (reason, lib_path(resolver, options, stem).0)
@@ -3254,7 +3250,7 @@ impl<'s> Files<'s> {
         // `processAllProgramFiles`: without root files there are no libraries and no automatic type directives.
         let has_root_files = !roots.is_empty();
         for lib in options.libs.iter().filter(|_| has_root_files) {
-            let lib = lib_file_stem(host, options, lib);
+            let lib = lib_file_stem(lib);
             let (path, is_lib) = lib_path(&resolver, options, lib);
             starts.push(add(
                 &path,
@@ -3625,7 +3621,7 @@ impl<'s> Files<'s> {
         let mut lib_traces = Vec::new();
         if options.trace_resolution && options.lib_replacement && has_root_files {
             let mut libs: Vec<Vec<u8>> = (options.libs.iter())
-                .map(|lib| lib_file_stem(host, options, lib).to_vec())
+                .map(|lib| lib_file_stem(lib).to_vec())
                 .collect();
             for module in modules.iter().flatten().filter(|_| !options.no_lib) {
                 for &(kind, value, ..) in &module.hir.references {
@@ -3633,7 +3629,7 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     let name = lib_name(atoms.bytes(value));
-                    let name = lib_file_stem(host, options, &name);
+                    let name = lib_file_stem(&name);
                     if host.is_file(&lib_file(options, name)) {
                         libs.push(name.to_vec());
                     }
@@ -4534,7 +4530,7 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     let name = lib_name(value);
-                    let name = lib_file_stem(host, of_program, &name);
+                    let name = lib_file_stem(&name);
                     // `GetLibFileName`: whether such a library exists does not depend on what
                     // replaces it.
                     if host.is_file(&lib_file(of_program, name)) {

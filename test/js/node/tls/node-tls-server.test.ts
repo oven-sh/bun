@@ -1,8 +1,9 @@
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
+import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isWindows } from "harness";
 import http2 from "http2";
 import https from "https";
 import net, { AddressInfo } from "net";
@@ -1792,18 +1793,24 @@ describe("setSecureContext() on a listening server", () => {
   // A cluster worker's listen() completes when the primary answers. A call
   // made before that has to reach the listener the worker then creates.
   it("counts in a cluster worker when called before 'listening'", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr only shows up in the failure message of a worker that printed nothing.
-    expect(stdout.trim() || stderr).toBe(
-      JSON.stringify({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" }),
-    );
-    expect(exitCode).toBe(0);
+    // This process is the primary, so the test starts one process and not two.
+    const settings = cluster.settings;
+    cluster.setupPrimary({ exec: join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs"), execArgv: [] });
+    const worker = cluster.fork(bunEnv);
+    cluster.settings = settings;
+    const exited = once(worker, "exit");
+    try {
+      const served = await Promise.race([
+        once(worker, "message").then(([message]) => message),
+        exited.then(([code, signal]) => {
+          throw new Error(`the worker exited before it reported: code ${code}, signal ${signal}`);
+        }),
+      ]);
+      expect(served).toEqual({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" });
+    } finally {
+      worker.kill();
+      await exited;
+    }
   });
 });
 
@@ -1964,9 +1971,12 @@ describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of
   // connections at this payload, so loop (mirrors test-tls-client-destroy-soon.js).
+  // Under debug/ASAN each connection costs ~50-150ms (connection setup and teardown,
+  // not the payload), so 64 of them overran the 5s default timeout.
+  const connections = isDebug || isASAN ? 8 : 64;
   it("delivers the whole stream when destroySoon follows end", async () => {
     const big = Buffer.alloc(2 * 1024 * 1024, "Y");
-    for (let i = 0; i < 64; i++) {
+    for (let i = 0; i < connections; i++) {
       const { promise, resolve, reject } = Promise.withResolvers<number>();
       const server = createServer(COMMON_CERT, socket => {
         socket.on("error", reject);

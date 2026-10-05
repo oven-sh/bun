@@ -1216,7 +1216,6 @@ impl Checker<'_, '_> {
 
     /// `checkReturnExpression`. `node`: the `return` statement, or the expression body. `e`: `NONE`
     /// where nothing is returned.
-    #[allow(clippy::too_many_arguments)]
     fn check_return_expression(
         &mut self,
         file: FileId,
@@ -1283,7 +1282,6 @@ impl Checker<'_, '_> {
 
     /// `checkTypeAssignableToAndOptionallyElaborate` for a caller that reads back the reported
     /// diagnostics.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn check_assignable_with_end(
         &mut self,
         file: FileId,
@@ -1314,7 +1312,6 @@ impl Checker<'_, '_> {
 
     /// `checkTypeAssignableToAndOptionallyElaborate`. `is_effective`: `expr` is the result of
     /// `getEffectiveCheckNode`, so its enclosing parentheses are not part of it.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn check_type_assignable_to_and_optionally_elaborate(
         &mut self,
         source: TypeId,
@@ -1339,7 +1336,6 @@ impl Checker<'_, '_> {
         is_assignable
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn check_type_assignable_to_and_optionally_elaborate_worker(
         &mut self,
         source: TypeId,
@@ -1402,7 +1398,6 @@ impl Checker<'_, '_> {
     /// to the offending part of `e`.
     /// `is_effective`: `e` is the result of `getEffectiveCheckNode`, so its enclosing parentheses
     /// are not part of it.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_error(
         &mut self,
         file: FileId,
@@ -1628,7 +1623,6 @@ impl Checker<'_, '_> {
     /// one to elaborate into.
     /// `is_effective`: `next` is the result of `getEffectiveCheckNode`, so its enclosing
     /// parentheses are not part of it.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_element(
         &mut self,
         source: TypeId,

@@ -1,7 +1,7 @@
 use bun_sema::atom::Interner;
 use bun_sema::messages::text;
 use bun_sema::resolve::Host;
-use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file};
+use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file_to_look_at};
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
         let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| m.path).collect();
-        write_file(&to, &paths.join(&b"\n"[..]));
+        write_file_to_look_at(&to, &paths.join(&b"\n"[..]));
     }
 }
 
@@ -257,7 +257,7 @@ fn main() {
                     declarations_out.unwrap(),
                     bun_sema::messages::text(path)
                 );
-                write_file(&path, text);
+                write_file_to_look_at(&path, text);
             };
             // For tuning the constants of the plan without rebuilding. To be removed once the
             // constants are chosen.

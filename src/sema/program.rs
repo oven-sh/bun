@@ -2227,7 +2227,6 @@ fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensit
 /// file that would be emitted and for which `is_wrong` returns true; `is_wrong` receives whether it
 /// is a root file. Each comes with the first import or `/// <reference path>` that adds the file to
 /// the program (`preferredLocation`: the file and the span), which is where it is reported.
-#[allow(clippy::too_many_arguments)]
 fn explain_source_files(
     host: &dyn Host,
     options: &Options,
@@ -2432,7 +2431,6 @@ fn declaration_emit_output_file_path(
 /// `verifyEmitFilePath`: 5055 for an output file that is an input file, 5056 for one that two input
 /// files are emitted to. Errors reported at a position in a file go to `include_errors`. With them,
 /// `CommonSourceDirectory`, if anything depends on it.
-#[allow(clippy::too_many_arguments)]
 fn output_path_errors(
     host: &dyn Host,
     options: &Options,
@@ -3591,7 +3589,6 @@ impl<'s> Files<'s> {
     }
 
     /// Everything that depends on the file alone.
-    #[allow(clippy::too_many_arguments)]
     fn parse_and_bind(
         arena: &'s Arena,
         host: &dyn Host,
@@ -3677,7 +3674,6 @@ impl<'s> Files<'s> {
         module.transient_symbols.clear();
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn load_one<'r>(
         arena: &'s Arena,
         host: &dyn Host,

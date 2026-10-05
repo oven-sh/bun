@@ -434,7 +434,6 @@ fn run(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_quietly(
     cwd: &[u8],
     project: Option<&[u8]>,

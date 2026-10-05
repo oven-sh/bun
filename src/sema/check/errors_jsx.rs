@@ -584,7 +584,6 @@ impl Checker<'_, '_> {
     }
 
     /// `checkApplicableSignatureForJsxCallLikeElement`
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn check_applicable_signature_for_jsx_call_like_element(
         &mut self,
         file: FileId,

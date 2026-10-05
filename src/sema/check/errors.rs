@@ -2569,7 +2569,6 @@ impl Checker<'_, '_> {
     }
 
     /// `checkForDisallowedESSymbolOperand`: 2469. `e`: `left op right` or `left op= right`.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn check_for_disallowed_es_symbol_operand(
         &mut self,
         file: FileId,

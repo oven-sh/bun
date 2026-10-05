@@ -40,11 +40,20 @@ pub fn read_file(path: &str) -> Option<Vec<u8>> {
     bun_sys::File::read_from(bun_core::Fd::cwd(), path.as_bytes()).ok()
 }
 
-/// Returns whether it is written. Its directory is created if there is none.
-pub fn write_file(path: &str, contents: &[u8]) -> bool {
-    let _ = bun_sys::mkdir_recursive(&path.as_bytes()[..rfind(path, "/").unwrap_or(0)]);
+/// Its directory is created if there is none.
+fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
+    if let Some(end) = rfind(path, "/").filter(|&end| end > 0) {
+        bun_sys::mkdir_recursive(&path.as_bytes()[..end])?;
+    }
     let path = bun_core::ZBox::from_bytes(path);
-    bun_sys::File::write_file(bun_core::Fd::cwd(), &path, contents).is_ok()
+    bun_sys::File::write_file(bun_core::Fd::cwd(), &path, contents)
+}
+
+/// For a file that is only written to be looked at: a failure is reported, and the run goes on.
+pub fn write_file_to_look_at(path: &str, contents: &[u8]) {
+    if let Err(error) = write_file(path, contents) {
+        error_line!("cannot write {path}: {error}");
+    }
 }
 
 // The searches of `str`, with Bun's. What is searched for is ASCII, so the text can be cut there.
@@ -2047,8 +2056,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             if let (Some(out), Some(_)) = (setup.out, &difference) {
                                 let dir = format!("{out}/{}", suite.name);
                                 let path = format!("{dir}/{configured}.{}", kind.extension());
-                                write_file(&path, ours);
-                                write_file(&format!("{path}.expected"), expected);
+                                write_file_to_look_at(&path, ours);
+                                write_file_to_look_at(&format!("{path}.expected"), expected);
                             }
                             (kind, difference)
                         };
@@ -2231,7 +2240,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 {
                                     let dir = format!("{out}/{}", suite.name);
                                     let path = format!("{dir}/{configured}.errors.txt");
-                                    write_file(&path, ours.as_bytes());
+                                    write_file_to_look_at(&path, ours.as_bytes());
                                 }
                                 let note = if level == Level::Differs {
                                     let (a, b) = (heads(top_of(&ours)), heads(top_of(&expected)));
@@ -2439,8 +2448,8 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
                 )
             })
             .collect();
-        if !write_file(&path, (lines.join("\n") + "\n").as_bytes()) {
-            error_line!("cannot write {path}");
+        if let Err(error) = write_file(&path, (lines.join("\n") + "\n").as_bytes()) {
+            error_line!("cannot write {path}: {error}");
             return false;
         }
     }

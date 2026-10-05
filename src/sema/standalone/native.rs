@@ -2,8 +2,6 @@
 //! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD, and a bump allocator
 //! instead of mimalloc. Never part of the real build.
 
-#![allow(clippy::missing_safety_doc)]
-
 use core::ffi::{c_char, c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────

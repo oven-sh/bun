@@ -3732,7 +3732,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `recursiveTypeRelatedTo`: the cached result if there is one; `Maybe` if the comparison is in
     /// progress or if both types expand infinitely; otherwise a structural comparison. `sd`, `td`:
     /// the `TypeData` of `source` and `target`.
-    #[allow(clippy::too_many_arguments)]
     fn recursive_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -5126,7 +5125,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The `default` case of the second `switch` of `structuredTypeRelatedToWorker`. `sd`, `td`:
     /// the `TypeData` of `source` and `target`.
-    #[allow(clippy::too_many_arguments)]
     fn objects_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -5316,7 +5314,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// The four comparisons of `structuredTypeRelatedToWorker` under `reportStructuralErrors`,
     /// which is `REPORT` here.
     /// `primitive_or_keyword`: `sourceIsPrimitive`, and whether `source` represents `object`.
-    #[allow(clippy::too_many_arguments)]
     #[inline]
     fn object_members_related_to<const REPORT: bool>(
         &mut self,
@@ -5660,7 +5657,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// where `members(source)` lacks them.
     /// `both`: set to the `members` of `source` and of `target`, if they were requested and are
     /// final.
-    #[allow(clippy::too_many_arguments)]
     fn properties_related_to_noting<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -5983,7 +5979,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `propertyRelatedTo`. `of`: `source` and `target`, the two types that own the properties.
-    #[allow(clippy::too_many_arguments)]
     fn property_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -6253,7 +6248,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `sd`, `td`: the `TypeData` of `source` and `target`. `both`: their `members`, if known.
-    #[allow(clippy::too_many_arguments)]
     fn signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,

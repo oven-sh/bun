@@ -1784,7 +1784,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getAccessibleSymbolChainFromSymbolTable`
-    #[allow(clippy::too_many_arguments)]
     fn chain_from_table(
         &mut self,
         symbol: Sym,
@@ -1804,7 +1803,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `trySymbolTable`
-    #[allow(clippy::too_many_arguments)]
     fn try_symbol_table(
         &mut self,
         symbol: Sym,
@@ -1974,7 +1972,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getCandidateListForSymbol`
-    #[allow(clippy::too_many_arguments)]
     fn candidate_list_for_symbol(
         &mut self,
         symbol: Sym,
@@ -2018,7 +2015,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isAccessible`
-    #[allow(clippy::too_many_arguments)]
     fn is_accessible(
         &mut self,
         symbol: Sym,

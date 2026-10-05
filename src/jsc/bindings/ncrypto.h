@@ -419,7 +419,7 @@ private:
 
 class Ec final {
 public:
-    static int GetCurveIdFromName(const char* name);
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying

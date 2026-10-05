@@ -725,11 +725,17 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
+        kind: bun_ast::ImportKind,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
+        let kind = BunString::static_(kind.label());
+        self.bun_vm().as_mut().on_resolve_depth += 1;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnResolvePlugins(self, ns, path, source, &kind)
+        });
+        self.bun_vm().as_mut().on_resolve_depth -= 1;
+        let result = result?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -1444,6 +1450,7 @@ extern "C" fn Zig__GlobalObject__resolve(
     specifier: &BunString,
     source: &BunString,
     query: &mut BunString,
+    dynamic_import: bool,
 ) {
     crate::mark_binding();
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -1451,7 +1458,11 @@ extern "C" fn Zig__GlobalObject__resolve(
         specifier,
         source,
         Some(query),
-        crate::virtual_machine::ResolveMode::Esm,
+        if dynamic_import {
+            crate::virtual_machine::ResolveMode::DynamicImport
+        } else {
+            crate::virtual_machine::ResolveMode::Esm
+        },
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
         Ok(Err(value)) => *res = ErrorableString::err(value),
@@ -1521,6 +1532,7 @@ unsafe extern "C" {
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
+        kind: &BunString,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
     safe fn Bun__resolveVirtualModule(

@@ -794,11 +794,16 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
       import { join } from "node:path";
 
       const target = join(import.meta.dir, "real.js");
+      const kinds = {};
 
       Bun.plugin({
         name: "redirect-to-file",
         setup(build) {
           build.onResolve({ filter: /^implicit\\.mod$/ }, () => ({ path: target }));
+          build.onResolve({ filter: /^(dynamic|required|require-resolve|resolve|meta)-kind$/ }, args => {
+            kinds[args.path] = args.kind;
+            return { path: target };
+          });
           build.onResolve({ filter: /^explicit\\.mod$/ }, () => ({ path: target, namespace: "file" }));
           build.onResolve({ filter: /^empty-namespace\\.mod$/ }, () => ({ path: target, namespace: "" }));
           build.onResolve({ filter: /^custom\\.mod$/ }, () => ({ path: "inner", namespace: "custom" }));
@@ -826,6 +831,26 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
           requireComputed: await attempt(() => require("implicit" + ".mod").value),
           resolveSync: await attempt(() => Bun.resolveSync("implicit.mod", import.meta.dir)),
           importMetaResolve: await attempt(() => import.meta.resolve("implicit.mod")),
+          dynamicKind: await attempt(async () => {
+            await import("dynamic-kind");
+            return kinds["dynamic-kind"];
+          }),
+          requireKind: await attempt(() => {
+            require("required-kind");
+            return kinds["required-kind"];
+          }),
+          requireResolveKind: await attempt(() => {
+            require.resolve("require-resolve-kind");
+            return kinds["require-resolve-kind"];
+          }),
+          resolveKind: await attempt(() => {
+            Bun.resolveSync("resolve-kind", import.meta.dir);
+            return kinds["resolve-kind"];
+          }),
+          metaKind: await attempt(() => {
+            import.meta.resolve("meta-kind");
+            return kinds["meta-kind"];
+          }),
         }),
       );
     `,
@@ -851,6 +876,11 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
     requireComputed: "redirected",
     resolveSync: target,
     importMetaResolve: Bun.pathToFileURL(target).href,
+    dynamicKind: "dynamic-import",
+    requireKind: "require-call",
+    requireResolveKind: "require-resolve",
+    resolveKind: "import-statement",
+    metaKind: "import-statement",
   });
   expect(exitCode).toBe(0);
 });
@@ -1650,5 +1680,50 @@ describe.concurrent("onResolve", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+it.concurrent("runtime onResolve distinguishes static imports from reentrant dynamic resolution", async () => {
+  using dir = tempDir("plugin-import-kinds", {
+    "target.mjs": `export const value = 42;`,
+    "static.mjs": `export { value } from "static-kind.mod";`,
+    "entry.mjs": `
+      const calls = [];
+      Bun.plugin({
+        name: "import kinds",
+        setup(build) {
+          build.onResolve({ filter: /-kind\\.mod$/ }, args => {
+            calls.push([args.path, args.kind]);
+            if (args.path === "dynamic-kind.mod") {
+              Bun.resolveSync("nested-kind.mod", import.meta.dir);
+            }
+            return { path: import.meta.dir + "/target.mjs" };
+          });
+        },
+      });
+      const dynamic = await import("dynamic-kind.mod");
+      const staticallyImported = await import("./static.mjs");
+      console.log(JSON.stringify({ calls, values: [dynamic.value, staticallyImported.value] }));
+    `,
+  });
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ result: stdout.trim() ? JSON.parse(stdout) : null, stderr, exitCode }).toEqual({
+    result: {
+      calls: [
+        ["dynamic-kind.mod", "dynamic-import"],
+        ["nested-kind.mod", "import-statement"],
+        ["static-kind.mod", "import-statement"],
+      ],
+      values: [42, 42],
+    },
+    stderr: "",
+    exitCode: 0,
   });
 });

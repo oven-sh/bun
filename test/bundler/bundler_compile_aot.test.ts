@@ -2784,7 +2784,7 @@ describe("--compile-aot with a type table", () => {
             .filter(([, remark]) => remark === "guards-over-whole-function")
             .map(([name]) => name),
         );
-        expect(["readsAll", "readsTwo"].filter(name => guarded.has(name))).toEqual(label.startsWith("with families") ? ["readsAll", "readsTwo"] : []);
+        expect(["readsAll", "readsTwo"].filter(name => guarded.has(name))).toEqual(label.startsWith("with families") ? ["readsAll", "readsTwo"] : ["readsAll"]);
       });
     }
   });

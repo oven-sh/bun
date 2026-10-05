@@ -216,6 +216,8 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
+    /// Number of active runtime onResolve calls.
+    pub(crate) on_resolve_depth: u32,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -7659,8 +7661,27 @@ fn run_on_resolve(
     importer: &bun_core::String,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let specifier = specifier.to_utf8();
-    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
-        return Ok(None);
+    let (namespace, path) = match ModuleLoader::plugin_namespace_and_path(&specifier) {
+        Some(parts) => parts,
+        None => {
+            let vm = global.bun_vm();
+            if specifier.is_empty()
+                || !bun_resolver::is_package_path(&specifier)
+                || importer.length() == 0
+                || vm.on_resolve_depth != 0
+                || vm.transpiler.resolver.custom_dir_paths.is_some()
+                || ModuleLoader::HardcodedModule::Alias::get(
+                    &specifier,
+                    bun_ast::Target::Bun,
+                    Default::default(),
+                )
+                .is_some()
+            {
+                return Ok(None);
+            }
+            // Only onResolve admits bare names; onLoad keeps its builtin-safe pre-filter.
+            (&b""[..], specifier.slice())
+        }
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();

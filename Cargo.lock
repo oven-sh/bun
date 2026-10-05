@@ -1377,6 +1377,7 @@ dependencies = [
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
+ "bun_sys",
  "bun_threading",
 ]
 

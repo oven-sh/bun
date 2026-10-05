@@ -15,6 +15,24 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
+/// `println!` and `eprintln!`, which nothing in Bun uses. The streams of the standard library keep
+/// the output capture of its panic hook alive, and so its backtrace printer, which imports the
+/// unwinder from libgcc_s.
+macro_rules! output_line {
+    ($($arguments:tt)*) => {
+        write_line(bun_sys::File::stdout(), format_args!($($arguments)*))
+    };
+}
+macro_rules! error_line {
+    ($($arguments:tt)*) => {
+        write_line(bun_sys::File::from_fd(bun_core::Fd::stderr()), format_args!($($arguments)*))
+    };
+}
+
+fn write_line(to: bun_sys::File, line: std::fmt::Arguments<'_>) {
+    let _ = to.write_all(format!("{line}\n").as_bytes());
+}
+
 /// `srcFolder`
 const SRC: &str = "/.src";
 /// `testLibFolder`
@@ -1133,7 +1151,10 @@ fn first_difference(ours: &[u8], expected: &[u8]) -> Option<String> {
     if ours == expected {
         return None;
     }
-    let (mut ours, mut expected) = (ours.split(|&b| b == b'\n'), expected.split(|&b| b == b'\n'));
+    let (mut ours, mut expected) = (
+        bun_core::strings::split(ours, b"\n"),
+        bun_core::strings::split(expected, b"\n"),
+    );
     let mut line = 1;
     loop {
         let (a, b) = (ours.next(), expected.next());
@@ -1776,7 +1797,7 @@ fn run_one(
         .iter()
         .filter(|it| matches!(it.code, 5055 | 5056));
     let blocked: Vec<&[u8]> = blocked
-        .filter_map(|it| it.text.split(|&b| b == b'\'').nth(1))
+        .filter_map(|it| bun_core::strings::split(&it.text, b"'").nth(1))
         .collect();
     declarations.retain(|it| !blocked.contains(&&it.2[..]));
     // `newCompilationResult`: in the order of the inputs, then "any unhandled outputs, ordered by
@@ -2204,8 +2225,8 @@ impl Watched {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     for (name, since) in IN_PROGRESS.lock().unwrap().iter().flatten() {
                         if since.elapsed() > std::time::Duration::from_secs(600) {
-                            eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
-                            std::process::exit(3);
+                            error_line!("STUCK: {name} has been under way for ten minutes. The run ends here.");
+                            std::process::abort();
                         }
                     }
                 }
@@ -2252,7 +2273,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     };
     let number = |name: &str| flag(name).and_then(|n| n.parse().ok());
     let (Some(lib_dir), Some(test_lib)) = (flag("lib"), flag("testlib")) else {
-        eprintln!("--lib and --testlib are required");
+        error_line!("--lib and --testlib are required");
         return false;
     };
     let (only, out) = (flag("only"), flag("out"));
@@ -2262,7 +2283,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         Some(path) => match OwnedBundle::read(&path) {
             Some(bundle) => Some(bundle),
             None => {
-                eprintln!("cannot read {path}");
+                error_line!("cannot read {path}");
                 return false;
             }
         },
@@ -2285,11 +2306,11 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     let mut all = Vec::new();
     for spec in args.iter().filter(|a| !a.starts_with("--")) {
         let [name, cases, baselines, names] = spec.split('=').collect::<Vec<_>>()[..] else {
-            eprintln!("not <name>=<tests>=<baselines>=<names>: {spec}");
+            error_line!("not <name>=<tests>=<baselines>=<names>: {spec}");
             return false;
         };
         let Some(listed) = setup.read(names) else {
-            eprintln!("cannot read {names}");
+            error_line!("cannot read {names}");
             return false;
         };
         let listed = String::from_utf8_lossy(&listed);
@@ -2304,17 +2325,17 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     }
     let at_least = |level: Level| all.iter().filter(|o| o.level >= level).count();
     let percent = |n: usize| n as f64 * 100.0 / all.len().max(1) as f64;
-    println!("{} tests (each configuration counts)", all.len());
+    output_line!("{} tests (each configuration counts)", all.len());
     for (level, what) in [
         (Level::Codes, "the same errors at the same places"),
         (Level::Words, "and in the same words"),
         (Level::Spans, "and as long: all but the related information"),
     ] {
         let n = at_least(level);
-        println!("{n:>6} {:>6.2}%  {what}", percent(n));
+        output_line!("{n:>6} {:>6.2}%  {what}", percent(n));
     }
     let n = at_least(Level::All);
-    println!(
+    output_line!(
         "{n:>6} {:>6.2}%  of {} Errors, byte for byte",
         percent(n),
         all.len()
@@ -2322,9 +2343,11 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     let mut failed: Vec<&Outcome> = all.iter().filter(|o| o.level < Level::All).collect();
     failed.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     for outcome in failed.iter().take(50) {
-        println!(
+        output_line!(
             "FAIL Errors {} {:?} {}",
-            outcome.name, outcome.level, outcome.note
+            outcome.name,
+            outcome.level,
+            outcome.note
         );
     }
     let mut are_the_others_the_same = true;
@@ -2337,7 +2360,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         }
         let same = compared.iter().filter(|it| it.1.is_none()).count();
         are_the_others_the_same &= same == compared.len();
-        println!(
+        output_line!(
             "{same:>6} {:>6.2}%  of {} {kind:?}, byte for byte",
             same as f64 * 100.0 / compared.len() as f64,
             compared.len()
@@ -2346,7 +2369,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             .iter()
             .filter_map(|it| Some((it.0, it.1.as_ref()?)));
         for (outcome, difference) in differences.take(50) {
-            println!("FAIL {kind:?} {} {difference}", outcome.name);
+            output_line!("FAIL {kind:?} {} {difference}", outcome.name);
         }
     }
     if let Some(path) = flag("report") {
@@ -2365,7 +2388,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             })
             .collect();
         if std::fs::write(&path, lines.join("\n") + "\n").is_err() {
-            eprintln!("cannot write {path}");
+            error_line!("cannot write {path}");
             return false;
         }
     }

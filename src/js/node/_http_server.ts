@@ -15,9 +15,11 @@ const {
   validateLinkHeaderValue,
   validateBoolean,
   validateInteger,
+  validateNumber,
   validateFunction,
   validateOneOf,
 } = require("internal/validators");
+const { kArmHandshakeTimeout } = require("internal/net/symbols");
 const {
   ConnResetException,
   ErrnoException,
@@ -281,10 +283,9 @@ function normalizeServerTls(tls) {
 
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
-// this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
-function connectionListener(this: Server, socket) {
-  // A tunnel socket that was handed to 'connect'/'upgrade' has left the native listener: re-emitted, it is a connection like any other.
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
+// an HTTPS server must TLS-wrap the others before handing them to the HTTP parser.
+// https://github.com/nodejs/node/blob/main/lib/_http_server.js
+function connectionListenerHTTP1(this: Server, socket) {
   (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
     http1Options: {
       IncomingMessage: this[kIncomingMessage],
@@ -302,6 +303,62 @@ interface Server extends NodeHTTPServer {
   httpAllowHalfOpen: boolean;
   blockList?: import("node:net").BlockList;
 }
+function tlsVersionName(version) {
+  switch (version) {
+    case 0x0301:
+      return "TLSv1";
+    case 0x0302:
+      return "TLSv1.1";
+    case 0x0303:
+      return "TLSv1.2";
+    case 0x0304:
+      return "TLSv1.3";
+    default:
+      return undefined;
+  }
+}
+
+function connectionListener(this: Server, socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
+  const tlsOptions = this[tlsSymbol];
+  if (!tlsOptions) {
+    connectionListenerHTTP1.$call(this, socket);
+    return;
+  }
+
+  let wrapped;
+  try {
+    const { TLSSocket } = require("node:tls");
+    wrapped = new TLSSocket(socket, {
+      ...tlsOptions,
+      isServer: true,
+      servername: tlsOptions.serverName,
+      minVersion: tlsVersionName(tlsOptions.minVersion),
+      maxVersion: tlsVersionName(tlsOptions.maxVersion),
+      ALPNProtocols: this.ALPNProtocols,
+      ALPNCallback: this.ALPNCallback,
+      SNICallback: this._SNICallback,
+    });
+  } catch (err) {
+    socket.destroy();
+    this.emit("error", err);
+    return;
+  }
+  wrapped.server = this;
+  wrapped._requestCert = tlsOptions.requestCert;
+  wrapped._rejectUnauthorized = tlsOptions.rejectUnauthorized;
+  require("node:net").Server.prototype[kArmHandshakeTimeout].$call(this, wrapped);
+}
+
+function secureConnectionListener(this: Server, socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
+  connectionListenerHTTP1.$call(this, socket);
+}
+
+function tlsClientErrorListener(this: Server, err, socket) {
+  if (!this.emit("clientError", err, socket)) socket.destroy(err);
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -426,6 +483,7 @@ function Server(options, callback): void {
         sessionTimeout: sessionTimeout ?? 0,
         sigalgs: options.sigalgs,
         ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
+        allowPartialTrustChain: tlsOptions.allowPartialTrustChain,
         passphrase,
         secureOptions,
         minVersion,
@@ -434,11 +492,21 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+      this._SNICallback = options.SNICallback;
+      this._ALPNCallback = options.ALPNCallback;
+      const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(handshakeTimeout, "options.handshakeTimeout", 0);
+      this._handshakeTimeout = handshakeTimeout;
     }
   }
 
   this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
+
+  if (this[tlsSymbol]) {
+    this.on("secureConnection", secureConnectionListener);
+    this.on("tlsClientError", tlsClientErrorListener);
+  }
 
   if (callback) this.on("request", callback);
   return this;

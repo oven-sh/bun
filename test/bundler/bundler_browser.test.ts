@@ -103,11 +103,11 @@ describe("bundler", () => {
         const odd = Buffer.from([0x61, 0x62, 0x63]);
         console.log(odd.indexOf("c", 0, "ucs2"), odd.includes("c", 0, "ucs2"));
         console.log(odd.lastIndexOf("c", 0, "ucs2"), odd.indexOf("c", 0, "utf16le"));
-        // Odd-length haystack plus a Uint8Array value: Node.js marks "not found"
-        // by comparing the byte result against the unrounded haystack length, so
-        // it reports the last unit rather than -1. Truncating the bounds without
-        // reproducing that marker turns these into -1. The trailing odd byte of
-        // the *value* is dropped, so 0x63 0x01 reads as 0x63 0x00.
+        // Odd-length haystack plus a Uint8Array value: a miss is -1, for a string
+        // value and a Uint8Array value alike. Node.js rounds the search range down
+        // to whole 2-byte units before searching, so the trailing odd byte of the
+        // haystack is never searched. The trailing odd byte of the *value* is
+        // dropped too, so 0x63 0x01 reads as 0x63 0x00.
         const odd5 = Buffer.from([0x61, 0x62, 0x63, 0x61, 0x62]);
         console.log(odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"), odd5.includes(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
         console.log(odd5.indexOf(new Uint8Array([0x63, 0x01]), 0, "ucs2"), odd5.indexOf(new Uint8Array([0xff, 0xff]), 0, "ucs2"));
@@ -115,13 +115,29 @@ describe("bundler", () => {
         console.log(odd5.indexOf(new Uint8Array([0x00, 0x61, 0x00, 0x62, 0x00]), 0, "ucs2"));
         // Odd-length value: the trailing byte is not half-compared.
         console.log(odd.indexOf(new Uint8Array([0x00, 0x61, 0x62]), 0, "ucs2"));
-        // Scope note: lastIndexOf(val, undefined, "utf16le") returns 5 where
-        // Node returns 10. That is pre-existing on main (reproducible without
-        // this change, with a plain Buffer value) and is left alone here.
-        // The end argument bounds the search range (Node v26; local Node v25
-        // lacks it, so expectations come from the issue #43655 table).
+        // The end argument bounds the search range (Node v26).
         console.log(b.indexOf("c", 0, 2), b.lastIndexOf("c", undefined, 4));
         console.log(b.lastIndexOf("a", 5, 4));
+        // end beyond the buffer length, and end of 0, are both clamped.
+        console.log(b.indexOf("a", 0, 999), b.lastIndexOf("a", 0, 999), b.includes("a", 0, 999));
+        console.log(b.indexOf("a", 0, 0), b.lastIndexOf("a", 0, 0), b.includes("a", 0, 0));
+        // A negative end clamps to 0, so a non-empty value misses and an empty
+        // one still reports the offset.
+        console.log(b.indexOf("a", 0, -1), b.lastIndexOf("a", 0, -1), b.includes("a", 0, -1));
+        console.log(b.indexOf("", 0, 0), b.lastIndexOf("", 0, 0), b.includes("", 0, 0));
+        console.log(b.indexOf("", 0, -1), b.lastIndexOf("", 0, -1));
+        console.log(b.indexOf("c", 0, NaN), b.lastIndexOf("a", 0, NaN));
+        // end before byteOffset: forward misses, backward clamps into range.
+        console.log(b.indexOf("c", 5, 2), b.lastIndexOf("a", 5, 2));
+        // end combined with an odd-length haystack: the range is rounded down to
+        // whole 2-byte units, so end of 4 and end of 5 search the same range.
+        console.log(odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, 4, "ucs2"), odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, 5, "ucs2"));
+        console.log(odd5.lastIndexOf(new Uint8Array([0x00, 0x61]), 0, 4, "ucs2"));
+        // Node.js tests whether the value fits against the rounded search range, so
+        // a value that would start on the trailing odd byte is rejected outright
+        // rather than read one unit past the end.
+        console.log(odd.indexOf(new Uint8Array([0x61, 0x62]), 1, "ucs2"), odd.includes(new Uint8Array([0x61, 0x62]), 1, "ucs2"));
+        console.log(odd.lastIndexOf(new Uint8Array([0x61, 0x62]), 1, "ucs2"), odd.indexOf(new Uint8Array([0x61, 0x62]), 1, "utf16le"));
         // Thrown errors carry code + message.
         try {
           b.indexOf({});
@@ -145,7 +161,8 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      // The values that Node.js prints for the same code (end-arg lines: v26 oracle).
+      // Every expected value below is the stdout Node.js v26.10.0 prints for this
+      // exact entry, captured from the official darwin-arm64 binary.
       stdout: `
         0 6 true
         3 3
@@ -154,13 +171,24 @@ describe("bundler", () => {
         true
         -1 false
         -1 -1
-        4 true
-        4 4
-        4 4
-        4
-        2
+        -1 false
+        -1 -1
+        -1 -1
+        -1
+        -1
         -1 2
         3
+        0 0 true
+        -1 -1 false
+        -1 -1 false
+        0 0 true
+        0 0
+        -1 -1
+        -1 0
+        -1 -1
+        -1
+        -1 false
+        0 -1
         ERR_INVALID_ARG_TYPE The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received an instance of Object
         ERR_UNKNOWN_ENCODING Unknown encoding: nope
         ERR_UNKNOWN_ENCODING Unknown encoding:\x20

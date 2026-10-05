@@ -814,14 +814,7 @@ function bidirectionalIndexOf(buffer, val, byteOffset, end, encoding, dir) {
       if (dir && found >= searchEnd) return -1;
       return found;
     }
-    return arrayIndexOf(
-      searchEnd < buffer.length ? buffer.slice(0, searchEnd) : buffer,
-      [val],
-      offset,
-      encoding,
-      dir,
-      false,
-    );
+    return arrayIndexOf(searchEnd < buffer.length ? buffer.slice(0, searchEnd) : buffer, [val], offset, encoding, dir);
   }
 
   // Special case: looking for an empty value returns the clamped offset,
@@ -858,21 +851,13 @@ function bidirectionalIndexOf(buffer, val, byteOffset, end, encoding, dir) {
     if (ucs2Search) searchEnd -= searchEnd % 2;
     haystack = buffer.slice(0, searchEnd);
   }
-  return arrayIndexOf(haystack, val, offset, encoding, dir, valIsString);
+  return arrayIndexOf(haystack, val, offset, encoding, dir);
 }
 
-function arrayIndexOf(arr, val, byteOffset, encoding, dir, valIsString) {
+function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
   let indexSize = 1;
   let arrLength = arr.length;
   let valLength = val.length;
-  // Node.js marks "not found" for a UTF-16 search by testing the byte result
-  // against the haystack length. A string value rounds that length down to whole
-  // 2-byte units first, so the marker can never be a real match and the result
-  // is -1 as usual; a Uint8Array value does not, so on an odd-length haystack
-  // Node.js reports the last unit instead of -1. Mirrored, not corrected -- see
-  // `node_buffer.cc` `IndexOfBuffer`.
-  let notFound = -1;
-
   if (encoding !== undefined) {
     encoding = String(encoding).toLowerCase();
     if (encoding === "ucs2" || encoding === "ucs-2" || encoding === "utf16le" || encoding === "utf-16le") {
@@ -880,11 +865,11 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir, valIsString) {
         return -1;
       }
       indexSize = 2;
-      // Node.js gives up before searching when the value cannot fit, so the
-      // `notFound` marker above does not apply to those cases either. Both
-      // tests are in bytes, as in `IndexOfBuffer`, against a haystack length
-      // that `IndexOfString` has already rounded down to whole units.
-      const fitLength = valIsString ? arr.length - (arr.length % indexSize) : arr.length;
+      // Node.js gives up before searching when the value cannot fit, as in
+      // `IndexOfString` / `IndexOfBuffer`. Both tests are in bytes against
+      // `search_end`, which those round down to whole 2-byte units for UCS2
+      // whether the value is a string or a Uint8Array.
+      const fitLength = arr.length - (arr.length % indexSize);
       if (val.length > fitLength || (dir && val.length + byteOffset > fitLength)) {
         return -1;
       }
@@ -896,10 +881,6 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir, valIsString) {
       arrLength = Math.trunc(arrLength / 2);
       valLength = Math.trunc(valLength / 2);
       byteOffset = Math.trunc(byteOffset / 2);
-      if (!valIsString && arr.length % 2 !== 0) {
-        // See `notFound` above: Node.js returns `haystack.length - 1` here.
-        notFound = arr.length - 1;
-      }
     }
   }
 
@@ -941,7 +922,7 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir, valIsString) {
     }
   }
 
-  return notFound;
+  return -1;
 }
 
 function unknownEncodingError(encoding) {

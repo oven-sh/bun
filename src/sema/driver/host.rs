@@ -185,8 +185,8 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
-    /// See `AlreadyRead`. `None` for a caller that has read nothing.
-    already_read: Option<bun_threading::Guarded<AlreadyRead>>,
+    /// See `AlreadyRead`.
+    already_read: AlreadyRead,
     /// What `already_read` adds to the listing of a directory, by the path of the directory.
     in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Host::times`, in nanoseconds.
@@ -194,8 +194,8 @@ pub struct Disk {
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as
-/// UTF-8 without a byte order mark. The first `Host::read` of such a file takes the text, so the
-/// file is not opened. `bun build --check` passes what the bundler has read.
+/// UTF-8 without a byte order mark. Such a file is not opened. Several programs may read it.
+/// `bun build --check` passes what the bundler has read.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -339,8 +339,7 @@ impl Disk {
         Disk {
             threads,
             in_memory: InMemory::by_directory(&already_read),
-            already_read: (!already_read.is_empty())
-                .then(|| bun_threading::Guarded::new(already_read)),
+            already_read,
             caches: Default::default(),
             case_sensitive: is_file_system_case_sensitive(),
             directories: ShardedMap::default(),
@@ -381,11 +380,15 @@ impl Disk {
     }
 
     /// Whether the entries of `path` are queried from the system every time: true for the roots,
-    /// which on Windows are not directories, and neither is a server.
+    /// which on Windows are not directories. Neither is a server, and `C:` names the working
+    /// directory on that drive.
     fn is_above_listings(path: &[u8]) -> bool {
-        // `(length, 0)`: there is no share in it.
-        let is_server = |path| matches!(windows_volume_name_len(to_native(path)), (3.., 0));
-        path.is_empty() || cfg!(windows) && (path == b"/" || is_server(path))
+        // `(length, 0)`: a drive, or a server without a share.
+        let is_volume = |path: &[u8]| {
+            let native = to_native(path);
+            windows_volume_name_len(native) == (native.len(), 0)
+        };
+        path.is_empty() || cfg!(windows) && (path == b"/" || is_volume(path))
     }
 
     fn directory(&self, path: &[u8]) -> &Directory {
@@ -496,7 +499,16 @@ impl Drop for Disk {
 
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
-    let directory = match bun_sys::open_dir_absolute(to_native(path)) {
+    // `C:` names the working directory on that drive.
+    let drive;
+    let native = match to_native(path) {
+        [_, b':'] if cfg!(windows) => {
+            drive = [to_native(path), b"/"].concat();
+            &drive[..]
+        }
+        native => native,
+    };
+    let directory = match bun_sys::open_dir_absolute(native) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
         Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Directory::Missing;
@@ -560,9 +572,8 @@ fn is_file_system_case_sensitive() -> bool {
 }
 
 /// `packagejson.Parse`, with Bun's JSON parser. That one also takes strings in single quotes and
-/// the number literals of JavaScript, which typescript-go refuses. `as_bun_install_does`: comments
-/// and trailing commas too.
-pub fn parse_package_json(arena: &Arena, text: &[u8], as_bun_install_does: bool) -> Option<Json> {
+/// the number literals of JavaScript, which typescript-go refuses.
+fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     use bun_ast::e::{JsonValue, ObjectJSON};
     use bun_parsers::json::ParsedJson;
     fn json_of_object(object: &ObjectJSON, has_duplicates: bool) -> Json {
@@ -598,20 +609,14 @@ pub fn parse_package_json(arena: &Arena, text: &[u8], as_bun_install_does: bool)
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
     let mut log = bun_ast::Log::init();
-    let parse = if as_bun_install_does {
-        ParsedJson::parse_package_json
-    } else {
-        ParsedJson::parse_json
-    };
-    let parsed = parse(&source, &mut log).ok()?;
+    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;
     };
     // The parser stops at the end of the first value. The object of an empty file has no `}`.
     let end = usize::try_from(root.close_brace_loc.start).ok()? + 1;
     // The only warning is about a duplicate key.
-    (as_bun_install_does || is_all_whitespace(&text[end..]))
-        .then(|| json_of_object(root.get(), log.warnings > 0))
+    is_all_whitespace(&text[end..]).then(|| json_of_object(root.get(), log.warnings > 0))
 }
 
 impl Host for Disk {
@@ -623,10 +628,8 @@ impl Host for Disk {
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if let Some(already_read) = &self.already_read
-            && let Some(text) = already_read.lock().remove(path)
-        {
-            return Some(Cow::Owned(text));
+        if let Some(text) = self.already_read.get(path) {
+            return Some(Cow::Owned(text.clone()));
         }
         let _reading = Spent::on(self, Phase::Read);
         let Split { parent, name } = split(path);
@@ -723,7 +726,7 @@ impl Host for Disk {
         file
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        parse_package_json(arena, text, false)
+        parse_package_json(arena, text)
     }
     fn loaded(&self) {
         self.caches.drop_those_of_the_parser();

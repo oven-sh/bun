@@ -1492,7 +1492,7 @@ pub(crate) mod command {
         // `bun --check` is `bun check`, also where that is a script.
         if tag == Tag::AutoCommand && ctx.runtime_options.check {
             ::bun_bunfig::arguments::load_config(Tag::InstallCommand, None, ctx)?;
-            super::check_command::CheckCommand::exec(&[]);
+            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if tag == Tag::AutoCommand {

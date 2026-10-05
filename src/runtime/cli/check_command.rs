@@ -36,14 +36,14 @@ fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
     Global::exit(1);
 }
 
-/// A compiler option is not in the table: see `unknown_long_flags_are_positional`.
-pub(crate) const PARAMS: &[clap::Param<clap::Help>] = &[
-    clap::param!(
-        "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
-    ),
-    clap::param!(
-        "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
-    ),
+const PROJECT: &[clap::Param<clap::Help>] = &[clap::param!(
+    "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
+)];
+/// For the help only. It is read like a compiler option.
+const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
+    "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
+)];
+const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
     ),
@@ -59,7 +59,10 @@ pub(crate) const PARAMS: &[clap::Param<clap::Help>] = &[
     clap::param!("-b, --build"),
     clap::param!("<POS>..."),
 ];
-static TABLE: &clap::ConvertedTable = clap::comptime_table!(PARAMS, cold);
+pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
+/// A compiler option is not in the table: see `unknown_long_flags_are_positional`.
+static TABLE: &clap::ConvertedTable =
+    clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
 
 /// `args`: what follows `check`.
 fn parse(args: &[&ZStr]) -> Options {
@@ -95,27 +98,8 @@ fn parse(args: &[&ZStr]) -> Options {
             Global::exit(1);
         }
     }
-    // `--pretty false`, which is how tsc takes it. The table takes a value after `=` only, so the
-    // word is among the positionals.
-    let word_after_pretty = (args.iter().zip(args.iter().skip(1)))
-        .map(|(arg, word)| (arg.as_bytes(), word.as_bytes()))
-        .take_while(|(arg, _)| *arg != b"--")
-        .find(|(arg, _)| *arg == b"--pretty")
-        .map(|(_, word)| word)
-        .filter(|word| word.eq_ignore_ascii_case(b"true") || word.eq_ignore_ascii_case(b"false"));
     let mut options = Options {
         project: parsed.option(b"--project").map(<[u8]>::to_vec),
-        pretty: match parsed.option(b"--pretty") {
-            _ if parsed.flag(b"--no-pretty") => Some(false),
-            None => None,
-            Some(b"") => Some(word_after_pretty.is_none_or(|it| it.eq_ignore_ascii_case(b"true"))),
-            Some(b"true") => Some(true),
-            Some(b"false") => Some(false),
-            Some(value) => usage_error(format_args!(
-                "--pretty does not take \"{}\"",
-                BStr::new(value)
-            )),
-        },
         all: parsed.flag(b"--all"),
         build: parsed.flag(b"--build"),
         timing: parsed.flag(b"--timing"),
@@ -131,28 +115,36 @@ fn parse(args: &[&ZStr]) -> Options {
         }
     }
     let positionals = parsed.positionals();
-    let positionals = (positionals.strip_prefix(&[b"check".as_slice()]))
-        .or_else(|| positionals.strip_prefix(&[b"--check".as_slice()]))
+    let positionals = positionals
+        .strip_prefix(&[b"check".as_slice()])
         .unwrap_or(positionals);
     // What follows `--` is a path, whatever it looks like.
     let after_dashes =
         (args.iter().position(|arg| arg.as_bytes() == b"--")).map_or(0, |at| args.len() - at - 1);
     let flags_end = positionals.len().saturating_sub(after_dashes);
     let mut rest = positionals.iter();
-    let mut word_after_pretty = word_after_pretty;
     while let Some(&arg) = rest.next() {
         let at = positionals.len() - rest.len() - 1;
-        if word_after_pretty == Some(arg) && at < flags_end {
-            word_after_pretty = None;
-            continue;
-        }
         match arg.strip_prefix(b"--") {
-            Some(flag) if at < flags_end => {
-                let option = compiler_option(flag, &mut rest);
-                options.compiler_options.push(option);
-            }
+            Some(flag) if at < flags_end => match name_and_value(flag, &mut rest) {
+                (b"pretty", None) => options.pretty = Some(true),
+                (b"pretty", Some(value)) if value.eq_ignore_ascii_case(b"true") => {
+                    options.pretty = Some(true);
+                }
+                (b"pretty", Some(value)) if value.eq_ignore_ascii_case(b"false") => {
+                    options.pretty = Some(false);
+                }
+                (b"pretty", Some(value)) => usage_error(format_args!(
+                    "--pretty does not take \"{}\"",
+                    BStr::new(value)
+                )),
+                (name, value) => options.compiler_options.push(compiler_option(name, value)),
+            },
             _ => options.paths.push(arg.to_vec()),
         }
+    }
+    if parsed.flag(b"--no-pretty") {
+        options.pretty = Some(false);
     }
     if options.build {
         match (options.project.is_some(), options.paths.len()) {
@@ -165,29 +157,29 @@ fn parse(args: &[&ZStr]) -> Options {
 }
 
 /// `flag` is what follows `--`: `strict`, `target` with the value in the next argument, or `target=es2022`.
-fn compiler_option<'a>(
+fn name_and_value<'a>(
     flag: &'a [u8],
     rest: &mut core::slice::Iter<'_, &'a [u8]>,
-) -> CompilerOption {
-    let (name, mut value) = match bun_core::strings::index_of_char_usize(flag, b'=') {
-        Some(at) => (&flag[..at], Some(&flag[at + 1..])),
-        None => (flag, None),
-    };
-    if value.is_none() {
-        let next = rest.as_slice().first().copied();
-        let takes_next = match next {
-            // `--strict false`, but not `--strict src/index.ts`.
-            Some(next) if bun_sema_driver::is_boolean_compiler_option(name) => {
-                next.eq_ignore_ascii_case(b"true") || next.eq_ignore_ascii_case(b"false")
-            }
-            Some(next) => !next.starts_with(b"-"),
-            None => false,
-        };
-        if takes_next {
-            rest.next();
-            value = next;
-        }
+) -> (&'a [u8], Option<&'a [u8]>) {
+    if let Some(at) = bun_core::strings::index_of_char_usize(flag, b'=') {
+        return (&flag[..at], Some(&flag[at + 1..]));
     }
+    let next = rest.as_slice().first().copied();
+    let takes_next = match next {
+        // `--strict false`, but not `--strict src/index.ts`.
+        Some(next) if flag == b"pretty" || bun_sema_driver::is_boolean_compiler_option(flag) => {
+            next.eq_ignore_ascii_case(b"true") || next.eq_ignore_ascii_case(b"false")
+        }
+        Some(next) => !next.starts_with(b"-"),
+        None => false,
+    };
+    if takes_next {
+        rest.next();
+    }
+    (flag, next.filter(|_| takes_next))
+}
+
+fn compiler_option(name: &[u8], value: Option<&[u8]>) -> CompilerOption {
     let option = bun_sema_driver::compiler_option_from_flag(name, value);
     let name = BStr::new(name);
     match option {
@@ -224,6 +216,10 @@ fn working_directory() -> Vec<u8> {
 pub(crate) fn is_package_script() -> bool {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::{dirname, join_abs_string};
+    // In that script it is the type checker: `"check": "bun check"`.
+    if env_var::npm_lifecycle_event::get() == Some(b"check".as_slice()) {
+        return false;
+    }
     let mut cwd = working_directory();
     let mut args = bun_core::argv().into_iter();
     while let Some(arg) = args.next() {
@@ -453,7 +449,16 @@ impl CheckCommand {
             let passed = bun_sema_baselines::run_from_command_line(&rest);
             Global::exit(u32::from(!passed));
         }
-        let options = parse(args);
+        Self::exec_with(&parse(args))
+    }
+
+    /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
+    /// those of `bun`, which has read them.
+    pub(crate) fn exec_without_arguments() -> ! {
+        Self::exec_with(&Options::default())
+    }
+
+    fn exec_with(options: &Options) -> ! {
         let cwd = working_directory();
         let report = run(
             &cwd,
@@ -466,10 +471,10 @@ impl CheckCommand {
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
                 true => report,
-                false => report_and_exit(&report, &options, &cwd),
+                false => report_and_exit(&report, options, &cwd),
             },
         );
-        report_and_exit(&report, &options, &cwd)
+        report_and_exit(&report, options, &cwd)
     }
 }
 
@@ -520,23 +525,29 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     Global::exit(u32::from(!report.is_ok()));
 }
 
+/// What `check_before` has found.
+pub(crate) struct CheckedBefore {
+    pub(crate) has_errors: bool,
+    /// What `--watch` waits for a change in, besides what is run: the files of the program outside
+    /// `node_modules`, of which some only have types, and its configuration file.
+    pub(crate) files: Vec<Vec<u8>>,
+}
+
 /// Type checks `entry_points` and everything they import before they are run. Reports the errors
-/// on stderr, which leaves stdout to the program. `Err`: there are errors. It holds the files that
-/// `--watch` waits for a change in: those of the program outside `node_modules`, and its
-/// configuration file.
-pub(crate) fn check_before(entry_points: &[&[u8]]) -> Result<(), Vec<Vec<u8>>> {
+/// on stderr, which leaves stdout to the program.
+pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
     let cwd = working_directory();
     let Some((paths, mut options)) = what_to_check(&cwd, entry_points) else {
-        return Ok(());
+        return CheckedBefore {
+            has_errors: false,
+            files: Vec::new(),
+        };
     };
     options.extend(bun_sema_driver::compiler_option_from_flag(
         b"listFiles",
         None,
     ));
     let report = check_and_report(&paths, &options);
-    if report.is_ok() {
-        return Ok(());
-    }
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let is_installed = |path: &&Vec<u8>| bun_core::strings::contains(path, b"/node_modules/");
@@ -546,12 +557,12 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> Result<(), Vec<Vec<u8>>> {
         .filter(|path| !is_installed(path));
     let loaded = loaded.chain((!report.config_path.is_empty()).then_some(&report.config_path));
     // The program is not loaded if its options are wrong.
-    let named = paths
-        .iter()
-        .map(|path| join_abs_string::<Auto>(&cwd, &[path]).to_vec());
-    Err(named
-        .chain(loaded.map(|path| to_native(path).to_vec()))
-        .collect())
+    let all = (paths.iter().map(Vec::as_slice)).chain(loaded.map(|path| to_native(path)));
+    CheckedBefore {
+        has_errors: !report.is_ok(),
+        // The watcher knows a file by its path as the system spells it.
+        files: (all.map(|path| join_abs_string::<Auto>(&cwd, &[path]).to_vec())).collect(),
+    }
 }
 
 /// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative.
@@ -594,6 +605,8 @@ fn check_for_build(
     log: &mut bun_ast::Log,
     shows_progress: bool,
 ) -> bool {
+    // Not `App.svelte`, which a plugin turns into TypeScript.
+    let entry_points = entry_points.filter(|path| has_types(path));
     let paths: Vec<Vec<u8>> = entry_points.map(<[u8]>::to_vec).collect();
     // Only stylesheets and the like.
     if paths.is_empty() {

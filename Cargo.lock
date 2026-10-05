@@ -1388,7 +1388,6 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_core",
- "bun_glob",
  "bun_js_parser",
  "bun_parsers",
  "bun_paths",

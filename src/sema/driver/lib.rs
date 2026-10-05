@@ -695,20 +695,6 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
         .to_vec()
 }
 
-/// Expands `paths` (absolute, existing) into root files. A file maps to itself; a directory maps to
-/// the files in it that `project` does not exclude.
-fn roots_of_paths(disk: &host::Disk, paths: &[Vec<u8>], project: &config::Project) -> Vec<Vec<u8>> {
-    let mut roots = Vec::new();
-    for path in paths {
-        if disk.is_dir(path) {
-            roots.extend(project.files_under(disk, path));
-        } else {
-            roots.push(path.clone());
-        }
-    }
-    roots
-}
-
 /// Runs the check that `request` describes. Each program is freed with its `Session` as soon as it
 /// has been checked. If `then` returns, the caches of the threads are dropped too, and the free
 /// memory is returned to the system.
@@ -751,13 +737,133 @@ pub fn check_already_read_then<R>(
     result
 }
 
+/// The configuration files that a request has loaded, by path: finding the project of a path loads
+/// some, and each is loaded once.
+#[derive(Default)]
+struct Projects {
+    loaded: FxHashMap<Vec<u8>, config::Project>,
+    /// `Project::files`, to look a file up in.
+    files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
+}
+
+impl Projects {
+    fn load(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &config::Project {
+        // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
+        // `references` it behaves like `tsc -b`, which has no `--noEmit`.
+        self.loaded.entry(config.to_vec()).or_insert_with(|| {
+            config::load_overriding(disk, &Session::new(), config, &|has_references| {
+                overriding_options(request, has_references)
+            })
+        })
+    }
+
+    /// `config`, or else the first of the projects that it references, directly or not, that has
+    /// `file` among its files.
+    fn find_project_with(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+        file: &[u8],
+        seen: &mut Vec<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        if seen.iter().any(|it| it == config) || !disk.is_file(config) {
+            return None;
+        }
+        seen.push(config.to_vec());
+        let is_new = !self.files.contains_key(config);
+        let project = self.load(disk, request, config);
+        let references: Vec<Vec<u8>> = (project.references.iter())
+            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+            .collect();
+        if let Some(files) = is_new.then(|| project.files.iter().cloned().collect()) {
+            self.files.insert(config.to_vec(), files);
+        }
+        if self.files[config].contains(file) {
+            return Some(config.to_vec());
+        }
+        (references.iter()).find_map(|it| self.find_project_with(disk, request, it, file, seen))
+    }
+
+    /// The project in which the file at `path` is checked, as the language service chooses it for
+    /// an open file (`findDefaultConfiguredProject`): that of the nearest configuration file, or
+    /// else the first of the projects it references that has the file, as under a solution.
+    /// `Err`: none of them has it. The nearest configuration file is the best there is, unless it
+    /// is a solution, which has no files of its own and no options for them.
+    fn owner_of(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        nearest: Option<Vec<u8>>,
+        path: &[u8],
+    ) -> Result<Option<Vec<u8>>, Option<Vec<u8>>> {
+        let Some(nearest) = nearest else {
+            return Ok(None);
+        };
+        if let Some(owner) = self.find_project_with(disk, request, &nearest, path, &mut Vec::new())
+        {
+            return Ok(Some(owner));
+        }
+        let project = self.load(disk, request, &nearest);
+        let is_solution = project.files.is_empty() && !project.references.is_empty();
+        Err((!is_solution).then_some(nearest))
+    }
+}
+
+/// The project checked where there is no configuration file: `files` and what they import, as in
+/// `tsc a.ts`. Without `files`, everything below `cwd`.
+fn project_without_config(
+    disk: &host::Disk,
+    request: &Request,
+    cwd: &[u8],
+    files: &[Vec<u8>],
+) -> config::Project {
+    let mut options = default_compiler_options();
+    if let Json::Object(options) = &mut options {
+        for option in request.compiler_options {
+            options.retain(|(name, _)| *name != option.0);
+            options.push((option.0.clone(), option.1.clone()));
+        }
+    }
+    config::without_config(disk, cwd, options, files.to_vec())
+}
+
+/// The directories below `top` with a configuration file of their own, as the paths of those files.
+fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
+    let (mut found, mut pending) = (Vec::new(), vec![top.to_vec()]);
+    // By real path: a link can lead back up.
+    let mut visited = FxHashSet::default();
+    while let Some(dir) = pending.pop() {
+        if !visited.insert(disk.realpath(&dir)) {
+            continue;
+        }
+        if dir != top {
+            let configs = [b"tsconfig.json", b"jsconfig.json"].map(|name| inside(&dir, name));
+            found.extend(configs.into_iter().find(|config| disk.is_file(config)));
+        }
+        for name in disk.entries(&dir).1 {
+            // What no project includes unless it says so.
+            let is_skipped = name.starts_with(b".")
+                || matches!(
+                    &name[..],
+                    b"node_modules" | b"bower_components" | b"jspm_packages"
+                );
+            if !is_skipped {
+                pending.push(inside(&dir, &name));
+            }
+        }
+    }
+    found.sort_unstable();
+    found
+}
+
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
 
     // Report missing paths (TS6053) before loading the config file or any source file.
-    let (paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
+    let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
         .map(|path| join(&cwd, path))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
     let not_found = missing.iter().map(|path| global(6053, &[path]));
@@ -765,48 +871,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     if paths.is_empty() && !missing.is_empty() {
         return report;
     }
-    // The configuration file nearest to a path, or else nearest to the working directory.
-    let config_of = |path: &Vec<u8>| {
-        let dir = if disk.is_dir(path) {
-            path.as_slice()
-        } else {
-            dirname::<Posix>(path)
-        };
-        config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd))
-    };
-    // Each path is checked with the options of its own project.
-    if request.project.is_none() {
-        let mut by_project: Vec<(Option<Vec<u8>>, Vec<Vec<u8>>)> = Vec::new();
-        for path in &paths {
-            let config = config_of(path);
-            match by_project.iter_mut().find(|it| it.0 == config) {
-                Some(project) => project.1.push(path.clone()),
-                None => by_project.push((config, vec![path.clone()])),
-            }
-        }
-        if by_project.len() > 1 {
-            for (config, paths) in &by_project {
-                let (project, paths) = (config.as_deref(), paths.as_slice());
-                let checked = check_request(
-                    disk,
-                    &Request {
-                        project,
-                        paths,
-                        ..*request
-                    },
-                );
-                if report.config_path.is_empty() {
-                    report.config_path.clone_from(&checked.config_path);
-                }
-                report.projects_checked += checked.projects_checked.max(1);
-                report.merge(checked);
-            }
-            report.load_time = started.elapsed().saturating_sub(report.check_time);
-            sort_and_deduplicate(&mut report.diagnostics);
-            return report;
-        }
-    }
-    let config_path = match request.project {
+    let explicit = match request.project {
         Some(project) => {
             let path = join(&cwd, project);
             if disk.is_dir(&path) {
@@ -823,37 +888,152 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
                 return report;
             }
         }
-        None => match paths.first() {
-            Some(first) => config_of(first),
-            None => config::find_config(disk, &cwd),
-        },
+        None => None,
     };
-    let mut project = match &config_path {
-        // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
-        // `references` it behaves like `tsc -b`, which has no `--noEmit`.
-        Some(path) => config::load_overriding(disk, &Session::new(), path, &|has_references| {
-            overriding_options(request, has_references)
-        }),
-        None => {
-            let mut options = default_compiler_options();
-            if let Json::Object(options) = &mut options {
-                for option in request.compiler_options {
-                    options.retain(|(name, _)| *name != option.0);
-                    options.push((option.0.clone(), option.1.clone()));
+    // `--project`, or else the configuration file nearest to a directory, or else nearest to the
+    // working directory.
+    let config_in = |dir: &[u8]| {
+        let nearest = || config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
+        explicit.clone().or_else(nearest)
+    };
+    let mut projects = Projects::default();
+    if paths.is_empty() {
+        match config_in(&cwd) {
+            Some(config) => {
+                let of = OfProject {
+                    config: Some(&config),
+                    named: None,
+                    elsewhere: None,
+                };
+                return check_project_of(disk, request, &mut projects, of, report, started);
+            }
+            // Whatever is here, each file with the options that are nearest to it.
+            None => paths.push(cwd.clone()),
+        }
+    }
+
+    // Each file is checked in its own project, once.
+    let mut by_project: Vec<(Option<Vec<u8>>, Vec<Vec<u8>>)> = Vec::new();
+    let mut add = |owner: Option<Vec<u8>>, file: Vec<u8>| match by_project
+        .iter_mut()
+        .find(|it| it.0 == owner)
+    {
+        Some(project) => project.1.push(file),
+        None => by_project.push((owner, vec![file])),
+    };
+    for path in &paths {
+        if !disk.is_dir(path) {
+            let nearest = config_in(dirname::<Posix>(path));
+            let owner = projects.owner_of(disk, request, nearest, path);
+            add(owner.unwrap_or_else(|nearest| nearest), path.clone());
+            continue;
+        }
+        // Each configuration file at, above or below the directory has a say about the files that
+        // are nearest to it.
+        let below = match explicit {
+            Some(_) => Vec::new(),
+            None => nested_configs(disk, path),
+        };
+        for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
+            let top = (config.as_deref().map(dirname::<Posix>))
+                .filter(|dir| dir.len() > path.len())
+                .unwrap_or(path);
+            let files = match &config {
+                Some(config) => projects.load(disk, request, config).files_under(disk, top),
+                None => project_without_config(disk, request, &cwd, &[]).files_under(disk, top),
+            };
+            let (mut included, mut others) = (Vec::new(), Vec::new());
+            for file in files {
+                if config_in(dirname::<Posix>(&file)) == config {
+                    match projects.owner_of(disk, request, config.clone(), &file) {
+                        Ok(owner) => included.push((owner, file)),
+                        Err(nearest) => others.push((nearest, file)),
+                    }
                 }
             }
-            config::without_config(disk, &cwd, options, Vec::new())
+            // The directory stands for the files that the project has in it. If it has none there,
+            // as in `bun check scripts`, for all that it does not exclude.
+            let files = if included.is_empty() {
+                others
+            } else {
+                included
+            };
+            files.into_iter().for_each(|(owner, file)| add(owner, file));
+        }
+    }
+    if by_project.is_empty() {
+        report.diagnostics.push(Diagnostic {
+            text: [
+                b"Nothing to check: no TypeScript files in '",
+                &paths[0][..],
+                b"'",
+            ]
+            .concat(),
+            code: 0,
+            ..global(18003, &[""; 0])
+        });
+        return report;
+    }
+    let is_one = by_project.len() == 1;
+    let all: FxHashSet<&[u8]> = (by_project.iter().flat_map(|it| &it.1))
+        .map(Vec::as_slice)
+        .collect();
+    for (config, files) in &by_project {
+        let own: FxHashSet<&[u8]> = files.iter().map(Vec::as_slice).collect();
+        let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
+        let of = OfProject {
+            config: config.as_deref(),
+            named: Some(files),
+            elsewhere: (!is_one).then_some(&elsewhere),
+        };
+        let (so_far, began) = (Report::default(), Instant::now());
+        let checked = check_project_of(disk, request, &mut projects, of, so_far, began);
+        if report.config_path.is_empty() {
+            report.config_path.clone_from(&checked.config_path);
+        }
+        report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
+        report.merge(checked);
+    }
+    report.load_time = started.elapsed().saturating_sub(report.check_time);
+    sort_and_deduplicate(&mut report.diagnostics);
+    report
+}
+
+/// What `check_project_of` checks.
+#[derive(Clone, Copy)]
+struct OfProject<'a> {
+    /// `None`: there is no configuration file.
+    config: Option<&'a [u8]>,
+    /// Of its files, and besides them. `None`: all of its files.
+    named: Option<&'a [Vec<u8>]>,
+    /// The files that are checked in another project. This one may import them.
+    elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
+}
+
+fn check_project_of(
+    disk: &host::Disk,
+    request: &Request,
+    projects: &mut Projects,
+    of: OfProject<'_>,
+    mut report: Report,
+    started: Instant,
+) -> Report {
+    let mut project = match of.config {
+        Some(config) => {
+            projects.load(disk, request, config);
+            projects.loaded.remove(config).expect("loaded above")
+        }
+        None => {
+            let cwd = host::from_native(request.cwd);
+            project_without_config(disk, request, &cwd, of.named.unwrap_or_default())
         }
     };
     report.config_path.clone_from(&project.config_path);
-    let mut named = None;
-    if !paths.is_empty() {
-        let mut roots = roots_of_paths(disk, &paths, &project);
+    let named = of.named.map(|named| {
         // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
         // affect every other file, so a file must produce the same errors with and without path arguments.
         let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
-        let more: Vec<Vec<u8>> = roots
-            .iter()
+        let more: Vec<Vec<u8>> = (named.iter())
             .filter(|root| seen.insert(root.as_slice()))
             .cloned()
             .collect();
@@ -863,36 +1043,13 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         project
             .errors
             .retain(|e| e.code != 18003 && e.code != 18002);
-        roots.sort_unstable();
-        named = Some(roots);
-    }
-    if config_path.is_none() && paths.is_empty() {
-        let configs = workspace_projects(disk, &cwd);
-        if !configs.is_empty() {
-            return check_workspaces(disk, &configs, project, request, report, started);
-        }
-    }
-    // A config file with an empty file set is left to TS18002 and TS18003. With `extends`, `"files": [], "include": []` is valid.
-    let has_no_input = named.as_ref().map_or_else(
-        || config_path.is_none() && project.files.is_empty(),
-        Vec::is_empty,
-    );
-    if has_no_input {
-        let dir = paths.first().unwrap_or(&cwd);
-        report.diagnostics.push(Diagnostic {
-            text: [
-                b"Nothing to check: no TypeScript files in '",
-                &dir[..],
-                b"'",
-            ]
-            .concat(),
-            code: 0,
-            ..global(18003, &[""; 0])
-        });
-        return report;
-    }
+        let mut named = named.to_vec();
+        named.sort_unstable();
+        named
+    });
+    let named = named.as_deref();
     if !project.references.is_empty() {
-        check_with_references(disk, project, request, report, started, named.as_deref())
+        check_with_references(disk, project, request, report, started, named, of.elsewhere)
     } else {
         check_named_files(
             disk,
@@ -900,118 +1057,11 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             request,
             report,
             started,
-            named.as_deref(),
-            None,
+            named,
+            of.elsewhere,
             None,
         )
     }
-}
-
-/// Returns the sorted `tsconfig.json` paths of the directories matched by `workspaces` in `dir`'s `package.json`. Patterns have
-/// `bun install` semantics (`WorkspaceMap::process_names_array`).
-fn workspace_projects(disk: &host::Disk, dir: &[u8]) -> Vec<Vec<u8>> {
-    let package = disk.read(&inside(dir, b"package.json"));
-    let package = package.and_then(|text| host::parse_package_json(&Arena::new(), &text, true));
-    let workspaces = package.as_ref().and_then(|p| p.get(b"workspaces"));
-    // Yarn's object form: `{ "packages": [..] }`.
-    let patterns = workspaces.and_then(|w| w.get(b"packages").unwrap_or(w).as_array());
-    let patterns: Vec<&[u8]> = (patterns.unwrap_or_default().iter())
-        .filter_map(Json::as_str)
-        .collect();
-    let mut found = Vec::new();
-    for (i, &pattern) in patterns.iter().enumerate() {
-        if !bun_glob::detect_glob_syntax(pattern) {
-            found.push(join(dir, &[pattern, &b"/tsconfig.json"[..]].concat()));
-            continue;
-        }
-        // A negated pattern only filters the matches of earlier patterns.
-        if pattern.starts_with(b"!") {
-            continue;
-        }
-        let Ok(Ok(mut walker)) = bun_glob::BunGlobWalker::init_with_cwd(
-            &[pattern, &b"/tsconfig.json"[..]].concat(),
-            host::to_native(dir),
-            false,
-            false,
-            false,
-            false,
-            true,
-            Some(|name| matches!(name, b"node_modules" | b".git" | b"CMakeFiles")),
-        ) else {
-            continue;
-        };
-        let mut matches = bun_glob::walk::Iterator::new(&mut walker);
-        if !matches!(matches.init(), Ok(Ok(()))) {
-            continue;
-        }
-        while let Ok(Ok(Some(matched))) = matches.next() {
-            let package = &matched[..matched.len() - b"/tsconfig.json".len()];
-            let is_negated = patterns[i + 1..].iter().any(|later| {
-                let result = bun_glob::r#match(later, package);
-                result.is_negated() && !result.matches()
-            });
-            if !is_negated {
-                found.push(join(dir, &matched));
-            }
-        }
-    }
-    found.retain(|path| disk.is_file(path));
-    found.sort_unstable();
-    found.dedup();
-    found
-}
-
-/// Checks a workspace root that has no config file. Each entry of `configs` is an independent project, as with `bun check -p`. `rest` is the
-/// default-options project of the root directory, restricted to the files that no workspace project includes. A file is checked only by the
-/// project that includes it, even when other projects import it.
-fn check_workspaces(
-    disk: &host::Disk,
-    configs: &[Vec<u8>],
-    mut rest: config::Project,
-    request: &Request,
-    mut report: Report,
-    started: Instant,
-) -> Report {
-    let over = |has_references| overriding_options(request, has_references);
-    let configuration = Session::new();
-    let mut projects: Vec<config::Project> = (configs.iter())
-        .map(|path| config::load_overriding(disk, &configuration, path, &over))
-        .collect();
-    drop(configuration);
-    let roots: Vec<Vec<Vec<u8>>> = projects.iter().map(|p| p.files.clone()).collect();
-    let named: FxHashSet<&[u8]> = roots.iter().flatten().map(Vec::as_slice).collect();
-    rest.files.retain(|file| !named.contains(file.as_slice()));
-    rest.options.files.clone_from(&rest.files);
-    if !rest.files.is_empty() {
-        projects.push(rest);
-    }
-    for (index, project) in projects.into_iter().enumerate() {
-        let own: FxHashSet<&[u8]> = (roots.get(index).into_iter().flatten())
-            .map(Vec::as_slice)
-            .collect();
-        let owned_elsewhere: FxHashSet<&[u8]> = named.difference(&own).copied().collect();
-        let (began, so_far) = (Instant::now(), Report::default());
-        let checked = if project.references.is_empty() {
-            let owned_elsewhere = Some(&owned_elsewhere);
-            check_named_files(
-                disk,
-                project,
-                request,
-                so_far,
-                began,
-                None,
-                owned_elsewhere,
-                None,
-            )
-        } else {
-            check_with_references(disk, project, request, so_far, began, None)
-        };
-        report.projects_checked += checked.projects_checked.max(1);
-        report.merge(checked);
-    }
-    report.load_time = started.elapsed().saturating_sub(report.check_time);
-    sort_and_deduplicate(&mut report.diagnostics);
-    report
 }
 
 struct ReferencedProject {
@@ -1236,6 +1286,7 @@ impl Host for WithOutputs<'_> {
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
 /// memory. `named`: see `check_named_files`. It is about `root`: what it references is built whole.
+/// `elsewhere`: see `OfProject`.
 fn check_with_references(
     host: &dyn Host,
     root: config::Project,
@@ -1243,6 +1294,7 @@ fn check_with_references(
     mut report: Report,
     started: Instant,
     named: Option<&[Vec<u8>]>,
+    elsewhere: Option<&FxHashSet<&[u8]>>,
 ) -> Report {
     let root_config_path = root.config_path.clone();
     let configuration = Session::new();
@@ -1402,6 +1454,7 @@ fn check_with_references(
         let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
             .flat_map(|i| roots[i].iter().map(Vec::as_slice))
+            .chain(elsewhere.into_iter().flatten().copied())
             .filter(|path| !own.contains(path))
             .collect();
         project.options.is_build = true;

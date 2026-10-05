@@ -2275,17 +2275,14 @@ impl TestCommand {
             }
         }
 
-        let mut failed_check = None;
+        let mut checked = None;
         if ctx.runtime_options.check {
             let paths: Vec<&[u8]> = test_files.iter().map(|path| &**path).collect();
-            if let Err(files) = crate::cli::check_command::check_before(&paths) {
-                if ctx.debug.hot_reload == jsc::virtual_machine::HotReload::None {
-                    Global::exit(1);
-                }
-                // Nothing has run, so `--hot` has no state to keep: the process starts again,
-                // which checks again.
-                ctx.debug.hot_reload = jsc::virtual_machine::HotReload::Watch;
-                failed_check = Some(files);
+            let found = crate::cli::check_command::check_before(&paths);
+            if ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None {
+                checked = Some(found);
+            } else if found.has_errors {
+                Global::exit(1);
             }
         }
 
@@ -2335,9 +2332,9 @@ impl TestCommand {
             }
         }
 
-        if let Some(files) = failed_check {
+        if let Some(found) = checked.as_ref().filter(|found| found.has_errors) {
             // No test is run.
-            (files.iter()).for_each(|path| vm.add_to_watcher_if_needed(path));
+            (found.files.iter()).for_each(|path| vm.add_to_watcher_if_needed(path));
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -2402,6 +2399,11 @@ impl TestCommand {
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
+        }
+
+        // Those that only have types. After the tests, like the files above.
+        for path in checked.iter().flat_map(|found| &found.files) {
+            vm.add_to_watcher_if_needed(path);
         }
 
         let write_snapshots_success = jest::Jest::runner()

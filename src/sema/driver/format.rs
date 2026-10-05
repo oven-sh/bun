@@ -380,10 +380,13 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     };
     let _ = write!(out, "::{level} ");
     if !d.path.is_empty() {
+        // GitHub takes the path from the root of the repository, wherever the step runs.
+        let workspace = bun_core::env_var::GITHUB_WORKSPACE::get().map(crate::host::from_native);
+        let from = workspace.as_deref().unwrap_or(style.cwd);
         let _ = write!(
             out,
             "file={},line={},col={},endLine={},endColumn={},",
-            bun_core::fmt::github_action_property(&relative_path(&d.path, style.cwd)),
+            bun_core::fmt::github_action_property(&relative_path(&d.path, from)),
             d.line,
             d.column,
             d.end_line,

@@ -22,7 +22,7 @@ Found 1 error in 1 file, checked 2 files [14.00ms]
 
 ### If `package.json` has a `check` script
 
-A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project.
+A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project. Inside the script itself `bun check` is the type checker too, so `"check": "bun check"` works.
 
 ```json package.json icon="file-json"
 {
@@ -79,11 +79,18 @@ Use `-p` to name a `tsconfig.json` or the directory that holds one.
 bun check -p packages/server
 ```
 
-Pass files or directories to check only those and what they import. The compiler options still come from the nearest `tsconfig.json`.
+Pass files or directories to check only those and what they import.
 
 ```bash terminal icon="terminal"
 bun check src/index.ts
+bun check packages/server packages/shared
 ```
+
+Each file is checked in the project your editor uses for it: the nearest `tsconfig.json`. If that one does not include the file but has `references`, like the `tsconfig.json` that `create vite` writes, it is the referenced project that includes the file.
+
+A file that no project includes is checked with the options of the nearest `tsconfig.json` all the same.
+
+A directory stands for the files that those projects have in it. If they have none there, as in `bun check scripts` when `include` is `["src"]`, it stands for every file in it that is not excluded.
 
 Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init`](/runtime/templating/init) writes, apart from the stricter rules that are a matter of taste (`noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`):
 
@@ -112,9 +119,9 @@ If there is nothing to check, `bun check` reports an error and exits with code 1
 
 Bun reads a referenced project from its source files. You do not have to build the project first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
 
-### Workspaces
+### Monorepos
 
-In a monorepo without a `tsconfig.json` at the root, `bun check` reads `workspaces` from the root `package.json`. Each workspace that has a `tsconfig.json` is checked with its own options, as `bun check -p` would check it. Files that no workspace's `tsconfig.json` selects are checked with the default options above. Each file is checked once.
+In a directory without a `tsconfig.json`, in it or above it, `bun check` checks every TypeScript file below it. Each file is checked with the options of the `tsconfig.json` nearest to it, and once. Files with no `tsconfig.json` near them get the options that `bun init` writes.
 
 ## Check before you run, build, or test
 
@@ -129,6 +136,13 @@ bun test --check
 ```txt
 src/index.ts(3,21): error TS2322: Type 'string' is not assignable to type 'number'.
 Found 1 error in 1 file, checked 2 files [14.00ms]
+```
+
+With `--watch`, Bun checks again before every restart. After a type error it waits for the next change, in any file of the program, including files that only have types. `--hot --check` restarts the process like `--watch`, so that nothing runs unchecked.
+
+```bash terminal icon="terminal"
+bun --watch --check src/index.ts
+bun test --watch --check
 ```
 
 With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs.

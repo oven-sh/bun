@@ -2535,13 +2535,14 @@ pub mod bv2_impl {
                 })
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
-            // of it.
+            // of it. What only a plugin provides is written nowhere else.
             let flags = self.graph.input_files.items_flags();
             let mut sources = (sources.iter().zip(loaders).zip(flags))
                 .filter(|((source, loader), flags)| {
                     loader.is_javascript_like_or_json()
                         && source.path.is_file()
-                        && !flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                            && bun_sys::exists(source.path.text))
                 })
                 .map(|((source, _), _)| (source.path.text, source.contents()));
             if type_check(

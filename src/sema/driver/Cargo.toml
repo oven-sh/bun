@@ -10,7 +10,6 @@ path = "lib.rs"
 bun_sema.workspace = true
 bun_js_parser.workspace = true
 bun_core.workspace = true
-bun_glob.workspace = true
 bun_ast.workspace = true
 bun_parsers.workspace = true
 bun_paths.workspace = true

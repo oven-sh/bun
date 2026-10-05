@@ -148,6 +148,42 @@ describe.concurrent("bun check", () => {
     expect(colored.exitCode).toBe(1);
   });
 
+  // As after `git clone`.
+  test("dependencies that are not installed", async () => {
+    const options = JSON.parse(tsconfig).compilerOptions;
+    const source = `import "react";\nimport "@scope/a/deep";\nimport "typed";\nimport "unlisted";\nimport "./missing";\nimport "node:fs";\n`;
+    const manifest = {
+      dependencies: { react: "1", "@scope/a": "1", installed: "1", unused: "1" },
+      devDependencies: { "@types/typed": "1" },
+    };
+    const note = (text: string) => text.split("\n").filter(line => line.startsWith("note: "));
+    using none = project({ "a.ts": source, "package.json": JSON.stringify(manifest) });
+    using one = project({
+      "a.ts": `import "react";\nimport "installed";\n`,
+      "package.json": JSON.stringify(manifest),
+      "node_modules/installed/package.json": `{ "name": "installed", "version": "1.0.0" }`,
+    });
+    using unlisted = project({ "a.ts": `import "unlisted";\n`, "package.json": JSON.stringify(manifest) });
+    // In a workspace, what a package lists may be installed at the root.
+    using workspace = project({
+      "packages/a/a.ts": `import "react";\nimport "@scope/a";\n`,
+      "packages/a/package.json": JSON.stringify(manifest),
+      "node_modules/react/package.json": `{ "name": "react", "version": "1.0.0" }`,
+    });
+    const bun = { "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, types: ["bun"] } }), "a.ts": "" };
+    using listed = project({ ...bun, "package.json": `{ "devDependencies": { "@types/bun": "1" } }` });
+    using notListed = project({ ...bun, "package.json": `{}` });
+    const results = await Promise.all([none, one, unlisted, workspace, listed, notListed].map(dir => check(dir)));
+    expect(results.map(it => note(it.stderr))).toEqual([
+      ["note: 3 dependencies in package.json are not installed. Run: bun install"],
+      ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      [],
+      ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      ["note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"],
+    ]);
+  });
+
   // `lib.*.d.ts` are in the executable, so they are those of the TypeScript that the type checker is a port of.
   describe("TypeScript's library files", () => {
     test("nothing has to be installed, and no configuration file is needed", async () => {

@@ -632,6 +632,9 @@ fn is_missing_bun_types(report: &Report) -> bool {
         }
         // `Cannot find name 'Bun'. Do you need to install type definitions for Bun? ..`
         2867 | 2868 => true,
+        2688 => d
+            .text
+            .starts_with(b"Cannot find type definition file for 'bun'."),
         _ => false,
     })
 }
@@ -658,7 +661,22 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             relative_path(path, style.cwd, style)
         );
     }
-    if is_missing_bun_types(report) {
+    if !report.not_installed.is_empty() {
+        let (verb, count) = match report.not_installed.len() {
+            1 => ("is", BString::from("1 dependency")),
+            n => ("are", alloc_print!("{n} dependencies")),
+        };
+        pretty!(
+            out,
+            style.color,
+            "<blue>note<r><d>:<r> {} in package.json {} not installed. Run: <cyan>bun install<r>\n",
+            count,
+            verb
+        );
+    }
+    // `bun install` installs them too.
+    let is_listed = (report.not_installed.iter()).any(|name| name == b"@types/bun");
+    if is_missing_bun_types(report) && !is_listed {
         if report.has_bun_types_installed {
             pretty!(
                 out,

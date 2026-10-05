@@ -549,6 +549,8 @@ pub struct Report {
     pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
+    /// The dependencies of a `package.json` that an error is about and that no `node_modules` has.
+    pub not_installed: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
     /// The configuration files of the projects that were checked.
@@ -744,6 +746,7 @@ pub fn check_already_read_then<R>(
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
+    report.not_installed = dependencies_not_installed(&disk, &project, &report.diagnostics);
     if cfg!(windows) {
         for reported in &mut report.diagnostics {
             host::show_drives(&mut reported.text);
@@ -763,6 +766,74 @@ pub fn check_already_read_then<R>(
     disk.parallel(threads, &|_| bun_core::Global::mimalloc_cleanup(true));
     bun_core::Global::mimalloc_cleanup(true);
     result
+}
+
+/// `Report::not_installed`. An error without a file is about the project in `project`.
+fn dependencies_not_installed(
+    host: &dyn Host,
+    project: &[u8],
+    diagnostics: &[Diagnostic],
+) -> Vec<Vec<u8>> {
+    // The name of a package in each message, and the package that has its types.
+    let mut missing: Vec<(&[u8], Vec<u8>)> = Vec::new();
+    for reported in diagnostics {
+        let before: &[u8] = match reported.code {
+            2307 => b"Cannot find module '",
+            2688 => b"Cannot find type definition file for '",
+            2882 => b"Cannot find module or type declarations for side-effect import of '",
+            _ => continue,
+        };
+        let Some(specifier) = reported.text.strip_prefix(before) else {
+            continue;
+        };
+        let specifier = &specifier[..strings::index_of_char_usize(specifier, b'\'').unwrap_or(0)];
+        if specifier.is_empty()
+            || bun_sema::resolve::is_relative(specifier)
+            || strings::contains_char(specifier, b':')
+        {
+            continue;
+        }
+        // `@scope/name/path` and `name/path`
+        let names = if specifier[0] == b'@' { 2 } else { 1 };
+        let package: Vec<&[u8]> = strings::split(specifier, b"/").take(names).collect();
+        let package = package.join(&b'/');
+        let from = match &reported.path[..] {
+            b"" => project,
+            path => dirname::<Posix>(path),
+        };
+        if !missing.iter().any(|it| it.0 == from && it.1 == package) {
+            missing.push((from, package));
+        }
+    }
+    let arena = Arena::new();
+    let mut found: Vec<Vec<u8>> = Vec::new();
+    for (from, package) in missing {
+        let manifest = ancestors(from).map(|dir| join(dir, b"package.json"));
+        let Some(manifest) = { manifest }.find(|path| host.is_file(path)) else {
+            continue;
+        };
+        let text = host.read(&manifest);
+        let Some(json) = text.and_then(|text| host.parse_package_json(&arena, &text)) else {
+            continue;
+        };
+        // `@scope/name` has its types in `@types/scope__name`.
+        let mangled = strings::replace_owned(package.trim_start_with(|c| c == '@'), b"/", b"__");
+        for name in [[b"@types/", &mangled[..]].concat(), package] {
+            let kinds: [&[u8]; 4] = [
+                b"dependencies",
+                b"devDependencies",
+                b"peerDependencies",
+                b"optionalDependencies",
+            ];
+            let is_listed =
+                (kinds.iter()).any(|kind| json.get(kind).is_some_and(|it| it.get(&name).is_some()));
+            let in_modules = |dir| host.is_dir(&join(&join(dir, b"node_modules"), &name));
+            if is_listed && !ancestors(from).any(in_modules) && !found.contains(&name) {
+                found.push(name);
+            }
+        }
+    }
+    found
 }
 
 /// The configuration files that a request has loaded, by path: finding the project of a path loads

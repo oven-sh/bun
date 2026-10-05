@@ -656,6 +656,9 @@ describe.concurrent("bun check", () => {
         [["-b", "a", "b"], `--build takes one project`],
         [["-b", "-p", "a", "b"], `--build takes one project`],
         [["--cwd", "nowhere"], `Could not change directory to "nowhere"`],
+        // What `tsc` does instead of compiling.
+        [["--version"], `Unknown flag "--version"`],
+        [["--init"], `Unknown flag "--init"`],
       ];
       const results = await Promise.all(cases.map(([args]) => check(dir, args)));
       // `maybe` is not a value of `--pretty`, so it is a path.
@@ -14808,6 +14811,22 @@ describe.concurrent("--check", () => {
     expect(bun.output.stderr).not.toContain("a/a.test.ts(2,12)");
   });
 
+  test("bun --watch --check watches the configuration files that tsconfig.json extends", async () => {
+    const options = JSON.parse(tsconfig).compilerOptions;
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ extends: "./configs/middle.json" }),
+      "configs/middle.json": JSON.stringify({ extends: "./base.json" }),
+      "configs/base.json": JSON.stringify({ compilerOptions: { ...options, strict: false } }),
+      "a.ts": `function f(x) {\n  return x;\n}\nconsole.log("ran", f(1));\n`,
+    });
+    await using bun = watching(dir, ["--watch", "--check", "a.ts"]);
+    await bun.until(() => bun.output.stdout.includes("ran 1"));
+    await bun.until(
+      () => bun.output.stderr.includes("a.ts(1,12): error TS7006"),
+      () => Bun.write(join(String(dir), "configs", "base.json"), JSON.stringify({ compilerOptions: options })),
+    );
+  });
+
   // These draw the same progress line as `bun check`, on a thread of its own, and the process goes on afterwards.
   describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
     const files = (n: string) => ({
@@ -14881,42 +14900,15 @@ describe.concurrent("--check", () => {
     expect(stopped.exitCode).toBe(1);
   });
 
-  // It runs before the entry point.
-  describe.each([
-    ["--preload", ["--preload", "./setup.ts"], {}],
-    ["--preload without an extension", ["--preload", "./setup"], {}],
-    ["--preload with an absolute path", ["--preload", "<dir>/setup.ts"], {}],
-    ["--require", ["--require", "./setup.ts"], {}],
-    ["--import", ["--import", "./setup.ts"], {}],
-    ["preload in bunfig.toml", [], { "bunfig.toml": `preload = ["./setup.ts"]\n[test]\npreload = ["./setup.ts"]\n` }],
-  ] as [string, string[], Record<string, string>][])("--check with %s", (_, flags, more) => {
-    const files = {
-      ...more,
-      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
-      "index.ts": `console.log("ran");\n`,
-      "a.test.ts": `import { test } from "bun:test";\ntest("a", () => console.log("ran"));\n`,
-    };
-    test.each([
-      ["bun", ["index.ts"]],
-      ["bun test", ["test"]],
-    ])("%s does not run what has a type error", async (_, cmd) => {
-      using good = project({ ...files, "setup.ts": `console.log("set up");\nexport const a: number = 1;\n` });
-      using bad = project({ ...files, "setup.ts": `console.log("set up");\nexport const a: number = "1";\n` });
-      const at = (dir: { toString(): string }) => [
-        ...cmd.filter(it => it === "test"),
-        "--check",
-        ...flags.map(it => it.replace("<dir>", String(dir))),
-        ...cmd.filter(it => it !== "test"),
-      ];
-      const [ran, stopped] = await Promise.all([run(String(good), at(good)), run(String(bad), at(bad))]);
-      expect([ran.stdout.includes("set up"), ran.stdout.includes("ran"), ran.exitCode]).toEqual([true, true, 0]);
-      expect(stopped.stderr).toContain("setup.ts(2,14): error TS2322");
-      expect([stopped.stdout.includes("set up"), stopped.stdout.includes("ran"), stopped.exitCode]).toEqual([
-        false,
-        false,
-        1,
-      ]);
+  // There is no watcher to wait for without a test file.
+  test("bun test --watch --check without a test file ends", async () => {
+    using dir = project({
+      "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
+      "setup.ts": `export const a: number = "1";\n`,
     });
+    const { stderr, exitCode } = await run(String(dir), ["test", "--watch", "--check"]);
+    expect(stderr).toContain("No tests found");
+    expect(exitCode).toBe(1);
   });
 
   // Neither has an entry point to start from, like a script of a package.json.

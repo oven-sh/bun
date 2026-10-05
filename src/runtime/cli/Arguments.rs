@@ -1263,6 +1263,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // Windows the process that starts it again is set up right after this.
         if ctx.runtime_options.check && ctx.debug.hot_reload == HotReload::Hot {
             ctx.debug.hot_reload = HotReload::Watch;
+            #[cfg(not(windows))]
+            {
+                bun_core::set_auto_reload_on_crash(true);
+            }
         }
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")

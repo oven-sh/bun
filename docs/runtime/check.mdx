@@ -308,7 +308,7 @@ Found 1 error in 1 file, checked 2 files [14.00ms]
 
 ### What `--check` covers
 
-Nothing runs unchecked. What Bun checks depends on what you run.
+What Bun checks depends on what you run.
 
 | You run                                               | Bun checks                                            |
 | ----------------------------------------------------- | ----------------------------------------------------- |
@@ -327,7 +327,7 @@ bun --check ./scripts/deploy.sh
 bun --check index.html about.html
 ```
 
-- Bun also checks the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point.
+- `--check` does not cover the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point. `bun check` covers them if your `tsconfig.json` includes them.
 - `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
 - Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
 - With `--tsconfig-override`, the check uses that `tsconfig.json`.
@@ -341,7 +341,7 @@ bun --watch --check src/index.ts
 bun test --watch --check
 ```
 
-`--hot --check` restarts the process like `--watch`, so that nothing runs unchecked.
+`--hot --check` restarts the process like `--watch`, so that Bun checks the code again before it runs.
 
 ### `bun build`
 

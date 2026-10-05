@@ -98,6 +98,8 @@ pub struct Project {
     pub errors: Vec<ConfigError>,
     /// The merged `compilerOptions` of all the files that were read, from which `options` is built.
     pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
+    /// `extendedSourceFiles`: the configuration files that it extends, and those that they extend.
+    pub extended_config_paths: Vec<Vec<u8>>,
 }
 
 impl Project {
@@ -172,6 +174,8 @@ struct Raw {
     /// `rawConfig.Has("references")`
     has_references: bool,
     has_extends: bool,
+    /// `extendedSourceFiles`
+    extended: Vec<Vec<u8>>,
 }
 
 /// `files`, `include` or `exclude`.
@@ -420,9 +424,11 @@ fn parse_config(
             errors,
             as_typescript_does,
         );
-        let Some(extended) = extended else {
+        own.extended.push(extended_path.clone());
+        let Some(mut extended) = extended else {
             continue;
         };
+        own.extended.append(&mut extended.extended);
         // A property the extending file does not specify itself takes the value from the last of
         // the extended files, relative to that file's directory.
         // `relativeDifference`: from the directory of the extending file. 18003 prints the result.
@@ -736,6 +742,7 @@ fn project_from_raw(
             Json::Object(options) => options,
             _ => Vec::new(),
         },
+        extended_config_paths: raw.extended,
     }
 }
 

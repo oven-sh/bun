@@ -655,11 +655,11 @@ pub(crate) struct CheckedBefore {
     pub(crate) files: Vec<Vec<u8>>,
 }
 
-/// Type checks `entry_points`, `preloads` and everything they import before they are run. Reports
-/// the errors on stderr, which leaves stdout to the program.
-pub(crate) fn check_before(entry_points: &[&[u8]], preloads: &[Box<[u8]>]) -> CheckedBefore {
+/// Type checks `entry_points` and everything they import before they are run. Reports the errors
+/// on stderr, which leaves stdout to the program.
+pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
     let cwd = working_directory();
-    let Some(paths) = what_to_check(&cwd, entry_points, preloads) else {
+    let Some(paths) = what_to_check(&cwd, entry_points) else {
         return CheckedBefore {
             has_errors: false,
             files: Vec::new(),
@@ -806,16 +806,10 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
     Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_javascript_like)
 }
 
-/// The files to name in the check of `entry_points` and `preloads`, which are relative to `cwd`.
-/// `None` if none of them has types to check.
-fn what_to_check(
-    cwd: &[u8],
-    entry_points: &[&[u8]],
-    preloads: &[Box<[u8]>],
-) -> Option<Vec<Vec<u8>>> {
-    let mut paths: Vec<Vec<u8>> = (preloads.iter())
-        .filter_map(|it| preloaded_file(cwd, it))
-        .collect();
+/// The files to name in the check of `entry_points`, which are relative to `cwd`. `None` if none of
+/// them has types to check.
+fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
+    let mut paths: Vec<Vec<u8>> = Vec::new();
     for &entry_point in entry_points {
         if has_types(entry_point) {
             paths.push(entry_point.to_vec());
@@ -827,24 +821,6 @@ fn what_to_check(
         }
     }
     (!paths.is_empty()).then_some(paths)
-}
-
-/// The file that `--preload`, `--require`, `--import` or `preload` in bunfig.toml names, if that is
-/// the path of a file with types. A package is no more checked than one that is imported.
-fn preloaded_file(cwd: &[u8], preload: &[u8]) -> Option<Vec<u8>> {
-    use bun_bundler::options::bundle_options_defaults::MODULE_EXTENSION_ORDER;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
-    let path = preload.strip_prefix(b"file://").unwrap_or(preload);
-    let is_relative = path.starts_with(b"./") || path.starts_with(b"../");
-    if !is_relative && !bun_paths::is_absolute(path) {
-        return None;
-    }
-    if has_types(path) {
-        return Some(path.to_vec());
-    }
-    // It is resolved as an import is.
-    let mut completed = MODULE_EXTENSION_ORDER.iter().map(|it| [path, *it].concat());
-    completed.find(|it| has_types(it) && bun_sys::exists(join_abs_string::<Auto>(cwd, &[it])))
 }
 
 /// The pages that `bun` serves for the argument `page`, which src/js/internal/html.ts finds with

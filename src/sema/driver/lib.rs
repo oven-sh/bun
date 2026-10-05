@@ -358,6 +358,10 @@ pub fn compiler_option_from_flag(
     value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
     use bun_sema::config_options::{choices, choices_of_list, from_text};
+    // What `tsc` does instead of compiling. A configuration file may have them, to no effect.
+    if name.eq_ignore_ascii_case(b"init") || name.eq_ignore_ascii_case(b"version") {
+        return Err(FlagError::Unknown);
+    }
     let allowed = choices(name);
     let value = match value {
         Some(value) => value,
@@ -1146,6 +1150,7 @@ fn check_project_of(
     let is_case_sensitive = disk.is_case_sensitive();
     // Here, for a solution: it has no program of its own.
     report.config_paths.push(project.config_path.clone());
+    (report.config_paths).extend(project.extended_config_paths.iter().cloned());
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project {
             // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
@@ -1833,6 +1838,7 @@ fn check_named_files(
     };
     project.options.current_directory = host::from_native(request.cwd);
     report.config_paths.push(project.config_path.clone());
+    (report.config_paths).extend(project.extended_config_paths.iter().cloned());
     let config_path = project.config_path.clone();
     let of_configuration = |error: &ConfigError| {
         let mut reported = global(error.code, &error.args);

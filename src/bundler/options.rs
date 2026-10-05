@@ -2008,7 +2008,7 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub mod bundle_options_defaults {
+pub(crate) mod bundle_options_defaults {
     pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
@@ -2016,7 +2016,7 @@ pub mod bundle_options_defaults {
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 

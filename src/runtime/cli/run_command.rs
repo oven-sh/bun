@@ -953,7 +953,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let more = ctx.passthrough.iter().map(|it| &it[..]).filter(is_page);
             let more = more.filter(|_| is_page(&&entry_path[..]));
             let entry_points: Vec<&[u8]> = std::iter::once(&entry_path[..]).chain(more).collect();
-            let found = crate::cli::check_command::check_before(&entry_points, &ctx.preloads);
+            let found = crate::cli::check_command::check_before(&entry_points);
             if ctx.debug.hot_reload != cli::command::HotReload::None {
                 checked = Some(found);
             } else if found.has_errors {

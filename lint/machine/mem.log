@@ -1,13 +1,3 @@
-10-04_20:43:40 anon=3MB pids=27 load=34.29 top=postgres:12MB
-10-04_20:44:10 anon=3MB pids=27 load=29.95 top=postgres:12MB
-10-04_20:44:40 anon=3MB pids=27 load=28.76 top=postgres:12MB
-10-04_20:45:10 anon=3MB pids=27 load=26.23 top=postgres:12MB
-10-04_20:45:40 anon=3MB pids=27 load=26.54 top=postgres:12MB
-10-04_20:46:10 anon=3MB pids=27 load=27.10 top=postgres:12MB
-10-04_20:46:40 anon=3MB pids=27 load=25.44 top=postgres:12MB
-10-04_20:47:10 anon=3MB pids=27 load=24.87 top=postgres:12MB
-10-04_20:47:40 anon=3MB pids=27 load=25.29 top=postgres:12MB
-10-04_20:48:10 anon=3MB pids=27 load=26.29 top=postgres:12MB
 10-04_20:48:40 anon=3MB pids=27 load=25.45 top=postgres:12MB
 10-04_20:49:10 anon=3MB pids=27 load=24.89 top=postgres:12MB
 10-04_20:49:40 anon=3MB pids=27 load=24.47 top=postgres:12MB
@@ -398,3 +388,13 @@
 10-05_00:02:30 anon=3MB pids=27 load=23.13 top=postgres:12MB
 10-05_00:03:00 anon=3MB pids=27 load=25.14 top=postgres:12MB
 10-05_00:03:30 anon=3MB pids=27 load=24.76 top=postgres:12MB
+10-05_00:04:00 anon=3MB pids=27 load=24.61 top=postgres:12MB
+10-05_00:04:30 anon=3MB pids=27 load=24.41 top=postgres:12MB
+10-05_00:05:00 anon=3MB pids=27 load=23.66 top=postgres:12MB
+10-05_00:05:30 anon=3MB pids=27 load=24.56 top=postgres:12MB
+10-05_00:06:00 anon=3MB pids=27 load=23.88 top=postgres:12MB
+10-05_00:06:30 anon=3MB pids=27 load=28.27 top=postgres:12MB
+10-05_00:07:00 anon=3MB pids=27 load=30.54 top=postgres:12MB
+10-05_00:07:30 anon=3MB pids=27 load=27.59 top=postgres:12MB
+10-05_00:08:00 anon=3MB pids=27 load=27.93 top=postgres:12MB
+10-05_00:08:31 anon=3MB pids=27 load=26.42 top=postgres:12MB

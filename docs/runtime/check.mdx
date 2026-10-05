@@ -131,7 +131,7 @@ In a directory without a `tsconfig.json`, in it or above it, `bun check` checks 
 
 ## Check before you run, build, or test
 
-The `--check` flag type checks the entry point and everything it imports. If there is a type error, Bun prints it, exits with code `1`, and does nothing else.
+The `--check` flag type checks the entry point and everything it imports, and the files that `--preload` or `preload` in `bunfig.toml` loads before it. If there is a type error, Bun prints it, exits with code `1`, and does nothing else.
 
 ```bash terminal icon="terminal"
 bun --check src/index.ts          # run

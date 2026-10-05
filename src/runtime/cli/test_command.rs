@@ -2278,7 +2278,7 @@ impl TestCommand {
         let mut checked = None;
         if ctx.runtime_options.check {
             let paths: Vec<&[u8]> = test_files.iter().map(|path| &**path).collect();
-            let found = crate::cli::check_command::check_before(&paths);
+            let found = crate::cli::check_command::check_before(&paths, &ctx.preloads);
             if ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None {
                 checked = Some(found);
             } else if found.has_errors {

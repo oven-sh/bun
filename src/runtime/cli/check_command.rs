@@ -249,7 +249,7 @@ pub(crate) fn is_package_script() -> bool {
     if running.is_some_and(|running| running_package_scripts(running).any(|it| it == dir)) {
         return false;
     }
-    if package_of_inherited_check_script(dir) == Some(dir) {
+    if package_of_inherited_check_script().is_some_and(|it| it == dir) {
         return false;
     }
     // Most have no such word in them.
@@ -305,17 +305,16 @@ fn is_check_script(name: &[u8]) -> bool {
 
 /// The directory of the package whose `check` script another package manager has started, with
 /// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
-/// then it is the one in `nearest`.
-fn package_of_inherited_check_script(nearest: &[u8]) -> Option<&[u8]> {
+/// then it is the one that this process is started in, not each one whose scripts it runs.
+fn package_of_inherited_check_script() -> Option<Vec<u8>> {
     use bun_paths::{platform::Auto, resolve_path::dirname};
     if !env_var::npm_lifecycle_event::get().is_some_and(is_check_script) {
         return None;
     }
     match env_var::npm_package_json::get() {
-        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(
-            of,
-        ))),
-        None => (env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_none()).then_some(nearest),
+        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
+        None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
+        None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
     }
 }
 
@@ -328,9 +327,9 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         return;
     };
     // `name` takes the place of what another package manager has said, for what the script runs.
-    let inherited = package_of_inherited_check_script(dir);
+    let inherited = package_of_inherited_check_script();
     let mut running = env.get(key).unwrap_or_default().to_vec();
-    for dir in (inherited.into_iter()).chain(is_check_script(name).then_some(dir)) {
+    for dir in (inherited.as_deref().into_iter()).chain(is_check_script(name).then_some(dir)) {
         if !running_package_scripts(&running).any(|it| it == dir) {
             let _ = write!(running, "{}:", dir.len());
             running.extend_from_slice(dir);
@@ -655,11 +654,11 @@ pub(crate) struct CheckedBefore {
     pub(crate) files: Vec<Vec<u8>>,
 }
 
-/// Type checks `entry_points` and everything they import before they are run. Reports the errors
-/// on stderr, which leaves stdout to the program.
-pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
+/// Type checks `entry_points`, `preloads` and everything they import before they are run. Reports
+/// the errors on stderr, which leaves stdout to the program.
+pub(crate) fn check_before(entry_points: &[&[u8]], preloads: &[Box<[u8]>]) -> CheckedBefore {
     let cwd = working_directory();
-    let Some(paths) = what_to_check(&cwd, entry_points) else {
+    let Some(paths) = what_to_check(&cwd, entry_points, preloads) else {
         return CheckedBefore {
             has_errors: false,
             files: Vec::new(),
@@ -806,10 +805,16 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
     Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_javascript_like)
 }
 
-/// The files to name in the check of `entry_points`, which are relative to `cwd`. `None` if none of
-/// them has types to check.
-fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
-    let mut paths: Vec<Vec<u8>> = Vec::new();
+/// The files to name in the check of `entry_points` and `preloads`, which are relative to `cwd`.
+/// `None` if none of them has types to check.
+fn what_to_check(
+    cwd: &[u8],
+    entry_points: &[&[u8]],
+    preloads: &[Box<[u8]>],
+) -> Option<Vec<Vec<u8>>> {
+    let mut paths: Vec<Vec<u8>> = (preloads.iter())
+        .filter_map(|it| preloaded_file(cwd, it))
+        .collect();
     for &entry_point in entry_points {
         if has_types(entry_point) {
             paths.push(entry_point.to_vec());
@@ -821,6 +826,24 @@ fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
         }
     }
     (!paths.is_empty()).then_some(paths)
+}
+
+/// The file that `--preload`, `--require`, `--import` or `preload` in bunfig.toml names, if that is
+/// the path of a file with types. A package is no more checked than one that is imported.
+fn preloaded_file(cwd: &[u8], preload: &[u8]) -> Option<Vec<u8>> {
+    use bun_bundler::options::bundle_options_defaults::MODULE_EXTENSION_ORDER;
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    let path = preload.strip_prefix(b"file://").unwrap_or(preload);
+    let is_relative = path.starts_with(b"./") || path.starts_with(b"../");
+    if !is_relative && !bun_paths::is_absolute(path) {
+        return None;
+    }
+    if has_types(path) {
+        return Some(path.to_vec());
+    }
+    // It is resolved as an import is.
+    let mut completed = MODULE_EXTENSION_ORDER.iter().map(|it| [path, *it].concat());
+    completed.find(|it| has_types(it) && bun_sys::exists(join_abs_string::<Auto>(cwd, &[it])))
 }
 
 /// The pages that `bun` serves for the argument `page`, which src/js/internal/html.ts finds with

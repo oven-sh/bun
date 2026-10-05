@@ -14685,6 +14685,30 @@ describe.concurrent("--check", () => {
     ).toEqual(cases.map(([, runs]) => ({ ranTheScript: Number(runs), reported: 1, exitCode: 1 })));
   });
 
+  // yarn does not say of which package the script is: of the one that `bun` is started in, not of
+  // each that it goes to.
+  test("a `check` script that another package manager runs, and that runs the scripts of other packages", async () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    using dir = project({
+      "package.json": JSON.stringify({ workspaces: ["packages/*"], scripts: { check: "echo no" } }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        scripts: { types: `${bun} check`, check: "echo the script of the package ran" },
+      }),
+      "packages/a/a.ts": `export const a: number = "1";\n`,
+    });
+    const own = join(String(dir), "package.json");
+    const results = await Promise.all(
+      [{ npm_lifecycle_event: "check" }, { npm_lifecycle_event: "check", npm_package_json: own }].map(extra =>
+        run(String(dir), ["--filter", "*", "types"], extra),
+      ),
+    );
+    expect(results.map(it => [it.stdout.includes("the script of the package ran"), it.exitCode])).toEqual([
+      [true, 0],
+      [true, 0],
+    ]);
+  });
+
   test("the `check` scripts of several packages are scripts, and each runs once", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     const files = {
@@ -14852,6 +14876,44 @@ describe.concurrent("--check", () => {
       Found 1 error in 1 file, checked 1 file [time]"
     `);
     expect(stopped.exitCode).toBe(1);
+  });
+
+  // It runs before the entry point.
+  describe.each([
+    ["--preload", ["--preload", "./setup.ts"], {}],
+    ["--preload without an extension", ["--preload", "./setup"], {}],
+    ["--preload with an absolute path", ["--preload", "<dir>/setup.ts"], {}],
+    ["--require", ["--require", "./setup.ts"], {}],
+    ["--import", ["--import", "./setup.ts"], {}],
+    ["preload in bunfig.toml", [], { "bunfig.toml": `preload = ["./setup.ts"]\n[test]\npreload = ["./setup.ts"]\n` }],
+  ] as [string, string[], Record<string, string>][])("--check with %s", (_, flags, more) => {
+    const files = {
+      ...more,
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "index.ts": `console.log("ran");\n`,
+      "a.test.ts": `import { test } from "bun:test";\ntest("a", () => console.log("ran"));\n`,
+    };
+    test.each([
+      ["bun", ["index.ts"]],
+      ["bun test", ["test"]],
+    ])("%s does not run what has a type error", async (_, cmd) => {
+      using good = project({ ...files, "setup.ts": `console.log("set up");\nexport const a: number = 1;\n` });
+      using bad = project({ ...files, "setup.ts": `console.log("set up");\nexport const a: number = "1";\n` });
+      const at = (dir: { toString(): string }) => [
+        ...cmd.filter(it => it === "test"),
+        "--check",
+        ...flags.map(it => it.replace("<dir>", String(dir))),
+        ...cmd.filter(it => it !== "test"),
+      ];
+      const [ran, stopped] = await Promise.all([run(String(good), at(good)), run(String(bad), at(bad))]);
+      expect([ran.stdout.includes("set up"), ran.stdout.includes("ran"), ran.exitCode]).toEqual([true, true, 0]);
+      expect(stopped.stderr).toContain("setup.ts(2,14): error TS2322");
+      expect([stopped.stdout.includes("set up"), stopped.stdout.includes("ran"), stopped.exitCode]).toEqual([
+        false,
+        false,
+        1,
+      ]);
+    });
   });
 
   // Neither has an entry point to start from, like a script of a package.json.

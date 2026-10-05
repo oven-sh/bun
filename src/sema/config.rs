@@ -441,7 +441,7 @@ fn parse_config(
                     // Not normalized: `..` after `**` is an error that is still to be reported.
                     Json::String(spec)
                         if !(starts_with_config_dir_template(&spec)
-                            || spec.starts_with(b"/")
+                            || crate::resolve::is_rooted_disk_path(&spec)
                             || relative_difference.is_empty()) =>
                     {
                         Json::String([&relative_difference[..], b"/", &spec[..]].concat())

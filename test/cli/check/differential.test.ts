@@ -648,6 +648,56 @@ differential(
   timeout,
 );
 
+// What is relative is relative to the file that it is written in.
+differential(
+  "paths in a configuration file that is extended",
+  async () => {
+    const paths = [
+      "*.ts",
+      "./*.ts",
+      "../*.ts",
+      "/nowhere/*.ts",
+      "C:/nowhere/*.ts",
+      "c:\\nowhere\\*.ts",
+      "\\\\server\\share\\*.ts",
+      "C:nowhere/*.ts",
+      "${configDir}/*.ts",
+    ];
+    // A drive or a server is the start of a path on Windows only. Elsewhere there is no such file to either, but
+    // TypeScript names it as on Windows.
+    const isOfWindows = (path: string) => /^([a-z]:[\\/]|\\\\)/i.test(path);
+    const cases = ["include", "exclude", "files"]
+      .flatMap(name => paths.map(path => [name, path]))
+      .filter(([name, path]) => isWindows || name !== "files" || !isOfWindows(path))
+      .map(([name, path]) => ({ [name]: [path] }));
+    using dir = tempDir(
+      "bun-check-differential",
+      Object.fromEntries(
+        cases.flatMap((base, i) => [
+          [
+            `c${i}/base/tsconfig.json`,
+            JSON.stringify({ compilerOptions: { noEmit: true, skipLibCheck: true }, ...base }),
+          ],
+          [`c${i}/project/tsconfig.json`, JSON.stringify({ extends: "../base/tsconfig.json" })],
+          [`c${i}/project/a.ts`, `export const a: number = "1";\n`],
+          [`c${i}/base/b.ts`, `export const b: number = "1";\n`],
+        ]),
+      ),
+    );
+    const root = String(dir);
+    const results: { base: object; bun: string[]; tsc: string[] }[] = [];
+    await inTurns([...cases.entries()], async ([i, base]) => {
+      const [bun, typescript] = await Promise.all([
+        linesOf([bunExe(), "check", "-p", `c${i}/project`], root, root),
+        linesOf([tsc!, "-p", `c${i}/project`, "--pretty", "false"], root, root),
+      ]);
+      results.push({ base, bun, tsc: typescript });
+    });
+    expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  },
+  timeout,
+);
+
 const casingOptions = { ...JSON.parse(tsconfig).compilerOptions };
 const casingConfig = (more: object, top: object = {}) =>
   JSON.stringify({ compilerOptions: { ...casingOptions, ...more }, exclude: ["**/hidden"], ...top });

@@ -174,6 +174,7 @@ impl All {
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
+        let async_hooks_id = all.next_async_hooks_id();
 
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
@@ -186,6 +187,7 @@ impl All {
         Ok(TimeoutObject::init(
             cx,
             id,
+            async_hooks_id,
             Kind::SetTimeout,
             countdown_int,
             wrapped_promise,
@@ -204,11 +206,13 @@ impl All {
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
+        let async_hooks_id = all.next_async_hooks_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         Ok(ImmediateObject::init(
             cx,
             id,
+            async_hooks_id,
             wrapped_callback,
             arguments,
             all.fake_timers.clock_while_active(clock),
@@ -226,6 +230,7 @@ impl All {
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
+        let async_hooks_id = all.next_async_hooks_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         let countdown_int = all.js_value_to_countdown(
@@ -243,6 +248,7 @@ impl All {
         let timeout = TimeoutObject::init(
             cx,
             id,
+            async_hooks_id,
             Kind::SetTimeout,
             if is_due_when_idle { 1 } else { countdown_int },
             wrapped_callback,
@@ -269,6 +275,7 @@ impl All {
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
+        let async_hooks_id = all.next_async_hooks_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         // Never 0, on either clock: it would be due again at the time it fired, so advancing the fake clock wouldn't end.
@@ -282,6 +289,7 @@ impl All {
         Ok(TimeoutObject::init(
             cx,
             id,
+            async_hooks_id,
             Kind::SetInterval,
             countdown_int,
             wrapped_callback,
@@ -701,6 +709,10 @@ pub(crate) fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsR
 
 pub(crate) mod internal_bindings {
     use super::*;
+
+    pub(crate) fn new_async_hooks_id() -> f64 {
+        timer_all_mut().next_async_hooks_id() as f64
+    }
 
     /// Node.js has some tests that check whether timers fire at the right time. They check this
     /// with the internal binding `getLibuvNow()`, which returns an integer in milliseconds. This

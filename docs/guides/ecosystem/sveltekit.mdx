@@ -131,7 +131,7 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
         This outputs the compiled server and client assets to the `build/` directory.
 
         <Note>
-          Deploying an uncompiled server requires `build/`, `package.json`, and production dependencies (`bun install --production`) on the host. To deploy without `node_modules`, compile into a [standalone executable](#standalone-executable-single-file-binary) instead.
+          Deploying an uncompiled server requires `build/`, `package.json`, `bun.lock`, and production dependencies installed on the host with `bun install --production --frozen-lockfile`. To deploy without `node_modules`, compile into a [standalone executable](#standalone-executable-single-file-binary) instead.
         </Note>
       </Step>
       <Step title="Start the production server">
@@ -192,7 +192,7 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
     - **`SOCKET_PATH`**: Configures the server to listen on a Unix domain socket instead of TCP (e.g. `SOCKET_PATH=/tmp/sveltekit.sock`).
     - **`BODY_SIZE_LIMIT`**: Configures the maximum request body size handled by `Bun.serve` (defaults to `512K`, accepts values like `10M` or `Infinity`).
     - **`CONNECTION_IDLE_TIMEOUT`**: Sets Bun's per-request inactivity timeout in seconds (0 to 255).
-    - **Reverse Proxy Headers**: When deployed behind a reverse proxy (such as Nginx, Cloudflare, or AWS ALB), configure trusted headers:
+    - **Reverse Proxy Headers**: Configure these only when a trusted proxy replaces client-supplied values for these headers and direct client access to Bun is blocked. Otherwise, clients can spoof the request origin and `getClientAddress()`:
       ```sh terminal icon="terminal"
       PROTOCOL_HEADER=x-forwarded-proto \
       HOST_HEADER=x-forwarded-host \

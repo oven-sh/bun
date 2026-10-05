@@ -217,15 +217,13 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// into an unrelated nested arrow.
     pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
         use js_ast::expr::Data;
-        match &Self::sound_without_annotations(*expr).data {
+        match &expr.data {
             Data::EArrow(_) | Data::EFunction(_) => Some(false),
             Data::ECall(call)
                 if !call.was_jsx_element && self.is_react_hoc_callee(&call.target) =>
             {
                 matches!(
-                    call.args
-                        .first()
-                        .map(|a| Self::sound_without_annotations(*a).data),
+                    call.args.first().map(|a| &a.data),
                     Some(Data::EArrow(_) | Data::EFunction(_))
                 )
                 .then_some(true)

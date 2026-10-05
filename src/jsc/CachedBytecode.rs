@@ -76,7 +76,6 @@ unsafe extern "C" {
         not_evaluated_modules: *const u64,
         not_evaluated_module_count: usize,
         compile_ahead_of_time: bool,
-        sound_types: bool,
     ) -> *mut BytecodeLinkEncoder;
     fn Bun__BytecodeLinkEncoder__destroy(this: *mut BytecodeLinkEncoder);
     fn Bun__BytecodeLinkEncoder__addModule(
@@ -332,7 +331,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
     compile_ahead_of_time: bool,
-    sound_types: bool,
 ) -> NonNull<BytecodeLinkEncoder> {
     crate::initialize(crate::InitializeOptions::default());
     // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
@@ -348,7 +346,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
             not_evaluated_modules.as_ptr(),
             not_evaluated_modules.len(),
             compile_ahead_of_time,
-            sound_types,
         ))
     }
 }

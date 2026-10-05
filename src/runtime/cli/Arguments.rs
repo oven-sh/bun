@@ -536,9 +536,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
-        parse_param!(
-            "--sound-types <STR>?             Check TypeScript annotations at runtime with the $$t intrinsic - 'basic' (default), 'full' or 'infer'"
-        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -2756,17 +2753,6 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-compiler") {
         ctx.bundler_options.react_compiler = true;
-    }
-
-    if let Some(setting) = args.option(b"--sound-types") {
-        let Some(level) = bun_ast::sound_types::Level::from_option_value(setting) else {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: Invalid --sound-types setting: \"{}\". Expected \"basic\", \"full\" or \"infer\"",
-                BStr::new(setting)
-            );
-            Global::crash();
-        };
-        ctx.bundler_options.sound_types = level;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

@@ -759,12 +759,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.lexer.token != T::TCloseBrace
             && p.lexer.token != T::TEndOfFile
         {
-            let mut expr = p.parse_expr(Level::Lowest)?;
-            if p.sound_types_enabled() {
-                let ty = p.fn_or_arrow_data_parse.sound_return;
-                expr = p.sound_annotate(expr, ty, bun_ast::sound_types::Rule::Return);
-            }
-            value = Some(expr);
+            value = Some(p.parse_expr(Level::Lowest)?);
         }
         p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
         p.lexer.expect_or_insert_semicolon()?;
@@ -1076,10 +1071,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             js_ast::StmtData::SClass(class) => {
                                 if let Some(name) = class.class.class_name {
-                                    if p.sound_types_enabled() {
-                                        let class_name = p.load_name_from_ref(name.ref_);
-                                        p.sound_declare_export(b"default", class_name);
-                                    }
                                     break 'default_name_getter LocRef {
                                         loc: name.loc,
                                         ref_: name.ref_,
@@ -1194,12 +1185,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;
-                if p.sound_types_enabled()
-                    && let js_ast::ExprData::EIdentifier(id) = expr.data
-                {
-                    let exported = p.load_name_from_ref(id.ref_);
-                    p.sound_declare_export(b"default", exported);
-                }
 
                 // Use the expression name if present, since it's a better name
                 let default_name = p.default_name_for_expr(expr, default_loc);
@@ -1249,11 +1234,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.arena.alloc_slice_copy(&buf)
                     };
                     namespace_ref = p.store_name_in_ref(name);
-                }
-
-                if p.sound_types_enabled() {
-                    let alias = alias.as_ref().map(|alias| alias.original_name.slice());
-                    p.sound_declare_export_star(path.text, alias);
                 }
 
                 let import_record_index = p.add_import_record(
@@ -1306,9 +1286,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"from") {
                     p.lexer.expect_contextual_keyword(b"from")?;
                     let parsed_path = p.parse_path()?;
-                    if p.sound_types_enabled() {
-                        p.sound_declare_exports(Some(parsed_path.text));
-                    }
 
                     p.lexer.expect_or_insert_semicolon()?;
 
@@ -1372,9 +1349,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
                 p.lexer.expect_or_insert_semicolon()?;
-                if p.sound_types_enabled() {
-                    p.sound_declare_exports(None);
-                }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // export {type Foo};
@@ -1491,10 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
-                        let path = p.parse_path()?;
-                        if p.sound_types_enabled() {
-                            p.sound_declare_imports(path.text, None, None);
-                        }
+                        let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
@@ -1609,10 +1580,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     } else {
                                         // "import type foo from 'bar';" (foo may be "from")
                                         p.lexer.expect_contextual_keyword(b"from")?;
-                                        let path = p.parse_path()?;
-                                        if p.sound_types_enabled() {
-                                            p.sound_declare_imports(path.text, Some(name), None);
-                                        }
+                                        let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
                                         return Ok(p.s(S::TypeScript {}, loc));
                                     }
@@ -1622,13 +1590,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type * as foo from 'bar';"
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
-                                let star_name = p.lexer.identifier;
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let path = p.parse_path()?;
-                                if p.sound_types_enabled() {
-                                    p.sound_declare_imports(path.text, None, Some(star_name));
-                                }
+                                let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
@@ -1637,10 +1601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type {foo} from 'bar';"
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let path = p.parse_path()?;
-                                if p.sound_types_enabled() {
-                                    p.sound_declare_imports(path.text, None, None);
-                                }
+                                let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
@@ -1701,16 +1662,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
-        if p.sound_types_enabled() {
-            let default_name = stmt
-                .default_name
-                .map(|name| p.load_name_from_ref(name.ref_));
-            let star_name = stmt
-                .namespace_ref
-                .is_valid()
-                .then(|| p.load_name_from_ref(stmt.namespace_ref));
-            p.sound_declare_imports(path.text, default_name, star_name);
-        }
 
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)
     }
@@ -1836,11 +1787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         scope: opts.scope,
                         ..Default::default()
                     };
-                    let name = p.lexer.identifier;
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
-                    if opts.is_export && p.sound_types_enabled() {
-                        p.sound_declare_export(name, name);
-                    }
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
             }
@@ -1865,7 +1812,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before || opts.is_name_optional {
                     let mut stmt_opts = ParseStatementOptions {
                         scope: opts.scope,
-                        is_export: opts.is_export,
                         ..Default::default()
                     };
 
@@ -1933,14 +1879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    if p.sound_types_enabled() {
-                        p.sound().foreign_declaration_depth += 1;
-                    }
-                    let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts);
-                    if p.sound_types_enabled() {
-                        p.sound().foreign_declaration_depth -= 1;
-                    }
-                    let _ = stmts?;
+                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.

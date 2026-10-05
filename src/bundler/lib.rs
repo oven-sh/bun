@@ -94,7 +94,6 @@ pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub mod bytecode_order;
 pub mod prelinked_module_graph;
-pub mod sound_types_host;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]

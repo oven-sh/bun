@@ -365,7 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_typeof(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = Self::sound_without_annotations(p.parse_expr(Level::Prefix)?);
+        let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
@@ -388,7 +388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_delete(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = Self::sound_without_annotations(p.parse_expr(Level::Prefix)?);
+        let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
@@ -567,9 +567,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc: p.lexer.loc(),
                     ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
-                if p.sound_types_enabled() {
-                    p.sound().types.declare_opaque(name_text);
-                }
                 p.lexer.next()?;
             }
         }
@@ -633,9 +630,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc: p.lexer.loc(),
                     ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
-                if p.sound_types_enabled() {
-                    p.sound().types.declare_opaque(name_text);
-                }
                 p.lexer.next()?;
             }
         }
@@ -695,7 +689,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Parse target into a local, then construct E::New once.
         let mut target = Expr::EMPTY;
         p.parse_expr_with_flags(Level::Member, flags, &mut target)?;
-        target = Self::sound_without_annotations(target);
 
         if Self::IS_TYPESCRIPT_ENABLED {
             // Skip over TypeScript type arguments here if there are any
@@ -987,13 +980,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "<T>x"
             p.lexer.next()?;
-            if p.sound_types_enabled() {
-                let ty = p.skip_type_script_type_sound(Level::Lowest, None)?;
-                p.lexer.expect_greater_than::<false>()?;
-                let mut value = Expr::EMPTY;
-                p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
-                return Ok(p.sound_annotate(value, ty, bun_ast::sound_types::Rule::Cast));
-            }
             p.skip_type_script_type(Level::Lowest)?;
             p.lexer.expect_greater_than::<false>()?;
             return p.parse_prefix(level, errors, flags);

@@ -3033,15 +3033,6 @@ declare module "bun" {
     deadCodeElimination?: boolean;
 
     /**
-     * Check TypeScript annotations at runtime with the `$$t` intrinsic.
-     * See {@link BuildConfig.soundTypes}.
-     *
-     * @default false
-     * @experimental
-     */
-    soundTypes?: boolean | "basic" | "full" | "infer";
-
-    /**
      * This does two things:
      * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations are inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.
@@ -3575,27 +3566,6 @@ declare module "bun" {
      * @experimental
      */
     reactCompilerOutputMode?: "client" | "ssr";
-
-    /**
-     * Check TypeScript annotations at runtime.
-     *
-     * Annotations that map to a runtime tag (`number`, `string[]`,
-     * `() => void`, `Foo | null`, ...) are lowered to calls of the `$$t`
-     * intrinsic, which throws a `TypeError` when the value does not have one
-     * of the expected tags. Annotations that cannot be checked are erased.
-     *
-     * - `true` or `"basic"`: parameters, return values, typed variables,
-     *   `as` casts and stores to typed class fields.
-     * - `"full"`: also `!` assertions, reads of typed class fields through
-     *   `this`, and the results of calls to functions in the same file.
-     * - `"infer"`: also what TypeScript infers without an annotation: reads of
-     *   members and elements whose type is a primitive or a typed array, the
-     *   results of typed methods, and variables initialized with those.
-     *
-     * @default false
-     * @experimental
-     */
-    soundTypes?: boolean | "basic" | "full" | "infer";
 
     /**
      * A map of file paths to their contents for in-memory bundling.

@@ -328,7 +328,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
 // `bun build --compile --bytecode` with a payload order file (--bytecode-order): one payload for the whole link.
 // Created, fed and finished on the bundler's bytecode thread (it uses that thread's bytecode VM).
-extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime, bool soundTypes)
+extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime)
 {
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -340,7 +340,6 @@ extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::Encod
     hints.compileAheadOfTime = compileAheadOfTime;
     auto& options = vm.bytecodeGenerationOptions;
     options = { };
-    options.useSoundTypes |= soundTypes;
     options.resolveAllScopeSlotsStatically |= compileAheadOfTime;
     options.evaluateObjectLiteralValuesFirst |= compileAheadOfTime;
     options.definePlainInstanceFieldsInConstructor |= compileAheadOfTime;

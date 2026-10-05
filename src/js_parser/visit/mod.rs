@@ -95,11 +95,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            sound_this_class: if self.sound_types_enabled() {
-                self.sound_take_next_fn_this_class()
-            } else {
-                0
-            },
+            ..Default::default()
         };
 
         if let Some(name) = func.name {
@@ -118,14 +114,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let body_loc = func.body.loc;
-        let mut body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        if self.sound_types_enabled() {
-            body_stmts = self.sound_body_with_param_checks(
-                func.args.slice(),
-                func.flags.contains(flags::Function::HasRestArg),
-                body_stmts,
-            );
-        }
+        let body_stmts: &'a [Stmt] = func.body.stmts.slice();
         let prev_may_replace_body = self.enter_react_compiler_candidate(
             func.name.map(|n| n.ref_),
             func.flags
@@ -305,14 +294,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.visit_binding(decl.binding, None);
 
             if let Some(mut val) = decl.value {
-                let mut sound_mask = bun_ast::sound_types::mask::TOP;
-                if TYPESCRIPT
-                    && let ExprData::ETypeCheck(check) = val.data
-                    && check.rule == bun_ast::sound_types::Rule::VarInit
-                {
-                    sound_mask = self.sound_resolve(check.ty);
-                    val = check.value;
-                }
                 let was_anonymous_named_expr = val.is_anonymous_named();
 
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
@@ -605,21 +586,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if sound_mask != bun_ast::sound_types::mask::TOP
-                    && let Some(value) = decl.value
-                {
-                    decl.value = Some(self.sound_check(
-                        value,
-                        sound_mask,
-                        bun_ast::sound_types::Rule::VarInit,
-                    ));
-                } else if self.sound_types_infer()
-                    && let Some(mut value) = decl.value
-                {
-                    self.sound_infer_variable(&decl.binding, &mut value);
-                    decl.value = Some(value);
-                }
-
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
@@ -818,9 +784,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
                         self.visit_expr(val);
-                        if self.sound_types_infer() {
-                            self.sound_infer_variable(&dec.binding, val);
-                        }
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -1094,9 +1057,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
-            if self.sound_types_enabled() {
-                self.sound_enter_class(class);
-            }
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1164,24 +1124,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 self.fn_only_data_visit.is_this_nested = true;
-                let old_sound_this_class = self.fn_only_data_visit.sound_this_class;
-                let mut sound_initializer_mask = bun_ast::sound_types::mask::TOP;
-                if self.sound_types_enabled() {
-                    let is_static = property.flags.contains(flags::Property::IsStatic);
-                    self.fn_only_data_visit.sound_this_class = if is_static {
-                        0
-                    } else {
-                        self.sound_current_class()
-                    };
-                    if !is_static && property.flags.contains(flags::Property::IsMethod) {
-                        self.sound_next_fn_is_instance_method();
-                    }
-                    if let Some(init) = &property.initializer
-                        && !self.sound_is_escape_hatch(init)
-                    {
-                        sound_initializer_mask = self.sound_resolve(property.sound_type);
-                    }
-                }
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
@@ -1272,26 +1214,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
-                    if sound_initializer_mask != bun_ast::sound_types::mask::TOP {
-                        property.initializer = Some(self.sound_check(
-                            property.initializer.unwrap(),
-                            sound_initializer_mask,
-                            bun_ast::sound_types::Rule::FieldInit,
-                        ));
-                    }
                     self.field_init_class_bodies.pop();
                 }
 
                 // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                self.fn_only_data_visit.sound_this_class = old_sound_this_class;
-                if self.sound_types_enabled() {
-                    self.sound_take_next_fn_this_class();
-                }
-            }
-            if self.sound_types_enabled() {
-                self.sound_leave_class();
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
@@ -1452,8 +1380,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if matches!(c.target.data, ExprData::ESuper(_))))
                                 })
                                 .map_or(0, |i| i + 1)
-                        } else if self.sound_types_enabled() {
-                            self.sound_prologue_len(old_body)
                         } else {
                             0
                         };

@@ -792,7 +792,6 @@ pub mod parse_worker {
                     s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
                 ),
                 nested_scope_slot: s.nested_scope_slot,
-                sound_type: s.sound_type,
                 kind,
                 import_item_status,
                 flags: s.flags,
@@ -2579,18 +2578,6 @@ pub mod parse_worker {
         };
         opts.features.react_compiler_parse_test_pragmas =
             opts.features.react_compiler.is_enabled() && topts.react_compiler_parse_test_pragmas;
-        opts.features.sound_types = topts.sound_types.unless_env_excluded(source.path.text);
-        let sound_types_host = crate::sound_types_host::SoundTypesHost {
-            resolver,
-            cache: bun_ptr::BackRef::new(&worker_ctx.sound_types_cache),
-        };
-        if opts.features.sound_types.is_enabled() && loader.is_typescript() {
-            opts.sound_types_host = Some(unsafe {
-                bun_ptr::detach_lifetime_ref::<dyn bun_ast::sound_types::ModuleTypesHost>(
-                    &sound_types_host,
-                )
-            });
-        }
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

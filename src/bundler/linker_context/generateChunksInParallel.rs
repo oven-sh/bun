@@ -527,7 +527,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    if let Some(coverage) = bun_ast::sound_types::oracle::take_table_coverage() {
+    if let Some(coverage) = bun_ast::type_tags::take_table_coverage() {
         bun_core::Output::print_errorln(format_args!("type table: {} sources tagged", coverage.tagged));
         bun_core::Output::print_errorln(format_args!("type table: {} sources differ", coverage.differing));
         bun_core::Output::print_errorln(format_args!("type table: {} sources unknown", coverage.unknown));
@@ -1424,7 +1424,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 table,
                 order,
                 c.options.aot,
-                c.options.sound_types,
             );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);

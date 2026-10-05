@@ -10,7 +10,6 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::op::Level;
-use bun_ast::sound_types::{Rule, SoundType};
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
@@ -144,12 +143,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             n.ref_ = p.declare_symbol(kind, n.loc, name_text)?;
         }
         func.name = name;
-        if p.sound_types_full()
-            && let Some(n) = name
-        {
-            let ty = p.sound().last_fn_return;
-            p.sound_record_fn_return(n.ref_, ty);
-        }
 
         // flags is freshly built so unset → only insert when true
         if has_if_scope {
@@ -253,7 +246,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut text = p.lexer.identifier;
             let mut arg = p.parse_binding(Default::default())?;
             let mut ts_metadata = bun_ast::ts::Metadata::default();
-            let mut sound_type = SoundType::TOP;
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if is_identifier && opts.is_constructor {
@@ -286,8 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "function foo(a?) {}"
-                let is_optional = p.lexer.token == T::TQuestion;
-                if is_optional {
+                if p.lexer.token == T::TQuestion {
                     p.lexer.next()?;
                 }
 
@@ -295,20 +286,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
                     if !rest_arg {
-                        let wants_metadata = p.options.features.emit_decorator_metadata
+                        if p.options.features.emit_decorator_metadata
                             && opts.allow_ts_decorators
                             && (opts.has_argument_decorators
                                 || opts.has_decorators
-                                || arg_has_decorators);
-                        if p.sound_types_enabled() {
-                            sound_type = p.skip_type_script_type_sound(
-                                Level::Lowest,
-                                wants_metadata.then_some(&mut ts_metadata),
-                            )?;
-                            if is_optional {
-                                sound_type = p.sound().types.optional(sound_type);
-                            }
-                        } else if wants_metadata {
+                                || arg_has_decorators)
+                        {
                             ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
@@ -339,11 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // We need to track this because it affects code generation
                 is_typescript_ctor_field,
                 ts_metadata,
-                sound_type,
             });
-            if p.sound_types_enabled() {
-                p.sound_record_parameter(args.last().unwrap());
-            }
 
             if p.lexer.token != T::TComma {
                 break;
@@ -389,24 +368,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
         // "function foo(): any {}"
-        let mut sound_return = SoundType::TOP;
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
 
-                let wants_metadata = p.options.features.emit_decorator_metadata
+                if p.options.features.emit_decorator_metadata
                     && opts.allow_ts_decorators
-                    && (opts.has_argument_decorators || opts.has_decorators);
-                if p.sound_types_enabled() {
-                    sound_return = p.skip_typescript_return_type_sound(
-                        wants_metadata.then_some(&mut func.return_ts_metadata),
-                    )?;
-                    if func.flags.contains(Flags::Function::IsAsync)
-                        || func.flags.contains(Flags::Function::IsGenerator)
-                    {
-                        sound_return = SoundType::TOP;
-                    }
-                } else if wants_metadata {
+                    && (opts.has_argument_decorators || opts.has_decorators)
+                {
                     func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
                 } else {
                     p.skip_typescript_return_type()?;
@@ -430,11 +399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(func);
         }
         let mut temp_opts = opts;
-        temp_opts.sound_return = sound_return;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.sound_types_enabled() {
-            p.sound().last_fn_return = sound_return;
-        }
         if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
             // next-line semantics: a suppression marks the enclosing top-level
@@ -575,9 +540,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for arg in args.iter_mut() {
             let opts = ParseStatementOptions::default();
             p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg.binding, &opts)?;
-            if p.sound_types_enabled() {
-                p.sound_record_parameter(arg);
-            }
         }
 
         // The ability to use "this" and "super()" is inherited by arrow functions
@@ -589,9 +551,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
-            if p.sound_types_enabled() {
-                p.sound().last_fn_return = data.sound_return;
-            }
             p.after_arrow_body_loc = p.lexer.loc();
             let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
                 || p.lexer.has_react_hooks_block_suppression;
@@ -627,12 +586,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
-        let expr = if p.sound_types_enabled() {
-            p.sound().last_fn_return = data.sound_return;
-            p.sound_annotate(expr, data.sound_return, Rule::Return)
-        } else {
-            expr
-        };
 
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);

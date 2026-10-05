@@ -110,7 +110,6 @@ pub(crate) mod js_bundler {
         pub(crate) react_fast_refresh: bool,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub(crate) react_compiler_parse_test_pragmas: bool,
-        pub(crate) sound_types: bun_ast::sound_types::Level,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub(crate) define: StringMap,
         pub(crate) loaders: Option<api::LoaderMap>,
@@ -175,7 +174,6 @@ pub(crate) mod js_bundler {
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
-                sound_types: bun_ast::sound_types::Level::Off,
                 react_compiler_output_mode: None,
                 define: StringMap::init(false),
                 loaders: None,
@@ -719,8 +717,6 @@ pub(crate) mod js_bundler {
                     bun_ast::runtime::ReactCompilerMode::Disabled
                 };
             }
-
-            this.sound_types = crate::api::js_transpiler::sound_types_from_js(global_this, config)?;
 
             if let Some(v) =
                 config.get_boolean_loose(global_this, "reactCompilerParseTestPragmas")?

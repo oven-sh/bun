@@ -68,9 +68,6 @@ new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT",
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_AOT: boolean, "BUN_AOT", {});
-new!(pub BUN_SOUND_TYPES: string, "BUN_SOUND_TYPES", {});
-new!(pub BUN_SOUND_TYPES_EXCLUDE: string, "BUN_SOUND_TYPES_EXCLUDE", {});
-new!(pub BUN_SOUND_TYPES_STATS: string, "BUN_SOUND_TYPES_STATS", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });

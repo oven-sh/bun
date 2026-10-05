@@ -946,7 +946,6 @@ impl_into_expr_data_boxed! {
     If => EIf,
     Import => EImport,
     InlinedEnum => EInlinedEnum,
-    TypeCheck => ETypeCheck,
 }
 
 impl_into_expr_data_inline! {
@@ -1148,7 +1147,6 @@ pub enum Tag {
     ESpecial,
     EInlinedEnum,
     ENameOfSymbol,
-    ETypeCheck,
 }
 
 impl Tag {
@@ -1497,8 +1495,6 @@ pub enum Data {
     EInlinedEnum(StoreRef<E::InlinedEnum>),
 
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
-
-    ETypeCheck(StoreRef<E::TypeCheck>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -2158,14 +2154,6 @@ impl Data {
                 });
                 Ok(Data::EInlinedEnum(StoreRef::from_bump(item)))
             }
-            Data::ETypeCheck(el) => {
-                let item = bump.alloc(E::TypeCheck {
-                    value: el.value.deep_clone_no_detach(bump)?,
-                    ty: el.ty,
-                    rule: el.rule,
-                });
-                Ok(Data::ETypeCheck(StoreRef::from_bump(item)))
-            }
             _ => Ok(this),
         }
     }
@@ -2328,7 +2316,6 @@ impl Data {
                 // pretend there is no comment
                 e.value.data.write_to_hasher(hasher, symbol_table);
             }
-            Data::ETypeCheck(e) => e.value.data.write_to_hasher(hasher, symbol_table),
             // no data
             Data::ERequireCallTarget
             | Data::ERequireResolveCallTarget
@@ -2900,7 +2887,6 @@ crate::new_store!(
         E::EString,
         E::InlinedEnum,
         E::NameOfSymbol,
-        E::TypeCheck,
     ],
     512
 );

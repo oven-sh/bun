@@ -486,9 +486,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
 
-    pub(crate) sound_level: bun_ast::sound_types::Level,
-    pub(crate) sound_state: Option<Box<crate::sound_types::SoundTypesState<'a>>>,
-
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
@@ -6153,7 +6150,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EArray(e) => !e.is_parenthesized,
             js_ast::ExprData::EObject(e) => !e.is_parenthesized,
-            js_ast::ExprData::ETypeCheck(e) => self.is_valid_assignment_target(&e.value),
             _ => false,
         }
     }
@@ -7623,13 +7619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
 
-                        let i = match super_index {
-                            Some(j) => j + 1,
-                            None if self.sound_types_enabled() => {
-                                self.sound_prologue_len(old_stmts)
-                            }
-                            None => 0,
-                        };
+                        let i = super_index.map(|j| j + 1).unwrap_or(0);
                         let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_stmts.len() + instance_members.len(),
                             self.arena,
@@ -8442,7 +8432,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for ref_ in stale {
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
-            self.sound_forget_symbols_from(snapshot.symbols_len);
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
@@ -9766,24 +9755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
             opts.features.emit_decorator_metadata = false;
-            opts.features.sound_types = bun_ast::sound_types::Level::Off;
         }
-
-        let sound_level = if opts.features.sound_types.is_enabled()
-            && !SCAN_ONLY
-            && !strings::contains(&source.contents, bun_ast::sound_types::CHECK_FN_NAME)
-        {
-            opts.features.sound_types
-        } else {
-            bun_ast::sound_types::Level::Off
-        };
-        let sound_state = sound_level.is_enabled().then(|| {
-            crate::sound_types::SoundTypesState::new(
-                source.path.text,
-                source.contents(),
-                opts.sound_types_host,
-            )
-        });
 
         let unwrap_all_requires = 'brk: {
             if opts.bundle && opts.output_format != options::Format::Cjs {
@@ -9945,8 +9917,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
-            sound_level,
-            sound_state,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

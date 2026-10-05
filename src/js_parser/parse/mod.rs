@@ -30,7 +30,6 @@ use crate::parser::{
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
-use bun_ast::sound_types::SoundType;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
@@ -428,7 +427,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
-        let mut sound_item_types: smallvec::SmallVec<[SoundType; 4]> = smallvec::SmallVec::new();
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -462,7 +460,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.latest_arrow_arg_loc = p.lexer.loc();
 
             let mut item = Expr::EMPTY;
-            let question_before = errors.invalid_expr_after_question;
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
@@ -473,18 +470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
                 type_colon_range = p.lexer.range();
                 p.lexer.next()?;
-                if p.sound_types_enabled() {
-                    let mut ty = p.skip_type_script_type_sound(Level::Lowest, None)?;
-                    let is_optional = errors.invalid_expr_after_question.map(|r| r.loc.start)
-                        != question_before.map(|r| r.loc.start);
-                    if is_optional {
-                        ty = p.sound().types.optional(ty);
-                    }
-                    sound_item_types.resize(items_list.len(), SoundType::TOP);
-                    sound_item_types.push(ty);
-                } else {
-                    p.skip_type_script_type(Level::Lowest)?;
-                }
+                p.skip_type_script_type(Level::Lowest)?;
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
@@ -563,7 +549,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: item.loc,
                     }),
                     default: tuple.expr,
-                    sound_type: sound_item_types.get(i).copied().unwrap_or(SoundType::TOP),
                     ..Default::default()
                 });
             }
@@ -592,21 +577,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
                         p.lexer.next()?;
-                        if p.sound_types_enabled() {
-                            arrow_data.sound_return = p.skip_typescript_return_type_sound(None)?;
-                        } else {
-                            p.skip_typescript_return_type()?;
-                        }
+                        p.skip_typescript_return_type()?;
                     }
                 } else {
                     // Otherwise, do the less expensive check
                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
-                    if is_arrow_fn && p.sound_types_enabled() {
-                        arrow_data.sound_return = p.sound().arrow_return;
-                    }
-                }
-                if opts.is_async {
-                    arrow_data.sound_return = SoundType::TOP;
                 }
             }
 
@@ -712,7 +687,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let is_identifier = p.lexer.token == T::TIdentifier;
-        let mut sound_class_name: &'a [u8] = b"";
 
         if !opts.is_name_optional
             || (is_identifier
@@ -720,7 +694,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             let name_loc = p.lexer.loc();
             let name_text = p.lexer.identifier;
-            sound_class_name = name_text;
             p.lexer.expect(T::TIdentifier)?;
 
             // We must return here
@@ -776,9 +749,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
                 p.pop_and_discard_scope(scope_index);
-                if p.sound_types_enabled() {
-                    p.sound_declare_class(sound_class_name, &class, opts.is_export);
-                }
                 if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
@@ -788,9 +758,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        if p.sound_types_enabled() {
-            p.sound_declare_class(sound_class_name, &class, opts.is_export);
-        }
         Ok(p.s(
             S::Class {
                 class,
@@ -1334,7 +1301,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             // Skip over types
-            let mut sound_type = SoundType::TOP;
             if Self::IS_TYPESCRIPT_ENABLED {
                 // "let foo!"
                 let is_definite_assignment_assertion =
@@ -1346,21 +1312,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "let foo: number"
                 if is_definite_assignment_assertion || p.lexer.token == T::TColon {
                     p.lexer.expect(T::TColon)?;
-                    if p.sound_types_enabled() && !opts.is_typescript_declare {
-                        sound_type = p.skip_type_script_type_sound(Level::Lowest, None)?;
-                    } else {
-                        p.skip_type_script_type(Level::Lowest)?;
-                    }
+                    p.skip_type_script_type(Level::Lowest)?;
                 }
             }
 
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                let mut init = p.parse_expr(Level::Comma)?;
-                if p.sound_types_enabled() {
-                    init = p.sound_annotate_initializer(kind, &local, init, sound_type);
-                }
-                value = Some(init);
+                value = Some(p.parse_expr(Level::Comma)?);
             }
 
             decls.push(G::Decl {

@@ -1601,10 +1601,8 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
-                    sound_types_host: None,
                 };
 
-                opts.features.sound_types = self.options.sound_types;
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 // emitDecoratorMetadata implies legacy/experimental decorators, as it only
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).

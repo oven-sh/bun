@@ -268,7 +268,6 @@ export interface BundlerTestInput {
   /** `false` skips chunk folding (`merge_small_chunks`). Internal to Bun's tests: api backend only. */
   foldChunks?: boolean;
   serverComponents?: boolean;
-  soundTypes?: boolean | "basic" | "full";
   reactCompiler?: boolean;
   reactFastRefresh?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -539,7 +538,6 @@ function expectBundled(
     run,
     runtimeFiles,
     serverComponents = false,
-    soundTypes,
     reactCompiler = false,
     reactFastRefresh = false,
     reactCompilerOutputMode,
@@ -901,7 +899,6 @@ function expectBundled(
               modulePreload === false && `--no-module-preload`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
-              soundTypes && (soundTypes === true ? "--sound-types" : `--sound-types=${soundTypes}`),
               reactCompiler && "--react-compiler",
               reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,
@@ -1280,7 +1277,6 @@ function expectBundled(
           reactCompiler,
           reactCompilerOutputMode,
           reactFastRefresh,
-          soundTypes,
           bytecode,
           bytecodeDepth,
           publicPath,

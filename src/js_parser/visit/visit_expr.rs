@@ -65,17 +65,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
             Tag::EBinary => Self::e_binary(self, e),
-            Tag::EIndex | Tag::EDot if self.sound_types_full() => {
-                let is_plain_read = self.sound_is_plain_read(e, in_);
-                if e.data.tag() == Tag::EDot {
-                    Self::e_dot(self, e, in_);
-                } else {
-                    Self::e_index(self, e, in_);
-                }
-                if is_plain_read {
-                    self.sound_check_field_read(e);
-                }
-            }
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -85,18 +74,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArray => Self::e_array(self, e, in_),
             Tag::EObject => Self::e_object(self, e, in_),
             Tag::EImport => Self::e_import(self, e, in_),
-            Tag::ECall if self.sound_types_full() => {
-                let is_unused = matches!(
-                    (self.stmt_expr_value, e.data),
-                    (Data::ECall(stmt), Data::ECall(call)) if core::ptr::eq(stmt.as_ptr(), call.as_ptr())
-                );
-                Self::e_call(self, e, in_);
-                if !is_unused {
-                    self.sound_check_call_result(e);
-                }
-            }
             Tag::ECall => Self::e_call(self, e, in_),
-            Tag::ETypeCheck => self.sound_visit_type_check(e, in_),
             Tag::ENew => Self::e_new(self, e, in_),
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
@@ -2713,14 +2691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
-        let sound_body = if p.sound_types_enabled() {
-            p.sound_arrow_body_with_param_checks(&e_)
-        } else {
-            None
-        };
-        let dupe: &'a mut [Stmt] = p
-            .arena
-            .alloc_slice_copy(sound_body.unwrap_or(e_.body.stmts.slice()));
+        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
         let prev_may_replace_body =
             p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
 

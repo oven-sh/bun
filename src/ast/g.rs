@@ -3,7 +3,6 @@ use bun_collections::VecExt;
 use crate::base::Ref;
 use crate::binding::Binding as BindingNodeIndex;
 use crate::expr::Expr as ExprNodeIndex;
-use crate::sound_types::SoundType;
 use crate::stmt::Stmt;
 use crate::ts as TypeScript;
 use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
@@ -159,8 +158,6 @@ pub struct Property {
     pub value: Option<ExprNodeIndex>,
 
     pub ts_metadata: TypeScript::Metadata,
-
-    pub sound_type: SoundType,
 }
 
 pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
@@ -176,7 +173,6 @@ impl Default for Property {
             key: None,
             value: None,
             ts_metadata: TypeScript::Metadata::MNone,
-            sound_type: SoundType::TOP,
         }
     }
 }
@@ -232,7 +228,6 @@ impl Property {
                 None => None,
             },
             ts_metadata: self.ts_metadata.clone(),
-            sound_type: self.sound_type,
         })
     }
 }
@@ -336,8 +331,6 @@ pub struct Arg {
     pub is_typescript_ctor_field: bool,
 
     pub ts_metadata: TypeScript::Metadata,
-
-    pub sound_type: SoundType,
 }
 
 impl Default for Arg {
@@ -348,7 +341,6 @@ impl Default for Arg {
             default: None,
             is_typescript_ctor_field: false,
             ts_metadata: TypeScript::Metadata::MNone,
-            sound_type: SoundType::TOP,
         }
     }
 }
@@ -370,10 +362,6 @@ impl Arg {
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
             ts_metadata: self.ts_metadata.clone(),
-            sound_type: self.sound_type,
         })
     }
 }
-
-const _: () = assert!(core::mem::size_of::<Arg>() == 88);
-const _: () = assert!(core::mem::size_of::<Property>() == 112);

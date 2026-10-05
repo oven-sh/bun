@@ -1432,7 +1432,6 @@ pub struct LinkerOptions {
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
     pub(crate) aot: bool,
-    pub(crate) sound_types: bool,
     pub(crate) preserve_source_paths: bool,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
     pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
@@ -1488,7 +1487,6 @@ impl Default for LinkerOptions {
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             aot: false,
-            sound_types: false,
             preserve_source_paths: false,
             bytecode_order: None,
             output_format: Format::Esm,
@@ -2487,7 +2485,7 @@ impl<'a> LinkerContext<'a> {
             module_info,
             type_tags: if self.options.generate_bytecode_cache {
                 let source = &parse_graph.input_files.items_source()[source_index.get() as usize];
-                bun_ast::sound_types::oracle::tags_for(source.path.text, source.contents())
+                bun_ast::type_tags::tags_for(source.path.text, source.contents())
             } else {
                 None
             },

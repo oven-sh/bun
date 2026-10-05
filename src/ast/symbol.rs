@@ -79,8 +79,6 @@ pub struct Symbol {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
-    pub sound_type: crate::sound_types::SoundType,
-
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
     pub kind: Kind,
@@ -186,7 +184,6 @@ impl Default for Symbol {
             use_count_estimate: 0,
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
-            sound_type: crate::sound_types::SoundType::TOP,
             kind: Kind::Other,
             import_item_status: ImportItemStatus::None,
             flags: SymbolFlags::empty(),

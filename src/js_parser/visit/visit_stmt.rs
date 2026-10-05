@@ -1984,16 +1984,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);
         p.visit_expr(&mut data.value);
-        if p.sound_types_infer()
-            && !data.is_await
-            && let StmtData::SLocal(local) = data.init.data
-            && local.decls.len_u32() == 1
-        {
-            p.sound_infer_loop_variable(&local.decls.at(0).binding, &data.value);
-        }
-        if p.sound_types_infer() && !data.is_await {
-            data.value = p.sound_mark_iterated_array(data.value);
-        }
         data.body = p.visit_loop_body(data.body);
 
         if let StmtData::SLocal(_) = data.init.data {

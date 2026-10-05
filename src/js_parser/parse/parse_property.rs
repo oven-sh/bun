@@ -227,17 +227,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             prop_flags.insert(flags::Property::IsStatic);
         }
 
-        let sound_type = if p.sound_types_enabled() {
-            let returns = p.sound().last_fn_return;
-            match kind {
-                PropertyKind::Get => returns,
-                PropertyKind::Normal => p.sound().types.function(returns),
-                _ => bun_ast::sound_types::SoundType::TOP,
-            }
-        } else {
-            bun_ast::sound_types::SoundType::TOP
-        };
-
         Ok(Some(G::Property {
             ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
             kind,
@@ -245,7 +234,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             key: Some(*key),
             value: Some(value),
             ts_metadata: TsMetadata::MFunction,
-            sound_type,
             ..Default::default()
         }))
     }
@@ -613,7 +601,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut has_type_parameters = false;
             let mut has_definite_assignment_assertion_operator = false;
-            let mut is_optional = false;
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if opts.is_class {
@@ -621,7 +608,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
                         p.lexer.next()?;
-                        is_optional = true;
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
                         && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
@@ -654,7 +640,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut initializer: Option<Expr> = None;
                 let mut ts_metadata = TsMetadata::default();
-                let mut sound_type = bun_ast::sound_types::SoundType::TOP;
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if !is_computed {
@@ -679,18 +664,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Skip over types
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
-                        let wants_metadata = p.options.features.emit_decorator_metadata
+                        if p.options.features.emit_decorator_metadata
                             && opts.is_class
-                            && opts.ts_decorators.len() > 0;
-                        if p.sound_types_enabled() {
-                            sound_type = p.skip_type_script_type_sound(
-                                Level::Lowest,
-                                wants_metadata.then_some(&mut ts_metadata),
-                            )?;
-                            if is_optional || has_definite_assignment_assertion_operator {
-                                sound_type = p.sound().types.optional(sound_type);
-                            }
-                        } else if wants_metadata {
+                            && opts.ts_decorators.len() > 0
+                        {
                             ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
@@ -765,7 +742,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key: Some(key),
                     initializer,
                     ts_metadata,
-                    sound_type,
                     ..Default::default()
                 }));
             }

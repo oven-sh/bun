@@ -4606,7 +4606,6 @@ pub(crate) mod __gated_printer {
                         self.print(b" */");
                     }
                 }
-                ExprData::ETypeCheck(e) => self.print_expr(e.value, level, flags),
                 ExprData::ENameOfSymbol(e) => {
                     let name = self.mangled_prop_name(e.ref_);
                     self.add_source_mapping_for_name(expr.loc, name, e.ref_);
@@ -4919,7 +4918,6 @@ pub(crate) mod __gated_printer {
                 // Vec is not Copy — re-slice instead of move.
                 ts_decorators: bun_alloc::AstAlloc::vec(),
                 ts_metadata: Default::default(),
-                sound_type: Default::default(),
             };
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {

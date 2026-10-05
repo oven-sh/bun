@@ -488,9 +488,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
-        if p.sound_types_enabled() {
-            p.sound().types.declare_opaque(default_name);
-        }
 
         let kind = js_ast::LocalKind::KConst;
         let name = p.lexer.identifier;
@@ -590,7 +587,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: name_loc,
             ref_: Ref::NONE,
         };
-        let is_at_module_scope = p.current_scope == p.module_scope;
 
         // Generate the namespace object
         let mut arg_ref: Ref = Ref::NONE;
@@ -683,17 +679,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
-
-        if p.sound_types_enabled() {
-            let ty = Self::sound_enum_type(&values);
-            p.sound_declare_type_in(
-                is_at_module_scope,
-                name_text,
-                bun_ast::sound_types::DeclKind::Enum,
-                ty,
-                opts.is_export,
-            );
-        }
 
         if !opts.is_typescript_declare {
             // Avoid a collision with the enum closure argument variable if the

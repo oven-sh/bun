@@ -143,8 +143,6 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
-
-    pub(crate) sound_types_cache: crate::sound_types_host::SoundTypesCache,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -1523,7 +1521,6 @@ pub mod bv2_impl {
                 evaluated_modules: &[u64],
                 not_evaluated_modules: &[u64],
                 compile_ahead_of_time: bool,
-                sound_types: bool,
             ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
             safe fn __bun_jsc_bytecode_link_encoder_destroy(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1681,7 +1678,6 @@ pub mod bv2_impl {
                 external_strings: core::ptr::NonNull<EncoderStringTable>,
                 order: &crate::bytecode_order::BytecodeOrder,
                 compile_ahead_of_time: bool,
-                sound_types: bool,
             ) -> Self {
                 Self {
                     encoder: __bun_jsc_bytecode_link_encoder_new(
@@ -1691,7 +1687,6 @@ pub mod bv2_impl {
                         &order.evaluated_modules,
                         &order.not_evaluated_modules,
                         compile_ahead_of_time,
-                        sound_types,
                     ),
                     module_count: 0,
                 }
@@ -2534,9 +2529,6 @@ pub mod bv2_impl {
                 self.graph.input_files.len(),
                 self.graph.ast.len()
             );
-            if self.transpiler.options.sound_types.is_enabled() {
-                bun_ast::sound_types::stats::write_if_requested();
-            }
         }
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
@@ -3261,7 +3253,6 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
-                sound_types_cache: Default::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -3384,7 +3375,6 @@ pub mod bv2_impl {
                 }
                 None => this.transpiler.options.aot,
             };
-            this.linker.options.sound_types = this.transpiler.options.sound_types.is_enabled();
             this.linker.options.preserve_source_paths =
                 this.transpiler.options.preserve_source_paths;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
@@ -5488,7 +5478,6 @@ pub mod bv2_impl {
                 }
                 drop(on_parse_finalizers);
             }
-            self.sound_types_cache = Default::default();
 
             // Plugin file/asset-loader bytes that `process_files_to_copy` will
             // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.

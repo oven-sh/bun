@@ -1389,7 +1389,6 @@ impl<'p, 'a> Walker<'p, 'a> {
                 self.byte(u8::from(e.value));
             }
             Data::EInlinedEnum(e) => self.expr(&e.value),
-            Data::ETypeCheck(e) => self.expr(&e.value),
             Data::EThis(_) => self.byte(t | 18),
             Data::ESuper(_) => self.byte(t | 19),
             Data::ENull(_) => self.byte(t | 20),

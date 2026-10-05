@@ -161,10 +161,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "import { type as as as } from 'mod'"
                             // "import { type as as foo } from 'mod'"
                             had_type_only_imports = true;
-                            if p.sound_types_enabled() {
-                                let local = p.lexer.identifier;
-                                p.sound_clause_item(b"as", local);
-                            }
                             p.lexer.next()?;
                         } else {
                             // "import { type as as } from 'mod'"
@@ -213,23 +209,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    let imported = p.parse_clause_alias(b"import")?;
-                    let mut local = imported;
+                    let _ = p.parse_clause_alias(b"import")?;
                     p.lexer.next()?;
 
                     if p.lexer.is_contextual_keyword(b"as") {
                         p.lexer.next()?;
 
-                        local = p.lexer.identifier;
                         p.lexer.expect(T::TIdentifier)?;
                     } else if !is_identifier_inner {
                         // An import where the name is a keyword must have an alias
                         p.lexer.expected_string(b"\"as\"")?;
                     }
                     had_type_only_imports = true;
-                    if p.sound_types_enabled() {
-                        p.sound_clause_item(imported, local);
-                    }
                 }
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
@@ -286,9 +277,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TCloseBrace)?;
-        if p.sound_types_enabled() {
-            p.sound_clause_items(&items);
-        }
         Ok(ImportClause {
             items: items.into_bump_slice_mut(),
             is_single_line,
@@ -398,20 +386,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export { type default as if } from 'path'"
                         // "export { type xx as 'yy' }"
                         // "export { type 'xx' } from 'mod'"
-                        let inner = p.parse_clause_alias(b"export").unwrap_or(b"");
-                        let mut exported = inner;
+                        let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                         p.lexer.next()?;
 
                         if p.lexer.is_contextual_keyword(b"as") {
                             p.lexer.next()?;
-                            exported = p.parse_clause_alias(b"export").unwrap_or(b"");
+                            let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                             p.lexer.next()?;
                         }
 
                         had_type_only_exports = true;
-                        if p.sound_types_enabled() {
-                            p.sound_clause_item(exported, inner);
-                        }
                     }
                 } else {
                     if p.lexer.is_contextual_keyword(b"as") {
@@ -477,10 +461,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
             )?;
             return Err(crate::Error::SyntaxError);
-        }
-
-        if p.sound_types_enabled() {
-            p.sound_clause_items(&items);
         }
 
         Ok(ExportClauseResult {

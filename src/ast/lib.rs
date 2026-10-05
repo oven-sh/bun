@@ -2865,7 +2865,7 @@ pub mod op;
 pub mod s;
 pub mod scope;
 pub mod server_component_boundary;
-pub mod sound_types;
+pub mod type_tags;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;

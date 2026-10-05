@@ -157,7 +157,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"
     ),
     parse_param!(
-        "--check                           Type check before running. Nothing runs if there are type errors"
+        "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
     ),
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"

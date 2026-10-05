@@ -1047,7 +1047,10 @@ pub(crate) mod command {
             return Tag::AuditCommand;
         }
         if x == RootCommandMatcher::case(b"check") {
-            return Tag::CheckCommand;
+            return match super::check_command::is_package_script() {
+                true => Tag::AutoCommand,
+                false => Tag::CheckCommand,
+            };
         }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
@@ -1484,6 +1487,12 @@ pub(crate) mod command {
                 Global::exit(1);
             }
             return Ok(());
+        }
+
+        // `bun --check` is `bun check`, also where that is a script.
+        if tag == Tag::AutoCommand && ctx.runtime_options.check {
+            ::bun_bunfig::arguments::load_config(Tag::InstallCommand, None, ctx)?;
+            super::check_command::CheckCommand::exec(&[]);
         }
 
         if tag == Tag::AutoCommand {

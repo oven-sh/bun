@@ -220,7 +220,7 @@ fn kind_of(name: &[u8]) -> Option<Kind> {
 }
 
 /// `IsFilePath` for the option `name` or for the elements of its list value.
-pub(crate) fn is_file_path(name: &[u8]) -> bool {
+pub fn is_file_path(name: &[u8]) -> bool {
     matches!(
         kind_of(name),
         Some(Kind::FilePath | Kind::List(Element::FilePath))

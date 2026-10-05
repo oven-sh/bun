@@ -131,8 +131,8 @@ fn parse(args: &[&ZStr]) -> Options {
         }
     }
     let positionals = parsed.positionals();
-    let positionals = positionals
-        .strip_prefix(&[b"check".as_slice()])
+    let positionals = (positionals.strip_prefix(&[b"check".as_slice()]))
+        .or_else(|| positionals.strip_prefix(&[b"--check".as_slice()]))
         .unwrap_or(positionals);
     // What follows `--` is a path, whatever it looks like.
     let after_dashes =
@@ -214,6 +214,53 @@ fn working_directory() -> Vec<u8> {
             Global::exit(1);
         }
     }
+}
+
+/// Whether `check` is a script of the project: `scripts.check` of the nearest `package.json`, which
+/// is where `bun run` looks. `bun check` ran it before there was a type checker, so it still does.
+/// The type checker is also `bun --check`.
+#[cold]
+#[inline(never)]
+pub(crate) fn is_package_script() -> bool {
+    use bun_paths::platform::Auto;
+    use bun_paths::resolve_path::{dirname, join_abs_string};
+    let mut cwd = working_directory();
+    let mut args = bun_core::argv().into_iter();
+    while let Some(arg) = args.next() {
+        let given = match arg.strip_prefix(b"--cwd") {
+            Some(b"") => args.next(),
+            Some(rest) => rest.strip_prefix(b"="),
+            None => None,
+        };
+        if let Some(given) = given {
+            cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
+        }
+    }
+    let mut dir = &cwd[..];
+    let (path, contents) = loop {
+        let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
+        if let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) {
+            break (path, contents);
+        }
+        let parent = dirname::<Auto>(dir);
+        if parent.is_empty() || parent.len() >= dir.len() {
+            return false;
+        }
+        dir = parent;
+    };
+    // Most have no such word in them.
+    if !bun_core::strings::contains(&contents, b"\"check\"") {
+        return false;
+    }
+    bun_ast::initialize_store();
+    let source = bun_ast::Source::init_path_string(&path[..], &contents[..]);
+    let (mut log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
+    let Ok(json) = bun_parsers::json::parse_package_json_utf8(&source, &mut log, &bump) else {
+        return false;
+    };
+    (json.as_property(b"scripts"))
+        .and_then(|scripts| scripts.expr.as_property(b"check"))
+        .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
 }
 
 /// The directory where `bun add -g` installs packages.

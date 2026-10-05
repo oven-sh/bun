@@ -2534,11 +2534,16 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
-            let mut sources = (sources.iter().zip(loaders))
-                .filter(|(source, loader)| {
-                    loader.is_javascript_like_or_json() && source.path.is_file()
+            // The types are those of what is written, as in `bun check`, not of what a plugin makes
+            // of it.
+            let flags = self.graph.input_files.items_flags();
+            let mut sources = (sources.iter().zip(loaders).zip(flags))
+                .filter(|((source, loader), flags)| {
+                    loader.is_javascript_like_or_json()
+                        && source.path.is_file()
+                        && !flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                 })
-                .map(|(source, _)| (source.path.text, source.contents()));
+                .map(|((source, _), _)| (source.path.text, source.contents()));
             if type_check(
                 self.transpiler.fs().top_level_dir,
                 &mut entry_points,
@@ -4993,6 +4998,8 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
+                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
                     // For copied assets keep the bytes Owned in `source.contents`
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything

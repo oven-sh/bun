@@ -20,6 +20,23 @@ Found 1 error in 1 file, checked 2 files [14.00ms]
 ✓ No type errors in 2 files [14.00ms]
 ```
 
+### If `package.json` has a `check` script
+
+A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "check": "biome check"
+  }
+}
+```
+
+```bash terminal icon="terminal"
+bun check   # runs "biome check"
+bun --check # type checks the project
+```
+
 ## Install TypeScript's library files
 
 The `typescript` package ships the `lib.*.d.ts` files that declare `Array`, `Promise`, and the rest of the language's built-in types. `bun check` reads those files from your project, so your editor and `bun check` see the same declarations.

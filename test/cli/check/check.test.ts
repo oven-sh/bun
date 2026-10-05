@@ -583,6 +583,23 @@ describe.concurrent("bun check", () => {
       `);
     });
 
+    test("a path on the command line is relative to the working directory, as in tsc", async () => {
+      using dir = project({
+        "packages/server/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
+        "packages/server/src/a.ts": `export const a: number = 1;\n`,
+      });
+      const [fromHere, fromTheConfig] = await Promise.all([
+        check(dir, ["-p", "packages/server", "--rootDir", "packages/server/src"]),
+        check(dir, ["-p", "packages/server", "--rootDir", "src"]),
+      ]);
+      expect(fromHere.stdout).toBe("");
+      expect(fromHere.exitCode).toBe(0);
+      expect(fromTheConfig.stdout).toStartWith(
+        `error TS6059: File '<dir>/packages/server/src/a.ts' is not under 'rootDir' '<dir>/src'.`,
+      );
+      expect(fromTheConfig.exitCode).toBe(1);
+    });
+
     // The administrative share of the drive, as in test/js/node/fs/cp.test.ts.
     test.skipIf(!isWindows)("a project on a network share", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
@@ -13765,6 +13782,39 @@ test("TypeScript 7 with the isolated linker: finds the lib files next to the rea
 });
 
 describe.concurrent("--check", () => {
+  test("a `check` script keeps `bun check`, and `bun --check` is the type checker everywhere", async () => {
+    const files = { "a.ts": `export const a: number = "1";\n`, "src/empty.txt": "" };
+    using scripted = project({
+      ...files,
+      "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+    });
+    // The word is there, the script is not.
+    using unscripted = project({
+      ...files,
+      "package.json": JSON.stringify({ description: "check", scripts: { "check:all": "echo no", lint: "check" } }),
+    });
+    const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const [script, below, elsewhere, flag, command, sameFlag] = await Promise.all([
+      run(String(scripted), ["check"]),
+      run(join(String(scripted), "src"), ["check"]),
+      run(String(unscripted), ["--cwd", String(scripted), "check"]),
+      run(String(scripted), ["--check"]),
+      run(String(unscripted), ["check"]),
+      run(String(unscripted), ["--check"]),
+    ]);
+    expect([script, below, elsewhere].map(it => [it.stdout, it.exitCode])).toEqual([
+      ["the script ran", 0],
+      ["the script ran", 0],
+      ["the script ran", 0],
+    ]);
+    expect([flag, command, sameFlag].map(it => [it.stdout, it.exitCode])).toEqual([
+      [error, 1],
+      [error, 1],
+      [error, 1],
+    ]);
+    expect(sameFlag.stderr).toBe(command.stderr);
+  });
+
   // The error is in a file that is imported, which nothing has loaded but the type checker.
   test.each([
     [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
@@ -14118,6 +14168,34 @@ describe.concurrent("--check", () => {
       success: false,
       outputs: 0,
       logs: [ts2322("entry.ts", `export const a: number = '1';`)],
+    });
+  });
+
+  test("what is checked is what is written, not what an onLoad plugin makes of it", async () => {
+    using dir = project({
+      "build.mjs": `
+        const [entrypoint, contents] = process.argv.slice(2);
+        const plugin = {
+          name: "replaces the text",
+          setup(build) {
+            build.onLoad({ filter: /[.]ts$/ }, () => ({ contents, loader: "ts" }));
+          },
+        };
+        const result = await Bun.build({ entrypoints: [entrypoint], outdir: "out", check: true, throw: false, plugins: [plugin] });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => [log.message, log.position?.line]) }));
+      `,
+      "right.ts": `export const a: number = 1;\n`,
+      "wrong.ts": `export const a: number = '1';\n`,
+    });
+    const build = async (...args: string[]) => JSON.parse((await run(String(dir), ["build.mjs", ...args])).stdout);
+    const [right, wrong] = await Promise.all([
+      build("right.ts", `\n\n\nexport const generated: number = '1';\n`),
+      build("wrong.ts", `\n\n\nexport const generated: number = 1;\n`),
+    ]);
+    expect(right).toEqual({ success: true, logs: [] });
+    expect(wrong).toEqual({
+      success: false,
+      logs: [["TS2322: Type 'string' is not assignable to type 'number'.", 1]],
     });
   });
 

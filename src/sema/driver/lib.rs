@@ -385,10 +385,24 @@ pub fn compiler_option_from_flag(
 
 /// The command line options, followed by `noEmit`, since nothing is ever emitted.
 fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)> {
+    // `convertToOptionsWithAbsolutePaths`: a path on the command line is relative to the working
+    // directory, not to the configuration file that it overrides.
+    let cwd = host::from_native(request.cwd);
+    let absolute = |value: &Json| match value {
+        Json::String(path) => Json::String(join(&cwd, path)),
+        other => other.clone(),
+    };
     request
         .compiler_options
         .iter()
-        .map(|option| (option.0.clone(), option.1.clone()))
+        .map(|CompilerOption(name, value)| {
+            let value = match value {
+                _ if !bun_sema::config_options::is_file_path(name) => value.clone(),
+                Json::Array(paths) => Json::Array(paths.iter().map(absolute).collect()),
+                path => absolute(path),
+            };
+            (name.clone(), value)
+        })
         .chain((!is_build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
         .collect()
 }

@@ -152,10 +152,12 @@ impl BuildCommand {
             .unwrap_or_default();
 
         if ctx.bundler_options.check && ctx.bundler_options.transform_only {
-            // Nothing is bundled, so nothing has been read.
+            // Nothing is bundled, so nothing has been resolved or read.
+            let entry_points = this_transpiler.options.entry_points.iter();
             if !crate::cli::check_command::check_for_build_command(
                 bun_resolver::fs::FileSystem::instance().top_level_dir,
-                &this_transpiler.options.entry_points,
+                &mut (entry_points.map(|path| &**path))
+                    .filter(|path| crate::cli::check_command::has_types(path)),
                 &mut core::iter::empty(),
                 log_ref,
             ) {

@@ -81,6 +81,10 @@ pub struct Project {
     /// The root files, in TypeScript's order: the entries of `files`, then the matches of
     /// `include`.
     pub files: Vec<Vec<u8>>,
+    /// The directory that `exclude` is relative to.
+    base: Vec<u8>,
+    /// `exclude`, or else the directories that the project writes to.
+    exclude: Vec<Vec<u8>>,
     pub references: Vec<ProjectReference>,
     pub errors: Vec<ConfigError>,
     /// The merged `compilerOptions` of all the files that were read, from which `options` is built.
@@ -88,6 +92,20 @@ pub struct Project {
 }
 
 impl Project {
+    /// The files that the project would have if it included all of the directory `dir`: not what
+    /// it excludes.
+    pub fn files_under(&self, host: &dyn Host, dir: &[u8]) -> Vec<Vec<u8>> {
+        let include = [join(dir, b"**/*")];
+        file_names_from_specs(
+            host,
+            &self.base,
+            &self.options,
+            &[],
+            &include,
+            &self.exclude,
+        )
+    }
+
     /// `GetBuildInfoFileName` under `tsc -b` (`options.Build`), where every project has one, incremental or not.
     pub fn get_build_info_file_name(&self) -> Vec<u8> {
         let specified = (self.raw_compiler_options.iter())
@@ -664,6 +682,8 @@ fn project_from_raw(
         config_path: config_path.to_vec(),
         options,
         files,
+        base: base.to_vec(),
+        exclude,
         references: raw.references.unwrap_or_default(),
         errors,
         raw_compiler_options: match compiler {

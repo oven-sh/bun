@@ -2517,6 +2517,23 @@ pub mod bv2_impl {
             };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
+            let import_records = self.graph.ast.items_import_records();
+            let imports_of_page = |index: usize| {
+                let records = match loaders[index] {
+                    Loader::Html => import_records[index].as_slice(),
+                    _ => &[],
+                };
+                (records.iter().map(|record| record.source_index))
+                    .filter(|imported| imported.is_valid())
+                    .map(|imported| imported.get() as usize)
+            };
+            let mut entry_points = (self.graph.entry_points.iter())
+                .map(|entry_point| entry_point.get() as usize)
+                .flat_map(|index| std::iter::once(index).chain(imports_of_page(index)))
+                .filter(|&index| {
+                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                })
+                .map(|index| sources[index].path.text);
             let mut sources = (sources.iter().zip(loaders))
                 .filter(|(source, loader)| {
                     loader.is_javascript_like_or_json() && source.path.is_file()
@@ -2524,7 +2541,7 @@ pub mod bv2_impl {
                 .map(|(source, _)| (source.path.text, source.contents()));
             if type_check(
                 self.transpiler.fs().top_level_dir,
-                &self.transpiler.options.entry_points,
+                &mut entry_points,
                 &mut sources,
                 self.transpiler.log_mut(),
             ) {

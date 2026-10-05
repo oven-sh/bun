@@ -8,7 +8,7 @@ use crate::util::ShardedMap;
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::resolve_path::{dirname, windows_volume_name_len};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -893,10 +893,31 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     let dir = if is_rooted || dir == b"/" { b"" } else { dir };
     let mut out = Vec::with_capacity(dir.len() + rest.len() + 1);
     out.extend_from_slice(dir);
+    // And `\\server\share\a` is `/\\server/share/a`. `..` does not leave the share.
+    let (mut root, mut rest) = (0, rest);
+    if cfg!(windows) && !has_drive {
+        let native = match rest {
+            [b'/', b'\\', b'\\', ..] => &rest[1..],
+            _ => rest,
+        };
+        let (share, after) = native.split_at(windows_volume_name_len(native).0);
+        if !share.is_empty() {
+            let names = strings::split_any(share, b"/\\").filter(|name| !name.is_empty());
+            for (i, name) in names.enumerate() {
+                out.extend_from_slice(if i == 0 { &br"/\\"[..] } else { b"/" });
+                out.extend_from_slice(name);
+            }
+            (root, rest) = (out.len(), after);
+        }
+    }
     for part in strings::split_any(rest, b"/\\") {
         match part {
             b"" | b"." => {}
-            b".." => out.truncate(strings::last_index_of_char(&out, b'/').unwrap_or(0)),
+            b".." => out.truncate(
+                strings::last_index_of_char(&out, b'/')
+                    .unwrap_or(0)
+                    .max(root),
+            ),
             _ => {
                 out.push(b'/');
                 out.extend_from_slice(part);

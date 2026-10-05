@@ -681,14 +681,13 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
         .to_vec()
 }
 
-/// Expands `paths` (absolute, existing) into root files. A file maps to itself; a directory maps to the files that a project without a
-/// config file rooted there would include.
-fn roots_of_paths(disk: &host::Disk, paths: &[Vec<u8>], allow_js: bool) -> Vec<Vec<u8>> {
+/// Expands `paths` (absolute, existing) into root files. A file maps to itself; a directory maps to
+/// the files in it that `project` does not exclude.
+fn roots_of_paths(disk: &host::Disk, paths: &[Vec<u8>], project: &config::Project) -> Vec<Vec<u8>> {
     let mut roots = Vec::new();
     for path in paths {
         if disk.is_dir(path) {
-            let compiler = Json::Object(vec![(b"allowJs".to_vec(), Json::Bool(allow_js))]);
-            roots.extend(config::without_config(disk, path, compiler, Vec::new()).files);
+            roots.extend(project.files_under(disk, path));
         } else {
             roots.push(path.clone());
         }
@@ -752,6 +751,47 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     if paths.is_empty() && !missing.is_empty() {
         return report;
     }
+    // The configuration file nearest to a path, or else nearest to the working directory.
+    let config_of = |path: &Vec<u8>| {
+        let dir = if disk.is_dir(path) {
+            path.as_slice()
+        } else {
+            dirname::<Posix>(path)
+        };
+        config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd))
+    };
+    // Each path is checked with the options of its own project.
+    if request.project.is_none() {
+        let mut by_project: Vec<(Option<Vec<u8>>, Vec<Vec<u8>>)> = Vec::new();
+        for path in &paths {
+            let config = config_of(path);
+            match by_project.iter_mut().find(|it| it.0 == config) {
+                Some(project) => project.1.push(path.clone()),
+                None => by_project.push((config, vec![path.clone()])),
+            }
+        }
+        if by_project.len() > 1 {
+            for (config, paths) in &by_project {
+                let (project, paths) = (config.as_deref(), paths.as_slice());
+                let checked = check_request(
+                    disk,
+                    &Request {
+                        project,
+                        paths,
+                        ..*request
+                    },
+                );
+                if report.config_path.is_empty() {
+                    report.config_path.clone_from(&checked.config_path);
+                }
+                report.projects_checked += checked.projects_checked.max(1);
+                report.merge(checked);
+            }
+            report.load_time = started.elapsed().saturating_sub(report.check_time);
+            sort_and_deduplicate(&mut report.diagnostics);
+            return report;
+        }
+    }
     let config_path = match request.project {
         Some(project) => {
             let path = join(&cwd, project);
@@ -769,24 +809,16 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
                 return report;
             }
         }
-        // Use the config file nearest to the first path argument, or else nearest to the working directory.
-        None => paths
-            .first()
-            .and_then(|first| {
-                let dir = if disk.is_dir(first) {
-                    first.as_slice()
-                } else {
-                    dirname::<Posix>(first)
-                };
-                config::find_config(disk, dir)
-            })
-            .or_else(|| config::find_config(disk, &cwd)),
+        None => match paths.first() {
+            Some(first) => config_of(first),
+            None => config::find_config(disk, &cwd),
+        },
     };
     let mut project = match &config_path {
         // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
         // `references` it behaves like `tsc -b`, which has no `--noEmit`.
         Some(path) => config::load_overriding(disk, &Session::new(), path, &|has_references| {
-            overriding_options(request, has_references && request.paths.is_empty())
+            overriding_options(request, has_references)
         }),
         None => {
             let mut options = default_compiler_options();
@@ -802,7 +834,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     report.config_path.clone_from(&project.config_path);
     let mut named = None;
     if !paths.is_empty() {
-        let mut roots = roots_of_paths(disk, &paths, project.options.allow_js);
+        let mut roots = roots_of_paths(disk, &paths, &project);
         // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
         // affect every other file, so a file must produce the same errors with and without path arguments.
         let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
@@ -845,8 +877,8 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         });
         return report;
     }
-    if named.is_none() && !project.references.is_empty() {
-        check_with_references(disk, project, request, report, started)
+    if !project.references.is_empty() {
+        check_with_references(disk, project, request, report, started, named.as_deref())
     } else {
         check_named_files(
             disk,
@@ -958,7 +990,7 @@ fn check_workspaces(
                 None,
             )
         } else {
-            check_with_references(disk, project, request, so_far, began)
+            check_with_references(disk, project, request, so_far, began, None)
         };
         report.projects_checked += checked.projects_checked.max(1);
         report.merge(checked);
@@ -1189,14 +1221,16 @@ impl Host for WithOutputs<'_> {
 
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
-/// memory.
+/// memory. `named`: see `check_named_files`. It is about `root`: what it references is built whole.
 fn check_with_references(
     host: &dyn Host,
     root: config::Project,
     request: &Request,
     mut report: Report,
     started: Instant,
+    named: Option<&[Vec<u8>]>,
 ) -> Report {
+    let root_config_path = root.config_path.clone();
     let configuration = Session::new();
     let mut graph = Graph {
         host,
@@ -1359,13 +1393,14 @@ fn check_with_references(
         project.options.is_build = true;
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
+        let named = named.filter(|_| project.config_path == root_config_path);
         let mut checked = check_named_files(
             &host,
             project,
             request,
             Report::default(),
             Instant::now(),
-            None,
+            named,
             Some(&owned_elsewhere),
             Some(&|| !host.awaited.lock().is_empty()),
         );

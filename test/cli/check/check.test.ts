@@ -583,6 +583,17 @@ describe.concurrent("bun check", () => {
       `);
     });
 
+    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts.
+    test.skipIf(!isWindows)("a project on a network share", async () => {
+      using dir = project({ "a.ts": `export const a: string = 1;\n` });
+      const real = realpathSync(String(dir));
+      const share = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+      const [from, named] = await Promise.all([run(share, ["check"]), check(dir, ["-p", share])]);
+      expect(from.stdout).toBe(`a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
+      expect(named.stdout).toEndWith(`/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
+      expect(named.stdout).toStartWith("//localhost/");
+    });
+
     test("-p accepts a file or a directory", async () => {
       using dir = project({
         "packages/a/tsconfig.json": tsconfig,
@@ -644,6 +655,37 @@ describe.concurrent("bun check", () => {
       expect(stdout).toMatchInlineSnapshot(
         `"src/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
       );
+    });
+
+    test("a directory that is named has the files that the project does not exclude", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, outDir: "src/written" },
+          include: ["src/**/*"],
+        }),
+        "excluding/tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          include: ["src/**/*"],
+          exclude: ["src/generated"],
+        }),
+        "excluding/src/a.ts": `export const a: string = 1;\n`,
+        "excluding/src/generated/g.ts": `export const g: string = 1;\n`,
+        "excluding/scripts/s.ts": `export const s: string = 1;\n`,
+        "src/a.ts": `export const a: string = 1;\n`,
+        "src/written/w.ts": `export const w: string = 1;\n`,
+      });
+      const error = (file: string) => `${file}(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+      const excluding = join(String(dir), "excluding");
+      const [excluded, notIncluded, named, written] = await Promise.all([
+        check(excluding, ["src"]),
+        check(excluding, ["scripts"]),
+        check(excluding, ["src/generated/g.ts"]),
+        check(dir, ["src"]),
+      ]);
+      expect(excluded.stdout).toBe(error("src/a.ts"));
+      expect(notIncluded.stdout).toBe(error("scripts/s.ts"));
+      expect(named.stdout).toBe(error("src/generated/g.ts"));
+      expect(written.stdout).toBe(error("src/a.ts"));
     });
 
     test("--listFiles and --listFilesOnly", async () => {
@@ -977,11 +1019,33 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
       mkdirSync(join(modules, "@scope"), { recursive: true });
       symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
       symlinkSync(join(String(dir), "packages/scoped"), join(modules, "@scope/pkg"), "junction");
-      const { stdout } = await check(dir);
+      // A file has the same errors when it is named, which is what `--check` does.
+      const [{ stdout }, file, directory] = await Promise.all([
+        check(dir),
+        check(dir, ["packages/app/src/index.ts"]),
+        check(dir, ["packages/app"]),
+      ]);
       expect(stdout).toMatchInlineSnapshot(`
         "packages/app/src/index.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'.
         packages/app/src/index.ts(4,14): error TS2322: Type 'number' is not assignable to type 'string'."
       `);
+      expect([file.stdout, directory.stdout]).toEqual([stdout, stdout]);
+    });
+
+    test("path arguments: each is checked with the compiler options of its own project", async () => {
+      using dir = project({
+        "console.d.ts": "",
+        "strict/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false, strict: true } }),
+        "strict/a.ts": `export function f(x) {\n  return x;\n}\n`,
+        "loose/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false, strict: false } }),
+        "loose/a.ts": `export function f(x) {\n  return x;\n}\n`,
+      });
+      const error = `strict/a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
+      const [strictFirst, looseFirst] = await Promise.all([
+        check(dir, ["strict/a.ts", "loose/a.ts"]),
+        check(dir, ["loose/a.ts", "strict/a.ts"]),
+      ]);
+      expect([strictFirst.stdout, looseFirst.stdout]).toEqual([error, error]);
     });
 
     test("does not generate build output for a project that is not referenced", async () => {
@@ -13616,16 +13680,17 @@ export function f<T>(rest: T) {
         "sub/a.ts": `export const a: number = "1";\n`,
         "--b.ts": `export const b: string = 1;\n`,
       });
-      const [attached, equals, afterDashes, notPretty, short, valueless] = await Promise.all([
+      const [attached, equals, afterDashes, notPretty, likeTsc, short, valueless] = await Promise.all([
         check(dir, ["-psub"]),
         check(dir, ["-p=sub"]),
         check(dir, ["--", "--b.ts"]),
         check(dir, ["--pretty=false", "-p", "sub"]),
+        check(dir, ["--pretty", "false", "-p", "sub"]),
         check(dir, ["-x"]),
         check(dir, ["--threads"]),
       ]);
       const a = `sub/a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
-      expect([attached.stdout, equals.stdout, notPretty.stdout]).toEqual([a, a, a]);
+      expect([attached.stdout, equals.stdout, notPretty.stdout, likeTsc.stdout]).toEqual([a, a, a, a]);
       expect(afterDashes.stdout).toBe(`--b.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
       expect(short.stderr).toMatchInlineSnapshot(`
         "error: Invalid Argument '-x'
@@ -13700,6 +13765,53 @@ test("TypeScript 7 with the isolated linker: finds the lib files next to the rea
 });
 
 describe.concurrent("--check", () => {
+  // The error is in a file that is imported, which nothing has loaded but the type checker.
+  test.each([
+    [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
+    [["--hot", "--check", "a.ts"], "stdout", "ran 1"],
+    [["test", "--watch", "--check", "a.test.ts"], "stderr", "1 pass"],
+  ] as const)("bun %j waits until the error is fixed", async (cmd, stream, expected) => {
+    using dir = project({
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "imported.ts": `export const n: number = "1";\n`,
+      "a.ts": `import { n } from "./imported";\nconsole.log("ran", n);\n`,
+      "a.test.ts": `import { test } from "bun:test";\nimport { n } from "./imported";\ntest("a", () => void n);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = { stdout: "", stderr: "" };
+    const read = async (name: "stdout" | "stderr") => {
+      for await (const chunk of proc[name]) output[name] += Buffer.from(chunk).toString();
+    };
+    const closed = Promise.all([read("stdout"), read("stderr")]);
+    const until = async (has: () => boolean, between: () => Promise<unknown>) => {
+      while (!has()) {
+        expect(proc.exitCode).toBeNull();
+        await between();
+      }
+    };
+    await until(
+      () => output.stderr.includes("TS2322"),
+      () => Bun.sleep(10),
+    );
+    expect(output[stream]).not.toContain(expected);
+    // The errors are printed before the files are watched, so one write can come too early.
+    await until(
+      () => output[stream].includes(expected),
+      async () => {
+        await Bun.write(join(String(dir), "imported.ts"), `export const n: number = 1;\n`);
+        await Bun.sleep(50);
+      },
+    );
+    proc.kill();
+    await closed;
+  });
+
   // These draw the same progress line as `bun check`, on a thread of its own, and the process goes on afterwards.
   describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
     const files = (n: string) => ({
@@ -13856,6 +13968,26 @@ describe.concurrent("--check", () => {
     expect(bad.exitCode).toBe(1);
   });
 
+  // What is checked is what the bundler resolved the entry point to, whatever it is written like.
+  test("bun build --check checks an entry point that is written without its extension, or as its directory", async () => {
+    using dir = project({
+      "src/index.ts": `export const value: number = "1";\n`,
+    });
+    const results = await Promise.all([
+      run(String(dir), ["build", "--check", "./src/index", "--outdir", "out-file"]),
+      run(String(dir), ["build", "--check", "./src", "--outdir", "out-directory"]),
+    ]);
+    for (const { stderr, exitCode } of results) {
+      expect(stderr).toMatchInlineSnapshot(`
+        "1 | export const value: number = "1";
+                         ^
+        error: TS2322: Type 'string' is not assignable to type 'number'.
+            at <dir>/src/index.ts:1:14"
+      `);
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // Prints what `Bun.build` returns or throws, with paths relative to the working directory. `run` turns every
   // backslash into a slash, so the sources have no double quotes: JSON would escape them.
   const buildScript = `
@@ -13956,6 +14088,52 @@ describe.concurrent("--check", () => {
       logs: [ts2322("right-on-disk.ts", `export const other: number = '2';`)],
     });
     expect(right.result).toEqual({ success: true, outputs: 1, logs: [] });
+  });
+
+  test("a file that is only in memory is checked like one on the disk", async () => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowImportingTsExtensions: true },
+      }),
+      "build.mjs": buildScript,
+      // The bundler finds such a file by its whole name.
+      "on-disk.ts": `import { value } from './in/memory/imported.ts';\nexport const other: number = value;\n`,
+    });
+    const at = (file: string) => join(String(dir), file);
+    const [entryPoint, imported, wrong] = await Promise.all([
+      build(dir, { entrypoints: [at("entry.ts")], files: { [at("entry.ts")]: `export const a: number = 1;\n` } }),
+      build(dir, {
+        entrypoints: ["on-disk.ts"],
+        files: { [at("in/memory/imported.ts")]: `export const value: number = 1;\n` },
+      }),
+      build(dir, {
+        entrypoints: [at("entry.ts")],
+        files: { [at("entry.ts")]: `export const a: number = '1';\n` },
+        throw: false,
+      }),
+    ]);
+    const passed = { success: true, outputs: 1, logs: [] };
+    expect([entryPoint.result, imported.result]).toEqual([passed, passed]);
+    expect(wrong.result).toEqual({
+      success: false,
+      outputs: 0,
+      logs: [ts2322("entry.ts", `export const a: number = '1';`)],
+    });
+  });
+
+  // The bundler asserts that the path of an entry point is absolute.
+  test.skipIf(isDebug || isASAN)("a file that is only in memory can have a relative name", async () => {
+    using dir = project({ "build.mjs": buildScript });
+    const { result } = await build(dir, {
+      entrypoints: ["./entry.ts"],
+      files: { "./entry.ts": `export const a: number = '1';\n` },
+      throw: false,
+    });
+    expect(result).toEqual({
+      success: false,
+      outputs: 0,
+      logs: [ts2322("entry.ts", `export const a: number = '1';`)],
+    });
   });
 
   test("bun build --check: an error of the bundler comes first", async () => {

@@ -5,7 +5,7 @@
 
 use bun_core::strings::{BOM, index_of, is_all_whitespace, without_trailing_slash};
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, z};
+use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
@@ -60,17 +60,21 @@ pub fn find_lib_dir(
         .or_else(|| global_node_modules.and_then(in_node_modules))
 }
 
-/// `/C:/a` becomes `C:/a`, which Windows accepts.
+/// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
 pub fn to_native(path: &[u8]) -> &[u8] {
     match path {
         [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
+        [b'/', b'\\', b'\\', ..] if cfg!(windows) => &path[1..],
         _ => path,
     }
 }
 
 /// Rewrites every `/C:/a` in the message `text` to its `to_native` form, which is how TypeScript
-/// prints it.
+/// prints it, and every `/\\server/a` to `//server/a`.
 pub fn show_drives(text: &mut Vec<u8>) {
+    while let Some(at) = index_of(text, b"/\\\\") {
+        text.splice(at..at + 3, *b"//");
+    }
     let mut from = 0;
     while let Some(colon) = index_of(&text[from..], b":/").map(|at| from + at) {
         from = colon + 2;
@@ -89,10 +93,11 @@ pub fn show_drives(text: &mut Vec<u8>) {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    join(b"/", path.strip_prefix(br"\\?\").unwrap_or(path))
+    join(b"/", bun_paths::string_paths::without_nt_prefix(path))
 }
 
 /// The entries of a directory. The names are sorted.
+#[derive(Default)]
 struct Listing {
     files: Vec<Vec<u8>>,
     directories: Vec<Vec<u8>>,
@@ -111,6 +116,18 @@ enum Directory {
 }
 
 impl Listing {
+    fn with(mut self, more: &InMemory) -> Self {
+        for (names, more) in [
+            (&mut self.files, &more.files),
+            (&mut self.directories, &more.directories),
+        ] {
+            names.extend_from_slice(more);
+            names.sort_unstable();
+            names.dedup();
+        }
+        self
+    }
+
     /// The name as spelled in the directory, and whether it is a directory.
     fn find(&self, name: &[u8], case_sensitive: bool) -> Option<(&[u8], bool)> {
         if let Ok(i) = self.files.binary_search_by(|n| n.as_slice().cmp(name)) {
@@ -170,6 +187,8 @@ pub struct Disk {
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `AlreadyRead`. `None` for a caller that has read nothing.
     already_read: Option<bun_threading::Guarded<AlreadyRead>>,
+    /// What `already_read` adds to the listing of a directory, by the path of the directory.
+    in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
 }
@@ -178,6 +197,39 @@ pub struct Disk {
 /// UTF-8 without a byte order mark. The first `Host::read` of such a file takes the text, so the
 /// file is not opened. `bun build --check` passes what the bundler has read.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
+
+/// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
+/// them. Such a file need not be on the disk (`files` of `Bun.build`), and it is found, listed and
+/// resolved to like one that is.
+#[derive(Default)]
+struct InMemory {
+    files: Vec<Vec<u8>>,
+    directories: Vec<Vec<u8>>,
+}
+
+impl InMemory {
+    fn by_directory(already_read: &AlreadyRead) -> FxHashMap<Vec<u8>, InMemory> {
+        let mut by_directory: FxHashMap<Vec<u8>, InMemory> = FxHashMap::default();
+        for path in already_read.keys() {
+            let Split { mut parent, name } = split(path);
+            let mut is_new = !by_directory.contains_key(parent);
+            let names = by_directory.entry(parent.to_vec()).or_default();
+            names.files.push(name.to_vec());
+            // A directory is entered in its parent when it gets its first entry.
+            while is_new {
+                let directory = split(parent);
+                if directory.name.is_empty() {
+                    break;
+                }
+                is_new = !by_directory.contains_key(directory.parent);
+                let names = by_directory.entry(directory.parent.to_vec()).or_default();
+                names.directories.push(directory.name.to_vec());
+                parent = directory.parent;
+            }
+        }
+        by_directory
+    }
+}
 
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
 #[derive(Default)]
@@ -219,8 +271,8 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     const FIRST_READ: usize = 64 * 1024;
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
     buffer.resize(FIRST_READ, 0);
-    let count = file.read(&mut buffer[..]).ok()?;
-    // A short read means end of file, so neither the size nor a second read is needed.
+    // Until the end of the file: some file systems return less than there is.
+    let count = file.read_all(&mut buffer[..]).ok()?;
     if count < FIRST_READ {
         return Some(buffer[..count].to_vec());
     }
@@ -286,6 +338,7 @@ impl Disk {
     pub fn with_already_read(threads: usize, already_read: AlreadyRead) -> Self {
         Disk {
             threads,
+            in_memory: InMemory::by_directory(&already_read),
             already_read: (!already_read.is_empty())
                 .then(|| bun_threading::Guarded::new(already_read)),
             caches: Default::default(),
@@ -328,9 +381,11 @@ impl Disk {
     }
 
     /// Whether the entries of `path` are queried from the system every time: true for the roots,
-    /// which on Windows are not directories.
+    /// which on Windows are not directories, and neither is a server.
     fn is_above_listings(path: &[u8]) -> bool {
-        path.is_empty() || path == b"/" && cfg!(windows)
+        // `(length, 0)`: there is no share in it.
+        let is_server = |path| matches!(windows_volume_name_len(to_native(path)), (3.., 0));
+        path.is_empty() || cfg!(windows) && (path == b"/" || is_server(path))
     }
 
     fn directory(&self, path: &[u8]) -> &Directory {
@@ -349,8 +404,29 @@ impl Disk {
                 .directories
                 .insert_ref(path.to_vec(), Directory::Missing);
         }
-        let read = list(path);
+        let read = match (list(path), self.in_memory.get(path)) {
+            (read, None) | (read @ Directory::Unreadable, _) => read,
+            (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
+            (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
+        };
         self.directories.insert_ref(path.to_vec(), read)
+    }
+
+    /// Whether `path` is a directory, for a path that `already_read` adds.
+    fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
+        let Split { parent, name } = split(path);
+        let names = self.in_memory.get(parent)?;
+        let has = |names: &[Vec<u8>]| names.iter().any(|it| it == name);
+        if has(&names.files) {
+            return Some(false);
+        }
+        has(&names.directories).then_some(true)
+    }
+
+    /// Asks the system, which does not know what is only in memory.
+    fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
+        self.find_in_memory(path)
+            .or_else(|| is_directory(Fd::cwd(), to_native(path)))
     }
 
     /// `None`: the system has to be queried.
@@ -427,12 +503,7 @@ fn list(path: &[u8]) -> Directory {
         }
         Err(_) => return Directory::Unreadable,
     };
-    let mut listing = Listing {
-        files: Vec::new(),
-        directories: Vec::new(),
-        links: Vec::new(),
-        folded: OnceLock::new(),
-    };
+    let mut listing = Listing::default();
     let mut entries = bun_sys::iterate_dir(directory.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
@@ -604,13 +675,13 @@ impl Host for Disk {
     fn is_file(&self, path: &[u8]) -> bool {
         match self.find(path) {
             Some(found) => matches!(found, Some((_, false))),
-            None => is_directory(Fd::cwd(), to_native(path)) == Some(false),
+            None => self.ask_whether_directory(path) == Some(false),
         }
     }
     fn is_dir(&self, path: &[u8]) -> bool {
         match self.find(path) {
             Some(found) => matches!(found, Some((_, true))),
-            None => is_directory(Fd::cwd(), to_native(path)) == Some(true),
+            None => self.ask_whether_directory(path) == Some(true),
         }
     }
     fn realpath(&self, path: &[u8]) -> Vec<u8> {

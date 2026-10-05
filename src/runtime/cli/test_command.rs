@@ -2275,10 +2275,17 @@ impl TestCommand {
             }
         }
 
+        let mut failed_check = None;
         if ctx.runtime_options.check {
             let paths: Vec<&[u8]> = test_files.iter().map(|path| &**path).collect();
-            if !crate::cli::check_command::check_before(&paths) {
-                Global::exit(1);
+            if let Err(files) = crate::cli::check_command::check_before(&paths) {
+                if ctx.debug.hot_reload == jsc::virtual_machine::HotReload::None {
+                    Global::exit(1);
+                }
+                // Nothing has run, so `--hot` has no state to keep: the process starts again,
+                // which checks again.
+                ctx.debug.hot_reload = jsc::virtual_machine::HotReload::Watch;
+                failed_check = Some(files);
             }
         }
 
@@ -2326,6 +2333,16 @@ impl TestCommand {
                 }
                 _ => {}
             }
+        }
+
+        if let Some(files) = failed_check {
+            // No test is run.
+            (files.iter()).for_each(|path| vm.add_to_watcher_if_needed(path));
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();

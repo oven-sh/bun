@@ -941,8 +941,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        if ctx.runtime_options.check && !crate::cli::check_command::check_before(&[&entry_path]) {
-            Global::exit(1);
+        let mut failed_check = None;
+        if ctx.runtime_options.check
+            && let Err(files) = crate::cli::check_command::check_before(&[&entry_path])
+        {
+            if ctx.debug.hot_reload == cli::command::HotReload::None {
+                Global::exit(1);
+            }
+            // Nothing has run, so `--hot` has no state to keep: the process starts again, which
+            // checks again.
+            ctx.debug.hot_reload = cli::command::HotReload::Watch;
+            failed_check = Some(files);
         }
 
         // `bun_jsc::initialize`
@@ -1105,6 +1114,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            failed_check,
         }
         .start()
     }
@@ -1224,6 +1234,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
+            failed_check: None,
         }
         .start()
     }
@@ -1244,6 +1255,9 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
+    /// `--check` has found errors under `--watch`: the program is not run. The process waits for a
+    /// change in one of these files.
+    failed_check: Option<Vec<Vec<u8>>>,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1293,6 +1307,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            failed_check,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1425,8 +1440,16 @@ impl Run<'_> {
             }
         }
 
-        match vm.load_entry_point(entry) {
-            Ok(promise) => {
+        let loaded = match failed_check {
+            Some(files) => {
+                (files.iter()).for_each(|path| vm.add_to_watcher_if_needed(path));
+                None
+            }
+            None => Some(vm.load_entry_point(entry)),
+        };
+        match loaded {
+            None => {}
+            Some(Ok(promise)) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
@@ -1464,7 +1487,7 @@ impl Run<'_> {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err.into()),
+            Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
         }
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A

@@ -4506,11 +4506,13 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        if !self.is_watcher_enabled() {
-            return;
-        }
-        let main = self.main();
-        if main.is_empty() {
+        self.add_to_watcher_if_needed(self.main());
+    }
+
+    /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
+    /// enabled.
+    pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
+        if !self.is_watcher_enabled() || path.is_empty() {
             return;
         }
         let watcher = self.bun_watcher_ptr();
@@ -4522,7 +4524,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
         }
     }
 

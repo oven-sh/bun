@@ -95,12 +95,21 @@ fn parse(args: &[&ZStr]) -> Options {
             Global::exit(1);
         }
     }
+    // `--pretty false`, which is how tsc takes it. The table takes a value after `=` only, so the
+    // word is among the positionals.
+    let word_after_pretty = (args.iter().zip(args.iter().skip(1)))
+        .map(|(arg, word)| (arg.as_bytes(), word.as_bytes()))
+        .take_while(|(arg, _)| *arg != b"--")
+        .find(|(arg, _)| *arg == b"--pretty")
+        .map(|(_, word)| word)
+        .filter(|word| word.eq_ignore_ascii_case(b"true") || word.eq_ignore_ascii_case(b"false"));
     let mut options = Options {
         project: parsed.option(b"--project").map(<[u8]>::to_vec),
         pretty: match parsed.option(b"--pretty") {
             _ if parsed.flag(b"--no-pretty") => Some(false),
             None => None,
-            Some(b"" | b"true") => Some(true),
+            Some(b"") => Some(word_after_pretty.is_none_or(|it| it.eq_ignore_ascii_case(b"true"))),
+            Some(b"true") => Some(true),
             Some(b"false") => Some(false),
             Some(value) => usage_error(format_args!(
                 "--pretty does not take \"{}\"",
@@ -130,8 +139,13 @@ fn parse(args: &[&ZStr]) -> Options {
         (args.iter().position(|arg| arg.as_bytes() == b"--")).map_or(0, |at| args.len() - at - 1);
     let flags_end = positionals.len().saturating_sub(after_dashes);
     let mut rest = positionals.iter();
+    let mut word_after_pretty = word_after_pretty;
     while let Some(&arg) = rest.next() {
         let at = positionals.len() - rest.len() - 1;
+        if word_after_pretty == Some(arg) && at < flags_end {
+            word_after_pretty = None;
+            continue;
+        }
         match arg.strip_prefix(b"--") {
             Some(flag) if at < flags_end => {
                 let option = compiler_option(flag, &mut rest);
@@ -460,25 +474,54 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
 }
 
 /// Type checks `entry_points` and everything they import before they are run. Reports the errors
-/// on stderr, which leaves stdout to the program. Returns whether there are no errors.
-pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
-    match what_to_check(&working_directory(), entry_points) {
-        Some((paths, options)) => check_and_report(&paths, &options),
-        None => true,
+/// on stderr, which leaves stdout to the program. `Err`: there are errors. It holds the files that
+/// `--watch` waits for a change in: those of the program outside `node_modules`, and its
+/// configuration file.
+pub(crate) fn check_before(entry_points: &[&[u8]]) -> Result<(), Vec<Vec<u8>>> {
+    let cwd = working_directory();
+    let Some((paths, mut options)) = what_to_check(&cwd, entry_points) else {
+        return Ok(());
+    };
+    options.extend(bun_sema_driver::compiler_option_from_flag(
+        b"listFiles",
+        None,
+    ));
+    let report = check_and_report(&paths, &options);
+    if report.is_ok() {
+        return Ok(());
     }
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::to_native;
+    let is_installed = |path: &&Vec<u8>| bun_core::strings::contains(path, b"/node_modules/");
+    let loaded = report
+        .listed_files
+        .iter()
+        .filter(|path| !is_installed(path));
+    let loaded = loaded.chain((!report.config_path.is_empty()).then_some(&report.config_path));
+    // The program is not loaded if its options are wrong.
+    let named = paths
+        .iter()
+        .map(|path| join_abs_string::<Auto>(&cwd, &[path]).to_vec());
+    Err(named
+        .chain(loaded.map(|path| to_native(path).to_vec()))
+        .collect())
 }
 
-/// `sources` of `bun_bundler::options::TypeCheck`.
-fn already_read(sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
+/// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative.
+fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
-        .map(|(path, text)| (bun_sema_driver::host::from_native(path), text.to_vec()))
+        .map(|(path, text)| {
+            let path = join_abs_string::<Auto>(cwd, &[path]);
+            (bun_sema_driver::host::from_native(path), text.to_vec())
+        })
         .collect()
 }
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(
     cwd: &[u8],
-    entry_points: &[Box<[u8]>],
+    entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
 ) -> bool {
@@ -488,7 +531,7 @@ pub(crate) fn check_for_build_command(
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
 pub(crate) fn check_for_bun_build(
     cwd: &[u8],
-    entry_points: &[Box<[u8]>],
+    entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
 ) -> bool {
@@ -499,16 +542,18 @@ pub(crate) fn check_for_bun_build(
 /// build reports like its own. It runs on the thread of the bundler.
 fn check_for_build(
     cwd: &[u8],
-    entry_points: &[Box<[u8]>],
+    entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
     shows_progress: bool,
 ) -> bool {
-    let entry_points: Vec<&[u8]> = entry_points.iter().map(|path| &**path).collect();
-    let Some((paths, options)) = what_to_check(cwd, &entry_points) else {
+    let paths: Vec<Vec<u8>> = entry_points.map(<[u8]>::to_vec).collect();
+    // Only stylesheets and the like.
+    if paths.is_empty() {
         return true;
-    };
-    let (already_read, then) = (already_read(sources), |report| report);
+    }
+    let options = options_for(&paths);
+    let (already_read, then) = (already_read(cwd, sources), |report| report);
     let report = match shows_progress {
         true => run(cwd, None, &paths, &options, 0, already_read, then),
         false => run_quietly(cwd, None, &paths, &options, 0, None, already_read, then),
@@ -571,39 +616,47 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     }
 }
 
+/// By its name. A file that is neither TypeScript nor JavaScript has no types to check: `[eval]`, a
+/// stylesheet, a page.
+pub(crate) fn has_types(path: &[u8]) -> bool {
+    use bun_ast::Loader;
+    Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_javascript_like)
+}
+
 /// The files to name in the check of `entry_points`, which are relative to `cwd`, and the compiler
 /// options that go with them. `None` if none of them has types to check.
 fn what_to_check(
     cwd: &[u8],
     entry_points: &[&[u8]],
 ) -> Option<(Vec<Vec<u8>>, Vec<CompilerOption>)> {
-    // An entry point that is neither TypeScript nor JavaScript has no types to check: `[eval]`, a
-    // stylesheet, a page.
-    use bun_ast::Loader;
-    let loader_of = |path: &[u8]| Loader::from_string(bun_paths::extension(path));
-    let is_checked = |path: &[u8]| loader_of(path).is_some_and(Loader::is_javascript_like);
     let mut paths: Vec<Vec<u8>> = Vec::new();
     for &entry_point in entry_points {
-        if is_checked(entry_point) {
+        if has_types(entry_point) {
             paths.push(entry_point.to_vec());
         } else if entry_point.ends_with(b".html") {
             let scripts = imports_of_page(cwd, entry_point);
-            paths.extend(scripts.into_iter().filter(|path| is_checked(path)));
+            paths.extend(scripts.into_iter().filter(|path| has_types(path)));
         }
     }
     if paths.is_empty() {
         return None;
     }
-    // A JavaScript entry point is loaded for its imports, regardless of `allowJs`. Its own errors
-    // are reported only under `checkJs`.
-    let allow_js: Vec<CompilerOption> = paths
-        .iter()
-        .any(|path| !loader_of(path).is_some_and(Loader::is_typescript))
+    let options = options_for(&paths);
+    Some((paths, options))
+}
+
+/// The compiler options that go with naming `paths` in a check. A JavaScript entry point is loaded
+/// for its imports, regardless of `allowJs`. Its own errors are reported only under `checkJs`.
+fn options_for(paths: &[Vec<u8>]) -> Vec<CompilerOption> {
+    use bun_ast::Loader;
+    let is_typescript = |path: &Vec<u8>| {
+        Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_typescript)
+    };
+    (!paths.iter().all(is_typescript))
         .then(|| bun_sema_driver::compiler_option_from_flag(b"allowJs", None).ok())
         .flatten()
         .into_iter()
-        .collect();
-    Some((paths, allow_js))
+        .collect()
 }
 
 /// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot
@@ -629,12 +682,12 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(&[], &[])
+    check_and_report(&[], &[]).is_ok()
 }
 
-fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
+fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> Report {
     let cwd = working_directory();
-    let report = run(
+    let mut report = run(
         &cwd,
         None,
         paths,
@@ -644,16 +697,19 @@ fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> b
         |report| report,
     );
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
-        return true;
+        return report;
     }
     let shown_from = bun_sema_driver::host::from_native(&cwd);
     let style = style_for(&shown_from, None, Destination::stderr(), false);
     let mut out = Vec::new();
+    // They are for the caller.
+    let listed_files = std::mem::take(&mut report.listed_files);
     format::write_diagnostics(&mut out, &report, &style);
     if !report.is_ok() {
         format::write_summary(&mut out, &report, &style);
     }
     let _ = Output::error_writer().write_all(&out);
     Output::flush();
-    report.is_ok()
+    report.listed_files = listed_files;
+    report
 }

@@ -22,7 +22,7 @@ Found 1 error in 1 file, checked 2 files [14.00ms]
 
 ### If `package.json` has a `check` script
 
-A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project. Inside the script itself `bun check` is the type checker too, so `"check": "bun check"` works.
+A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project. Inside that script, and in the scripts it runs, `bun check` is the type checker too, so `"check": "bun check"` works.
 
 ```json package.json icon="file-json"
 {
@@ -90,7 +90,7 @@ Each file is checked in the project your editor uses for it: the nearest `tsconf
 
 A file that no project includes is checked with the options of the nearest `tsconfig.json` all the same.
 
-A directory stands for the files that those projects have in it. If they have none there, as in `bun check scripts` when `include` is `["src"]`, it stands for every file in it that is not excluded.
+A directory stands for the part of the project that is in it, so `bun check .` is the same as `bun check`. If the project has no files there, as in `bun check scripts` when `include` is `["src"]`, every file in the directory that is not excluded is checked, each with the `tsconfig.json` nearest to it.
 
 Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init`](/runtime/templating/init) writes, apart from the stricter rules that are a matter of taste (`noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`):
 
@@ -145,11 +145,13 @@ bun --watch --check src/index.ts
 bun test --watch --check
 ```
 
-With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs.
+With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs. That goes for `--filter`, `--parallel` and `--sequential` too.
 
 ```bash terminal icon="terminal"
 bun run --check dev
 ```
+
+With `--tsconfig-override`, the check uses that `tsconfig.json`, like everything else.
 
 A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
 

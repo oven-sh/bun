@@ -56,6 +56,7 @@ const env = {
   GITHUB_WORKSPACE: undefined,
   // Of the script that runs the tests.
   npm_lifecycle_event: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
   NO_COLOR: "1",
   // Prevent fallback to globally installed packages.
   BUN_INSTALL_GLOBAL_DIR: "/nowhere",
@@ -640,15 +641,14 @@ describe.concurrent("bun check", () => {
         const error = (file: string) =>
           `${file}(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
         expect(from.stdout).toBe(`${error("a.ts")}\n${error("sub/b.ts")}`);
-        for (const [result, name] of [
-          [byProject, "a.ts"],
-          [directory, "sub/b.ts"],
-          [file, "a.ts"],
-        ] as const) {
-          expect(result.stdout).toContain(error(name));
-          expect(result.stdout).not.toContain("TS6053");
-          expect(result.exitCode).toBe(1);
-        }
+        // In one assertion, so that a failure shows all of them.
+        const named = [byProject, directory, file];
+        expect(named.map(it => [it.stdout, it.exitCode])).toEqual([
+          [expect.stringContaining(error("a.ts")), 1],
+          [expect.stringContaining(error("sub/b.ts")), 1],
+          [expect.stringContaining(error("a.ts")), 1],
+        ]);
+        expect(named.map(it => it.stdout).join("\n")).not.toContain("TS6053");
       } finally {
         subst(drive!, "/D");
       }
@@ -673,11 +673,29 @@ describe.concurrent("bun check", () => {
       expect(own.map(line => line.replace(/^\S*\//, ""))).toEqual(["imported.ts", "a.ts"]);
     });
 
+    test("a directory outside the project, without a tsconfig.json of its own", async () => {
+      using dir = tempDir("bun-check", {
+        "packages/my-application/tsconfig.json": tsconfig,
+        "packages/my-application/a.ts": `export const a: string = 1;\n`,
+        "packages/lib/b.ts": `export const b: string = 1;\n`,
+      });
+      mkdirSync(join(String(dir), "node_modules"));
+      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
+      const { stdout } = await check(join(String(dir), "packages", "my-application"), ["../lib"]);
+      expect(stdout).toBe(`../lib/b.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
+    });
+
     test("a directory with a link that leads back up", async () => {
-      using dir = project({ "a.ts": `export const a: string = 1;\n` });
-      symlinkSync(String(dir), join(String(dir), "up"), "junction");
+      // Without a tsconfig.json at the root, so that those below are looked for.
+      using dir = tempDir("bun-check", {
+        "pkg/tsconfig.json": tsconfig,
+        "pkg/a.ts": `export const a: string = 1;\n`,
+      });
+      mkdirSync(join(String(dir), "node_modules"));
+      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
+      symlinkSync(String(dir), join(String(dir), "pkg", "up"), "junction");
       const { stdout } = await check(dir, ["."]);
-      expect(stdout).toBe(`a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
+      expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
     test("a path on the command line is relative to the working directory, as in tsc", async () => {
@@ -1172,6 +1190,9 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         "vite.config.ts": `export const port: number = "1";\n`,
         // No project has it.
         "scripts/s.ts": `export const s: number = "1";\n`,
+        // A project of its own, which the solution does not reference: `bun check` leaves it alone.
+        "examples/x/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false } }),
+        "examples/x/e.ts": `export const e: number = "1";\n`,
       });
       const main = `src/main.tsx(3,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
       const other = (file: string) => `${file}(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
@@ -1184,10 +1205,11 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         check(dir, ["vite.config.ts"]),
         check(dir, ["src/main.tsx", "vite.config.ts"]),
         check(dir, ["scripts"]),
+        check(dir, ["examples"]),
         run(String(dir), ["--check", "src/main.tsx"]),
       ]);
       const whole = `${main}\n${other("vite.config.ts")}`;
-      expect(results.slice(0, 8).map(it => it.stdout)).toEqual([
+      expect(results.slice(0, 9).map(it => it.stdout)).toEqual([
         whole,
         whole,
         main,
@@ -1196,9 +1218,10 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         other("vite.config.ts"),
         whole,
         other("scripts/s.ts"),
+        other("examples/x/e.ts"),
       ]);
-      expect(results[8].stderr).toContain("TS2322");
-      expect(results[8].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
+      expect(results[9].stderr).toContain("TS2322");
+      expect(results[9].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
     });
 
     test("path arguments: each is checked with the compiler options of its own project", async () => {
@@ -13945,17 +13968,33 @@ describe.concurrent("--check", () => {
       ...files,
       "package.json": JSON.stringify({ description: "check", scripts: { "check:all": "echo no", lint: "check" } }),
     });
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     // The script is the type checker, with an option.
     using wrapped = project({
       ...files,
+      "package.json": JSON.stringify({ scripts: { check: `${bun} check --pretty false` } }),
+    });
+    // By way of another script.
+    using aggregate = project({
+      ...files,
       "package.json": JSON.stringify({
-        scripts: { check: `"${bunExe().replaceAll("\\", "/")}" check --pretty false` },
+        scripts: { "check": `${bun} run check:types`, "check:types": `${bun} check --pretty false` },
       }),
     });
+    // The script of another package is a script all the same.
+    using nested = project({
+      ...files,
+      "package.json": JSON.stringify({ scripts: { check: `cd sub && ${bun} check` } }),
+      "sub/package.json": JSON.stringify({ scripts: { check: "echo the script of sub ran" } }),
+    });
     const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
-    const inItself = await run(String(wrapped), ["check"]);
-    expect([inItself.stdout, inItself.exitCode]).toEqual([error, 1]);
-    const [script, below, elsewhere, flag, command, sameFlag, flagElsewhere, withOthers] = await Promise.all([
+    const inScripts = await Promise.all([wrapped, aggregate, nested].map(dir => run(String(dir), ["check"])));
+    expect(inScripts.map(it => [it.stdout, it.exitCode])).toEqual([
+      [error, 1],
+      [error, 1],
+      ["the script of sub ran", 0],
+    ]);
+    const [script, below, elsewhere, flag, command, sameFlag, flagElsewhere, withOthers, after] = await Promise.all([
       run(String(scripted), ["check"]),
       run(join(String(scripted), "src"), ["check"]),
       run(String(unscripted), ["--cwd", String(scripted), "check"]),
@@ -13965,13 +14004,16 @@ describe.concurrent("--check", () => {
       // The arguments are those of `bun`.
       run(join(String(scripted), "src"), ["--cwd", "..", "--check"]),
       run(String(scripted), ["--silent", "--check", "--no-install"]),
+      // `bun run` looks for the script where it is, since what follows the name is for the script.
+      run(String(unscripted), ["check", "--cwd", String(scripted)]),
     ]);
     expect([script, below, elsewhere].map(it => [it.stdout, it.exitCode])).toEqual([
       ["the script ran", 0],
       ["the script ran", 0],
       ["the script ran", 0],
     ]);
-    expect([flag, command, sameFlag, flagElsewhere, withOthers].map(it => [it.stdout, it.exitCode])).toEqual([
+    expect([flag, command, sameFlag, flagElsewhere, withOthers, after].map(it => [it.stdout, it.exitCode])).toEqual([
+      [error, 1],
       [error, 1],
       [error, 1],
       [error, 1],
@@ -14040,6 +14082,72 @@ describe.concurrent("--check", () => {
       () => Bun.write(join(String(dir), "types.ts"), `export type N = string;\n`),
     );
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
+  });
+
+  test("--tsconfig-override is the tsconfig.json of the check too", async () => {
+    using dir = project({
+      "tsconfig.build.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, paths: { "@/*": ["./src/*"] } },
+      }),
+      "src/lib.ts": `export const a: number = 1;\n`,
+      "src/index.ts": `import { a } from "@/lib";\nconsole.log("ran", a);\n`,
+    });
+    const override = ["--tsconfig-override", "tsconfig.build.json"];
+    const [without, ran, built] = await Promise.all([
+      run(String(dir), ["--check", "src/index.ts"]),
+      run(String(dir), [...override, "--check", "src/index.ts"]),
+      run(String(dir), ["build", "--check", ...override, "src/index.ts", "--outdir", "out"]),
+    ]);
+    expect(without.stderr).toContain("TS2307");
+    expect(ran.stderr + built.stderr).not.toContain("TS2307");
+    expect([ran.stdout, ran.exitCode, built.exitCode]).toEqual(["ran 1", 0, 0]);
+  });
+
+  test("--check with --filter, --parallel or --sequential checks the project before the scripts", async () => {
+    using dir = project({
+      "package.json": JSON.stringify({
+        workspaces: ["packages/*"],
+        scripts: { one: "echo one ran", two: "echo two ran" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { build: "echo a ran" } }),
+      "a.ts": `export const a: number = "1";\n`,
+    });
+    const results = await Promise.all([
+      run(String(dir), ["--check", "--filter", "*", "build"]),
+      run(String(dir), ["run", "--check", "--parallel", "one", "two"]),
+      run(String(dir), ["run", "--check", "--sequential", "one", "two"]),
+    ]);
+    const seen = results.map(it => [
+      it.exitCode,
+      it.stderr.includes("TS2322"),
+      (it.stdout + it.stderr).includes("ran"),
+    ]);
+    expect(seen).toEqual([
+      [1, true, false],
+      [1, true, false],
+      [1, true, false],
+    ]);
+  });
+
+  test("bun test --watch --check watches the tsconfig.json of every project", async () => {
+    const declared = `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`;
+    const tests = `import { test } from "bun:test";\nfunction f(x) {\n  return x;\n}\ntest("t", () => void f(1));\n`;
+    const loose = JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict: false } });
+    using dir = project({
+      "a/tsconfig.json": loose,
+      "a/bun-test.d.ts": declared,
+      "a/a.test.ts": tests,
+      "b/tsconfig.json": loose,
+      "b/bun-test.d.ts": declared,
+      "b/b.test.ts": tests,
+    });
+    await using bun = watching(dir, ["test", "--watch", "--check"]);
+    await bun.until(() => bun.output.stderr.includes("2 pass"));
+    await bun.until(
+      () => bun.output.stderr.includes("b/b.test.ts(2,12): error TS7006"),
+      () => Bun.write(join(String(dir), "b", "tsconfig.json"), tsconfig),
+    );
+    expect(bun.output.stderr).not.toContain("a/a.test.ts(2,12)");
   });
 
   // These draw the same progress line as `bun check`, on a thread of its own, and the process goes on afterwards.

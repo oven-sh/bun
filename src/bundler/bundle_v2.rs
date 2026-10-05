@@ -2547,6 +2547,7 @@ pub mod bv2_impl {
                 .map(|((source, _), _)| (source.path.text, source.contents()));
             if type_check(
                 self.transpiler.fs().top_level_dir,
+                self.transpiler.options.tsconfig_override.as_deref(),
                 &mut entry_points,
                 &mut sources,
                 self.transpiler.log_mut(),

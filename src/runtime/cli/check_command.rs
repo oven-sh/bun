@@ -216,13 +216,13 @@ fn working_directory() -> Vec<u8> {
 pub(crate) fn is_package_script() -> bool {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::{dirname, join_abs_string};
-    // In that script it is the type checker: `"check": "bun check"`.
-    if env_var::npm_lifecycle_event::get() == Some(b"check".as_slice()) {
-        return false;
-    }
     let mut cwd = working_directory();
     let mut args = bun_core::argv().into_iter();
     while let Some(arg) = args.next() {
+        // What follows the name of a script is for the script.
+        if arg == b"check" {
+            break;
+        }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
             Some(rest) => rest.strip_prefix(b"="),
@@ -244,6 +244,18 @@ pub(crate) fn is_package_script() -> bool {
         }
         dir = parent;
     };
+    // In that script, and in what it runs, it is the type checker: `"check": "bun check"`.
+    let is_running = match env_var::BUN_INTERNAL_CHECK_SCRIPTS::get() {
+        Some(running) => {
+            let mut running = running.split(|&byte| byte == bun_paths::DELIMITER);
+            running.any(|it| it == bun_core::strings::without_trailing_slash(dir))
+        }
+        // Another package manager may run it.
+        None => env_var::npm_lifecycle_event::get() == Some(b"check".as_slice()),
+    };
+    if is_running {
+        return false;
+    }
     // Most have no such word in them.
     if !bun_core::strings::contains(&contents, b"\"check\"") {
         return false;
@@ -257,6 +269,18 @@ pub(crate) fn is_package_script() -> bool {
     (json.as_property(b"scripts"))
         .and_then(|scripts| scripts.expr.as_property(b"check"))
         .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
+}
+
+/// `bun run` is about to run the `check` script of the package in `dir`, with `env`. See
+/// `is_package_script`.
+pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, dir: &[u8]) {
+    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
+    let mut running = env.get(key).unwrap_or_default().to_vec();
+    if !running.is_empty() {
+        running.push(bun_paths::DELIMITER);
+    }
+    running.extend_from_slice(bun_core::strings::without_trailing_slash(dir));
+    env.map.put(key, &running).expect("unreachable");
 }
 
 /// The directory where `bun add -g` installs packages.
@@ -529,7 +553,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
 pub(crate) struct CheckedBefore {
     pub(crate) has_errors: bool,
     /// What `--watch` waits for a change in, besides what is run: the files of the program outside
-    /// `node_modules`, of which some only have types, and its configuration file.
+    /// `node_modules`, of which some only have types, and its configuration files.
     pub(crate) files: Vec<Vec<u8>>,
 }
 
@@ -555,7 +579,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
         .listed_files
         .iter()
         .filter(|path| !is_installed(path));
-    let loaded = loaded.chain((!report.config_path.is_empty()).then_some(&report.config_path));
+    let loaded = loaded.chain(report.config_paths.iter().filter(|path| !path.is_empty()));
     // The program is not loaded if its options are wrong.
     let all = (paths.iter().map(Vec::as_slice)).chain(loaded.map(|path| to_native(path)));
     CheckedBefore {
@@ -579,27 +603,30 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(
     cwd: &[u8],
+    tsconfig: Option<&[u8]>,
     entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
 ) -> bool {
-    check_for_build(cwd, entry_points, sources, log, true)
+    check_for_build(cwd, tsconfig, entry_points, sources, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
 pub(crate) fn check_for_bun_build(
     cwd: &[u8],
+    tsconfig: Option<&[u8]>,
     entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
 ) -> bool {
-    check_for_build(cwd, entry_points, sources, log, false)
+    check_for_build(cwd, tsconfig, entry_points, sources, log, false)
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
 /// build reports like its own. It runs on the thread of the bundler.
 fn check_for_build(
     cwd: &[u8],
+    tsconfig: Option<&[u8]>,
     entry_points: &mut dyn Iterator<Item = &[u8]>,
     sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
     log: &mut bun_ast::Log,
@@ -615,8 +642,8 @@ fn check_for_build(
     let options = options_for(&paths);
     let (already_read, then) = (already_read(cwd, sources), |report| report);
     let report = match shows_progress {
-        true => run(cwd, None, &paths, &options, 0, already_read, then),
-        false => run_quietly(cwd, None, &paths, &options, 0, None, already_read, then),
+        true => run(cwd, tsconfig, &paths, &options, 0, already_read, then),
+        false => run_quietly(cwd, tsconfig, &paths, &options, 0, None, already_read, then),
     };
     for reported in &report.diagnostics {
         let kind = match reported.category {
@@ -747,9 +774,11 @@ pub(crate) fn check_project_before() -> bool {
 
 fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> Report {
     let cwd = working_directory();
+    // `--tsconfig-override`: what is run is resolved with it, in place of every other.
+    let context = bun_options_types::context::try_get();
     let mut report = run(
         &cwd,
-        None,
+        context.and_then(|ctx| ctx.args.tsconfig_override.as_deref()),
         paths,
         compiler_options,
         0,

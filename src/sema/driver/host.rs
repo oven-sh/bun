@@ -69,6 +69,17 @@ pub fn to_native(path: &[u8]) -> &[u8] {
     }
 }
 
+/// The root of a drive is `/C:`. For the system, to which `C:` is the working directory on that
+/// drive, and in a message it is `/C:/`.
+pub fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
+    match path {
+        [b'/', drive, b':'] if cfg!(windows) && drive.is_ascii_alphabetic() => {
+            Cow::Owned([path, b"/"].concat())
+        }
+        _ => Cow::Borrowed(path),
+    }
+}
+
 /// Rewrites every `/C:/a` in the message `text` to its `to_native` form, which is how TypeScript
 /// prints it, and every `/\\server/a` to `//server/a`.
 pub fn show_drives(text: &mut Vec<u8>) {
@@ -429,7 +440,7 @@ impl Disk {
     /// Asks the system, which does not know what is only in memory.
     fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
         self.find_in_memory(path)
-            .or_else(|| is_directory(Fd::cwd(), to_native(path)))
+            .or_else(|| is_directory(Fd::cwd(), to_native(&with_root(path))))
     }
 
     /// `None`: the system has to be queried.
@@ -447,7 +458,7 @@ impl Disk {
 
     fn ask_for_real_path(path: &[u8]) -> Vec<u8> {
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(to_native(path), &mut name), &mut real)
+        bun_sys::realpath(z(to_native(&with_root(path)), &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
     }
 
@@ -499,16 +510,7 @@ impl Drop for Disk {
 
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
-    // `C:` names the working directory on that drive.
-    let drive;
-    let native = match to_native(path) {
-        [_, b':'] if cfg!(windows) => {
-            drive = [to_native(path), b"/"].concat();
-            &drive[..]
-        }
-        native => native,
-    };
-    let directory = match bun_sys::open_dir_absolute(native) {
+    let directory = match bun_sys::open_dir_absolute(to_native(&with_root(path))) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
         Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Directory::Missing;

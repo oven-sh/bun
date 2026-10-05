@@ -531,8 +531,8 @@ pub struct Report {
     pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
-    /// The configuration file that was used. Empty if there is none.
-    pub config_path: Vec<u8>,
+    /// The configuration files of the projects that were checked.
+    pub config_paths: Vec<Vec<u8>>,
     /// `listFiles`, `listFilesOnly`: the files of the program, in program order.
     pub listed_files: Vec<Vec<u8>>,
     /// `traceResolution`: the lines, in order.
@@ -571,6 +571,7 @@ impl Report {
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
+        self.config_paths.extend(other.config_paths);
         self.listed_files.extend(other.listed_files);
         self.resolution_trace.extend(other.resolution_trace);
         self.has_bun_types_installed |= other.has_bun_types_installed;
@@ -866,7 +867,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
         .map(|path| join(&cwd, path))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
-    let not_found = missing.iter().map(|path| global(6053, &[path]));
+    let not_found = (missing.iter()).map(|path| global(6053, &[host::with_root(path)]));
     report.diagnostics.extend(not_found);
     if paths.is_empty() && !missing.is_empty() {
         return report;
@@ -877,14 +878,17 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             if disk.is_dir(&path) {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
-                    report.diagnostics.push(global(5057, &[path]));
+                    let shown = host::with_root(&path);
+                    report.diagnostics.push(global(5057, &[shown]));
                     return report;
                 }
                 Some(inside)
             } else if disk.is_file(&path) {
                 Some(path)
             } else {
-                report.diagnostics.push(global(5058, &[path]));
+                report
+                    .diagnostics
+                    .push(global(5058, &[host::with_root(&path)]));
                 return report;
             }
         }
@@ -913,30 +917,51 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     }
 
     // Each file is checked in its own project, once.
-    let mut by_project: Vec<(Option<Vec<u8>>, Vec<Vec<u8>>)> = Vec::new();
-    let mut add = |owner: Option<Vec<u8>>, file: Vec<u8>| match by_project
+    let mut by_project: Vec<(Option<Vec<u8>>, Extent, Vec<Vec<u8>>)> = Vec::new();
+    let mut add = |owner: Option<Vec<u8>>, extent: Extent, file: Vec<u8>| match by_project
         .iter_mut()
-        .find(|it| it.0 == owner)
+        .find(|it| it.0 == owner && it.1 == extent)
     {
-        Some(project) => project.1.push(file),
-        None => by_project.push((owner, vec![file])),
+        Some(project) => project.2.push(file),
+        None => by_project.push((owner, extent, vec![file])),
     };
     for path in &paths {
         if !disk.is_dir(path) {
             let nearest = config_in(dirname::<Posix>(path));
             let owner = projects.owner_of(disk, request, nearest, path);
-            add(owner.unwrap_or_else(|nearest| nearest), path.clone());
+            let owner = owner.unwrap_or_else(|nearest| nearest);
+            add(owner, Extent::Project, path.clone());
             continue;
         }
-        // Each configuration file at, above or below the directory has a say about the files that
-        // are nearest to it.
+        // The directory stands for the part of the project that is in it: of the project that is
+        // checked from there without an argument, so that `bun check .` is `bun check`.
+        if let Some(config) = config_in(path) {
+            let files = projects
+                .load(disk, request, &config)
+                .files_under(disk, path);
+            let mut has_files = false;
+            for file in files {
+                let seen = &mut Vec::new();
+                if (projects.find_project_with(disk, request, &config, &file, seen)).is_some() {
+                    add(Some(config.clone()), Extent::Graph, file);
+                    has_files = true;
+                }
+            }
+            if has_files {
+                continue;
+            }
+        }
+        // It has nothing there, as in `bun check scripts`, or there is none. Each configuration
+        // file at, above or below the directory has a say about the files that are nearest to it.
         let below = match explicit {
             Some(_) => Vec::new(),
             None => nested_configs(disk, path),
         };
         for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
+            let is_below =
+                |dir: &&[u8]| (dir.strip_prefix(&path[..])).is_some_and(|it| it.starts_with(b"/"));
             let top = (config.as_deref().map(dirname::<Posix>))
-                .filter(|dir| dir.len() > path.len())
+                .filter(is_below)
                 .unwrap_or(path);
             let files = match &config {
                 Some(config) => projects.load(disk, request, config).files_under(disk, top),
@@ -958,7 +983,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             } else {
                 included
             };
-            files.into_iter().for_each(|(owner, file)| add(owner, file));
+            (files.into_iter()).for_each(|(owner, file)| add(owner, Extent::Project, file));
         }
     }
     if by_project.is_empty() {
@@ -975,22 +1000,19 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let is_one = by_project.len() == 1;
-    let all: FxHashSet<&[u8]> = (by_project.iter().flat_map(|it| &it.1))
+    let all: FxHashSet<&[u8]> = (by_project.iter().flat_map(|it| &it.2))
         .map(Vec::as_slice)
         .collect();
-    for (config, files) in &by_project {
+    for (config, extent, files) in &by_project {
         let own: FxHashSet<&[u8]> = files.iter().map(Vec::as_slice).collect();
         let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
         let of = OfProject {
             config: config.as_deref(),
-            named: Some(files),
+            named: Some((*extent, files.as_slice())),
             elsewhere: (!is_one).then_some(&elsewhere),
         };
         let (so_far, began) = (Report::default(), Instant::now());
         let checked = check_project_of(disk, request, &mut projects, of, so_far, began);
-        if report.config_path.is_empty() {
-            report.config_path.clone_from(&checked.config_path);
-        }
         report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
         report.merge(checked);
     }
@@ -999,13 +1021,23 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     report
 }
 
+/// Where the files are that a check is limited to.
+#[derive(Clone, Copy, PartialEq)]
+enum Extent {
+    /// In the project, or they are added to it. What it references is built whole.
+    Project,
+    /// In the project and in those that it references, directly or not. Of these, one without such
+    /// a file is left out, unless one with such a file references it.
+    Graph,
+}
+
 /// What `check_project_of` checks.
 #[derive(Clone, Copy)]
 struct OfProject<'a> {
     /// `None`: there is no configuration file.
     config: Option<&'a [u8]>,
-    /// Of its files, and besides them. `None`: all of its files.
-    named: Option<&'a [Vec<u8>]>,
+    /// `None`: all of its files.
+    named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project. This one may import them.
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
 }
@@ -1025,29 +1057,33 @@ fn check_project_of(
         }
         None => {
             let cwd = host::from_native(request.cwd);
-            project_without_config(disk, request, &cwd, of.named.unwrap_or_default())
+            let files = of.named.map(|it| it.1).unwrap_or_default();
+            project_without_config(disk, request, &cwd, files)
         }
     };
-    report.config_path.clone_from(&project.config_path);
-    let named = of.named.map(|named| {
-        // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
-        // affect every other file, so a file must produce the same errors with and without path arguments.
-        let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
-        let more: Vec<Vec<u8>> = (named.iter())
-            .filter(|root| seen.insert(root.as_slice()))
-            .cloned()
-            .collect();
-        project.files.extend(more);
-        project.options.files.clone_from(&project.files);
-        // An empty file set in the config file is not an error when path arguments provide the roots.
-        project
-            .errors
-            .retain(|e| e.code != 18003 && e.code != 18002);
+    // Here, for a solution: it has no program of its own.
+    report.config_paths.push(project.config_path.clone());
+    let named = of.named.map(|(extent, named)| {
+        if extent == Extent::Project {
+            // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
+            // affect every other file, so a file must produce the same errors with and without path arguments.
+            let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
+            let more: Vec<Vec<u8>> = (named.iter())
+                .filter(|root| seen.insert(root.as_slice()))
+                .cloned()
+                .collect();
+            project.files.extend(more);
+            project.options.files.clone_from(&project.files);
+            // An empty file set in the config file is not an error when path arguments provide the roots.
+            project
+                .errors
+                .retain(|e| e.code != 18003 && e.code != 18002);
+        }
         let mut named = named.to_vec();
         named.sort_unstable();
-        named
+        (extent, named)
     });
-    let named = named.as_deref();
+    let named = (named.as_ref()).map(|(extent, files)| (*extent, files.as_slice()));
     if !project.references.is_empty() {
         check_with_references(disk, project, request, report, started, named, of.elsewhere)
     } else {
@@ -1057,7 +1093,7 @@ fn check_project_of(
             request,
             report,
             started,
-            named,
+            named.map(|it| it.1),
             of.elsewhere,
             None,
         )
@@ -1285,7 +1321,7 @@ impl Host for WithOutputs<'_> {
 
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
-/// memory. `named`: see `check_named_files`. It is about `root`: what it references is built whole.
+/// memory. `named`: see `check_named_files` and `Extent`.
 /// `elsewhere`: see `OfProject`.
 fn check_with_references(
     host: &dyn Host,
@@ -1293,7 +1329,7 @@ fn check_with_references(
     request: &Request,
     mut report: Report,
     started: Instant,
-    named: Option<&[Vec<u8>]>,
+    named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
 ) -> Report {
     let root_config_path = root.config_path.clone();
@@ -1361,6 +1397,21 @@ fn check_with_references(
         projects.iter().map(|p| p.project.options.clone()).collect();
     let is_read_later = |index: usize| references.iter().any(|of| of.contains(&index));
     let count = projects.len();
+    // See `Extent::Graph`.
+    let has_named: Vec<bool> = (roots.iter())
+        .map(|files| match named {
+            Some((Extent::Graph, named)) => {
+                files.iter().any(|file| named.binary_search(file).is_ok())
+            }
+            _ => true,
+        })
+        .collect();
+    let mut is_left_out: Vec<bool> = has_named.iter().map(|has| !has).collect();
+    let mut pending: Vec<usize> = (0..count).filter(|&index| has_named[index]).collect();
+    while let Some(index) = pending.pop() {
+        let referenced = references[index].iter();
+        pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
+    }
     // Under `noEmit` nothing is emitted, and a `.d.ts` next to a `.js` source would be resolved
     // in its place.
     let writes_declaration_files =
@@ -1396,6 +1447,8 @@ fn check_with_references(
             if project.errors.is_empty() {
                 return Ok(None);
             }
+        } else if is_left_out[index] {
+            return Ok(None);
         } else {
             project.errors.append(&mut about_references);
         }
@@ -1460,7 +1513,16 @@ fn check_with_references(
         project.options.is_build = true;
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
-        let named = named.filter(|_| project.config_path == root_config_path);
+        let named = match named {
+            Some((Extent::Project, files)) if project.config_path == root_config_path => {
+                Some(files)
+            }
+            // What another project reads is built whole.
+            Some((Extent::Graph, files)) if has_named[index] && !is_read_later(index) => {
+                Some(files)
+            }
+            _ => None,
+        };
         let mut checked = check_named_files(
             &host,
             project,
@@ -1608,6 +1670,7 @@ fn check_named_files(
         n => n,
     };
     project.options.current_directory = host::from_native(request.cwd);
+    report.config_paths.push(project.config_path.clone());
     let of_configuration = |error: &ConfigError| {
         let mut reported = global(error.code, &error.args);
         for (level, code, args) in &error.chain {

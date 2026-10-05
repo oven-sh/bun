@@ -789,11 +789,41 @@ fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
         if has_types(entry_point) {
             paths.push(entry_point.to_vec());
         } else if entry_point.ends_with(b".html") {
-            let scripts = imports_of_page(cwd, entry_point);
-            paths.extend(scripts.into_iter().filter(|path| has_types(path)));
+            for page in pages_of(cwd, entry_point) {
+                let scripts = imports_of_page(cwd, &page);
+                paths.extend(scripts.into_iter().filter(|path| has_types(path)));
+            }
         }
     }
     (!paths.is_empty()).then_some(paths)
+}
+
+/// The pages that `bun` serves for the argument `page`, which src/js/internal/html.ts finds with
+/// `new Bun.Glob(page).scanSync(cwd)` if it can be a pattern. None of them is in a `node_modules`.
+fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
+    use bun_glob::{BunGlobWalker, walk};
+    let mut pages = Vec::new();
+    if !page.iter().any(|c| matches!(c, b'*' | b'{')) {
+        pages.push(page.to_vec());
+    } else if let Ok(Ok(mut walker)) =
+        // The defaults of `scanSync`: files only.
+        BunGlobWalker::init_with_cwd(
+            page, cwd, false, false, false, false, true, None,
+        )
+    {
+        let mut matches = walk::Iterator::new(&mut walker);
+        if matches!(matches.init(), Ok(Ok(()))) {
+            while let Ok(Ok(Some(path))) = matches.next() {
+                pages.push(path.into_vec());
+            }
+        }
+    }
+    pages.retain(|page| {
+        let page =
+            bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);
+        !bun_core::strings::contains(page, bun_paths::NODE_MODULES_NEEDLE)
+    });
+    pages
 }
 
 /// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot

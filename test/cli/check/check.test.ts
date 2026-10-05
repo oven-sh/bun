@@ -14075,7 +14075,7 @@ export function f<T>(rest: T) {
       },
     };
 
-    // Each starts up to 26 processes at once.
+    // Each starts up to 25 processes at once.
     test.serial.each(Object.keys(layouts))("%s", async layout => {
       const { files, file, directory } = layouts[layout];
       using dir = project(files);
@@ -14130,8 +14130,9 @@ export function f<T>(rest: T) {
       ];
       // Where the file system takes one spelling of a name for another, so does `bun check`. It prints the name that the
       // directory has.
-      if (existsSync(join(root, file.toUpperCase()))) {
-        const inUpperCaseDirectories = `${dirname(file).toUpperCase()}/${basename(file)}`;
+      const inUpperCaseDirectories = `${dirname(file).toUpperCase()}/${basename(file)}`;
+      const foldsCase = existsSync(join(root, file.toUpperCase()));
+      if (foldsCase) {
         commands.push(
           ["file", root, ["check", file.toUpperCase()]],
           ["file", root, ["check", `./${inUpperCaseDirectories}`]],
@@ -14140,7 +14141,6 @@ export function f<T>(rest: T) {
           ["directory", root, ["check", directory.toUpperCase()]],
           ["directory", root, ["check", `./${directory.toUpperCase()}/`]],
           ["file", root, ["--check", inUpperCaseDirectories]],
-          ["file", root, ["build", "--check", inUpperCaseDirectories, "--outdir", "out"]],
         );
       }
       const [whole, ...results] = await Promise.all([
@@ -14164,6 +14164,15 @@ export function f<T>(rest: T) {
           it.exitCode,
         ]),
       ).toEqual(commands.map(command => [name(command), expected[command[0]], 1]));
+
+      // The bundler names a file as its entry point is spelled, in its own errors too.
+      if (foldsCase) {
+        const built = await run(root, ["build", "--check", inUpperCaseDirectories, "--outdir", "out"]);
+        expect([reported(root, built.stderr), built.exitCode]).toEqual([
+          expected.file.map(it => it.replace(file, inUpperCaseDirectories)),
+          1,
+        ]);
+      }
     });
 
     // The name in `files` is the name of the file in the program. The argument is spelled as the directory has it.
@@ -14537,6 +14546,42 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(1);
     },
   );
+
+  // What is served is checked: every page, also those that a pattern stands for.
+  test.each([
+    [["index.html", "about.html"]],
+    [["./index.html", "./pages/contact.html"]],
+    [["./*.html"]],
+    [["./**/*.html"]],
+    // Not the first: `bun` looks for a file with that name.
+    [["index.html", "{about,none}.html"]],
+    [["index.html", "./pages/*.html"]],
+  ])("bun --check %j: the scripts of every page", async pages => {
+    const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
+    using dir = project({
+      "index.html": page("./src/index.ts"),
+      "about.html": page("./src/about.ts"),
+      "pages/contact.html": page("../src/contact.ts"),
+      "node_modules/installed/page.html": page("./installed.ts"),
+      "node_modules/installed/installed.ts": `export const installed: number = "1";\n`,
+      "src/index.ts": `export const index = 1;\n`,
+      "src/about.ts": `export const about: number = "1";\n`,
+      "src/contact.ts": `export const contact: number = "1";\n`,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["--check", ...pages]);
+    const served = (name: string) => pages.some(it => it.includes(name) || it.includes("**"));
+    expect({
+      about: stderr.includes("src/about.ts(1,14): error TS2322"),
+      contact: stderr.includes("src/contact.ts(1,14): error TS2322"),
+      installed: stderr.includes("installed.ts"),
+      exitCode,
+    }).toEqual({
+      about: served("about") || pages.includes("./*.html"),
+      contact: served("contact") || pages.includes("./pages/*.html"),
+      installed: false,
+      exitCode: 1,
+    });
+  });
 
   test("--tsconfig-override is the tsconfig.json of the check too", async () => {
     using dir = project({

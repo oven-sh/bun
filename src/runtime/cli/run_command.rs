@@ -944,7 +944,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         let mut checked = None;
         if ctx.runtime_options.check {
-            let found = crate::cli::check_command::check_before(&[&entry_path]);
+            // src/js/internal/html.ts serves every argument that is a page.
+            let is_page = |path: &&[u8]| path.ends_with(b".html");
+            let more = ctx.passthrough.iter().map(|it| &it[..]).filter(is_page);
+            let more = more.filter(|_| is_page(&&entry_path[..]));
+            let entry_points: Vec<&[u8]> = std::iter::once(&entry_path[..]).chain(more).collect();
+            let found = crate::cli::check_command::check_before(&entry_points);
             if ctx.debug.hot_reload != cli::command::HotReload::None {
                 checked = Some(found);
             } else if found.has_errors {

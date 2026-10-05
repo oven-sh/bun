@@ -127,6 +127,9 @@ impl Session {
 
 impl Drop for Session {
     /// A loop, so that the stack depth does not depend on the number of threads.
+    ///
+    /// On any thread, while the threads that allocated work for other sessions: `mi_heap_destroy`
+    /// detaches what a thread holds of the heap under that thread's lock (`_mi_heap_detach_theaps`).
     fn drop(&mut self) {
         let mut next = self.first.take();
         while let Some(mut node) = next {

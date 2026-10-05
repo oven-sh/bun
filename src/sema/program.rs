@@ -216,6 +216,12 @@ impl<'s> std::ops::DerefMut for ModuleCell<'s> {
     }
 }
 
+/// Held while tasks on the threads that only read and tasks on the threads of the host wait for
+/// each other. Both pools are bounded and belong to the process. With two loads under way, the
+/// readers of one can occupy one pool and the processors of the other the other pool, and then each
+/// waits for tasks that never start. Whatever else runs on the pools ends without waiting.
+static WAITS_ACROSS_POOLS: Guarded<()> = Guarded::new(());
+
 /// Reads the files at `paths` and passes the contents of each to `work`, on all the threads of the
 /// host. Where the host has threads that only read (`Host::io_pool`), they read, one file after
 /// the other, and the threads of the host never wait for the file system.
@@ -289,6 +295,7 @@ fn read_and_work(
             work(i, text);
         }
     };
+    let _alone = WAITS_ACROSS_POOLS.lock();
     io.each_while((), read, &mut vec![(); io.max_threads()], || {
         host.parallel(threads, &process);
     });
@@ -3547,12 +3554,16 @@ impl<'s> Files<'s> {
         };
         let threads = host.threads();
         match host.io_pool() {
-            Some(io) => io.each_while(
-                (),
-                |(), (), _| load(true, false),
-                &mut vec![(); io.max_threads()],
-                || host.parallel(threads, &|_| load(false, true)),
-            ),
+            Some(io) => {
+                let _alone = WAITS_ACROSS_POOLS.lock();
+                io.each_while(
+                    (),
+                    |(), (), _| load(true, false),
+                    &mut vec![(); io.max_threads()],
+                    || host.parallel(threads, &|_| load(false, true)),
+                );
+            }
+            // Any one of these finishes the load by itself.
             None => host.parallel(threads, &|_| load(true, true)),
         }
         std::mem::take(&mut shared.lock().done)

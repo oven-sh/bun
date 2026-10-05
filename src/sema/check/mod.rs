@@ -648,7 +648,7 @@ impl<'s> Program<'s> {
             ran_out_of_stack: std::cell::Cell::new(false),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
-            provisional_shapes: Vec::new(),
+            provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
             cycle_at: 0,
@@ -1177,9 +1177,8 @@ pub struct Checker<'p, 's> {
     times_cut_short: std::cell::Cell<u64>,
     /// For the most recently queried file.
     exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
-    /// See `provisional_shape`, which returns a reference into the box and pushes the next.
-    #[expect(clippy::vec_box)]
-    provisional_shapes: Vec<Box<shape::Resolved<'s>>>,
+    /// See `provisional_shape`, which returns a reference to one and pushes the next.
+    provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
     /// Non-cacheable query results, for reuse while the computation that made them non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order. An event is dropped when a later one has a
@@ -2485,9 +2484,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `end_scope` for a memo with a test of its own.
     #[inline]
-    #[expect(clippy::needless_pass_by_value, reason = "a scope ends once")]
-    fn end_scope_as(&mut self, scope: Scope, is_open: bool) -> Result<Stored, Open> {
-        self.lowest_taint = self.lowest_taint.min(scope.outer_taint);
+    fn end_scope_as(
+        &mut self,
+        Scope { outer_taint, .. }: Scope,
+        is_open: bool,
+    ) -> Result<Stored, Open> {
+        self.lowest_taint = self.lowest_taint.min(outer_taint);
         if is_open {
             Err(Open)
         } else {

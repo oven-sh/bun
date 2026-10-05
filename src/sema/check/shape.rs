@@ -604,12 +604,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// A shape that is not final. It lives until `release_provisional_shapes`.
     fn provisional_shape(&mut self, shape: Shape<'s>) -> Built<'p> {
-        let resolved = Box::new(Resolved::new(shape));
-        // SAFETY: a box does not move its contents, and it is dropped by
+        let at = self.provisional_shapes.push(Resolved::new(shape));
+        let resolved = self.provisional_shapes.get(at);
+        // SAFETY: the elements of a `LocalVec` do not move, and they are dropped by
         // `release_provisional_shapes`, which is only called where no `Members` is live: between
         // files.
-        let provisional: &'p Resolved<'p> = unsafe { &*std::ptr::from_ref(&*resolved) };
-        self.provisional_shapes.push(resolved);
+        let provisional: &'p Resolved<'p> = unsafe { &*std::ptr::from_ref(resolved) };
         Built {
             resolved: provisional,
             kept: None,

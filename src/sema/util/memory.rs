@@ -146,8 +146,11 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Drop for Chunks<E, FIRST, A> {
 
 // ───────────────────────────── vectors ─────────────────────────────
 
-/// The length of a `Stable`. Private: `Stable::push` relies on `add` for an index of its own.
-trait Length: Default {
+/// The length of a `Stable`.
+///
+/// # Safety
+/// `Stable::push` relies on `add` for an index of its own: no two calls return overlapping ranges.
+pub unsafe trait Length: Default {
     /// Whether `Stable::get` compares the index with the length.
     const IS_CHECKED: bool;
     fn get(&self) -> u32;
@@ -157,7 +160,8 @@ trait Length: Default {
     fn take(&mut self) -> u32;
 }
 
-impl Length for AtomicU32 {
+// SAFETY: `fetch_add` is atomic.
+unsafe impl Length for AtomicU32 {
     const IS_CHECKED: bool = false;
     #[inline]
     fn get(&self) -> u32 {
@@ -172,8 +176,8 @@ impl Length for AtomicU32 {
     }
 }
 
-/// Not `Sync`, so all calls come from one thread at a time.
-impl Length for Cell<u32> {
+// SAFETY: it is not `Sync`, so all calls come from one thread at a time.
+unsafe impl Length for Cell<u32> {
     const IS_CHECKED: bool = true;
     #[inline]
     fn get(&self) -> u32 {
@@ -191,7 +195,6 @@ impl Length for Cell<u32> {
 const FIRST_CHUNK_BITS: u32 = 10;
 
 /// A vector that is appended to through a shared reference and whose elements never move.
-#[allow(private_bounds)]
 pub struct Stable<T, L: Length, A: Allocator + Clone = Global> {
     chunks: Chunks<MaybeUninit<T>, FIRST_CHUNK_BITS, A>,
     /// The elements below it are initialized, except for those that a `push` in progress or the
@@ -207,14 +210,12 @@ pub type AppendVec<T, A = Global> = Stable<T, AtomicU32, A>;
 /// For one thread. It can be emptied and used again.
 pub type LocalVec<T, A = Global> = Stable<T, Cell<u32>, A>;
 
-#[allow(private_bounds)]
 impl<T, L: Length, A: Allocator + Clone + Default> Default for Stable<T, L, A> {
     fn default() -> Self {
         Self::new_in(A::default())
     }
 }
 
-#[allow(private_bounds)]
 impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
     pub fn new() -> Self
     where
@@ -304,7 +305,6 @@ impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
     }
 }
 
-#[allow(private_bounds)]
 impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
     fn drop(&mut self) {
         self.clear();

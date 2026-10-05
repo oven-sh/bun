@@ -2381,8 +2381,9 @@ macro_rules! follow_enum {
                     })*
                 }
             }
-            #[allow(unused_variables)]
             fn follow(&mut self, link: &$crate::types::Link) {
+                // No variant may have a field.
+                let _ = link;
                 match self {
                     $($pattern => {
                         $($crate::types::Follow::follow($field, link);)*

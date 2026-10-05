@@ -71,7 +71,7 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     // `GetPathComponentsRelativeTo`: the names that both begin with are compared as the file system
     // compares them.
     fn names(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-        path.split(|&c| c == b'/')
+        strings::split(path, b"/")
     }
     let common = (names(path).zip(names(from)))
         .take_while(|(a, b)| is_same_path(a, b, false))

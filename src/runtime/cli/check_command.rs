@@ -215,7 +215,7 @@ fn working_directory() -> Vec<u8> {
 #[inline(never)]
 pub(crate) fn is_package_script() -> bool {
     use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::{dirname, join_abs_string};
+    use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
     let mut args = bun_core::argv().into_iter();
     while let Some(arg) = args.next() {
@@ -249,13 +249,7 @@ pub(crate) fn is_package_script() -> bool {
     if running.is_some_and(|running| running_package_scripts(running).any(|it| it == dir)) {
         return false;
     }
-    // Another package manager runs it. Not all say of which package.
-    if env_var::npm_lifecycle_event::get() == Some(b"check".as_slice())
-        && match env_var::npm_package_json::get() {
-            Some(of) => bun_core::strings::without_trailing_slash(dirname::<Auto>(of)) == dir,
-            None => running.is_none(),
-        }
-    {
+    if package_of_inherited_check_script(dir) == Some(dir) {
         return false;
     }
     // Most have no such word in them.
@@ -304,22 +298,47 @@ fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// `bun run check` runs all three.
+fn is_check_script(name: &[u8]) -> bool {
+    matches!(name, b"check" | b"precheck" | b"postcheck")
+}
+
+/// The directory of the package whose `check` script another package manager has started, with
+/// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
+/// then it is the one in `nearest`.
+fn package_of_inherited_check_script(nearest: &[u8]) -> Option<&[u8]> {
+    use bun_paths::{platform::Auto, resolve_path::dirname};
+    if !env_var::npm_lifecycle_event::get().is_some_and(is_check_script) {
+        return None;
+    }
+    match env_var::npm_package_json::get() {
+        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(
+            of,
+        ))),
+        None => (env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_none()).then_some(nearest),
+    }
+}
+
 /// Makes `env` that of the script `name` of the package that has `dir`. See `is_package_script`.
 pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir: &[u8]) {
     use std::io::Write;
-    // `bun run check` runs all three.
-    if !matches!(name, b"check" | b"precheck" | b"postcheck") {
-        return;
-    }
     let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
     // As `is_package_script` finds it, wherever in the package the script is started.
     let Some((dir, ..)) = nearest_package_json(dir) else {
         return;
     };
+    // `name` takes the place of what another package manager has said, for what the script runs.
+    let inherited = package_of_inherited_check_script(dir);
     let mut running = env.get(key).unwrap_or_default().to_vec();
-    let _ = write!(running, "{}:", dir.len());
-    running.extend_from_slice(dir);
-    env.map.put(key, &running).expect("unreachable");
+    for dir in (inherited.into_iter()).chain(is_check_script(name).then_some(dir)) {
+        if !running_package_scripts(&running).any(|it| it == dir) {
+            let _ = write!(running, "{}:", dir.len());
+            running.extend_from_slice(dir);
+        }
+    }
+    if !running.is_empty() {
+        env.map.put(key, &running).expect("unreachable");
+    }
 }
 
 /// `note_package_script` for as long as `with` takes: `env` is that of other scripts too.
@@ -809,7 +828,7 @@ fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
 fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     use bun_glob::{BunGlobWalker, walk};
     let mut pages = Vec::new();
-    if !page.iter().any(|c| matches!(c, b'*' | b'{')) {
+    if !bun_core::strings::contains_any(page, b"*{") {
         pages.push(page.to_vec());
     } else if let Ok(Ok(mut walker)) =
         // The defaults of `scanSync`: files only.

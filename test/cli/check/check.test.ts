@@ -14175,6 +14175,18 @@ export function f<T>(rest: T) {
           it.exitCode,
         ]),
       ).toEqual(commands.map(command => [name(command), expected[command[0]], 1]));
+      // As it is printed: from the working directory, however that is spelled.
+      for (const [i, [kind, cwd, cmd]] of commands.entries()) {
+        if (cwd.startsWith(root) || cmd[0] !== "check") continue;
+        const above = cmd[1] === "." ? `${directory}/` : "";
+        expect({
+          cmd,
+          printed: [...results[i].stdout.matchAll(/^(.+?)\(\d+,\d+\): error/gm)].map(it => it[1]),
+        }).toEqual({
+          cmd,
+          printed: expected[kind].map(it => it.split(":")[0].slice(above.length)),
+        });
+      }
 
       // The bundler names a file as its entry point is spelled, in its own errors too.
       if (foldsCase) {
@@ -14634,6 +14646,43 @@ describe.concurrent("--check", () => {
     ];
     const results = await Promise.all(cases.map(([extra]) => check(dir, [], extra)));
     expect(results.map(it => it.stdout)).toEqual(cases.map(it => it[1]));
+  });
+
+  // `bun run` says which script it runs in the place of what the other package manager has said.
+  test("a `check` script that another package manager runs, and that runs other scripts", async () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    using dir = project({
+      "a.ts": `export const a: number = "1";\n`,
+      "package.json": JSON.stringify({
+        scripts: {
+          check: `echo the script ran && ${bun} run types`,
+          types: `${bun} run deeper`,
+          deeper: `${bun} check`,
+        },
+      }),
+      "other/package.json": JSON.stringify({ scripts: { check: "echo no" } }),
+    });
+    const own = join(String(dir), "package.json");
+    const other = join(String(dir), "other", "package.json");
+    // What the `check` script runs first, as it is started in each of these.
+    const cases: [Record<string, string>, boolean][] = [
+      [{ npm_lifecycle_event: "check" }, false],
+      [{ npm_lifecycle_event: "check", npm_package_json: own }, false],
+      [{ npm_lifecycle_event: "precheck", npm_package_json: own }, false],
+      // Nobody runs the `check` script of this package: `bun check` does.
+      [{ npm_lifecycle_event: "check", npm_package_json: other }, true],
+      [{ npm_lifecycle_event: "lint", npm_package_json: own }, true],
+      [{}, true],
+    ];
+    const results = await Promise.all(cases.map(([extra]) => run(String(dir), ["run", "types"], extra)));
+    expect(
+      results.map(it => ({
+        // Once, where it does.
+        ranTheScript: it.stdout.split("the script ran").length - 1,
+        reported: it.stdout.split("a.ts(1,14): error TS2322").length - 1,
+        exitCode: it.exitCode,
+      })),
+    ).toEqual(cases.map(([, runs]) => ({ ranTheScript: Number(runs), reported: 1, exitCode: 1 })));
   });
 
   test("the `check` scripts of several packages are scripts, and each runs once", async () => {

@@ -5335,6 +5335,139 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
+it.each([
+  ["default", {}, "http/1.1"],
+  ["ALPNProtocols", { ALPNProtocols: ["http/1.1"] }, "http/1.1"],
+  ["ALPNCallback", { ALPNCallback: () => "http/1.1" }, "http/1.1"],
+])("https wraps a raw socket injected through the connection event (%s)", async (_name, options, protocol) => {
+  const server = createHttpsServer({ ...tlsCert, ...options }, (req, res) => {
+    expect((req.socket as any).encrypted).toBe(true);
+    expect((req.socket as any).alpnProtocol).toBe(protocol);
+    res.writeHead(200, { Connection: "close" });
+    res.end("injected-ok");
+  });
+  const rawClosed = Promise.withResolvers<void>();
+  const front = createNetServer(socket => {
+    socket.once("close", () => rawClosed.resolve());
+    server.emit("connection", socket);
+  });
+
+  try {
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const response = await new Promise<{ statusCode: number | undefined; body: string }>((resolve, reject) => {
+      const request = https.get(
+        {
+          host: "127.0.0.1",
+          port: (front.address() as AddressInfo).port,
+          rejectUnauthorized: false,
+          agent: false,
+          ALPNProtocols: ["http/1.1"],
+        },
+        response => {
+          const chunks: Buffer[] = [];
+          response.on("data", chunk => chunks.push(chunk));
+          response.on("end", () =>
+            resolve({ statusCode: response.statusCode, body: Buffer.concat(chunks).toString("utf8") }),
+          );
+        },
+      );
+      request.on("error", reject);
+    });
+
+    expect(response).toEqual({ statusCode: 200, body: "injected-ok" });
+    await rawClosed.promise;
+  } finally {
+    front.close();
+  }
+});
+
+it("https wraps a handed-off native CONNECT tunnel", async () => {
+  const server = createHttpsServer(tlsCert, (req, res) => {
+    res.writeHead(200, { Connection: "close" });
+    res.end(req.socket.encrypted ? "tunnel-ok" : "plaintext");
+  });
+  const front = createServer();
+  front.on("connect", (_req, socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    server.emit("connection", socket);
+  });
+  let client;
+  try {
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const result = await new Promise<string>((resolve, reject) => {
+      const tunnel = http.request({
+        host: "127.0.0.1",
+        port: (front.address() as AddressInfo).port,
+        method: "CONNECT",
+        path: "localhost:443",
+      });
+      tunnel.on("error", reject);
+      tunnel.on("connect", (_response, socket) => {
+        client = tlsConnect({ socket, rejectUnauthorized: false }, () => {
+          client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        });
+        const chunks: Buffer[] = [];
+        client.on("error", reject);
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      });
+      tunnel.end();
+    });
+    expect(result).toContain("HTTP/1.1 200 OK");
+    expect(result).toContain("tunnel-ok");
+  } finally {
+    client?.destroy();
+    front.closeAllConnections();
+    front.close();
+  }
+});
+
+async function withStalledInjectedHttpsConnection<T>(observe: (server: https.Server) => Promise<T>) {
+  const server = createHttpsServer({ ...tlsCert, handshakeTimeout: 50 });
+  const rawClosed = Promise.withResolvers<void>();
+  const front = createNetServer(socket => {
+    socket.once("close", () => rawClosed.resolve());
+    server.emit("connection", socket);
+  });
+  let client;
+
+  try {
+    const observed = observe(server);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    const result = await observed;
+    await rawClosed.promise;
+    return result;
+  } finally {
+    client?.destroy();
+    front.close();
+  }
+}
+
+it("https routes an injected socket handshake timeout through clientError", async () => {
+  const result = await withStalledInjectedHttpsConnection(server => {
+    const clientError = Promise.withResolvers<{ code: string | undefined; destroyed: boolean }>();
+    server.on("clientError", (err: Error & { code?: string }, socket) => {
+      clientError.resolve({ code: err.code, destroyed: socket.destroyed });
+      socket.destroy();
+    });
+    return clientError.promise;
+  });
+  expect(result).toEqual({ code: "ERR_TLS_HANDSHAKE_TIMEOUT", destroyed: false });
+});
+
+it("https destroys an injected socket after an unhandled handshake timeout", async () => {
+  const result = await withStalledInjectedHttpsConnection(server => {
+    const tlsClientError = Promise.withResolvers<{ code: string | undefined; destroyed: boolean }>();
+    server.on("tlsClientError", (err: Error & { code?: string }, socket) => {
+      tlsClientError.resolve({ code: err.code, destroyed: socket.destroyed });
+    });
+    return tlsClientError.promise;
+  });
+  expect(result).toEqual({ code: "ERR_TLS_HANDSHAKE_TIMEOUT", destroyed: true });
+});
+
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
 // belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
 // (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the

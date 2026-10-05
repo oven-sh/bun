@@ -423,6 +423,8 @@ impl Process {
                         self.on_exit(status, &rusage);
                         return Ok(true);
                     }
+                    // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
+                    self.close();
                 }
                 Err(err)
             }
@@ -721,10 +723,7 @@ impl Process {
             return None;
         }
         self.send_signal(libc::SIGKILL as u8).ok()?;
-        let status = Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)));
-        // The same goes from here on, and `kill` leaves alone what is not watched.
-        self.close();
-        match status? {
+        match Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)))? {
             Status::Signaled(signal) if signal == libc::SIGKILL as u8 => None,
             status @ (Status::Exited(_) | Status::Signaled(_)) => Some(status),
             Status::Running | Status::Err(_) => None,

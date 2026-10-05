@@ -551,15 +551,20 @@ describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with th
       stdout: "ignore",
       stderr: "ignore",
     });
-    const exitCode = await proc.exited;
-    const left = readdirSync("/proc").filter(pid => {
-      try {
-        return /^\d+$/.test(pid) && readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(watched);
-      } catch {
-        return false;
-      }
-    });
-    for (const pid of left) process.kill(Number(pid), "SIGKILL");
+    let exitCode: number | undefined;
+    let left: string[] = [];
+    try {
+      exitCode = await proc.exited;
+    } finally {
+      left = readdirSync("/proc").filter(pid => {
+        try {
+          return /^\d+$/.test(pid) && readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(watched);
+        } catch {
+          return false;
+        }
+      });
+      for (const pid of left) process.kill(Number(pid), "SIGKILL");
+    }
     expect({ left: left.length, failed: exitCode !== 0 }).toEqual({ left: 0, failed: true });
   });
 });

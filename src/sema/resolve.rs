@@ -3,10 +3,12 @@
 
 use crate::hir::ResolutionMode;
 use crate::json::Json;
-use crate::session::Session;
+use crate::session::{Arena, Session};
 use crate::util::ShardedMap;
 use bstr::ByteSlice;
 use bun_core::strings;
+use bun_paths::fs::Path;
+use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len};
 use std::borrow::Cow;
@@ -278,10 +280,18 @@ impl Options {
     /// `getParseFileRedirect`: `OutputDts`, which is read in place of the file at `path` if that is a source of a referenced project.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
         let sources = &self.referenced_sources;
-        let index = sources
-            .binary_search_by(|it| it.0.as_slice().cmp(path))
-            .ok()?;
-        Some(sources[index].1.as_slice()).filter(|output| !output.is_empty())
+        let index = self.find_by_path(sources, |it| &it.0, path)?;
+        Some(sources[index].2.as_slice()).filter(|output| !output.is_empty())
+    }
+
+    /// The index of the file with this name in a table that is sorted by `tspath.Path`.
+    fn find_by_path<T>(&self, table: &[T], path: fn(&T) -> &Vec<u8>, name: &[u8]) -> Option<usize> {
+        if table.is_empty() {
+            return None;
+        }
+        let mut buffer = path_buffer_pool::get();
+        let name = to_path_in(name, self.use_case_sensitive_file_names, &mut buffer[..]);
+        table.binary_search_by(|it| path(it)[..].cmp(&name)).ok()
     }
 
     /// `GetSourceOfProjectReferenceIfOutputIncluded`: the source that the declaration file at `path` is read in place of, else `path`.
@@ -290,9 +300,9 @@ impl Options {
         path: &'a [u8],
     ) -> &'a [u8] {
         let outputs = &self.referenced_output_dts;
-        match outputs.binary_search_by(|it| it.0.as_slice().cmp(path)) {
-            Ok(index) => &self.referenced_sources[outputs[index].1 as usize].0,
-            Err(_) => path,
+        match self.find_by_path(outputs, |it| &it.0, path) {
+            Some(index) => &self.referenced_sources[outputs[index].1 as usize].1,
+            None => path,
         }
     }
 }
@@ -387,6 +397,10 @@ pub struct Options {
     pub no_unchecked_side_effect_imports: bool,
     /// `deduplicatePackages: false`: two installed copies of a package are distinct packages.
     pub retains_duplicate_packages: bool,
+    /// `forceConsistentCasingInFileNames`
+    pub force_consistent_casing_in_file_names: Option<bool>,
+    /// `lib` is specified, so `libs` are its entries.
+    pub specifies_lib: bool,
     pub allow_js: bool,
     /// `maxNodeModuleJsDepth`: with `allowJs`, JavaScript is loaded up to this many imports deep into packages.
     pub max_node_module_js_depth: u32,
@@ -408,12 +422,15 @@ pub struct Options {
     /// For each referenced project that emits into a separate directory: its declaration output
     /// directory and its `rootDir`.
     pub referenced_outputs: Vec<(Vec<u8>, Vec<u8>)>,
-    /// `sourceToProjectReference`, sorted: for each file of the referenced projects, `Source`,
-    /// `OutputDts`, and the index in `referenced_options` of `Resolved`. `tsc -b` reads the
-    /// declaration file in place of the source (`getParseFileRedirect`). `OutputDts` is empty if no
-    /// declaration file is emitted for the file.
-    pub referenced_sources: Vec<(Vec<u8>, Vec<u8>, u32)>,
-    /// `outputDtsToProjectReference`, sorted: `OutputDts` and its index in `referenced_sources`.
+    /// `sourceToProjectReference`, sorted: for each file of the referenced projects, its
+    /// `tspath.Path`, `Source`, `OutputDts`, and the index in `referenced_options` of `Resolved`.
+    /// `tsc -b` reads the declaration file in place of the source (`getParseFileRedirect`).
+    /// `OutputDts` is empty if no declaration file is emitted for the file.
+    pub referenced_sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)>,
+    /// `UseCaseSensitiveFileNames`, for the paths in these tables.
+    pub use_case_sensitive_file_names: bool,
+    /// `outputDtsToProjectReference`, sorted: the `tspath.Path` of `OutputDts` and its index in
+    /// `referenced_sources`.
     pub referenced_output_dts: Vec<(Vec<u8>, u32)>,
     /// The options of the referenced projects that have a file in `referenced_sources`.
     pub referenced_options: Vec<Options>,
@@ -599,6 +616,7 @@ impl Options {
             }
         }
         options.no_lib = flag(b"noLib");
+        options.specifies_lib = list(b"lib").is_some();
         options.libs = match (list(b"lib"), target.as_deref()) {
             _ if options.no_lib => Vec::new(),
             (Some(libs), _) => libs.into_iter().map(lib_name).collect(),
@@ -656,6 +674,8 @@ impl Options {
         options.no_unchecked_side_effect_imports =
             specified(b"noUncheckedSideEffectImports").unwrap_or(true);
         options.retains_duplicate_packages = specified(b"deduplicatePackages") == Some(false);
+        options.force_consistent_casing_in_file_names =
+            specified(b"forceConsistentCasingInFileNames");
         options.check_js = specified(b"checkJs");
         options.allow_js = specified(b"allowJs").unwrap_or_else(|| options.check_js == Some(true));
         if let Some(Json::Number(depth)) = compiler.get(b"maxNodeModuleJsDepth") {
@@ -847,6 +867,51 @@ pub(crate) fn path_is_relative(path: &[u8]) -> bool {
         path,
         [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
     )
+}
+
+/// `tspath.ToPath` of an absolute, normalized file name (`GetCanonicalFileName`): what identifies the
+/// file, however its name is spelled.
+pub fn to_path(file_name: &[u8], is_case_sensitive: bool) -> Cow<'_, [u8]> {
+    match is_case_sensitive {
+        true => Cow::Borrowed(file_name),
+        false => Cow::Owned(to_file_name_lower_case(file_name)),
+    }
+}
+
+/// `to_path`, in `buffer` if it fits there.
+pub fn to_path_in<'a>(
+    file_name: &'a [u8],
+    is_case_sensitive: bool,
+    buffer: &'a mut [u8],
+) -> Cow<'a, [u8]> {
+    if is_case_sensitive {
+        Cow::Borrowed(file_name)
+    } else if file_name.is_ascii() && file_name.len() <= buffer.len() {
+        Cow::Borrowed(strings::copy_lowercase_if_needed(file_name, buffer))
+    } else {
+        Cow::Owned(to_file_name_lower_case(file_name))
+    }
+}
+
+/// The file with this name. `text` is its `tspath.Path`, which identifies it: tables of files have
+/// that as the key. `pretty` is `FileName()`, the name as it is spelled.
+pub fn file_path<'s>(file_name: &'s [u8], is_case_sensitive: bool, arena: &'s Arena) -> Path<'s> {
+    let mut buffer = path_buffer_pool::get();
+    let text = to_path_in(file_name, is_case_sensitive, &mut buffer[..]);
+    match std::ptr::eq(text.as_ptr(), file_name.as_ptr()) {
+        true => Path::init(file_name),
+        false => Path::init_with_pretty(arena.alloc_slice_copy(&text), file_name),
+    }
+}
+
+/// Whether two file names have the same `tspath.Path`.
+pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
+    a == b
+        || !is_case_sensitive
+            && match a.is_ascii() && b.is_ascii() {
+                true => strings::eql_case_insensitive_ascii_check_length(a, b),
+                false => to_file_name_lower_case(a) == to_file_name_lower_case(b),
+            }
 }
 
 /// `ToFileNameLowerCase`
@@ -1403,14 +1468,14 @@ impl<'h> Resolver<'h> {
     pub fn redirect_for_resolution<'a>(&'a self, path: &'a [u8]) -> (&'a Resolver<'h>, &'a [u8]) {
         let sources = &self.options.referenced_sources;
         let outputs = &self.options.referenced_output_dts;
-        let index = match sources.binary_search_by(|it| it.0.as_slice().cmp(path)) {
-            Ok(index) => index,
-            Err(_) => match outputs.binary_search_by(|it| it.0.as_slice().cmp(path)) {
-                Ok(index) => outputs[index].1 as usize,
-                Err(_) => return (self, path),
+        let index = match self.options.find_by_path(sources, |it| &it.0, path) {
+            Some(index) => index,
+            None => match self.options.find_by_path(outputs, |it| &it.0, path) {
+                Some(index) => outputs[index].1 as usize,
+                None => return (self, path),
             },
         };
-        let (source, _, project) = &sources[index];
+        let (_, source, _, project) = &sources[index];
         (&self.redirected[*project as usize], source)
     }
 
@@ -1424,9 +1489,11 @@ impl<'h> Resolver<'h> {
     /// `getOriginalAndResolvedFileName`: the real path of `found`.
     fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
         let real = self.real_path(found, look);
-        if real != found {
-            self.links.lock().push((self.keep(found), self.keep(&real)));
+        // One that differs only in case: the name as it is written, which the program reports.
+        if is_same_path(&real, found, self.host.is_case_sensitive()) {
+            return found.to_vec();
         }
+        self.links.lock().push((self.keep(found), self.keep(&real)));
         real
     }
 
@@ -1597,15 +1664,37 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
     ) -> Option<ResolvedModule<'h>> {
+        Some(self.resolve_module_name_and_id(spec, from, mode, tracer)?.0)
+    }
+
+    /// The same, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
+    pub fn resolve_module_name_with_package_id(
+        &self,
+        spec: &[u8],
+        from: &[u8],
+        mode: ResolutionMode,
+    ) -> Option<(ResolvedModule<'h>, Option<Vec<u8>>)> {
+        self.resolve_module_name_and_id(spec, from, mode, Some(&Tracer::default()))
+    }
+
+    /// The id is only made for the log.
+    fn resolve_module_name_and_id(
+        &self,
+        spec: &[u8],
+        from: &[u8],
+        mode: ResolutionMode,
+        tracer: Option<&Tracer>,
+    ) -> Option<(ResolvedModule<'h>, Option<Vec<u8>>)> {
         let key = resolution_key(spec, from, mode);
         if tracer.is_none()
             && let Some(&known) = self.resolved.get_ref(key.as_slice())
         {
-            return known;
+            return Some((known?, None));
         }
         let outcome = Outcome::default();
         let look = self.look(mode, true, &outcome);
         let look = Look { tracer, ..look };
+        let mut package_id = None;
         look.trace(6086, &[spec, from]);
         self.trace_resolution_using_project_reference(look);
         let options = self.options;
@@ -1623,8 +1712,9 @@ impl<'h> Resolver<'h> {
                 false => self.package_name(&outcome.package_directory.borrow()),
             };
             if tracer.is_some() {
-                match self.package_id_text(look) {
-                    Some(id) => look.trace(6218, &[spec, &path, &id]),
+                package_id = self.package_id_text(look);
+                match &package_id {
+                    Some(id) => look.trace(6218, &[spec, &path, id]),
                     None => look.trace(6089, &[spec, &path]),
                 }
             }
@@ -1645,9 +1735,9 @@ impl<'h> Resolver<'h> {
             if found.is_none() {
                 look.trace(6090, &[spec]);
             }
-            return found;
+            return Some((found?, package_id));
         }
-        *self.resolved.insert_ref(self.keep(&key), found)
+        Some(((*self.resolved.insert_ref(self.keep(&key), found))?, None))
     }
 
     /// `traceResolutionUsingProjectReference`
@@ -2033,6 +2123,31 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
     ) -> Option<(Vec<u8>, bool)> {
+        let (found, is_external, _) =
+            self.resolve_type_reference_and_id(name, from, mode, tracer)?;
+        Some((found, is_external))
+    }
+
+    /// `ResolvedFileName`, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
+    pub fn resolve_type_reference_with_package_id(
+        &self,
+        name: &[u8],
+        from: &[u8],
+        mode: ResolutionMode,
+    ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+        let tracer = Tracer::default();
+        let (found, _, id) = self.resolve_type_reference_and_id(name, from, mode, Some(&tracer))?;
+        Some((found, id))
+    }
+
+    /// The id is only made for the log.
+    fn resolve_type_reference_and_id(
+        &self,
+        name: &[u8],
+        from: &[u8],
+        mode: ResolutionMode,
+        tracer: Option<&Tracer>,
+    ) -> Option<(Vec<u8>, bool, Option<Vec<u8>>)> {
         let from_dir = dirname::<Posix>(from);
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let outcome = Outcome::default();
@@ -2087,14 +2202,16 @@ impl<'h> Resolver<'h> {
             self.followed(&found, look)
         };
         // `traceTypeReferenceDirectiveResult`
+        let mut package_id = None;
         if tracer.is_some() {
             let primary: &[u8] = if is_primary { b"true" } else { b"false" };
-            match self.package_id_text(look) {
-                Some(id) => look.trace(6219, &[name, &found, &id, primary]),
+            package_id = self.package_id_text(look);
+            match &package_id {
+                Some(id) => look.trace(6219, &[name, &found, id, primary]),
                 None => look.trace(6119, &[name, &found, primary]),
             }
         }
-        Some((source.unwrap_or(found), is_external))
+        Some((source.unwrap_or(found), is_external, package_id))
     }
 
     /// The search of `resolveTypeReferenceDirective` and of `resolveFromTypeRoot` in type roots: a
@@ -3214,7 +3331,7 @@ pub fn resolve_config(
 }
 
 /// `ContainsPath` for two absolute, normalized paths: `child` equals `parent` or is inside it.
-pub(crate) fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bool {
+pub fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bool {
     if !is_case_sensitive && !(parent.is_ascii() && child.is_ascii()) {
         let (parent, child) = (
             to_file_name_lower_case(parent),

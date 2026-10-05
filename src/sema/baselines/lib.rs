@@ -1696,18 +1696,17 @@ fn run_one(
             }
         }
         let files = &checker.p.files;
-        let path = text(files.modules[file.idx()].path);
+        let path = text(files.modules[file.idx()].file_name());
         // `GetSourceFile` of a path in `redirectFilesByPath` returns the retained copy of the
         // package: the harness walks it once more, alongside the text of that unit.
         let mut copies: Vec<String> = Vec::new();
         if contains(&path, "/node_modules/") {
-            let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
-            copies.extend(
-                same_file
-                    .map(|(other, _)| text(other))
-                    .filter(|other| *other != path),
-            );
-            copies.sort();
+            let same_file = files
+                .redirect_targets
+                .get(&file)
+                .copied()
+                .unwrap_or_default();
+            copies.extend(same_file.iter().map(|other| text(other)));
         }
         // A later unit with the same name replaces the file. The harness walks the result of
         // `GetSourceFile` once for each of them, alongside the text of that unit.
@@ -1739,7 +1738,10 @@ fn run_one(
             return;
         }
         let files = &checker.p.files;
-        let (path, output) = (files.module(file).path, files.declaration_file_path(file));
+        let (path, output) = (
+            files.module(file).file_name(),
+            files.declaration_file_path(file),
+        );
         let common = files.common_source_directory;
         *common_source_directory.lock() = common.map(<[u8]>::to_vec);
         // `getOutputPath`, which looks in `outDir` for what is in `declarationDir`.

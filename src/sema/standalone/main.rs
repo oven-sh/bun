@@ -41,7 +41,12 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
 /// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
-        let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| m.path).collect();
+        let paths: Vec<&[u8]> = program
+            .files
+            .modules
+            .iter()
+            .map(|m| m.file_name())
+            .collect();
         write_file_to_look_at(&to, &paths.join(&b"\n"[..]));
     }
 }
@@ -222,7 +227,7 @@ fn main() {
                             .map_or(0, |n| n + 1);
                         let line = bun_core::strings::count_char(before, b'\n') + 1;
                         let column = before.len() - line_start + 1;
-                        let path = text(module.path);
+                        let path = text(module.file_name());
                         error_types.push((path, line, column, kind));
                     }
                 };
@@ -239,7 +244,7 @@ fn main() {
                     let now = bun_sema_standalone::instructions_and_cycles().0;
                     let before =
                         instructions_so_far.swap(now, std::sync::atomic::Ordering::Relaxed);
-                    let path = text(checker.p.files.modules[file.idx()].path);
+                    let path = text(checker.p.files.modules[file.idx()].file_name());
                     error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
                 };
             let after_file = if has("--file-instructions") {

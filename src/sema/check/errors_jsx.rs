@@ -30,7 +30,7 @@ impl Checker<'_, '_> {
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        let path = self.files().module(file).path;
+        let path = self.files().module(file).file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
             .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
@@ -132,7 +132,7 @@ impl Checker<'_, '_> {
                 } else if let Some(spec) = runtime {
                     match self.files().module(file).imported_file(spec) {
                         Some(found) => {
-                            let path = self.files().module(found).path;
+                            let path = self.files().module(found).file_name();
                             self.error_at((file, start, end), 2306, &[Arg::Bytes(path)])
                         }
                         None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),

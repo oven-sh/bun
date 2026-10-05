@@ -14075,7 +14075,7 @@ export function f<T>(rest: T) {
       },
     };
 
-    // Each starts 18 processes at once.
+    // Each starts up to 26 processes at once.
     test.serial.each(Object.keys(layouts))("%s", async layout => {
       const { files, file, directory } = layouts[layout];
       using dir = project(files);
@@ -14128,6 +14128,21 @@ export function f<T>(rest: T) {
         ["file", root, ["build", "--check", file, "--outdir", "out"]],
         ["file", below, ["build", "--check", `./${basename(file)}`, "--outdir", "out"]],
       ];
+      // Where the file system takes one spelling of a name for another, so does `bun check`. It prints the name that the
+      // directory has.
+      if (existsSync(join(root, file.toUpperCase()))) {
+        const inUpperCaseDirectories = `${dirname(file).toUpperCase()}/${basename(file)}`;
+        commands.push(
+          ["file", root, ["check", file.toUpperCase()]],
+          ["file", root, ["check", `./${inUpperCaseDirectories}`]],
+          ["file", root, ["check", join(root, inUpperCaseDirectories)]],
+          ["file", below, ["check", basename(file).toUpperCase()]],
+          ["directory", root, ["check", directory.toUpperCase()]],
+          ["directory", root, ["check", `./${directory.toUpperCase()}/`]],
+          ["file", root, ["--check", inUpperCaseDirectories]],
+          ["file", root, ["build", "--check", inUpperCaseDirectories, "--outdir", "out"]],
+        );
+      }
       const [whole, ...results] = await Promise.all([
         run(root, ["check"]),
         ...commands.map(([, cwd, cmd]) => run(cwd, cmd)),
@@ -14149,6 +14164,25 @@ export function f<T>(rest: T) {
           it.exitCode,
         ]),
       ).toEqual(commands.map(command => [name(command), expected[command[0]], 1]));
+    });
+
+    // The name in `files` is the name of the file in the program. The argument is spelled as the directory has it.
+    test("a file that the configuration file spells differently", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["Src/One.ts"] }),
+        "src/one.ts": bad,
+      });
+      if (!existsSync(join(String(dir), "SRC"))) return;
+      const whole = await check(dir);
+      expect(whole.stdout).toContain("One.ts(1,14): error TS2322");
+      for (const argument of ["src/one.ts", "Src/One.ts", "SRC/ONE.ts", "src", "SRC"]) {
+        const named = await check(dir, [argument]);
+        expect({ argument, stdout: named.stdout, exitCode: named.exitCode }).toEqual({
+          argument,
+          stdout: whole.stdout,
+          exitCode: 1,
+        });
+      }
     });
   });
 

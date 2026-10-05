@@ -11,9 +11,9 @@ use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, Phase, Resolver, ScriptTarget, Spent, Tracer, ancestors, contains_path,
-    file_extension_is_one_of, format_by_extension, has_ts_implementation_extension, inside,
-    is_javascript, is_relative, join, lib_name, remove_file_extension, supported_extensions,
-    to_file_name_lower_case,
+    file_extension_is_one_of, file_path, format_by_extension, has_ts_implementation_extension,
+    inside, is_javascript, is_relative, is_same_path, join, lib_name, remove_file_extension,
+    supported_extensions, to_file_name_lower_case, to_path, to_path_in,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -24,6 +24,8 @@ use crate::util::{FxBuild, FxHashMap, FxHashSet, List};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
+use bun_paths::fs::Path;
+use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_threading::Guarded;
@@ -109,7 +111,8 @@ fn few<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
 }
 
 pub struct Module<'s> {
-    pub path: &'s [u8],
+    /// `text`: `Path()`, which identifies the file. `pretty`: `FileName()`.
+    pub path: Path<'s>,
     pub hir: hir::File<'s>,
     pub bound: Bound<'s>,
     /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
@@ -317,6 +320,14 @@ fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
     }
 }
 
+impl<'s> Module<'s> {
+    /// `FileName()`: the name of the file, as it is spelled where `collectFiles` first comes to it.
+    #[inline]
+    pub fn file_name(&self) -> &'s [u8] {
+        self.path.pretty
+    }
+}
+
 impl Module<'_> {
     /// Whether its top-level declarations are local to it.
     pub fn is_module(&self) -> bool {
@@ -424,8 +435,31 @@ pub enum SymbolTable {
     Globals,
 }
 
-/// `Files::by_path`
-type ByPath<'s> = ArenaHashMap<'s, &'s [u8], FileId>;
+/// `filesByPath`
+pub struct ByPath<'s> {
+    /// By `Path::text`.
+    files: ArenaHashMap<'s, &'s [u8], FileId>,
+    is_case_sensitive: bool,
+}
+
+impl ByPath<'_> {
+    /// The file with this name, in every spelling that the file system takes for the same.
+    pub fn get(&self, file_name: &[u8]) -> Option<FileId> {
+        if self.is_case_sensitive {
+            return self.files.get(file_name).copied();
+        }
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(file_name, false, &mut buffer[..]);
+        self.files.get(&path[..]).copied()
+    }
+
+    pub fn contains(&self, file_name: &[u8]) -> bool {
+        self.get(file_name).is_some()
+    }
+}
+
+/// In place of a file of the program: the configuration file, for a related location in it.
+pub const IN_CONFIGURATION: FileId = FileId(u32::MAX - 1);
 
 pub struct Files<'s> {
     session: &'s Session,
@@ -680,10 +714,12 @@ struct Loaded<'s, 'r> {
 /// A file that `Files::load` has found.
 #[derive(Copy, Clone)]
 struct FoundFile<'s> {
-    path: &'s [u8],
+    path: Path<'s>,
     is_lib: bool,
     /// `parseTaskData.packageId`, as an index into `Found::kept`.
     package: Option<u32>,
+    /// `taskDataByPath`: the first task for the file, by whichever spelling of its name.
+    first: FileId,
 }
 
 /// What `Files::load` knows about the files it has found, besides the files themselves.
@@ -693,6 +729,9 @@ struct Found<'s> {
     files: Vec<FoundFile<'s>>,
     /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
     kept: Vec<Option<FileId>>,
+    /// `seen` of `collectFiles`, by `FoundFile::first`: the task that it came to first, whose
+    /// spelling is the name of the file.
+    named: Vec<Option<FileId>>,
     /// Whether `collectFiles` has begun.
     is_collecting: bool,
 }
@@ -1926,7 +1965,7 @@ fn referenced_file(
         if !host.is_file(name) {
             return Err(6053);
         }
-        if name == from {
+        if is_same_path(name, from, host.is_case_sensitive()) {
             return Err(1006);
         }
         return Ok(name.to_vec());
@@ -1999,15 +2038,6 @@ fn components_of_path(path: &[u8]) -> Vec<&[u8]> {
     parts
 }
 
-/// `GetCanonicalFileName` of both.
-fn is_same_name(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
-    if is_case_sensitive {
-        a == b
-    } else {
-        to_file_name_lower_case(a) == to_file_name_lower_case(b)
-    }
-}
-
 /// `computeCommonSourceDirectoryOfFilenames`. `None`: the files have nothing in common, not even the drive.
 fn common_directory_of(
     files: &[&[u8]],
@@ -2029,7 +2059,7 @@ fn common_directory_of(
         let shared = common
             .iter()
             .zip(&parts)
-            .take_while(|(a, b)| is_same_name(a, b, is_case_sensitive))
+            .take_while(|(a, b)| is_same_path(a, b, is_case_sensitive))
             .count();
         if shared == 0 {
             return None;
@@ -2039,19 +2069,61 @@ fn common_directory_of(
     Some(join(b"/", &common.join(&b"/"[..])))
 }
 
-/// `FileIncludeReason` for a file that `checkSourceFilesBelongToPath` reports.
-#[derive(Copy, Clone)]
+/// `FileIncludeReason`
 enum IncludeReason {
     /// `fileIncludeKindRootFile`
     RootFile,
-    /// `fileIncludeKindImport` (1393) or `fileIncludeKindReferenceFile` (1400): the file that
-    /// refers to it, and the span of the reference.
-    Reference {
-        code: u32,
-        from: FileId,
-        start: u32,
-        end: u32,
-    },
+    /// `fileIncludeKindLibFile`: the entry of `lib`. `None`: it is the default library.
+    LibFile(Option<Vec<u8>>),
+    /// `fileIncludeKindAutomaticTypeDirectiveFile`: `typeReference` and `packageId.String()`.
+    AutomaticTypeDirectiveFile(Vec<u8>, Option<Vec<u8>>),
+    /// The kinds for which `isReferencedFile`.
+    Reference(Reference),
+}
+
+/// `referenceFileLocation`
+struct Reference {
+    target: FileId,
+    /// Of the message, without a package id. `fileIncludeKindImport`: 1393, 1395 for the helpers,
+    /// 1397 for the JSX runtime. `fileIncludeKindReferenceFile`: 1400.
+    /// `fileIncludeKindTypeReferenceDirective`: 1402. `fileIncludeKindLibReferenceDirective`: 1405.
+    code: u32,
+    from: FileId,
+    start: u32,
+    end: u32,
+    /// `packageId.String()`
+    package_id: Option<Vec<u8>>,
+}
+
+impl Reference {
+    /// `isSynthetic`
+    fn is_synthetic(&self) -> bool {
+        matches!(self.code, 1395 | 1397)
+    }
+}
+
+/// One time that `collectFiles` comes to a file.
+struct Visit {
+    reason: IncludeReason,
+    /// `task.normalizedFilePath`
+    name: Vec<u8>,
+    /// How many visits came before it.
+    order: usize,
+}
+
+impl Visit {
+    /// `isReferencedFile`
+    fn is_reference(&self) -> bool {
+        matches!(self.reason, IncludeReason::Reference(_))
+    }
+
+    /// Where it can be reported.
+    fn location(&self) -> Option<(FileId, u32, u32)> {
+        match &self.reason {
+            IncludeReason::Reference(it) if !it.is_synthetic() => Some((it.from, it.start, it.end)),
+            _ => None,
+        }
+    }
 }
 
 /// The end of the string literal that starts at `start`.
@@ -2087,53 +2159,612 @@ pub(crate) fn mode_for_usage_location(
     }
 }
 
-/// `referenceFileLocation` of each `/// <reference path>` and each import in `module` that resolves
-/// to a file of the program: that file, the code of the corresponding message, and the span. In the
-/// order of `parseTask.subTasks`.
-fn reference_locations(
-    host: &dyn Host,
-    options: &Options,
-    atoms: &Interner,
-    by_path: &ByPath,
-    module: &Module,
-) -> Vec<(FileId, u32, u32, u32)> {
-    let hir = &module.hir;
-    let text: &[u8] = &module.hir.text;
-    let mut locations = Vec::new();
-    for &(kind, value, pos, _) in hir.references.iter() {
-        if matches!(kind, ReferenceKind::Path)
-            && !options.no_resolve
-            && let Ok(found) = referenced_file(
-                host,
-                options,
-                &referenced_path(atoms.bytes(value), module.path),
-                module.path,
-            )
-            && let Some(&target) = by_path.get(found.as_slice())
+/// `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with
+/// helpers imports `tslib`.
+fn imports_helpers(options: &Options, hir: &File) -> bool {
+    options.import_helpers
+        && (hir.is_js
+            || hir.kind != FileKind::Declaration
+                && (options.isolated_modules || hir.has_module_syntax))
+}
+
+/// `addRootFileTask`: the file that is read for the root file `root`, or else the error.
+/// `Ok(None)`: a declaration file that has not been built.
+fn root_file_name(host: &dyn Host, options: &Options, root: &[u8]) -> Result<Option<Vec<u8>>, u32> {
+    let found = referenced_file(host, options, root, b"")?;
+    Ok(match options.parse_file_redirect(&found) {
+        Some(output) => host.is_file(output).then(|| output.to_vec()),
+        None => Some(found),
+    })
+}
+
+/// `GetNormalizedAbsolutePathWithoutRoot`. `c:/a` is `/c:/a` here.
+fn without_root(path: &[u8]) -> &[u8] {
+    match path {
+        [b'/', drive, b':', rest @ ..] if drive.is_ascii_alphabetic() => rest,
+        _ => path,
+    }
+}
+
+/// What the `includeProcessor` reads of a program.
+struct Included<'a, 's> {
+    host: &'a dyn Host,
+    options: &'a Options,
+    atoms: &'a Interner<'s>,
+    modules: &'a [ModuleCell<'s>],
+    by_path: &'a ByPath<'s>,
+    /// The names of the root files.
+    roots: &'a [Vec<u8>],
+    /// What `rootTasks` are for: the libraries up to `libs_end`, the root files up to `roots_end`,
+    /// then what the automatic type directives resolve to.
+    starts: &'a [FileId],
+    libs_end: usize,
+    roots_end: usize,
+    /// Of each of those root files, its index in `roots`.
+    root_of_start: &'a [u32],
+}
+
+/// Where a problem with the inclusion of a file is reported, if that is in a file.
+type Explanation = (Option<(FileId, u32, u32)>, Problem);
+
+/// Where `Included::visits` is in a file: the file, how many of its edges have been followed, and
+/// its references that have not been passed, if it refers to a file that is asked about.
+type Frame = (
+    FileId,
+    usize,
+    Option<std::vec::IntoIter<(Reference, Vec<u8>)>>,
+);
+
+impl Included<'_, '_> {
+    /// `referenceFileLocation` of each reference in `file` to a file of the program, with
+    /// `task.normalizedFilePath`, in the order of `parseTask.subTasks`. Only a file that
+    /// `is_asked` about has its package id.
+    fn references_in(
+        &self,
+        program_resolver: &Resolver,
+        file: FileId,
+        is_asked: &[bool],
+    ) -> Vec<(Reference, Vec<u8>)> {
+        let &Included {
+            host,
+            options: of_program,
+            atoms,
+            by_path,
+            ..
+        } = self;
+        let module: &Module = &self.modules[file.idx()];
+        let hir = &module.hir;
+        let text: &[u8] = &module.hir.text;
+        let (resolver, from) = program_resolver.redirect_for_resolution(module.file_name());
+        let options = resolver.options();
+        let mut references = Vec::new();
+        let mut refer = |name: Vec<u8>, code: u32, start: u32, end: u32| -> Option<FileId> {
+            let target = by_path.get(&name)?;
+            let reference = Reference {
+                target,
+                code,
+                from: file,
+                start,
+                end,
+                package_id: None,
+            };
+            references.push((reference, name));
+            Some(target)
+        };
+        let mut ids: Vec<(usize, Option<Vec<u8>>)> = Vec::new();
+        let mut count = 0;
+        // They are processed by kind: paths, then types, then libraries.
+        for of_kind in [
+            ReferenceKind::Path,
+            ReferenceKind::Types,
+            ReferenceKind::Lib,
+        ] {
+            for &(kind, value, pos, mode) in hir.references.iter() {
+                // `noResolve`: only library references are still processed.
+                if kind != of_kind || of_program.no_resolve && kind != ReferenceKind::Lib {
+                    continue;
+                }
+                let value = atoms.bytes(value);
+                let end = pos + value.len() as u32;
+                let (name, code) = match kind {
+                    ReferenceKind::Path => {
+                        let written = referenced_path(value, module.file_name());
+                        let found =
+                            referenced_file(host, of_program, &written, module.file_name()).ok();
+                        let found =
+                            found.and_then(|it| match of_program.parse_file_redirect(&it) {
+                                Some(output) => host.is_file(output).then(|| output.to_vec()),
+                                None => Some(it),
+                            });
+                        (found, 1400)
+                    }
+                    ReferenceKind::Types => {
+                        // `getModeForTypeReferenceDirectiveInFile`
+                        let mode = match mode {
+                            ResolutionMode::None => {
+                                program_resolver.implied_format(module.file_name())
+                            }
+                            mode => mode,
+                        };
+                        let found = resolver.resolve_type_reference(value, from, mode, None);
+                        let found = found.map(|it| it.0);
+                        if let Some(target) = found.as_ref().and_then(|it| by_path.get(it))
+                            && is_asked[target.idx()]
+                        {
+                            let with_id =
+                                resolver.resolve_type_reference_with_package_id(value, from, mode);
+                            ids.push((count, with_id.and_then(|it| it.1)));
+                        }
+                        (found, 1402)
+                    }
+                    ReferenceKind::Lib if of_program.no_lib => (None, 1405),
+                    ReferenceKind::Lib => {
+                        let name = lib_name(value);
+                        let name = lib_file_stem(host, of_program, &name);
+                        let is_there = host.is_file(&lib_file(of_program, name));
+                        let found =
+                            is_there.then(|| lib_path(program_resolver, of_program, name).0);
+                        (found, 1405)
+                    }
+                };
+                if let Some(name) = name
+                    && refer(name, code, pos, end).is_some()
+                {
+                    count += 1;
+                }
+            }
+        }
+        // `resolveImportsAndModuleAugmentations`: the synthetic imports come first.
+        let mut specifiers: Vec<(Atom, ResolutionMode, u32, u32, u32)> = Vec::new();
+        if imports_helpers(options, hir) {
+            specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
+        }
+        if (module.file_name().ends_with(b".tsx") || module.file_name().ends_with(b".jsx"))
+            && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
-            let end = pos + atoms.bytes(value).len() as u32;
-            locations.push((target, 1400, pos, end));
+            specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
+        }
+        // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
+        let mut uses = hir.specifier_uses.to_vec();
+        uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
+        for u in &uses {
+            let mode = mode_for_usage_location(options, module.default_mode, u);
+            specifiers.push((
+                u.spec,
+                mode,
+                1393,
+                u.pos,
+                end_of_string_literal(text, u.pos),
+            ));
+        }
+        for (spec, mode, code, start, end) in specifiers {
+            let Some(&target) = module.imports.get(&(spec, mode)) else {
+                continue;
+            };
+            // The name is that of the file, unless somebody asks.
+            let mut name = self.modules[target.idx()].file_name().to_vec();
+            if is_asked[target.idx()]
+                && let Some((found, id)) =
+                    resolver.resolve_module_name_with_package_id(atoms.bytes(spec), from, mode)
+            {
+                name = found.file_name.to_vec();
+                ids.push((count, id));
+            }
+            if refer(name, code, start, end).is_some() {
+                count += 1;
+            }
+        }
+        for (at, id) in ids {
+            if let Some(reference) = references.get_mut(at) {
+                reference.0.package_id = id;
+            }
+        }
+        references
+    }
+
+    /// `fileIncludeReasons` of the files that `is_asked` about, by file: `collectFiles` adds the
+    /// reason of a task whenever it comes to the task, also if it has been to the file before.
+    /// After the files, in both lists: the root files that are not found, which have a task too.
+    fn visits(&self, resolver: &Resolver, is_asked: &[bool]) -> Vec<Vec<Visit>> {
+        let &Included {
+            host,
+            options,
+            modules,
+            starts,
+            ..
+        } = self;
+        let no_file = FileId(modules.len() as u32);
+        let mut visits: Vec<Vec<Visit>> = (0..=modules.len()).map(|_| Vec::new()).collect();
+        let mut order = 0;
+        let mut visit = |file: FileId, reason: IncludeReason, name: Vec<u8>| {
+            visits[file.idx()].push(Visit {
+                reason,
+                name,
+                order,
+            });
+            order += 1;
+        };
+        // `rootTasks`: the root files, the libraries, what the automatic type directives resolve to.
+        let (libs, rest) = starts.split_at(self.libs_end);
+        let (roots, automatic) = rest.split_at(self.roots_end - self.libs_end);
+        let mut tasks: Vec<(FileId, Option<(IncludeReason, Vec<u8>)>)> = Vec::new();
+        let mut found = roots.iter().zip(self.root_of_start).peekable();
+        for (index, root) in self.roots.iter().enumerate() {
+            let start = found.next_if(|it| *it.1 as usize == index).map(|it| *it.0);
+            let name = match start {
+                Some(start) if !is_asked[start.idx()] => None,
+                Some(_) => root_file_name(host, options, root).ok().flatten(),
+                None if !is_asked[no_file.idx()] => continue,
+                None => root_file_name(host, options, root)
+                    .is_err()
+                    .then(|| root.clone()),
+            };
+            let reason = name.map(|name| (IncludeReason::RootFile, name));
+            tasks.push((start.unwrap_or(no_file), reason));
+        }
+        for (&start, lib) in libs.iter().zip(&options.libs) {
+            let reason = || {
+                let stem = lib_file_stem(host, options, lib);
+                let entry = [b"lib.", stem, b".d.ts"].concat();
+                let reason = IncludeReason::LibFile(options.specifies_lib.then_some(entry));
+                (reason, lib_path(resolver, options, stem).0)
+            };
+            tasks.push((start, is_asked[start.idx()].then(reason)));
+        }
+        if automatic.iter().any(|start| is_asked[start.idx()]) {
+            // `addAutomaticTypeDirectiveTasks`
+            let from = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
+            let found = (automatic_type_directives(host, resolver, options).into_iter())
+                .filter_map(|name| {
+                    let mode = ResolutionMode::None;
+                    let found = resolver.resolve_type_reference_with_package_id(&name, &from, mode);
+                    found.map(|(path, id)| {
+                        (IncludeReason::AutomaticTypeDirectiveFile(name, id), path)
+                    })
+                });
+            tasks.extend(automatic.iter().copied().zip(found.map(Some)));
+        } else {
+            tasks.extend(automatic.iter().map(|&start| (start, None)));
+        }
+        let refers_to_one =
+            |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_asked[edge.idx()]);
+        let mut seen = vec![false; modules.len()];
+        for (first, reason) in tasks {
+            if let Some((reason, name)) = reason.filter(|_| is_asked[first.idx()]) {
+                visit(first, reason, name);
+            }
+            if first == no_file {
+                continue;
+            }
+            let frame = |file: FileId| -> Frame {
+                let references = || self.references_in(resolver, file, is_asked).into_iter();
+                (file, 0, refers_to_one(file).then(references))
+            };
+            let mut stack: Vec<Frame> = Vec::new();
+            if !std::mem::replace(&mut seen[first.idx()], true) {
+                stack.push(frame(first));
+            }
+            while let Some(top) = stack.last_mut() {
+                let edges = modules[top.0.idx()].edges;
+                let edge = edges.get(top.1).copied();
+                // `subTasks` has a task for each reference. The reason of one that repeats an earlier
+                // reference of the file is added when the traversal gets to it.
+                while let Some(references) = &mut top.2
+                    && let Some((next, _)) = references.as_slice().first()
+                {
+                    let is_repeated = edges[..top.1].contains(&next.target);
+                    if !is_repeated && Some(next.target) != edge {
+                        break;
+                    }
+                    if let Some((reference, name)) = references.next()
+                        && is_asked[reference.target.idx()]
+                    {
+                        visit(reference.target, IncludeReason::Reference(reference), name);
+                    }
+                    if !is_repeated {
+                        break;
+                    }
+                }
+                let Some(edge) = edge else {
+                    stack.pop();
+                    continue;
+                };
+                top.1 += 1;
+                if !std::mem::replace(&mut seen[edge.idx()], true) {
+                    stack.push(frame(edge));
+                }
+            }
+        }
+        visits
+    }
+
+    /// `computeDiagnostic`: the code and the arguments of the message for a reason.
+    fn reason_message(&self, visit: &Visit) -> (u32, Vec<Vec<u8>>) {
+        let options = self.options;
+        // `UsesWildcardTypes`
+        let uses_wildcard = (options.types.iter().flatten()).any(|it| it == b"*");
+        let with_id = |code: u32, mut args: Vec<Vec<u8>>, id: Option<&Vec<u8>>| {
+            args.extend(id.cloned());
+            (code + u32::from(id.is_some()), args)
+        };
+        match &visit.reason {
+            IncludeReason::RootFile => {
+                root_file_reason(options, &visit.name, self.host.is_case_sensitive())
+            }
+            IncludeReason::LibFile(Some(entry)) => (1422, vec![entry.clone()]),
+            // `GetEmitScriptTarget`
+            IncludeReason::LibFile(None) => {
+                let target = match options.target {
+                    ScriptTarget::None => ScriptTarget::ES2025,
+                    target => target,
+                };
+                let mut name = Vec::new();
+                let _ = write!(name, "{target:?}");
+                (1425, vec![name])
+            }
+            IncludeReason::AutomaticTypeDirectiveFile(name, id) => {
+                let code = if uses_wildcard { 1420 } else { 1417 };
+                with_id(code, vec![name.clone()], id.as_ref())
+            }
+            IncludeReason::Reference(it) => {
+                let from: &Module = &self.modules[it.from.idx()];
+                // `referenceFileLocation.text`
+                let written = match it.code {
+                    1395 => b"\"tslib\"".to_vec(),
+                    1397 => {
+                        let runtime = jsx_runtime_of(options, &from.hir, self.atoms);
+                        [&b"\""[..], &runtime.unwrap_or_default(), b"\""].concat()
+                    }
+                    _ => (from.hir.text.get(it.start as usize..it.end as usize))
+                        .unwrap_or_default()
+                        .to_vec(),
+                };
+                with_id(
+                    it.code,
+                    vec![written, from.file_name().to_vec()],
+                    it.package_id.as_ref(),
+                )
+            }
         }
     }
-    // `resolveImportsAndModuleAugmentations`: the synthetic import of the JSX runtime comes first.
-    if (module.path.ends_with(b".tsx") || module.path.ends_with(b".jsx"))
-        && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
-        && let Some(&target) = module
-            .imports
-            .get(&(atoms.intern(&runtime), module.default_mode))
-    {
-        locations.push((target, 1397, 0, 0));
-    }
-    // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
-    let mut uses = hir.specifier_uses.to_vec();
-    uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
-    for u in &uses {
-        let mode = mode_for_usage_location(options, module.default_mode, u);
-        if let Some(&target) = module.imports.get(&(u.spec, mode)) {
-            locations.push((target, 1393, u.pos, end_of_string_literal(text, u.pos)));
+
+    /// `toRelatedInfo`
+    fn related_info(&self, visit: &Visit) -> Option<(FileId, u32, u32, u32)> {
+        let options = self.options;
+        let in_configuration = |place: Place, code: u32| {
+            let text = self.host.read(&options.config_path)?;
+            let session = Session::new();
+            let file = crate::json::TsConfigSourceFile::parse(self.host, &session, text)?;
+            let (start, end) = Problem::new(code, &[], place).span_in(&file)?;
+            Some((IN_CONFIGURATION, start, end, code))
+        };
+        match &visit.reason {
+            IncludeReason::Reference(it) => {
+                let (file, start, end) = visit.location()?;
+                let code = match it.code {
+                    1400 => 1401,
+                    1402 => 1404,
+                    1405 => 1406,
+                    _ => 1399,
+                };
+                Some((file, start, end, code))
+            }
+            _ if options.config_path.is_empty() => None,
+            IncludeReason::RootFile => {
+                let is_case_sensitive = self.host.is_case_sensitive();
+                match root_file_reason(options, &visit.name, is_case_sensitive) {
+                    (1409, _) => in_configuration(
+                        Place::File(
+                            visit.name.clone(),
+                            options.base_dir.clone(),
+                            is_case_sensitive,
+                        ),
+                        1410,
+                    ),
+                    (1407, args) => {
+                        in_configuration(Place::TopElement(b"include", args[0].clone()), 1408)
+                    }
+                    _ => None,
+                }
+            }
+            IncludeReason::AutomaticTypeDirectiveFile(name, _) => {
+                let uses_wildcard = (options.types.iter().flatten()).any(|it| it == b"*");
+                let place = Place::Element(b"types", name.clone());
+                (!uses_wildcard).then(|| in_configuration(place, 1419))?
+            }
+            IncludeReason::LibFile(Some(entry)) => {
+                in_configuration(Place::Element(b"lib", entry.clone()), 1423)
+            }
+            IncludeReason::LibFile(None) => None,
         }
     }
-    locations
+
+    /// `fileIncludeReasons[path]` for each path that `visits`, which are those to one file, come by.
+    /// A copy of a package file has a path of its own.
+    fn by_path<'v>(&self, visits: &'v [Visit]) -> Vec<Vec<&'v Visit>> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let mut by_path: Vec<Vec<&Visit>> = Vec::new();
+        for visit in visits {
+            let is_there =
+                |it: &&mut Vec<&Visit>| is_same_path(&it[0].name, &visit.name, is_case_sensitive);
+            match by_path.iter_mut().find(is_there) {
+                Some(visits) => visits.push(visit),
+                None => by_path.push(vec![visit]),
+            }
+        }
+        by_path
+    }
+
+    /// Those of `visits` that come by the path of the file with this name.
+    fn by_path_of<'v>(&self, visits: &'v [Visit], name: &[u8]) -> Vec<&'v Visit> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let is_it = |visit: &&Visit| is_same_path(&visit.name, name, is_case_sensitive);
+        visits.iter().filter(is_it).collect()
+    }
+
+    /// `createDiagnosticExplainingFile`: `visits` are those by one path, which stands for `file`.
+    /// `because`: `diagnosticReason`.
+    fn explain(
+        &self,
+        resolver: &Resolver,
+        file: FileId,
+        visits: &[&Visit],
+        because: Option<&Visit>,
+        code: u32,
+        args: &[&[u8]],
+    ) -> Explanation {
+        let is = |a: &Visit, b: &Visit| std::ptr::eq(a, b);
+        let mut preferred_location = because.filter(|it| it.location().is_some());
+        // `seenReasons`
+        let other = because.filter(|&it| !visits.iter().any(|own| is(own, it)));
+        let all: Vec<&Visit> = visits.iter().copied().chain(other).collect();
+        let mut problem = Problem::new(code, args, Place::Nowhere);
+        for &visit in &all {
+            // `processRelatedInfo`
+            if preferred_location.is_none() && visit.location().is_some() {
+                preferred_location = Some(visit);
+            } else if !preferred_location.is_some_and(|it| is(it, visit)) {
+                problem.related.extend(self.related_info(visit));
+            }
+        }
+        if preferred_location.is_none() || all.len() != 1 {
+            problem = problem.with(1, 1430, &[]);
+            for visit in all {
+                let (code, args) = self.reason_message(visit);
+                let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
+                problem = problem.with(2, code, &args);
+            }
+        }
+        // `explainRedirectAndImpliedFormat`
+        let location = preferred_location.and_then(Visit::location);
+        let Some(module) = self.modules.get(file.idx()) else {
+            return (location, problem);
+        };
+        let name = visits.first().map_or(module.path.pretty, |it| &it.name[..]);
+        let source = self
+            .options
+            .source_of_project_reference_if_output_included(name);
+        if source != name {
+            problem = problem.with(1, 1428, &[source]);
+        }
+        // `redirectFilesByPath`
+        if !is_same_path(name, module.file_name(), self.host.is_case_sensitive()) {
+            problem = problem.with(1, 1429, &[module.file_name()]);
+        } else if let Some((code, args)) = implied_format_reason(resolver, self.options, module) {
+            let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
+            problem = problem.with(1, code, &args);
+        }
+        (location, problem)
+    }
+
+    /// `code`, with the file and `arg` as arguments, for each source file that would be emitted and
+    /// for which `is_wrong` returns true. `is_wrong` receives whether it is a root file.
+    fn explain_source_files(
+        &self,
+        code: u32,
+        arg: &[u8],
+        is_wrong: &dyn Fn(&Module, bool) -> bool,
+    ) -> Vec<Explanation> {
+        let (options, modules) = (self.options, self.modules);
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let mut is_root = vec![false; modules.len()];
+        for root in self.roots {
+            if let Some(id) = self.by_path.get(root) {
+                is_root[id.idx()] = true;
+            }
+        }
+        let mut is_reported: Vec<bool> = (modules.iter().zip(&is_root))
+            .map(|(module, &is_root)| {
+                source_file_may_be_emitted(options, module, is_case_sensitive)
+                    && is_wrong(module, is_root)
+                    // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
+                    && (is_root || !options.has_project_references)
+            })
+            .collect();
+        if !is_reported.contains(&true) {
+            return Vec::new();
+        }
+        is_reported.push(false);
+        let resolving = Session::new();
+        let resolver = Resolver::new(&resolving, self.host, options);
+        let visits = self.visits(&resolver, &is_reported);
+        (modules.iter().zip(&visits).enumerate())
+            .map(|(i, (module, visits))| (i, module, self.by_path_of(visits, module.file_name())))
+            .filter(|(.., visits)| !visits.is_empty())
+            .map(|(i, module, visits)| {
+                let file = FileId(i as u32);
+                self.explain(
+                    &resolver,
+                    file,
+                    &visits,
+                    None,
+                    code,
+                    &[module.file_name(), arg],
+                )
+            })
+            .collect()
+    }
+
+    /// `addProcessingDiagnosticsForFileCasing`, wherever `collectFiles` calls it. `respelled`: the
+    /// files that it has come to by more than one spelling of a name. `alike`: the names that
+    /// differ only in case, where that makes them the names of different files.
+    fn file_casing_errors(
+        &self,
+        respelled: &[FileId],
+        alike: &[Vec<(&[u8], FileId)>],
+    ) -> Vec<Explanation> {
+        if respelled.is_empty() && alike.is_empty() {
+            return Vec::new();
+        }
+        let mut is_asked = vec![false; self.modules.len() + 1];
+        let alike_files = alike.iter().flatten().map(|it| &it.1);
+        for file in respelled.iter().chain(alike_files) {
+            is_asked[file.idx()] = true;
+        }
+        let resolving = Session::new();
+        let resolver = Resolver::new(&resolving, self.host, self.options);
+        let visits = self.visits(&resolver, &is_asked);
+        let differs = |file: FileId, to_file: &[&Visit], visit: &Visit, is_referred_to: bool| {
+            let existing = &to_file[0].name[..];
+            let (code, args) = match !visit.is_reference() && is_referred_to {
+                true => (1261, [existing, &visit.name[..]]),
+                false => (1149, [&visit.name[..], existing]),
+            };
+            self.explain(&resolver, file, to_file, Some(visit), code, &args)
+        };
+        let is_reference = |visit: &&Visit| visit.is_reference();
+        let mut problems = Vec::new();
+        // `seen[data]` has another name.
+        let is_forced = self.options.force_consistent_casing_in_file_names != Some(false);
+        for &file in respelled.iter().filter(|_| is_forced) {
+            for to_file in self.by_path(&visits[file.idx()]) {
+                for (i, &visit) in to_file.iter().enumerate().skip(1) {
+                    // A different drive letter is no error.
+                    if without_root(&visit.name) != without_root(&to_file[0].name) {
+                        let is_referred_to = to_file[..=i].iter().any(is_reference);
+                        problems.push(differs(file, &to_file, visit, is_referred_to));
+                    }
+                }
+            }
+        }
+        // `tasksSeenByNameIgnoreCase`
+        for alike in alike {
+            let mut each: Vec<(FileId, Vec<&Visit>)> = (alike.iter())
+                .map(|&(name, file)| (file, self.by_path_of(&visits[file.idx()], name)))
+                .filter(|it| !it.1.is_empty())
+                .collect();
+            each.sort_by_key(|it| it.1[0].order);
+            let Some(((file, to_file), others)) = each.split_first() else {
+                continue;
+            };
+            for (_, to_other) in others {
+                let visit = to_other[0];
+                let mut before = to_file.iter().filter(|it| it.order < visit.order);
+                problems.push(differs(*file, to_file, visit, before.any(is_reference)));
+            }
+        }
+        problems
+    }
 }
 
 /// `computeDiagnostic` of `fileIncludeKindRootFile`: the code and the arguments of the message that
@@ -2149,7 +2780,7 @@ fn root_file_reason(
     if options
         .file_specs
         .iter()
-        .any(|spec| is_same_name(spec, path, is_case_sensitive))
+        .any(|spec| is_same_path(spec, path, is_case_sensitive))
     {
         return (1409, Vec::new());
     }
@@ -2178,12 +2809,12 @@ fn implied_format_reason(
         return None;
     }
     // `loadSourceFileMetaData`
-    let scope = ancestors(dirname::<Posix>(module.path))
+    let scope = ancestors(dirname::<Posix>(module.file_name()))
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
     let is_type_recorded = options.resolves_like_node
-        && format_by_extension(module.path) == ResolutionMode::None
-        || strings::contains(module.path, b"/node_modules/");
+        && format_by_extension(module.file_name()) == ResolutionMode::None
+        || strings::contains(module.file_name(), b"/node_modules/");
     let package_type = scope
         .as_ref()
         .filter(|_| is_type_recorded)
@@ -2219,165 +2850,8 @@ fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensit
     module.hir.kind != FileKind::Json
         || !options.out_dir.is_empty()
             && (common.is_empty()
-                || contains_path(common, module.path, is_case_sensitive)
-                    && !is_same_name(&options.out_dir, common, is_case_sensitive))
-}
-
-/// `createDiagnosticExplainingFile`: `code`, with the file and `arg` as arguments, for each source
-/// file that would be emitted and for which `is_wrong` returns true; `is_wrong` receives whether it
-/// is a root file. Each comes with the first import or `/// <reference path>` that adds the file to
-/// the program (`preferredLocation`: the file and the span), which is where it is reported.
-fn explain_source_files(
-    host: &dyn Host,
-    options: &Options,
-    atoms: &Interner,
-    modules: &[ModuleCell],
-    by_path: &ByPath,
-    roots: &[Vec<u8>],
-    starts: &[FileId],
-    code: u32,
-    arg: &[u8],
-    is_wrong: &dyn Fn(&Module, bool) -> bool,
-) -> Vec<(Option<(FileId, u32, u32)>, Problem)> {
-    let is_case_sensitive = host.is_case_sensitive();
-    let mut is_root = vec![false; modules.len()];
-    for root in roots {
-        if let Some(&id) = by_path.get(root.as_slice()) {
-            is_root[id.idx()] = true;
-        }
-    }
-    let mut is_reported: Vec<bool> = modules
-        .iter()
-        .zip(&is_root)
-        .map(|(module, &is_root)| {
-            let module: &Module = module;
-            source_file_may_be_emitted(options, module, is_case_sensitive)
-                && is_wrong(module, is_root)
-        })
-        .collect();
-    if !is_reported.contains(&true) {
-        return Vec::new();
-    }
-    for (i, reported) in is_reported.iter_mut().enumerate() {
-        // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
-        *reported &= is_root[i] || !options.has_project_references;
-    }
-    if !is_reported.contains(&true) {
-        return Vec::new();
-    }
-    // `collectFiles`: the reason of a sub task is added before the traversal descends into it.
-    let mut reasons: Vec<Vec<IncludeReason>> = vec![Vec::new(); modules.len()];
-    let mut locations: FxHashMap<FileId, Vec<(FileId, u32, u32, u32)>> = FxHashMap::default();
-    let mut seen = vec![false; modules.len()];
-    for &first in starts {
-        if is_reported[first.idx()] && is_root[first.idx()] {
-            reasons[first.idx()].push(IncludeReason::RootFile);
-        }
-        // (file, how many of its edges have been followed, how many of its references have been
-        // passed, whether it refers to a reported file)
-        let refers_to_reported =
-            |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_reported[edge.idx()]);
-        let mut stack: Vec<(FileId, usize, usize, bool)> = Vec::new();
-        if !std::mem::replace(&mut seen[first.idx()], true) {
-            stack.push((first, 0, 0, refers_to_reported(first)));
-        }
-        while let Some(top) = stack.last_mut() {
-            let (file, next, _, refers_to_reported_file) = *top;
-            let edges = modules[file.idx()].edges;
-            let edge = edges.get(next).copied();
-            // `subTasks` has a task for each reference. The reason of one that repeats an earlier
-            // reference of the file is added when the traversal gets to it.
-            if refers_to_reported_file {
-                let found = locations.entry(file).or_insert_with(|| {
-                    reference_locations(host, options, atoms, by_path, &modules[file.idx()])
-                });
-                while let Some(&(target, code, start, end)) = found.get(top.2) {
-                    let is_repeated = edges[..next].contains(&target);
-                    if !is_repeated && Some(target) != edge {
-                        break;
-                    }
-                    top.2 += 1;
-                    if is_reported[target.idx()] {
-                        reasons[target.idx()].push(IncludeReason::Reference {
-                            code,
-                            from: file,
-                            start,
-                            end,
-                        });
-                    }
-                    if !is_repeated {
-                        break;
-                    }
-                }
-            }
-            let Some(edge) = edge else {
-                stack.pop();
-                continue;
-            };
-            top.1 += 1;
-            if !std::mem::replace(&mut seen[edge.idx()], true) {
-                stack.push((edge, 0, 0, refers_to_reported(edge)));
-            }
-        }
-    }
-    let resolving = Session::new();
-    let resolver = Resolver::new(&resolving, host, options);
-    let mut problems = Vec::new();
-    for (i, module) in modules.iter().enumerate() {
-        let reasons = &reasons[i];
-        if !is_reported[i] || reasons.is_empty() {
-            continue;
-        }
-        let preferred_location = reasons.iter().find_map(|reason| match *reason {
-            // `isSynthetic`
-            IncludeReason::Reference { code: 1397, .. } => None,
-            IncludeReason::Reference {
-                from, start, end, ..
-            } => Some((from, start, end)),
-            IncludeReason::RootFile => None,
-        });
-        let mut problem = Problem::new(code, &[module.path, arg], Place::Nowhere);
-        if preferred_location.is_none() || reasons.len() != 1 {
-            problem = problem.with(1, 1430, &[]);
-            for reason in reasons {
-                problem = match *reason {
-                    IncludeReason::RootFile => {
-                        let (code, args) =
-                            root_file_reason(options, module.path, is_case_sensitive);
-                        let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-                        problem.with(2, code, &args)
-                    }
-                    IncludeReason::Reference {
-                        code,
-                        from,
-                        start,
-                        end,
-                    } => {
-                        let from = &modules[from.idx()];
-                        let synthetic = (code == 1397)
-                            .then(|| jsx_runtime_of(options, &from.hir, atoms))
-                            .flatten()
-                            .map(|runtime| [&b"\""[..], &runtime[..], b"\""].concat());
-                        let written = match &synthetic {
-                            Some(specifier) => specifier.as_slice(),
-                            None => from
-                                .hir
-                                .text
-                                .get(start as usize..end as usize)
-                                .unwrap_or_default(),
-                        };
-                        problem.with(2, code, &[written, from.path])
-                    }
-                };
-            }
-        }
-        if let Some((code, args)) = implied_format_reason(&resolver, options, module) {
-            let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-            problem = problem.with(1, code, &args);
-        }
-        problems.push((preferred_location, problem));
-    }
-    problems
+                || contains_path(common, module.file_name(), is_case_sensitive)
+                    && !is_same_path(&options.out_dir, common, is_case_sensitive))
 }
 
 /// The parts of `verifyCompilerOptions` that depend on which files are emitted and where. 6307 for
@@ -2432,15 +2906,17 @@ fn declaration_emit_output_file_path(
 /// files are emitted to. Errors reported at a position in a file go to `include_errors`. With them,
 /// `CommonSourceDirectory`, if anything depends on it.
 fn output_path_errors(
-    host: &dyn Host,
-    options: &Options,
-    atoms: &Interner,
-    modules: &[ModuleCell],
-    by_path: &ByPath,
-    roots: &[Vec<u8>],
-    starts: &[FileId],
+    included: &Included,
     include_errors: &mut Vec<(FileId, u32, u32, Problem)>,
 ) -> (Vec<Problem>, Option<Vec<u8>>) {
+    let &Included {
+        host,
+        options,
+        modules,
+        by_path,
+        roots,
+        ..
+    } = included;
     let mut errors = Vec::new();
     let is_case_sensitive = host.is_case_sensitive();
     let declaration_dir = if options.emits_declarations {
@@ -2451,9 +2927,7 @@ fn output_path_errors(
     // See `Options::own_roots`.
     let reached_from_own_roots = options.own_roots.map(|count| {
         let own = roots.iter().take(count);
-        let mut pending: Vec<FileId> = (own.filter_map(|it| by_path.get(it.as_slice())))
-            .copied()
-            .collect();
+        let mut pending: Vec<FileId> = own.filter_map(|it| by_path.get(it)).collect();
         let mut is_reached = vec![false; modules.len()];
         while let Some(file) = pending.pop() {
             if !std::mem::replace(&mut is_reached[file.idx()], true) {
@@ -2463,7 +2937,9 @@ fn output_path_errors(
         is_reached
     });
     let is_own = |module: &Module| match &reached_from_own_roots {
-        Some(is_reached) => (by_path.get(module.path)).is_some_and(|file| is_reached[file.idx()]),
+        Some(is_reached) => {
+            (by_path.get(module.file_name())).is_some_and(|file| is_reached[file.idx()])
+        }
         None => true,
     };
     let sources: Vec<&Module> = modules
@@ -2472,11 +2948,9 @@ fn output_path_errors(
         .filter(|module| source_file_may_be_emitted(options, module, is_case_sensitive))
         .filter(|module| is_own(module))
         .collect();
-    let paths: Vec<&[u8]> = sources.iter().map(|module| module.path).collect();
+    let paths: Vec<&[u8]> = sources.iter().map(|module| module.file_name()).collect();
     let explain = |code: u32, arg: &[u8], is_wrong: &dyn Fn(&Module, bool) -> bool| {
-        explain_source_files(
-            host, options, atoms, modules, by_path, roots, starts, code, arg, is_wrong,
-        )
+        included.explain_source_files(code, arg, is_wrong)
     };
     let mut explained = Vec::new();
     if options.composite {
@@ -2502,7 +2976,7 @@ fn output_path_errors(
             common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
             explained.extend(explain(6059, specified, &|module, _| {
-                !contains_path(specified, module.path, is_case_sensitive) && is_own(module)
+                !contains_path(specified, module.file_name(), is_case_sensitive) && is_own(module)
             }));
             common = Some(specified.to_vec());
         }
@@ -2527,7 +3001,7 @@ fn output_path_errors(
         && (!options.out_dir.is_empty() || !declaration_dir.is_empty())
         && let Some(computed) =
             common_directory_of(&paths, &options.current_directory, is_case_sensitive)
-        && !is_same_name(
+        && !is_same_path(
             &computed,
             dirname::<Posix>(&options.config_path),
             is_case_sensitive,
@@ -2554,7 +3028,7 @@ fn output_path_errors(
     }
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut verify = |output: Vec<u8>| {
-        if by_path.contains_key(output.as_slice()) {
+        if by_path.contains(&output) {
             let problem = Problem::new(5055, &[&output], Place::Nowhere);
             errors.push(if options.has_config_file {
                 problem
@@ -2562,11 +3036,7 @@ fn output_path_errors(
                 problem.with(1, 5068, &[])
             });
         }
-        let key = if is_case_sensitive {
-            output.clone()
-        } else {
-            to_file_name_lower_case(&output)
-        };
+        let key = to_path(&output, is_case_sensitive).into_owned();
         if seen.contains(&key) {
             errors.push(Problem::new(5056, &[&output], Place::Nowhere));
         } else {
@@ -2574,7 +3044,7 @@ fn output_path_errors(
         }
     };
     for module in sources {
-        let path = module.path;
+        let path = module.file_name();
         let is_json = module.hir.kind == FileKind::Json;
         let is_one_of = |extensions: [&[u8]; 2]| file_extension_is_one_of(path, &extensions);
         if !options.emit_declaration_only {
@@ -2719,7 +3189,13 @@ impl<'s> Files<'s> {
         // below, before the first file is checked: in `session` they would stay until the end.
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, options);
-        let mut by_path: ByPath<'s> = map_in(arena);
+        let is_case_sensitive = host.is_case_sensitive();
+        let mut by_path = ByPath {
+            files: map_in(arena),
+            is_case_sensitive,
+        };
+        // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
+        let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
         let mut by_package_id: FxHashMap<Vec<u8>, u32> = FxHashMap::default();
         let mut all_found = Found::default();
         let mut modules: Vec<Option<Module>> = Vec::new();
@@ -2735,11 +3211,18 @@ impl<'s> Files<'s> {
                        frontier: &mut Vec<(FileId, &'s [u8], bool)>,
                        found: &mut Found<'s>|
          -> FileId {
-            if let Some(&id) = by_path.get(path) {
+            let known = match is_case_sensitive {
+                true => by_path.files.get(path),
+                false => by_name.get(path),
+            };
+            if let Some(&id) = known {
                 depths[id.idx()] = depths[id.idx()].min(depth);
                 return id;
             }
             let path = slice_in(path, arena);
+            let of_file = file_path(path, is_case_sensitive, arena);
+            let id = FileId(modules.len() as u32);
+            let first = *by_path.files.entry(of_file.text).or_insert(id);
             // Of the copies of a package file, the one that `collectFiles` comes to first is in the
             // program. That is probably the one that is found first, so another one is only read
             // if it turns out to be the one.
@@ -2756,14 +3239,19 @@ impl<'s> Files<'s> {
                 }
                 package = Some(index);
             }
-            let id = FileId(modules.len() as u32);
             modules.push(None);
             depths.push(depth);
-            by_path.insert(path, id);
+            // Another spelling of a name is only read if `collectFiles` comes to it first.
+            is_read &= first == id;
+            if !is_case_sensitive {
+                by_name.insert(path, id);
+            }
+            found.named.push(None);
             found.files.push(FoundFile {
-                path,
+                path: of_file,
                 is_lib,
                 package,
+                first,
             });
             if is_read {
                 frontier.push((id, path, is_lib));
@@ -2789,27 +3277,27 @@ impl<'s> Files<'s> {
         }
         let libs_end = starts.len();
         let mut program_errors = Vec::new();
-        for root in roots {
-            // `addRootFileTask`
-            let found = referenced_file(host, options, root, b"").map(|found| {
-                match options.parse_file_redirect(&found) {
-                    Some(output) => host.is_file(output).then(|| output.to_vec()),
-                    None => Some(found),
-                }
-            });
-            match found {
-                // The declaration file has not been built: nothing is read.
+        let mut root_of_start: Vec<u32> = Vec::new();
+        // They have a task as well.
+        let mut missing_roots: Vec<&[u8]> = Vec::new();
+        for (index, root) in roots.iter().enumerate() {
+            match root_file_name(host, options, root) {
+                // Nothing is read.
                 Ok(None) => {}
-                Ok(Some(found)) => starts.push(add(
-                    &found,
-                    false,
-                    0,
-                    &mut modules,
-                    &mut depths,
-                    &mut frontier,
-                    &mut all_found,
-                )),
+                Ok(Some(found)) => {
+                    root_of_start.push(index as u32);
+                    starts.push(add(
+                        &found,
+                        false,
+                        0,
+                        &mut modules,
+                        &mut depths,
+                        &mut frontier,
+                        &mut all_found,
+                    ));
+                }
                 Err(code) => {
+                    missing_roots.push(root);
                     let (reason, args) = root_file_reason(options, root, host.is_case_sensitive());
                     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
                     let problem = reference_problem(options, code, root);
@@ -2884,6 +3372,10 @@ impl<'s> Files<'s> {
         let mut seen: Vec<bool> = Vec::new();
         // `redirectFilesByPath`: a copy of a package file, and the one that is in the program.
         let mut redirects: Vec<(FileId, FileId)> = Vec::new();
+        // `redirectFilesByPath`: the name of a copy of a package file, and the copy that is kept.
+        let mut package_copies: Vec<(&'s [u8], FileId)> = Vec::new();
+        // The files that `collectFiles` comes to by more than one spelling of their name.
+        let mut respelled: Vec<FileId> = Vec::new();
         // What `traceResolution` logs, in order.
         let mut log: Vec<DiagAndArgs> = Vec::new();
         'load: loop {
@@ -2977,6 +3469,7 @@ impl<'s> Files<'s> {
                         traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
                         traces[id.idx()] = std::mem::take(&mut loaded.traces);
                     }
+                    loaded.module.path = all_found.files[id.idx()].path;
                     modules[id.idx()] = Some(loaded.module);
                 }
             }
@@ -3009,19 +3502,30 @@ impl<'s> Files<'s> {
                         start
                     }
                 };
+                let FoundFile {
+                    path: Path { pretty: path, .. },
+                    is_lib,
+                    package,
+                    first,
+                } = all_found.files[file.idx()];
+                // `seen[data]`
+                let named = *all_found.named[first.idx()].get_or_insert(file);
+                if named != file {
+                    respelled.push(named);
+                    if !std::mem::replace(&mut seen[file.idx()], true) {
+                        redirects.push((file, named));
+                    }
+                    continue;
+                }
                 if seen[file.idx()] {
                     continue;
                 }
-                let FoundFile {
-                    path,
-                    is_lib,
-                    package,
-                } = all_found.files[file.idx()];
                 if let Some(package) = package {
                     let kept = *all_found.kept[package as usize].get_or_insert(file);
                     if kept != file {
                         seen[file.idx()] = true;
                         redirects.push((file, kept));
+                        package_copies.push((path, kept));
                         // It has been parsed, and what it imports has been resolved.
                         if options.trace_resolution && modules[file.idx()].is_none() {
                             let text = host.read_source(path);
@@ -3049,6 +3553,18 @@ impl<'s> Files<'s> {
                 stack.push((file, 0));
             }
         }
+        drop(by_name);
+        // A spelling that `collectFiles` has not come to is one of the file all the same.
+        for (task, found) in all_found.files.iter().enumerate() {
+            if let Some(named) = all_found.named[found.first.idx()]
+                && named.idx() != task
+                && !std::mem::replace(&mut seen[task], true)
+            {
+                redirects.push((FileId(task as u32), named));
+            }
+        }
+        respelled.sort_unstable();
+        respelled.dedup();
         // Only the files that `collectFiles` came to are in the program, and of a package file only
         // one copy. The paths of the other copies stand for that one.
         if !redirects.is_empty() || !seen.iter().all(|&is_seen| is_seen) {
@@ -3085,13 +3601,21 @@ impl<'s> Files<'s> {
                 file += 1;
                 is_kept[file - 1]
             });
-            by_path.retain(|_, file| match renumbered[file.idx()] {
-                Some(new) => {
-                    *file = new;
-                    true
-                }
-                None => false,
-            });
+            by_path
+                .files
+                .retain(|_, file| match renumbered[file.idx()] {
+                    Some(new) => {
+                        *file = new;
+                        true
+                    }
+                    None => false,
+                });
+            for file in respelled
+                .iter_mut()
+                .chain(package_copies.iter_mut().map(|it| &mut it.1))
+            {
+                *file = renumber(*file);
+            }
             steps.retain_mut(|(from, to, _)| {
                 let is_in_program = is_kept[from.idx()];
                 (*from, *to) = (renumber(*from), renumber(*to));
@@ -3126,9 +3650,9 @@ impl<'s> Files<'s> {
             }
             let mut lookups: Vec<_> = (libs.iter())
                 .map(|lib| library_name_and_resolve_from(options, lib))
-                .map(|(name, from)| match host.is_case_sensitive() {
-                    true => (from.clone(), name, from),
-                    false => (to_file_name_lower_case(&from), name, from),
+                .map(|(name, from)| {
+                    let path = to_path(&from, host.is_case_sensitive()).into_owned();
+                    (path, name, from)
                 })
                 .collect();
             lookups.sort();
@@ -3163,7 +3687,7 @@ impl<'s> Files<'s> {
         }
         program_errors.extend(resolver.resolution_problems());
         for (id, spec, mode, path) in only_found {
-            if let Some(&target) = by_path.get(path)
+            if let Some(target) = by_path.get(path)
                 && let Some(module) = &mut modules[id.idx()]
             {
                 module.imports.insert((spec, mode), target);
@@ -3171,22 +3695,16 @@ impl<'s> Files<'s> {
         }
 
         // `redirectFilesByPath`: the paths that alias a file that is stored under another path.
-        let kept: FxHashMap<FileId, &[u8]> = by_path
-            .iter()
-            .filter_map(|(&path, &id)| {
-                let kept = modules[id.idx()].as_ref()?.path;
-                (kept != path).then_some((id, kept))
-            })
-            .collect();
+        let kept: FxHashSet<FileId> = package_copies.iter().map(|it| it.1).collect();
         if !kept.is_empty() {
             for module in modules.iter_mut().flatten() {
                 let mut redirected = Vec::new();
                 for (&(spec, mode), target) in &module.imports {
-                    let (resolver, from) = resolver.redirect_for_resolution(module.path);
-                    if let Some(kept) = kept.get(target)
+                    let (resolver, from) = resolver.redirect_for_resolution(module.file_name());
+                    if kept.contains(target)
                         && let Some(found) =
                             resolver.resolve_module_name(atoms.bytes(spec), from, mode)
-                        && found.file_name != *kept
+                        && package_copies.iter().any(|it| it.0 == found.file_name)
                     {
                         redirected.push((spec, mode, atoms.intern(found.file_name)));
                     }
@@ -3197,10 +3715,8 @@ impl<'s> Files<'s> {
         let mut redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]> = map_in(arena);
         if !kept.is_empty() {
             let mut duplicates: FxHashMap<FileId, Vec<&'s [u8]>> = FxHashMap::default();
-            for (&path, id) in &by_path {
-                if kept.get(id).is_some_and(|&kept| kept != path) {
-                    duplicates.entry(*id).or_default().push(path);
-                }
+            for &(path, id) in &package_copies {
+                duplicates.entry(id).or_default().push(path);
             }
             for (id, mut paths) in duplicates {
                 paths.sort();
@@ -3209,7 +3725,7 @@ impl<'s> Files<'s> {
         }
         let mut package_jsons: FxHashMap<&'s [u8], Json> = FxHashMap::default();
         for module in modules.iter().flatten() {
-            let path: &'s [u8] = module.path;
+            let path: &'s [u8] = module.file_name();
             if let Some((_, _, end)) = crate::resolve::node_module_path_parts(path)
                 && !package_jsons.contains_key(&path[..end])
                 && let Some(json) = resolver.package_json(&path[..end])
@@ -3222,9 +3738,9 @@ impl<'s> Files<'s> {
         let emitted = modules.iter().flatten().filter(|module| {
             matches!(module.hir.kind, hir::FileKind::Ts | hir::FileKind::Tsx)
                 && !module.is_lib
-                && !strings::contains(module.path, b"/node_modules/")
+                && !strings::contains(module.file_name(), b"/node_modules/")
         });
-        let found = resolver.linked_directories(emitted.map(|module| module.path));
+        let found = resolver.linked_directories(emitted.map(|module| module.file_name()));
         if !found.is_empty() {
             let found = found.iter();
             linked_directories = arena.alloc_slice_fill_iter(
@@ -3311,18 +3827,64 @@ impl<'s> Files<'s> {
                     && module.bound.export_stars.is_empty();
             }
         }
+        // `tasksSeenByNameIgnoreCase`: only where they are different files.
+        let mut alike: Vec<Vec<(&[u8], FileId)>> = Vec::new();
+        let no_file = FileId(modules.len() as u32);
+        let is_respelled = |(i, a): (usize, &&[u8])| {
+            let mut before = missing_roots[..i].iter();
+            before.any(|b| a != b && is_same_path(a, b, is_case_sensitive))
+        };
+        if missing_roots.iter().enumerate().any(is_respelled) {
+            respelled.push(no_file);
+        }
+        if is_case_sensitive {
+            let hash = |name: &[u8]| match name.is_ascii() {
+                true => bun_wyhash::hash_ascii_lowercase(0, name),
+                false => bun_wyhash::hash_ascii_lowercase(0, &to_file_name_lower_case(name)),
+            };
+            let names = || {
+                let kept = modules.iter().enumerate();
+                let kept = kept.map(|(i, module)| (module.file_name(), FileId(i as u32)));
+                let missing = missing_roots.iter().map(|&name| (name, no_file));
+                kept.chain(package_copies.iter().copied()).chain(missing)
+            };
+            let mut hashes: FxHashSet<u64> = FxHashSet::default();
+            hashes.reserve(modules.len());
+            let repeated: FxHashSet<u64> = (names().map(|it| hash(it.0)))
+                .filter(|&hash| !hashes.insert(hash))
+                .collect();
+            if !repeated.is_empty() {
+                let mut by_lower_case: FxHashMap<Vec<u8>, Vec<(&[u8], FileId)>> =
+                    FxHashMap::default();
+                for (name, file) in names().filter(|it| repeated.contains(&hash(it.0))) {
+                    let names = by_lower_case.entry(to_file_name_lower_case(name));
+                    names.or_default().push((name, file));
+                }
+                alike.extend(by_lower_case.into_values().filter(|names| names.len() > 1));
+            }
+        }
         let mut include_errors = Vec::new();
-        let (output_path_errors, common_source_directory) = output_path_errors(
+        let included = Included {
             host,
             options,
-            &atoms,
-            &modules,
-            &by_path,
+            atoms: &atoms,
+            modules: &modules,
+            by_path: &by_path,
             roots,
-            &starts,
-            &mut include_errors,
-        );
+            starts: &starts,
+            libs_end,
+            roots_end,
+            root_of_start: &root_of_start,
+        };
+        let (output_path_errors, common_source_directory) =
+            output_path_errors(&included, &mut include_errors);
         program_errors.extend(output_path_errors);
+        for (at, problem) in included.file_casing_errors(&respelled, &alike) {
+            match at {
+                Some((file, start, end)) => include_errors.push((file, start, end, problem)),
+                None => program_errors.push(problem),
+            }
+        }
         let has_type_only_stars = modules.iter().any(|m| {
             m.bound.export_stars.iter().any(|&(_, star)| {
                 matches!(
@@ -3405,17 +3967,14 @@ impl<'s> Files<'s> {
             all.extend(lib_traces);
             // `packageJsonInfoCache`. `loadSourceFileMetaData` looks for the scope of a file before
             // anything in the file is resolved.
-            let key = |path: &[u8]| match host.is_case_sensitive() {
-                true => path.to_vec(),
-                false => to_file_name_lower_case(path),
-            };
+            let key = |path: &[u8]| to_path(path, host.is_case_sensitive()).into_owned();
             let mut cached: FxHashSet<Vec<u8>> = FxHashSet::default();
             let mut with_scope: FxHashSet<Vec<u8>> = FxHashSet::default();
             for trace in &mut all {
                 match trace.code {
                     6086 | 6116 => {
                         let from = &trace.args[1][..];
-                        if !files.by_path.contains_key(from) {
+                        if !files.by_path.contains(from) {
                             continue;
                         }
                         for dir in ancestors(dirname::<Posix>(from)) {
@@ -3737,11 +4296,7 @@ impl<'s> Files<'s> {
         let mut arbitrary_extension_files = Vec::new();
         let mut extensionless_imports = Vec::new();
         // `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with helpers imports `tslib`.
-        let imports_helpers = options.import_helpers
-            && (hir.is_js
-                || hir.kind != FileKind::Declaration
-                    && (options.isolated_modules || hir.has_module_syntax));
-        if imports_helpers
+        if imports_helpers(options, &hir)
             && let Some(resolved) = resolver.resolve_module_name(b"tslib", from, default_mode)
         {
             note_package(&mut resolved_packages, &resolved);
@@ -3770,7 +4325,7 @@ impl<'s> Files<'s> {
                     resolver.resolve_module_name_traced(name, from, mode, Some(&tracer));
                 }
             };
-            if imports_helpers {
+            if imports_helpers(options, &hir) {
                 trace(b"tslib", default_mode);
             }
             if let Some((_, runtime)) = &runtime {
@@ -4022,11 +4577,11 @@ impl<'s> Files<'s> {
         references.extend(types);
         references.extend(libs);
         let module = Module {
-            path: slice_in(path, arena),
             hir,
             bound,
             is_lib,
-            // `load` fills `imports` and `edges`.
+            // `load` fills `path`, `imports` and `edges`.
+            path: Path::init(b""),
             imports: map_in(arena),
             untyped_imports: few(untyped_imports, arena),
             untyped_import_files: few(untyped_import_files, arena),
@@ -4104,7 +4659,7 @@ impl<'s> Files<'s> {
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !module.path.ends_with(b".tsx") && !module.path.ends_with(b".jsx") {
+        if !module.file_name().ends_with(b".tsx") && !module.file_name().ends_with(b".jsx") {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;
@@ -4122,7 +4677,7 @@ impl<'s> Files<'s> {
 
     /// `getDefaultLibFilePriority`
     fn default_lib_file_priority(&self, file: FileId) -> usize {
-        let path = self.modules[file.idx()].path;
+        let path = self.modules[file.idx()].file_name();
         let is_in_lib_dir = path
             .strip_prefix(self.options.lib_dir.trim_end_with(|c| c == '/'))
             .is_some_and(|rest| rest.starts_with(b"/"));
@@ -4955,26 +5510,22 @@ impl<'s> Files<'s> {
 
     /// `GetSourceFileFromReference` for a `/// <reference path>` in `origin`.
     pub fn source_file_from_reference(&self, origin: FileId, written: &[u8]) -> Option<FileId> {
-        let name = referenced_path(written, self.module(origin).path);
+        let name = referenced_path(written, self.module(origin).file_name());
         if has_extension(&name) {
             if unsupported_extension_error(self.options, &name).is_some() {
                 return None;
             }
-            return self.by_path.get(&name[..]).copied();
+            return self.by_path.get(&name);
         }
         let mut extensions = supported_extensions(self.options)[0].iter();
-        extensions.find_map(|it| {
-            self.by_path
-                .get(&[&name[..], &it[..]].concat()[..])
-                .copied()
-        })
+        extensions.find_map(|it| self.by_path.get(&[&name[..], &it[..]].concat()))
     }
 
     /// `GetOutputPathsFor(file).DeclarationFilePath()`
     pub fn declaration_file_path(&self, file: FileId) -> Vec<u8> {
         declaration_emit_output_file_path(
             self.options,
-            self.module(file).path,
+            self.module(file).file_name(),
             self.common_source_directory,
             self.is_case_sensitive,
         )
@@ -5620,7 +6171,10 @@ impl<'s> Files<'s> {
                 .iter()
                 .any(|d| matches!(d, Decl::File))
             && (self.hir(module.file).kind == FileKind::Json
-                || self.module(module.file).path.ends_with(b".d.json.ts"))
+                || self
+                    .module(module.file)
+                    .file_name()
+                    .ends_with(b".d.json.ts"))
     }
 
     /// `isESMFormatImportImportingCommonjsFormatFile` for a plain `import` in `from`: a file that

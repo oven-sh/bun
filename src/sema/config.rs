@@ -5,8 +5,8 @@
 use crate::config_options::is_file_path;
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    Host, Options, ancestors, contains_path, join, known_extension, remove_file_extension,
-    supported_extensions, to_file_name_lower_case,
+    Host, Options, ancestors, contains_path, is_same_path, join, known_extension,
+    remove_file_extension, supported_extensions, to_file_name_lower_case, to_path,
 };
 use crate::session::Session;
 use crate::verify::{Place, Problem};
@@ -27,6 +27,9 @@ pub struct ConfigError {
     /// `GetProgramDiagnostics`, not `GetConfigFileParsingDiagnostics`: the file could be read, but
     /// its options are inconsistent.
     pub is_about_options: bool,
+    /// `RelatedInformation`, all of it in the configuration file: the span, and the code of a
+    /// message without arguments.
+    pub related: Vec<(u32, u32, u32)>,
 }
 
 impl ConfigError {
@@ -37,6 +40,7 @@ impl ConfigError {
             at: None,
             chain: Vec::new(),
             is_about_options: false,
+            related: Vec::new(),
         }
     }
 
@@ -60,6 +64,11 @@ impl ConfigError {
             at,
             chain: problem.chain.clone(),
             is_about_options: true,
+            // What is in a file of the program is where the problem itself is reported.
+            related: (problem.related.iter())
+                .filter(|it| it.0 == crate::program::IN_CONFIGURATION)
+                .map(|&(_, from, to, code)| (from, to, code))
+                .collect(),
         }
     }
 }
@@ -283,8 +292,7 @@ fn parse_config(
             code: problem.code,
             args: problem.args,
             at: problem.span.map(at),
-            chain: Vec::new(),
-            is_about_options: false,
+            ..ConfigError::new(problem.code, &[])
         }));
         let mut specified = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
@@ -739,13 +747,7 @@ fn file_names_from_specs(
     exclude: &[Vec<u8>],
 ) -> Vec<Vec<u8>> {
     let case_sensitive = host.is_case_sensitive();
-    let key = |file: &[u8]| {
-        if case_sensitive {
-            file.to_vec()
-        } else {
-            to_file_name_lower_case(file)
-        }
-    };
+    let key = |file: &[u8]| to_path(file, case_sensitive).into_owned();
     let supported = supported_extensions(options);
     let mut literal_files = OrderedFiles::default();
     let mut wildcard_files = OrderedFiles::default();
@@ -971,13 +973,7 @@ impl GlobPattern {
     }
 
     fn equal(&self, a: &[u8], b: &[u8]) -> bool {
-        if self.case_sensitive {
-            a == b
-        } else if a.is_ascii() && b.is_ascii() {
-            a.eq_ignore_ascii_case(b)
-        } else {
-            to_file_name_lower_case(a) == to_file_name_lower_case(b)
-        }
+        is_same_path(a, b, self.case_sensitive)
     }
 
     /// `matchWildcard`
@@ -1234,11 +1230,7 @@ fn match_files(
         fn visit(&mut self, path: &[u8]) {
             // A symlink can form a cycle.
             let real = self.matchers.host.realpath(path);
-            let canonical = if self.case_sensitive {
-                real
-            } else {
-                to_file_name_lower_case(&real)
-            };
+            let canonical = to_path(&real, self.case_sensitive).into_owned();
             if !self.visited.insert(canonical) {
                 return;
             }

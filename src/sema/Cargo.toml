@@ -17,6 +17,7 @@ bun_core.workspace = true
 bun_paths.workspace = true
 bun_semver.workspace = true
 bun_threading.workspace = true
+bun_wyhash.workspace = true
 bstr.workspace = true
 hashbrown.workspace = true
 rustc-hash = "2"

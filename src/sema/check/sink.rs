@@ -252,7 +252,7 @@ impl super::Program<'_> {
 
     /// `CompareDiagnostics`
     pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
-        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| m.path);
+        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| m.file_name());
         (path(a.file), a.start, a.end, a.code, &a.args)
             .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
             .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))

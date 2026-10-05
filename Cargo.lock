@@ -1363,6 +1363,7 @@ dependencies = [
  "bun_sema_standalone",
  "bun_semver",
  "bun_threading",
+ "bun_wyhash",
  "hashbrown 0.15.5",
  "rustc-hash",
  "smallvec",

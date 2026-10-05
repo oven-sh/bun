@@ -87,6 +87,13 @@ pub enum Place {
     /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
     /// is out of range.
     Reference(usize),
+    /// `GetTsConfigPropArrayElementValue` of `GetMatchedFileSpec`: at the entry of `files` for the
+    /// file with this name. With it, the directory that the entries are relative to, and
+    /// `UseCaseSensitiveFileNames`.
+    File(Vec<u8>, Vec<u8>, bool),
+    /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the value of the
+    /// option. No location if it is not there.
+    Element(&'static [u8], Vec<u8>),
 }
 
 /// A diagnostic about the options.
@@ -98,6 +105,9 @@ pub struct Problem {
     /// its message arguments.
     pub chain: Vec<(u32, u32, Vec<Vec<u8>>)>,
     pub at: Place,
+    /// `RelatedInformation`: the file, which can be `IN_CONFIGURATION`, the span, and the code of a
+    /// message without arguments.
+    pub related: Vec<(crate::program::FileId, u32, u32, u32)>,
 }
 
 impl Problem {
@@ -107,6 +117,7 @@ impl Problem {
             args: args.iter().map(|&a| a.to_vec()).collect(),
             chain: Vec::new(),
             at,
+            related: Vec::new(),
         }
     }
 
@@ -129,6 +140,15 @@ impl Problem {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
         }
+        if let Place::File(name, base, is_case_sensitive) = &self.at {
+            let is_it = |&e: &_| {
+                let entry = file.convert_property_value_to_json(e);
+                let entry = entry.as_str().map(|it| crate::resolve::join(base, it));
+                entry.is_some_and(|it| crate::resolve::is_same_path(&it, name, *is_case_sensitive))
+            };
+            let mut entries = file.elements(value_of(root, b"files")?);
+            return entries.find(is_it).map(|e| file.span(e));
+        }
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
             let Place::TopElement(_, specified) = &self.at else {
@@ -139,13 +159,20 @@ impl Problem {
         }
         let options = file.property(root, b"compilerOptions", b"")?;
         let written = file.initializer(options);
+        if let Place::Element(name, specified) = &self.at {
+            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
+            let mut elements = file.elements(value_of(written, name)?);
+            return elements.find(is_it).map(|e| file.span(e));
+        }
         let in_paths = |key: &[u8]| file.property(value_of(written, b"paths")?, key, b"");
         let found = match &self.at {
             Place::Nowhere
             | Place::CompilerOptions
             | Place::Top(_)
             | Place::TopElement(..)
-            | Place::Reference(_) => None,
+            | Place::Reference(_)
+            | Place::File(..)
+            | Place::Element(..) => None,
             Place::Key(name, other) => file
                 .property(written, name, other)
                 .map(|p| file.name_span(p)),

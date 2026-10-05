@@ -246,7 +246,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         let decls = files.decls(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return remove_file_extension(files.module(file).path).to_owned();
+            return remove_file_extension(files.module(file).file_name()).to_owned();
         }
         for &(file, decl) in &decls {
             if let Decl::Module(m) = decl
@@ -1982,7 +1982,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
             Some(&(file, Decl::File)) => {
-                return cat! { b"\"", remove_file_extension(files.module(file).path), b"\"" };
+                return cat! { b"\"", remove_file_extension(files.module(file).file_name()), b"\"" };
             }
             _ => {}
         }

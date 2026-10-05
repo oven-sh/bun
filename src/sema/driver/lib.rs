@@ -24,8 +24,8 @@ use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, inside, is_declaration_file_name, is_javascript, join,
-    output_declaration_file_name,
+    Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
+    is_javascript, is_same_path, join, output_declaration_file_name, to_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -777,7 +777,9 @@ impl Projects {
         file: &[u8],
         seen: &mut Vec<Vec<u8>>,
     ) -> Option<Vec<u8>> {
-        if seen.iter().any(|it| it == config) || !disk.is_file(config) {
+        let is_case_sensitive = disk.is_case_sensitive();
+        let is_seen = |it: &Vec<u8>| is_same_path(it, config, is_case_sensitive);
+        if seen.iter().any(is_seen) || !disk.is_file(config) {
             return None;
         }
         seen.push(config.to_vec());
@@ -799,9 +801,11 @@ impl Projects {
                     config::load_overriding(disk, &Session::new(), config, &with_javascript).files
                 }
             };
-            (self.files).insert(config.to_vec(), files.into_iter().collect());
+            let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
+            let paths = paths.map(Cow::into_owned).collect();
+            (self.files).insert(config.to_vec(), paths);
         }
-        if self.files[config].contains(file) {
+        if self.files[config].contains(&*to_path(file, is_case_sensitive)) {
             return Some(config.to_vec());
         }
         (references.iter()).find_map(|it| self.find_project_with(disk, request, it, file, seen))
@@ -817,7 +821,8 @@ impl Projects {
         seen: &mut Vec<Vec<u8>>,
         files: &mut Vec<Vec<u8>>,
     ) {
-        if seen.iter().any(|it| it == config) || !disk.is_file(config) {
+        let is_seen = |it: &Vec<u8>| is_same_path(it, config, disk.is_case_sensitive());
+        if seen.iter().any(is_seen) || !disk.is_file(config) {
             return;
         }
         seen.push(config.to_vec());
@@ -909,8 +914,10 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     let mut report = Report::default();
 
     // Report missing paths (TS6053) before loading the config file or any source file.
+    let is_case_sensitive = disk.is_case_sensitive();
+    let is_same = |a: &[u8], b: &[u8]| is_same_path(a, b, is_case_sensitive);
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
-        .map(|path| join(&cwd, path))
+        .map(|path| disk.as_written(&join(&cwd, path)))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
     let not_found = (missing.iter()).map(|path| global(6053, &[host::with_root(path)]));
     report.diagnostics.extend(not_found);
@@ -919,7 +926,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     }
     let explicit = match request.project {
         Some(project) => {
-            let path = join(&cwd, project);
+            let path = disk.as_written(&join(&cwd, project));
             if disk.is_dir(&path) {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
@@ -968,8 +975,13 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     let mut by_project: Vec<(Option<Vec<u8>>, Extent, Vec<Vec<u8>>)> = Vec::new();
     let mut add = |owner: Option<Vec<u8>>, extent: Extent, file: Vec<u8>| match by_project
         .iter_mut()
-        .find(|it| it.0 == owner && it.1 == extent)
-    {
+        .find(|it| {
+            it.1 == extent
+                && match (&it.0, &owner) {
+                    (Some(a), Some(b)) => is_same(a, b),
+                    (a, b) => a.is_none() && b.is_none(),
+                }
+        }) {
         Some(project) => project.2.push(file),
         None => by_project.push((owner, extent, vec![file])),
     };
@@ -984,16 +996,15 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         // The directory stands for the part of the project that is in it: of the project that is
         // checked from there without an argument, so that `bun check .` is `bun check`.
         // The projects know their files. A configuration file there is checked too.
-        let is_in_directory =
-            |file: &Vec<u8>| (file.strip_prefix(&path[..])).is_some_and(|it| it.starts_with(b"/"));
+        let is_in_directory = |file: &Vec<u8>| contains_path(path, file, is_case_sensitive);
         if let Some(config) = config_in(path) {
             let (mut configs, mut files) = (Vec::new(), Vec::new());
             projects.files_of_graph(disk, request, &config, &mut configs, &mut files);
             files.retain(is_in_directory);
             if !files.is_empty() {
                 files.extend(configs.into_iter().filter(is_in_directory));
-                files.sort_unstable();
-                files.dedup();
+                files.sort_by_cached_key(|it| to_path(it, is_case_sensitive).into_owned());
+                files.dedup_by(|a, b| is_same(a, b));
                 (files.into_iter()).for_each(|file| add(Some(config.clone()), Extent::Graph, file));
                 continue;
             }
@@ -1006,7 +1017,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         };
         for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
             let is_below =
-                |dir: &&[u8]| (dir.strip_prefix(&path[..])).is_some_and(|it| it.starts_with(b"/"));
+                |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
             let top = (config.as_deref().map(dirname::<Posix>))
                 .filter(is_below)
                 .unwrap_or(path);
@@ -1036,11 +1047,12 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     // A file that is named besides a directory that has it.
     let in_directories: FxHashSet<Vec<u8>> = (by_project.iter())
         .filter(|it| it.1 == Extent::Graph)
-        .flat_map(|it| it.2.iter().cloned())
+        .flat_map(|it| it.2.iter())
+        .map(|file| to_path(file, is_case_sensitive).into_owned())
         .collect();
     for (_, extent, files) in &mut by_project {
         if *extent == Extent::Project {
-            files.retain(|file| !in_directories.contains(file));
+            files.retain(|it| !in_directories.contains(&*to_path(it, is_case_sensitive)));
         }
     }
     by_project.retain(|it| !it.2.is_empty());
@@ -1058,11 +1070,16 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let is_one = by_project.len() == 1;
-    let all: FxHashSet<&[u8]> = (by_project.iter().flat_map(|it| &it.2))
+    let paths_of = |files: &'_ [Vec<u8>]| -> Vec<Vec<u8>> {
+        let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
+        paths.map(Cow::into_owned).collect()
+    };
+    let paths_by_project: Vec<Vec<Vec<u8>>> = by_project.iter().map(|it| paths_of(&it.2)).collect();
+    let all: FxHashSet<&[u8]> = (paths_by_project.iter().flatten())
         .map(Vec::as_slice)
         .collect();
-    for (config, extent, files) in &by_project {
-        let own: FxHashSet<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    for ((config, extent, files), paths) in by_project.iter().zip(&paths_by_project) {
+        let own: FxHashSet<&[u8]> = paths.iter().map(Vec::as_slice).collect();
         let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
         let of = OfProject {
             config: config.as_deref(),
@@ -1097,7 +1114,7 @@ struct OfProject<'a> {
     config: Option<&'a [u8]>,
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
-    /// The files that are checked in another project. This one may import them.
+    /// The files that are checked in another project, by `tspath.Path`. This one may import them.
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
 }
 
@@ -1120,15 +1137,18 @@ fn check_project_of(
             project_without_config(disk, request, &cwd, files)
         }
     };
+    let is_case_sensitive = disk.is_case_sensitive();
     // Here, for a solution: it has no program of its own.
     report.config_paths.push(project.config_path.clone());
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project {
             // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
             // affect every other file, so a file must produce the same errors with and without path arguments.
-            let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
+            let files = project.files.iter();
+            let mut seen: FxHashSet<Cow<[u8]>> =
+                files.map(|it| to_path(it, is_case_sensitive)).collect();
             let more: Vec<Vec<u8>> = (named.iter())
-                .filter(|root| seen.insert(root.as_slice()))
+                .filter(|root| seen.insert(to_path(root, is_case_sensitive)))
                 .cloned()
                 .collect();
             if !more.is_empty() {
@@ -1141,7 +1161,9 @@ fn check_project_of(
                 .errors
                 .retain(|e| e.code != 18003 && e.code != 18002);
         }
-        let mut named = named.to_vec();
+        // From here on they are only looked for.
+        let named = named.iter().map(|it| to_path(it, is_case_sensitive));
+        let mut named: Vec<Vec<u8>> = named.map(Cow::into_owned).collect();
         named.sort_unstable();
         (extent, named)
     });
@@ -1157,7 +1179,8 @@ fn check_project_of(
     } else {
         // All of its files: the project, with what no file imports.
         let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
-            *extent == Extent::Graph && project.files.iter().all(|file| is_among(named, file))
+            let is_named = |it: &Vec<u8>| is_among(named, &to_path(it, is_case_sensitive));
+            *extent == Extent::Graph && project.files.iter().all(is_named)
         };
         let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
         check_named_files(
@@ -1173,7 +1196,7 @@ fn check_project_of(
     }
 }
 
-/// `named` is sorted.
+/// `named` is sorted. It has, and `file` is, a `tspath.Path`.
 fn is_among(named: &[Vec<u8>], file: &[u8]) -> bool {
     named.binary_search_by(|it| it.as_slice().cmp(file)).is_ok()
 }
@@ -1190,9 +1213,12 @@ struct Graph<'h> {
     /// For `config::load_overriding`.
     session: &'h Session,
     overrides: Vec<(Vec<u8>, Json)>,
+    /// `tasks`, until `setup_build_task` takes them: `resolved`, by the `tspath.Path` of the
+    /// configuration file.
+    resolved: FxHashMap<Vec<u8>, config::Project>,
     /// `order`: dependencies first.
     projects: Vec<ReferencedProject>,
-    /// Keyed by configuration file, each of which is loaded once. `completed`: its index in
+    /// Keyed by the `tspath.Path` of a configuration file, each of which is loaded once. `completed`: its index in
     /// `projects`. `analyzing`: `None`.
     index_of: FxHashMap<Vec<u8>, Option<usize>>,
     circularity_stack: Vec<Vec<u8>>,
@@ -1203,33 +1229,59 @@ struct Graph<'h> {
 }
 
 impl Graph<'_> {
+    /// `createBuildTasks`, for what `root` references: a configuration file is loaded once, by the
+    /// name in the task that runs first. The tasks of a `singleThreadedWorkGroup` run last in,
+    /// first out.
+    fn create_build_tasks(&mut self, root: &config::Project) {
+        let key = |name: &[u8]| to_path(name, self.host.is_case_sensitive()).into_owned();
+        let referenced = |project: &config::Project| -> Vec<Vec<u8>> {
+            let references = project.references.iter();
+            let name = |it: &config::ProjectReference| {
+                config::resolve_config_file_name_of_project_reference(&it.path)
+            };
+            references.map(name).collect()
+        };
+        let root_path = key(&root.config_path);
+        let mut queued = referenced(root);
+        while let Some(config) = queued.pop() {
+            let path = key(&config);
+            if path != root_path && !self.resolved.contains_key(&path) && self.host.is_file(&config)
+            {
+                let over = |_: bool| self.overrides.clone();
+                let project = config::load_overriding(self.host, self.session, &config, &over);
+                queued.extend(referenced(&project));
+                self.resolved.insert(path, project);
+            }
+        }
+    }
+
     /// `setupBuildTask`: returns the index of `project` in `projects`.
     fn setup_build_task(&mut self, project: config::Project, in_circular_context: bool) -> usize {
-        self.index_of.insert(project.config_path.clone(), None);
+        let key = |name: &[u8]| to_path(name, self.host.is_case_sensitive()).into_owned();
+        self.index_of.insert(key(&project.config_path), None);
         self.circularity_stack.push(project.config_path.clone());
         let mut references = Vec::new();
         for reference in &project.references {
             let path = config::resolve_config_file_name_of_project_reference(&reference.path);
             let in_circular_context = in_circular_context || reference.circular;
-            match self.index_of.get(&path) {
+            match self.index_of.get(&key(&path)) {
                 Some(Some(index)) => references.push(*index),
                 Some(None) if in_circular_context => {}
                 Some(None) => {
                     let stack = self.circularity_stack.join(&b'\n');
                     self.errors.push(global(6202, &[stack]));
                 }
-                None if !self.host.is_file(&path) => self.not_found.push(global(6053, &[path])),
-                None => {
-                    let over = |_: bool| self.overrides.clone();
-                    let referenced = config::load_overriding(self.host, self.session, &path, &over);
-                    references.push(self.setup_build_task(referenced, in_circular_context));
-                }
+                None => match self.resolved.remove(&key(&path)) {
+                    Some(referenced) => {
+                        references.push(self.setup_build_task(referenced, in_circular_context));
+                    }
+                    None => self.not_found.push(global(6053, &[path])),
+                },
             }
         }
         self.circularity_stack.pop();
         let index = self.projects.len();
-        self.index_of
-            .insert(project.config_path.clone(), Some(index));
+        self.index_of.insert(key(&project.config_path), Some(index));
         self.projects.push(ReferencedProject {
             project,
             references,
@@ -1410,18 +1462,21 @@ fn check_with_references(
     named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
 ) -> Report {
+    let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let configuration = Session::new();
     let mut graph = Graph {
         host,
         session: &configuration,
         overrides: overriding_options(request, true),
+        resolved: FxHashMap::default(),
         projects: Vec::new(),
         index_of: FxHashMap::default(),
         circularity_stack: Vec::new(),
         errors: Vec::new(),
         not_found: Vec::new(),
     };
+    graph.create_build_tasks(&root);
     graph.setup_build_task(root, false);
     let Graph {
         projects,
@@ -1437,7 +1492,10 @@ fn check_with_references(
         return report;
     }
     report.diagnostics.append(&mut not_found);
-    let resolved = |path: &[u8]| Some(&projects[(*index_of.get(path)?)?].project);
+    let resolved = |path: &[u8]| {
+        let path = to_path(path, is_case_sensitive);
+        Some(&projects[(*index_of.get(&*path)?)?].project)
+    };
     let about_references: Vec<Vec<ConfigError>> = (projects.iter())
         .map(|p| {
             (verify_project_references(&p.project, &resolved).iter())
@@ -1450,6 +1508,10 @@ fn check_with_references(
     drop(configuration);
     // A file that belongs to a referenced project is checked there, with that project's options.
     let roots: Vec<Vec<Vec<u8>>> = projects.iter().map(|p| p.project.files.clone()).collect();
+    let root_paths: Vec<Vec<Vec<u8>>> = (roots.iter())
+        .map(|roots| roots.iter().map(|it| to_path(it, is_case_sensitive)))
+        .map(|paths| paths.map(Cow::into_owned).collect())
+        .collect();
     // The output directory of each project's declaration files, and the source directory it
     // mirrors. `None`: next to the sources.
     let outputs: Vec<Option<(Vec<u8>, Vec<u8>)>> = projects
@@ -1479,7 +1541,9 @@ fn check_with_references(
     let has_named: Vec<bool> = (projects.iter())
         .map(|it| std::iter::once(&it.project.config_path).chain(&it.project.files))
         .map(|mut files| match named {
-            Some((Extent::Graph, named)) => files.any(|file| is_among(named, file)),
+            Some((Extent::Graph, named)) => {
+                files.any(|file| is_among(named, &to_path(file, is_case_sensitive)))
+            }
             _ => true,
         })
         .collect();
@@ -1569,10 +1633,17 @@ fn check_with_references(
                     .filter(|path| !is_declaration_file_name(path));
                 sources.map(move |source| {
                     let output_dts = output_declaration_file_name(source, output);
-                    (source.clone(), output_dts.unwrap_or_default(), at as u32)
+                    let path = to_path(source, is_case_sensitive).into_owned();
+                    (
+                        path,
+                        source.clone(),
+                        output_dts.unwrap_or_default(),
+                        at as u32,
+                    )
                 })
             })
             .collect();
+        project.options.use_case_sensitive_file_names = is_case_sensitive;
         project.options.referenced_sources.sort_unstable();
         project
             .options
@@ -1580,14 +1651,14 @@ fn check_with_references(
             .dedup_by(|a, b| a.0 == b.0);
         project.options.referenced_output_dts = (project.options.referenced_sources.iter())
             .enumerate()
-            .filter(|(_, it)| !it.1.is_empty())
-            .map(|(index, it)| (it.1.clone(), index as u32))
+            .filter(|(_, it)| !it.2.is_empty())
+            .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
             .collect();
         project.options.referenced_output_dts.sort_unstable();
-        let own: FxHashSet<&[u8]> = roots[index].iter().map(Vec::as_slice).collect();
+        let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
         let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
-            .flat_map(|i| roots[i].iter().map(Vec::as_slice))
+            .flat_map(|i| root_paths[i].iter().map(Vec::as_slice))
             .chain(elsewhere.into_iter().flatten().copied())
             .filter(|path| !own.contains(path))
             .collect();
@@ -1595,12 +1666,15 @@ fn check_with_references(
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
         let named = match named {
-            Some((Extent::Project, files)) if project.config_path == root_config_path => {
+            Some((Extent::Project, files))
+                if is_same_path(&project.config_path, &root_config_path, is_case_sensitive) =>
+            {
                 Some(files)
             }
             // What another program reads is built whole. A solution has no program.
             Some((Extent::Graph, files)) if !is_read_by_a_program(index) => {
-                Some(files).filter(|named| !roots[index].iter().all(|file| is_among(named, file)))
+                let is_named = |file: &Vec<u8>| is_among(files, file);
+                (!root_paths[index].iter().all(is_named)).then_some(files)
             }
             _ => None,
         };
@@ -1735,6 +1809,7 @@ pub fn check_project(
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
 /// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
+/// Both have a `tspath.Path` for each file.
 fn check_named_files(
     host: &dyn Host,
     mut project: config::Project,
@@ -1752,6 +1827,7 @@ fn check_named_files(
     };
     project.options.current_directory = host::from_native(request.cwd);
     report.config_paths.push(project.config_path.clone());
+    let config_path = project.config_path.clone();
     let of_configuration = |error: &ConfigError| {
         let mut reported = global(error.code, &error.args);
         for (level, code, args) in &error.chain {
@@ -1760,6 +1836,22 @@ fn check_named_files(
                 reported.text.extend_from_slice(b"  ");
             }
             reported.text.extend_from_slice(&global(*code, args).text);
+        }
+        if !error.related.is_empty()
+            && let Some(text) = host.read(&config_path)
+        {
+            let starts = compute_ecma_line_starts(&text);
+            let related = error.related.iter().map(|&(from, to, code)| {
+                located(
+                    &config_path,
+                    &text,
+                    &starts,
+                    from,
+                    to,
+                    global(code, &[""; 0]),
+                )
+            });
+            reported.related = related.collect();
         }
         match &error.at {
             Some((path, from, to)) => match host.read(path) {
@@ -1792,7 +1884,6 @@ fn check_named_files(
         .filter(|error| error.is_about_options)
         .map(of_configuration)
         .collect();
-    let config_path = project.config_path.clone();
     let lib_dir = match request.lib_dir {
         Some(dir) => Some(host::from_native(dir)),
         None => host::find_lib_dir(
@@ -1865,7 +1956,7 @@ fn check_named_files(
         loaded(program);
     }
     if is_true(b"listFiles") || is_true(b"listFilesOnly") {
-        let path = |&file: &FileId| program.files.module(file).path.to_vec();
+        let path = |&file: &FileId| program.files.module(file).file_name().to_vec();
         report.listed_files = program.files.order.iter().map(path).collect();
     }
     let trace = program.files.resolution_trace.iter();
@@ -1897,11 +1988,7 @@ fn check_named_files(
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
-            .filter(|&i| {
-                named
-                    .binary_search_by(|it| it.as_slice().cmp(modules[i].path))
-                    .is_ok()
-            })
+            .filter(|&i| is_among(named, modules[i].path.text))
             .collect();
         for &i in &to_follow {
             is_reached[i] = true;
@@ -1919,10 +2006,11 @@ fn check_named_files(
         to_check.retain(|file| is_reached[file.idx()]);
     }
     if let Some(owned_elsewhere) = owned_elsewhere {
-        to_check.retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path));
+        let path = |f: FileId| program.files.modules[f.idx()].path.text;
+        to_check.retain(|&f| !owned_elsewhere.contains(path(f)));
     }
     if let Some(only) = request.only {
-        to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].path, only));
+        to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].file_name(), only));
     }
     if is_true(b"listFilesOnly") && request.stops_like_tsc {
         to_check.clear();
@@ -1951,7 +2039,7 @@ fn check_named_files(
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
         if module.is_lib {
-            host.read(module.path).unwrap_or_default()
+            host.read(module.file_name()).unwrap_or_default()
         } else {
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
@@ -1980,12 +2068,28 @@ fn check_named_files(
                             return reported;
                         };
                         if of == file {
-                            return located(module.path, text, &starts, start, end, reported);
+                            return located(
+                                module.file_name(),
+                                text,
+                                &starts,
+                                start,
+                                end,
+                                reported,
+                            );
+                        }
+                        if of == bun_sema::program::IN_CONFIGURATION {
+                            return match host.read(&config_path) {
+                                Some(text) => {
+                                    let starts = compute_ecma_line_starts(&text);
+                                    located(&config_path, &text, &starts, start, end, reported)
+                                }
+                                None => reported,
+                            };
                         }
                         let other = &program.files.modules[of.idx()];
                         let text = &text_of(of)[..];
                         located(
-                            other.path,
+                            other.file_name(),
                             text,
                             &compute_ecma_line_starts(text),
                             start,
@@ -2005,7 +2109,7 @@ fn check_named_files(
                     },
                     ..global(0, &[""; 0])
                 };
-                located(module.path, text, &starts, e.start, e.end, reported)
+                located(module.file_name(), text, &starts, e.start, e.end, reported)
             })
             .collect();
         if let Some(progress) = request.progress {
@@ -2119,7 +2223,7 @@ fn check_named_files(
         // The diagnostics that were found are reported. Others may be missing, so the report lists
         // the file as incomplete.
         for file in outcome.incomplete {
-            let path = program.files.modules[file.idx()].path.to_vec();
+            let path = program.files.modules[file.idx()].file_name().to_vec();
             incomplete.lock().push(path);
         }
         unfinished.lock().extend(outcome.checked);
@@ -2135,7 +2239,7 @@ fn check_named_files(
         host.parallel(unfinished.len(), &|i| {
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(written) = checked.declaration_file.take() {
-                let path = program.files.modules[file.idx()].path.to_vec();
+                let path = program.files.modules[file.idx()].file_name().to_vec();
                 declaration_files.lock().push((path, written));
             }
             let declaration = checked.take_declaration_diagnostics();
@@ -2320,7 +2424,11 @@ fn check_named_files(
         if request.task_clock.is_none() {
             slowest.truncate(5);
         }
-        let path_of = |file: usize| program.files.modules[to_check[file].idx()].path.to_vec();
+        let path_of = |file: usize| {
+            program.files.modules[to_check[file].idx()]
+                .file_name()
+                .to_vec()
+        };
         steps.lock().push(StepReport {
             slowest_tasks: (slowest.into_iter())
                 .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))

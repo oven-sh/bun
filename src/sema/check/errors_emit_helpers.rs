@@ -158,7 +158,7 @@ impl Checker<'_, '_> {
             return Some(found);
         }
         let (code, args) = match module.imports.get(&(tslib, mode)) {
-            Some(&target) => (2306, vec![files.module(target).path.to_vec()]),
+            Some(&target) => (2306, vec![files.module(target).file_name().to_vec()]),
             None if module.untyped_imports.contains(&(tslib, mode)) => return None,
             None => (2354, vec![TSLIB.as_bytes().to_vec()]),
         };

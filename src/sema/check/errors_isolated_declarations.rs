@@ -139,7 +139,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
         let is_on = self.files().options.isolated_declarations
             && !self.hir(file).has_errors
-            && !strings::contains(self.files().module(file).path, b"/node_modules/");
+            && !strings::contains(self.files().module(file).file_name(), b"/node_modules/");
         is_on.then(|| Emit::new(file))
     }
 

@@ -28,6 +28,9 @@ impl Checker<'_, '_> {
                     level: *level,
                 });
             super::explain::add_lines(&mut diagnostic.message_chain, lines.collect());
+            for &(file, start, end, code) in &problem.related {
+                diagnostic.add_related_info(Reported::bare((file, start, end), code));
+            }
             self.add_diagnostic(diagnostic);
         }
     }

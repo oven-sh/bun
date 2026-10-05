@@ -130,7 +130,7 @@ impl Checker<'_, '_> {
     /// `getSourceFileFromReference`: 1006
     fn aliases_self_references(&mut self, file: FileId) {
         let files = self.files();
-        let path = files.module(file).path;
+        let path = files.module(file).file_name();
         for &(kind, value, start, _) in &self.hir(file).references {
             if kind == ReferenceKind::Path
                 && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
@@ -419,7 +419,7 @@ impl Checker<'_, '_> {
 
     /// `getVerbatimModuleSyntaxErrorMessage`
     pub(super) fn verbatim_module_syntax_error_message(&self, file: FileId) -> u32 {
-        let path = self.files().module(file).path;
+        let path = self.files().module(file).file_name();
         if path.ends_with(b".cts") || path.ends_with(b".cjs") {
             1286
         } else {
@@ -1050,7 +1050,7 @@ impl Checker<'_, '_> {
             // `AllowImportingTsExtensionsFrom`
             } else if using_ts_extension
                 && !options.allow_importing_ts_extensions
-                && !is_declaration_file_name(importing.path)
+                && !is_declaration_file_name(importing.file_name())
             {
                 if site.is_emittable {
                     // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
@@ -1079,9 +1079,9 @@ impl Checker<'_, '_> {
                 let should_rewrite =
                     path_is_relative(text) && has_ts_implementation_extension(text);
                 let may_be_emitted = target.hir.kind != FileKind::Declaration
-                    && !strings::contains(target.path, b"/node_modules/");
+                    && !strings::contains(target.file_name(), b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
-                    let path = relative_from_file(importing.path, target.path);
+                    let path = relative_from_file(importing.file_name(), target.file_name());
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension && !should_rewrite && may_be_emitted {
                     // `GetAnyExtensionFromPath`
@@ -1097,7 +1097,7 @@ impl Checker<'_, '_> {
                     let mut redirected = importing.redirected_imports.iter();
                     let path = match redirected.find(|r| (r.0, r.1) == key) {
                         Some(r) => Arg::Atom(r.2),
-                        None => Arg::Bytes(target.path),
+                        None => Arg::Bytes(target.file_name()),
                     };
                     self.error_at(at, 2306, &[path]);
                 }
@@ -1109,7 +1109,7 @@ impl Checker<'_, '_> {
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
                 && is_sync_import
                 && target.is_esm
-                && !target.path.ends_with(b".json")
+                && !target.file_name().ends_with(b".json")
                 // `HasResolutionModeOverride`
                 && !(matches!(
                     kind,
@@ -1198,7 +1198,7 @@ impl Checker<'_, '_> {
         at: (FileId, u32, u32),
     ) -> Option<Reported> {
         let importing = self.files().module(file);
-        let path = importing.path;
+        let path = importing.file_name();
         let target_extension = if path.ends_with(b".d.ts") {
             return None;
         } else if path.ends_with(b".ts") {

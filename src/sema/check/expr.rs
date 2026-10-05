@@ -1809,7 +1809,10 @@ impl<'p, 's> Checker<'p, 's> {
                     .iter()
                     .any(|d| matches!(d, Decl::File))
                 && (files.hir(module.file).kind == FileKind::Json
-                    || files.module(module.file).path.ends_with(b".d.json.ts"));
+                    || files
+                        .module(module.file)
+                        .file_name()
+                        .ends_with(b".d.json.ts"));
             if is_default_only {
                 // `getTypeWithSyntheticDefaultOnly`
                 ty = wrapper;

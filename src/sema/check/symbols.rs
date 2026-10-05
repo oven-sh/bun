@@ -909,7 +909,10 @@ impl<'p, 's> Checker<'p, 's> {
         // has only a default export.
         if is_file_to_node
             && (files.hir(module.file).kind == FileKind::Json
-                || files.module(module.file).path.ends_with(b".d.json.ts"))
+                || files
+                    .module(module.file)
+                    .file_name()
+                    .ends_with(b".d.json.ts"))
         {
             let default = Prop {
                 name: known::default,

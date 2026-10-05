@@ -805,12 +805,12 @@ impl<'p, 's> Checker<'p, 's> {
         let module = files.module(file);
         // `sourceFileMayBeEmitted`
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            || strings::contains(module.path, b"/node_modules/")
+            || strings::contains(module.file_name(), b"/node_modules/")
                 && !files
                     .options
                     .files
                     .iter()
-                    .any(|listed| listed == module.path)
+                    .any(|listed| listed == module.file_name())
         {
             return None;
         }
@@ -848,7 +848,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
-            && let Some(output) = crate::resolve::output_declaration_file_name(module.path, None)
+            && let Some(output) =
+                crate::resolve::output_declaration_file_name(module.file_name(), None)
         {
             let name =
                 &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
@@ -2873,7 +2874,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         continue;
                     };
                     let decl_file_name = match files.hir(file).kind {
-                        FileKind::Declaration => files.module(file).path.to_vec(),
+                        FileKind::Declaration => files.module(file).file_name().to_vec(),
                         _ => files.declaration_file_path(file),
                     };
                     let output_file_path = files.declaration_file_path(self.file());
@@ -5882,7 +5883,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Vec<Ending> {
         let files = self.files();
         let allows_ts = files.options.allow_importing_ts_extensions
-            || is_declaration_file_name(files.module(importing).path);
+            || is_declaration_file_name(files.module(importing).file_name());
         if mode == ResolutionMode::Import && files.options.resolves_like_node {
             return if allows_ts {
                 vec![Ending::Ts, Ending::Js]
@@ -5956,11 +5957,7 @@ impl<'p, 's> Checker<'p, 's> {
                         b".json",
                     ]
                     .iter()
-                    .any(|extension| {
-                        files
-                            .by_path
-                            .contains_key([directory, *extension].concat().as_slice())
-                    }) =>
+                    .any(|extension| files.by_path.contains(&[directory, *extension].concat())) =>
                 {
                     directory.to_vec()
                 }
@@ -6083,7 +6080,7 @@ impl<'p, 's> Checker<'p, 's> {
             let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
             self.process_ending(path, &allowed)
         };
-        if !dirname::<Posix>(files.module(importing).path)
+        if !dirname::<Posix>(files.module(importing).file_name())
             .starts_with(&path[..top_level_node_modules])
         {
             return Vec::new();
@@ -6148,7 +6145,7 @@ impl<'p, 's> Checker<'p, 's> {
         mode: ResolutionMode,
         target_mode: ResolutionMode,
     ) -> Vec<u8> {
-        let from = dirname::<Posix>(self.files().module(importing).path);
+        let from = dirname::<Posix>(self.files().module(importing).file_name());
         // The number of directory levels from the importing file up to the directory that contains
         // `path`.
         let distance = |path: &[u8]| {
@@ -6272,7 +6269,7 @@ impl<'p, 's> Checker<'p, 's> {
         if paths_only && options.paths.is_empty() {
             return Vec::new();
         }
-        let source_directory = dirname::<Posix>(files.module(importing).path);
+        let source_directory = dirname::<Posix>(files.module(importing).file_name());
         let mut relative_path = self.try_get_module_name_from_root_dirs(
             module_file_name,
             source_directory,
@@ -6434,7 +6431,9 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&(_, _, name)) = redirected.find(|it| it.0 == specifier && it.1 == mode) {
             return self.atoms().bytes(name).to_vec();
         }
-        let path = files.module(importer.imports[&(specifier, mode)]).path;
+        let path = files
+            .module(importer.imports[&(specifier, mode)])
+            .file_name();
         let mut to_outputs = importer.project_reference_imports.iter();
         if to_outputs.any(|&it| it == (specifier, mode))
             && let Some(output) = self.reference_redirect(path)
@@ -6461,7 +6460,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
         let path = (files.options)
-            .source_of_project_reference_if_output_included(files.module(target).path);
+            .source_of_project_reference_if_output_included(files.module(target).file_name());
         // `GetEachFileNameOfModule`. The output of a referenced project for the file comes first,
         // then the source: the `exports` of its package map to one or the other.
         let reference_redirect = self.reference_redirect(path);
@@ -6475,7 +6474,7 @@ impl<'p, 's> Checker<'p, 's> {
             .copied()
             .unwrap_or_default();
         targets.extend(redirects.iter().map(|path| (path.to_vec(), false)));
-        let mut paths = self.paths_through_links(path, &targets, from.path);
+        let mut paths = self.paths_through_links(path, &targets, from.file_name());
         // `containsIgnoredPath`, `shouldFilterIgnoredPaths`
         let contains_ignored_path = |path: &[u8]| {
             [b"/node_modules/.".as_slice(), b"/.git", b".#"]

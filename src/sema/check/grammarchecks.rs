@@ -270,7 +270,7 @@ impl Checker<'_, '_> {
         }
         if f.type_params.len() == 1 {
             let first = f.type_params.at(0);
-            let path = self.files().module(file).path;
+            let path = self.files().module(file).file_name();
             // Neither a constraint nor a trailing comma.
             if hir[first].constraint.is_none()
                 && text.get(skip_trivia(text, hir[first].end as usize)) == Some(&b'>')

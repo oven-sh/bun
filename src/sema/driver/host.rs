@@ -470,6 +470,22 @@ impl Disk {
             .map_or_else(|_| path.to_vec(), from_native)
     }
 
+    /// `path`, with every name in it spelled as its directory has it. Links are not followed.
+    pub fn as_written(&self, path: &[u8]) -> Vec<u8> {
+        let Split { parent, name } = split(path);
+        if self.case_sensitive || name.is_empty() || Self::is_above_listings(parent) {
+            return path.to_vec();
+        }
+        let written = match self.directory(parent) {
+            Directory::Listed(listing) => listing.find(name, false).map(|it| it.0),
+            Directory::Missing | Directory::Unreadable => None,
+        };
+        match parent {
+            b"/" => [b"/", written.unwrap_or(name)].concat(),
+            _ => inside(&self.as_written(parent), written.unwrap_or(name)),
+        }
+    }
+
     /// `path` is there.
     fn real_path_of(&self, path: &[u8]) -> Vec<u8> {
         let Split { parent, name } = split(path);

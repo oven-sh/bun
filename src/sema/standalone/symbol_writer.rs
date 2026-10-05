@@ -1119,7 +1119,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
 
     /// `Decl(a.ts, 3, 11)`
     fn push_declaration(&mut self, text: &mut String, file: FileId, declaration: Declaration) {
-        let path = self.c.files().module(file).path;
+        let path = self.c.files().module(file).file_name();
         let file_name = &crate::messages::text(bun_paths::basename_posix(path));
         text.push_str("Decl(");
         text.push_str(file_name);

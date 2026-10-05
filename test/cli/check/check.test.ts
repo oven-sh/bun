@@ -14989,6 +14989,7 @@ describe.concurrent("--check", () => {
           name: "provides the text",
           setup(build) {
             build.onResolve({ filter: /[/]generated$/ }, () => ({ path: join(process.cwd(), "generated.ts") }));
+            build.onLoad({ filter: /Outer[.]svelte$/ }, () => ({ contents: "export * from './App.svelte';", loader: "ts" }));
             build.onLoad({ filter: /generated[.]ts$|[.]svelte$/ }, () => ({ contents, loader: "ts" }));
           },
         };
@@ -14999,14 +15000,25 @@ describe.concurrent("--check", () => {
       "Outer.svelte": `<script lang='ts'></script>\n`,
       "store.ts": `export const n: number = '1';\n`,
       "uses.ts": `import { value } from './generated';\nexport const own: number = value;\n`,
+      "node_modules/runtime/package.json": JSON.stringify({ name: "runtime", version: "1.0.0", main: "index.js" }),
+      "node_modules/runtime/index.js": `// @ts-check\n/** @type {number} */\nexport const runtime = '1';\n`,
     });
     const build = async (...args: string[]) => JSON.parse((await run(String(dir), ["build.mjs", ...args])).stdout);
     // It cannot be named, so what it imports is.
-    const imported = await build("App.svelte", `import { n } from './store';\nexport const a: number = n;\n`);
-    expect(imported).toEqual({
-      success: false,
-      logs: [["TS2322: Type 'string' is not assignable to type 'number'.", 1]],
-    });
+    const importsStore = `import { n } from './store';\nexport const a: number = n;\n`;
+    const [imported, throughAnother, installed] = await Promise.all([
+      build("App.svelte", importsStore),
+      build("Outer.svelte", importsStore),
+      // What a plugin makes of it imports the plugin's own runtime, which is not of the project.
+      build("App.svelte", `import { runtime } from 'runtime';\nexport const a = runtime;\n`),
+    ]);
+    for (const result of [imported, throughAnother]) {
+      expect(result).toEqual({
+        success: false,
+        logs: [["TS2322: Type 'string' is not assignable to type 'number'.", 1]],
+      });
+    }
+    expect(installed).toEqual({ success: true, logs: [] });
     const [component, right, wrong] = await Promise.all([
       build("App.svelte", `export const a: number = 1;\n`),
       build("uses.ts", `export const value: number = 1;\n`),

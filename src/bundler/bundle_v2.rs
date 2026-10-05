@@ -2523,7 +2523,8 @@ pub mod bv2_impl {
                 flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
             // What cannot be named stands for what it imports: a page, and what only a plugin can
-            // read, like `App.svelte`.
+            // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
+            // which is not of the project.
             let mut named: Vec<usize> = Vec::new();
             let mut is_named = vec![false; sources.len()];
             let mut pending: Vec<usize> = (self.graph.entry_points.iter().rev())
@@ -2539,7 +2540,8 @@ pub mod bv2_impl {
                     pending.extend(
                         (records.map(|record| record.source_index))
                             .filter(|imported| imported.is_valid())
-                            .map(|imported| imported.get() as usize),
+                            .map(|imported| imported.get() as usize)
+                            .filter(|&imported| !sources[imported].path.is_node_module()),
                     );
                 }
             }

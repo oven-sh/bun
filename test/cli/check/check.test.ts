@@ -673,6 +673,17 @@ describe.concurrent("bun check", () => {
       expect(own.map(line => line.replace(/^\S*\//, ""))).toEqual(["imported.ts", "a.ts"]);
     });
 
+    // Not that of the file system that has `bun`.
+    test("the case of a file name matters if it does to the file system of the project", async () => {
+      using dir = project({
+        "button.ts": `export const button = 1;\n`,
+        "a.ts": `import { button } from "./Button";\nexport const a: number = button;\n`,
+      });
+      const { stdout } = await check(dir, ["a.ts"]);
+      const isFound = existsSync(join(String(dir), "BUTTON.TS"));
+      expect(stdout.includes("TS2307")).toBe(!isFound);
+    });
+
     test("a directory outside the project, without a tsconfig.json of its own", async () => {
       using dir = tempDir("bun-check", {
         "packages/my-application/tsconfig.json": tsconfig,
@@ -14111,6 +14122,40 @@ describe.concurrent("--check", () => {
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
   });
 
+  // These take a shorter way to the file, on which less is set up.
+  test("bun --check with an entry point that starts with `./` or is absolute", async () => {
+    using dir = project({
+      "good.ts": `export const n: number = 1;\nconsole.log("ran", n);\n`,
+      "bad.ts": `export const n: number = "1";\nconsole.log("ran", n);\n`,
+    });
+    const results = await Promise.all(
+      ["./good.ts", join(String(dir), "good.ts"), "./bad.ts", join(String(dir), "bad.ts")].map(entry =>
+        run(String(dir), ["--check", entry]),
+      ),
+    );
+    expect(results.map(it => [it.stdout, it.stderr.includes("bad.ts(1,14): error TS2322"), it.exitCode])).toEqual([
+      ["ran 1", false, 0],
+      ["ran 1", false, 0],
+      ["", true, 1],
+      ["", true, 1],
+    ]);
+  });
+
+  // `./` takes a shorter way to the page, on which less is set up.
+  test.each(["index.html", "./index.html"])(
+    "bun --check %s: a script that the page names from its root",
+    async page => {
+      using dir = project({
+        "index.html": `<!doctype html>\n<script type="module" src="/src/main.ts"></script>\n`,
+        "src/main.ts": `export const a: number = "1";\n`,
+      });
+      const { stderr, exitCode } = await run(String(dir), ["--check", page]);
+      expect(stderr).toContain(`src/main.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(stderr).not.toContain("TS6053");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("--tsconfig-override is the tsconfig.json of the check too", async () => {
     using dir = project({
       "tsconfig.build.json": JSON.stringify({
@@ -14140,20 +14185,24 @@ describe.concurrent("--check", () => {
         name: "a",
         scripts: { check: `${bun} check && echo ran >> ran.txt`, other: "echo other" },
       }),
-      "packages/a/a.ts": `export const a: number = 1;\n`,
+      "packages/a/src/a.ts": `export const a: number = 1;\n`,
     };
+    // Where `bun` is started, and where the script then runs.
     const cases = [
-      [".", ["--workspaces", "check"]],
-      [".", ["--filter=*", "check"]],
-      [".", ["-F", "*", "check"]],
-      ["packages/a", ["run", "--parallel", "check", "other"]],
-      ["packages/a", ["run", "--sequential", "check", "other"]],
+      [".", "packages/a", ["--workspaces", "check"]],
+      [".", "packages/a", ["--filter=*", "check"]],
+      [".", "packages/a", ["-F", "*", "check"]],
+      ["packages/a", "packages/a", ["run", "--parallel", "check", "other"]],
+      ["packages/a", "packages/a", ["run", "--sequential", "check", "other"]],
+      ["packages/a/src", "packages/a/src", ["run", "--parallel", "check", "other"]],
+      ["packages/a/src", "packages/a/src", ["run", "--sequential", "check", "other"]],
+      ["packages/a/src", "packages/a", ["check"]],
     ] as const;
     const seen = await Promise.all(
-      cases.map(async ([cwd, cmd]) => {
+      cases.map(async ([cwd, where, cmd]) => {
         using dir = project(files);
         const { exitCode, stderr } = await run(join(String(dir), cwd), [...cmd]);
-        const ran = join(String(dir), "packages", "a", "ran.txt");
+        const ran = join(String(dir), where, "ran.txt");
         return [exitCode, stderr.includes("Unknown flag"), existsSync(ran) ? readFileSync(ran, "utf8").trim() : ""];
       }),
     );

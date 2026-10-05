@@ -226,7 +226,7 @@ impl Virtual {
             links: BTreeMap::new(),
             is_case_sensitive,
             mounted,
-            disk: bun_sema_driver::host::Disk::new(1),
+            disk: bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/"),
         }
     }
 

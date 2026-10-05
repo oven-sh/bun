@@ -241,26 +241,21 @@ pub(crate) fn is_package_script() -> bool {
             cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
         }
     }
-    let mut dir = &cwd[..];
-    let (path, contents) = loop {
-        let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
-        if let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) {
-            break (path, contents);
-        }
-        let parent = dirname::<Auto>(dir);
-        if parent.is_empty() || parent.len() >= dir.len() {
-            return false;
-        }
-        dir = parent;
+    let Some((dir, path, contents)) = nearest_package_json(&cwd) else {
+        return false;
     };
     // In that script, and in what it runs, it is the type checker: `"check": "bun check"`.
-    let is_running = match env_var::BUN_INTERNAL_CHECK_SCRIPTS::get() {
-        Some(running) => running_package_scripts(running)
-            .any(|it| it == bun_core::strings::without_trailing_slash(dir)),
-        // Another package manager may run it.
-        None => env_var::npm_lifecycle_event::get() == Some(b"check".as_slice()),
-    };
-    if is_running {
+    let running = env_var::BUN_INTERNAL_CHECK_SCRIPTS::get();
+    if running.is_some_and(|running| running_package_scripts(running).any(|it| it == dir)) {
+        return false;
+    }
+    // Another package manager runs it. Not all say of which package.
+    if env_var::npm_lifecycle_event::get() == Some(b"check".as_slice())
+        && match env_var::npm_package_json::get() {
+            Some(of) => bun_core::strings::without_trailing_slash(dirname::<Auto>(of)) == dir,
+            None => running.is_none(),
+        }
+    {
         return false;
     }
     // Most have no such word in them.
@@ -278,6 +273,25 @@ pub(crate) fn is_package_script() -> bool {
         .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
 }
 
+/// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
+/// its text.
+fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
+    use bun_paths::platform::Auto;
+    use bun_paths::resolve_path::{dirname, join_abs_string};
+    loop {
+        let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
+        if let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) {
+            let dir = bun_core::strings::without_trailing_slash(dir);
+            return Some((dir, path, contents));
+        }
+        let parent = dirname::<Auto>(dir);
+        if parent.is_empty() || parent.len() >= dir.len() {
+            return None;
+        }
+        dir = parent;
+    }
+}
+
 /// The entries of `BUN_INTERNAL_CHECK_SCRIPTS`. Each is a length, `:` and as many bytes, since a
 /// path can have any byte in it.
 fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -290,7 +304,7 @@ fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// Makes `env` that of the script `name` of the package in `dir`. See `is_package_script`.
+/// Makes `env` that of the script `name` of the package that has `dir`. See `is_package_script`.
 pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir: &[u8]) {
     use std::io::Write;
     // `bun run check` runs all three.
@@ -298,7 +312,10 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         return;
     }
     let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
-    let dir = bun_core::strings::without_trailing_slash(dir);
+    // As `is_package_script` finds it, wherever in the package the script is started.
+    let Some((dir, ..)) = nearest_package_json(dir) else {
+        return;
+    };
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let _ = write!(running, "{}:", dir.len());
     running.extend_from_slice(dir);
@@ -799,6 +816,10 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     };
     let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
     let mut log = bun_ast::Log::init();
+    // The scanner takes `/src/main.tsx` from there. `bun ./index.html` has not come to it yet.
+    if bun_resolver::fs::FileSystem::init(None).is_err() {
+        return Vec::new();
+    }
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");

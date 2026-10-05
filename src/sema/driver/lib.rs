@@ -713,7 +713,8 @@ pub fn check_already_read_then<R>(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
-    let disk = host::Disk::with_already_read(threads, already_read);
+    let project = host::from_native(request.cwd);
+    let disk = host::Disk::with_already_read(threads, already_read, &project);
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);

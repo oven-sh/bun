@@ -342,17 +342,14 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
 }
 
 impl Disk {
-    pub fn new(threads: usize) -> Self {
-        Self::with_already_read(threads, AlreadyRead::default())
-    }
-
-    pub fn with_already_read(threads: usize, already_read: AlreadyRead) -> Self {
+    /// `project`: a path in the project, in the checker's path format.
+    pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
         Disk {
             threads,
             in_memory: InMemory::by_directory(&already_read),
             already_read,
             caches: Default::default(),
-            case_sensitive: is_file_system_case_sensitive(),
+            case_sensitive: is_file_system_case_sensitive(project),
             directories: ShardedMap::default(),
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
@@ -558,19 +555,24 @@ fn list(path: &[u8]) -> Directory {
     Directory::Listed(listing)
 }
 
-/// `isFileSystemCaseSensitive`: whether this program is still found when the case of its path is swapped.
-fn is_file_system_case_sensitive() -> bool {
+/// `isFileSystemCaseSensitive`, for the file system that has `path`: whether `path` is no longer
+/// found when the case of its name is swapped. Only of its name: what is above it can be on another
+/// file system, like `/mnt` of `/mnt/c`. TypeScript asks about itself, which is in the project.
+fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     if cfg!(windows) {
         return false;
     }
-    let Ok(exe) = bun_core::self_exe_path() else {
-        return true;
-    };
-    let mut swapped = exe.as_bytes().to_vec();
-    for c in &mut swapped {
-        *c ^= u8::from(c.is_ascii_alphabetic()) << 5;
+    for path in ancestors(path) {
+        let Split { parent, name } = split(path);
+        let mut swapped = name.to_vec();
+        for c in &mut swapped {
+            *c ^= u8::from(c.is_ascii_alphabetic()) << 5;
+        }
+        if swapped != name {
+            return !bun_sys::exists(&join(parent, &swapped));
+        }
     }
-    !bun_sys::exists(&swapped)
+    true
 }
 
 /// `packagejson.Parse`, with Bun's JSON parser. That one also takes strings in single quotes and

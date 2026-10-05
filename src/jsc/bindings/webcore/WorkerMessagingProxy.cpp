@@ -55,6 +55,7 @@ void* WebWorker__create(
     void* parentVM,
     const BunString* name,
     const BunString* url,
+    const BunString* evalSource,
     BunString* errorMessage,
     bool* errorIsInvalidExecArgv,
     uint32_t parentContextId,
@@ -66,10 +67,19 @@ void* WebWorker__create(
     StringImpl** argvPtr,
     size_t argvLen,
     bool defaultExecArgv,
+    bool inheritPreloads,
     StringImpl** execArgvPtr,
     size_t execArgvLen,
+    StringImpl** effectiveExecArgvPtr,
+    size_t effectiveExecArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    BunString* execArgvPreloadModulesPtr,
+    size_t execArgvPreloadModulesLen,
+    size_t execArgvEvalPreloadCount,
+    size_t execArgvBunPreloadCount,
+    size_t execArgvRequirePreloadCount,
+    uint8_t execArgvEvalMode);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -134,6 +144,11 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         preloadModules.append(Bun::toString(str));
     }
 
+    Vector<BunString> execArgvPreloadModules;
+    execArgvPreloadModules.reserveInitialCapacity(m_options.execArgvPreloadModules.size());
+    for (auto& str : m_options.execArgvPreloadModules)
+        execArgvPreloadModules.append(Bun::toString(str));
+
     static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
     std::span<WTF::StringImpl*> execArgv = m_options.execArgv
                                                .transform([](Vector<String>& vec) -> std::span<WTF::StringImpl*> {
@@ -147,11 +162,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     bool errorIsInvalidExecArgv = false;
     BunString name = Bun::toString(m_options.name);
     BunString url = Bun::toString(scriptURL);
+    BunString evalSource = Bun::toString(m_options.evalSource);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
         &name,
         &url,
+        &evalSource,
         &errorMessage,
         &errorIsInvalidExecArgv,
         m_loaderContextIdentifier,
@@ -162,12 +179,22 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         m_options.kind == WorkerOptions::Kind::Node,
         reinterpret_cast<WTF::StringImpl**>(m_options.argv.begin()),
         m_options.argv.size(),
-        !m_options.execArgv.has_value(),
+        m_options.inheritExecArgv,
+        m_options.inheritPreloads,
         execArgv.data(),
         execArgv.size(),
+        reinterpret_cast<WTF::StringImpl**>(m_options.effectiveExecArgv.begin()),
+        m_options.effectiveExecArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        execArgvPreloadModules.begin(),
+        execArgvPreloadModules.size(),
+        m_options.execArgvEvalPreloadCount,
+        m_options.execArgvBunPreloadCount,
+        m_options.execArgvRequirePreloadCount,
+        static_cast<uint8_t>(m_options.execArgvEvalMode));
     m_options.preloadModules.clear();
+    m_options.execArgvPreloadModules.clear();
 
     if (!m_workerThread) {
         m_state.store(State::Closed);

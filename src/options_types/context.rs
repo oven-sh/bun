@@ -14,6 +14,15 @@ use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkerEvalMode {
+    #[default]
+    Auto,
+    CommonJS,
+    Module,
+}
+
 // Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
 // CLI string: populated once from argv/bunfig during startup and never freed.
 
@@ -43,6 +52,10 @@ pub struct ContextData {
     pub no_exit_on_error: bool,
 
     pub preloads: Vec<Box<[u8]>>,
+    pub worker_eval_preloads: Vec<Box<[u8]>>,
+    pub worker_preload_require_start: usize,
+    pub worker_preload_require_count: usize,
+    pub worker_eval_mode: WorkerEvalMode,
     pub has_loaded_global_config: bool,
 }
 
@@ -83,6 +96,10 @@ impl Default for ContextData {
             sequential: false,
             no_exit_on_error: false,
             preloads: Vec::new(),
+            worker_eval_preloads: Vec::new(),
+            worker_preload_require_start: 0,
+            worker_preload_require_count: 0,
+            worker_eval_mode: WorkerEvalMode::Auto,
             has_loaded_global_config: false,
         }
     }

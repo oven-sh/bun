@@ -619,6 +619,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__createArgv(JSC::JSGlobalObject* arg0)
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createArgv0(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createExecArgv(JSC::JSGlobalObject* arg0);
+ZIG_DECL JSC::EncodedJSValue Bun__Process__tokenizeWorkerOptions(JSC::JSGlobalObject*, const BunString*, bool, bool);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0);
 ZIG_DECL bool Bun__Process__hasTitle();
 ZIG_DECL BunString Bun__Process__getTitle(JSC::JSGlobalObject* arg0);

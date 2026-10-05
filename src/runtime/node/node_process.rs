@@ -14,6 +14,111 @@ unsafe extern "C" {
     safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
 }
 
+#[unsafe(export_name = "Bun__Process__tokenizeWorkerOptions")]
+extern "C" fn tokenize_worker_options(
+    global: &JSGlobalObject,
+    source: &bun_core::String,
+    is_bun: bool,
+    strict: bool,
+) -> JSValue {
+    let result = (|| -> JsResult<JSValue> {
+        let source = source.to_utf8();
+        let tokens = match bun_core::node_options::tokenize(source.slice()) {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                if !strict {
+                    return JSValue::create_empty_array(global, 0);
+                }
+                let message = match error {
+                    bun_core::node_options::TokenizeError::UnterminatedString => {
+                        "unterminated string"
+                    }
+                    bun_core::node_options::TokenizeError::InvalidEscape => "invalid escape",
+                };
+                let variable: &[u8] = if is_bun {
+                    b"BUN_OPTIONS"
+                } else {
+                    b"NODE_OPTIONS"
+                };
+                let mut text = b"invalid value for ".to_vec();
+                text.extend_from_slice(variable);
+                text.extend_from_slice(b" (");
+                text.extend_from_slice(message.as_bytes());
+                text.extend_from_slice(b")\n");
+                return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &text);
+            }
+        };
+        let mut parsed: Vec<Vec<u8>> = Vec::new();
+        let mut i = 0;
+        while i < tokens.len() {
+            let token = &tokens[i];
+            if token.len() <= 1 || token.first() != Some(&b'-') {
+                break;
+            }
+            let split = bun_core::strings::split_once_char(token, b'=');
+            let name = split.map_or_else(|| token.as_ref(), |(name, _)| name);
+            if !is_bun
+                && token.first() == Some(&b'-')
+                && !bun_core::node_options::is_allowed_worker_argument(token)
+            {
+                if strict {
+                    let mut message = name.to_vec();
+                    message.extend_from_slice(b" is not allowed in NODE_OPTIONS");
+                    return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &message);
+                }
+                break;
+            }
+            let required_value = if is_bun && name == b"--preload" {
+                Some(b"--preload".as_slice())
+            } else {
+                bun_core::node_options::worker_required_value_flag(token)
+            };
+            if let Some(canonical) = required_value {
+                let value = match split {
+                    Some((_, value)) if !value.is_empty() => Some(value),
+                    Some(_) => None,
+                    None => tokens
+                        .get(i + 1)
+                        .filter(|value| value.first() != Some(&b'-'))
+                        .map(|value| {
+                            i += 1;
+                            value
+                                .strip_prefix(b"\\-")
+                                .map_or_else(|| value.as_ref(), |_| &value[1..])
+                        }),
+                };
+                let Some(value) = value else {
+                    if strict {
+                        let mut message = token.to_vec();
+                        message.extend_from_slice(b" requires an argument");
+                        return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &message);
+                    }
+                    break;
+                };
+                let mut argument = canonical.to_vec();
+                argument.push(b'=');
+                argument.extend_from_slice(value);
+                parsed.push(argument);
+            } else {
+                let mut argument = bun_core::node_options::worker_canonical_flag(token)
+                    .map_or_else(|| token.to_vec(), |canonical| canonical.to_vec());
+                if argument.as_slice() != token.as_ref() {
+                    if let Some((_, value)) = split {
+                        argument.push(b'=');
+                        argument.extend_from_slice(value);
+                    }
+                }
+                parsed.push(argument);
+            }
+            i += 1;
+        }
+        JSValue::create_array_from_iter(global, parsed.iter(), |token| {
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, token)
+        })
+    })();
+    bun_jsc::to_js_host_fn_result(global, result)
+}
+
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
 
 // `&JSGlobalObject` is ABI-identical to `*const JSGlobalObject` (non-null) in
@@ -291,6 +396,13 @@ mod _impl {
         // it isn't worth doing this as a part of the CLI
         let mut iter = argv.iter();
         let _ = iter.next(); // skip argv[0]
+        // NODE_OPTIONS-injected tokens occupy argv[1 .. 1 + node_options_argc].
+        // Node does not report env-derived options in process.execArgv. The
+        // BUN_OPTIONS tokens after them stay visible on purpose: the
+        // standalone path above rebuilds execArgv from BUN_OPTIONS too.
+        for _ in 0..bun_core::node_options_argc() {
+            let _ = iter.next();
+        }
         for arg in iter {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;

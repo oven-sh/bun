@@ -2077,12 +2077,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     match process.watch_or_reap() {
         Ok(false) => this.process_slot().set(Some(process)),
         Ok(true) => {}
-        Err(err) => {
-            if !process.has_exited() {
-                let rusage = bun_core::ffi::zeroed::<Rusage>();
-                process.on_exit(Status::Err(err), &rusage);
-            }
-        }
+        Err(err) => process.on_watch_failed(err),
     }
 }
 

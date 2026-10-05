@@ -2563,10 +2563,11 @@ pub mod bv2_impl {
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .map(|((source, _), _)| (source.path.text, source.contents()));
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             if type_check(
                 self.transpiler.fs().top_level_dir,
                 self.transpiler.options.tsconfig_override.as_deref(),
+                &self.transpiler.options.custom_conditions,
                 &mut entry_points,
                 &mut sources,
                 self.transpiler.log_mut(),

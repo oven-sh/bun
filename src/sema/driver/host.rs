@@ -3,7 +3,7 @@
 //! The checker's paths are absolute, use `/`, and start with one. On Windows it represents `C:\a\b`
 //! as `/C:/a/b`.
 
-use bun_core::strings::{BOM, index_of, is_all_whitespace, without_trailing_slash};
+use bun_core::strings::{BOM, contains, index_of, is_all_whitespace, without_trailing_slash};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
@@ -11,8 +11,8 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside, join,
-    to_file_name_lower_case, to_path,
+    Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside,
+    is_declaration_file_name, join, to_file_name_lower_case, to_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::{FxHashMap, ShardedMap};
@@ -186,6 +186,8 @@ pub struct Disk {
     pub bundled_libs: Option<BundledLibs>,
     /// `Host::script_kind`, by `tspath.Path`.
     pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
+    /// `Request::script_kinds_by_extension`
+    pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
@@ -369,6 +371,7 @@ impl Disk {
             times: Default::default(),
             bundled_libs: None,
             script_kinds: Vec::new(),
+            script_kinds_by_extension: Vec::new(),
             before_read: None,
             scripts_of_page: None,
         }
@@ -789,12 +792,20 @@ impl Host for Disk {
         scripts.unwrap_or_default()
     }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
-        if self.script_kinds.is_empty() {
+        if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {
             return None;
         }
-        let path = to_path(path, self.case_sensitive);
-        let found = self.script_kinds.iter().find(|it| it.0 == *path);
-        found.map(|it| it.1)
+        let key = to_path(path, self.case_sensitive);
+        if let Some(found) = self.script_kinds.iter().find(|it| it.0 == *key) {
+            return Some(found.1);
+        }
+        // A declaration file, and what is installed, is what its name says.
+        if is_declaration_file_name(path) || contains(path, b"/node_modules/") {
+            return None;
+        }
+        let extension = bun_paths::extension(path);
+        let mut by_extension = self.script_kinds_by_extension.iter();
+        by_extension.find(|it| it.0 == extension).map(|it| it.1)
     }
     fn parse<'s>(
         &self,

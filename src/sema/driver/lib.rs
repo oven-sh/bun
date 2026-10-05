@@ -26,7 +26,7 @@ use bun_sema::program::{FileId, Files};
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
     Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
-    is_javascript, is_relative, is_same_path, join, output_declaration_file_name, to_path,
+    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -441,6 +441,9 @@ pub struct Request<'a> {
     pub are_entry_points: bool,
     /// `Host::script_kind` of those of `paths` whose names do not tell what they are run as.
     pub script_kinds: &'a [(Vec<u8>, ScriptKind)],
+    /// `--loader .js:ts`: `Host::script_kind` of the files of the project with an extension, which
+    /// starts with the `.`.
+    pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
     /// Compiler options given on the command line. They override the configuration file, also of referenced projects.
@@ -754,6 +757,7 @@ pub fn check_provided_then<R>(
         (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
     });
     disk.script_kinds = script_kinds.collect();
+    disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -1034,8 +1038,13 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         if scripts.is_empty() {
             return report;
         }
-        let paths = &scripts[..];
-        report.merge(check_paths(disk, &Request { paths, ..*request }));
+        // They are run, whatever has found them: see `Request::are_entry_points`.
+        let of_pages = Request {
+            paths: &scripts,
+            are_entry_points: true,
+            ..*request
+        };
+        report.merge(check_paths(disk, &of_pages));
         sort_and_deduplicate(&mut report.diagnostics);
     }
 }
@@ -1328,12 +1337,6 @@ fn check_project_of(
     }
 }
 
-/// `is_javascript`, unless the host knows better than the name.
-fn is_javascript_file(disk: &host::Disk, path: &[u8]) -> bool {
-    let by_name = || is_javascript(path);
-    (disk.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
-}
-
 /// `named` is sorted. It has, and `file` is, a `tspath.Path`.
 fn is_among(named: &[Vec<u8>], file: &[u8]) -> bool {
     named.binary_search_by(|it| it.as_slice().cmp(file)).is_ok()
@@ -1559,6 +1562,12 @@ impl Host for WithOutputs<'_> {
     }
     fn is_case_sensitive(&self) -> bool {
         self.disk.is_case_sensitive()
+    }
+    fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
+        self.disk.script_kind(path)
+    }
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
+        self.disk.scripts_of_page(page)
     }
     fn parse<'s>(
         &self,

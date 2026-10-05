@@ -321,6 +321,7 @@ fn main() {
                     .then_some(&task_instructions as &(dyn Fn() -> u64 + Sync)),
                 plan_options,
                 script_kinds: &[],
+                script_kinds_by_extension: &[],
                 conditions: &[],
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,

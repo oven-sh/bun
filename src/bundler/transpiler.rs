@@ -1485,6 +1485,7 @@ impl<'a> Transpiler<'a> {
                     lower_toml_datetimes: false,
                     is_entry_point: false,
                     tolerant: false,
+                    is_javascript: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

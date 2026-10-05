@@ -12,8 +12,8 @@ use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, Phase, Resolver, ScriptTarget, Spent, Tracer, ancestors, contains_path,
     file_extension_is_one_of, file_path, format_by_extension, has_ts_implementation_extension,
-    inside, is_javascript, is_relative, is_same_path, join, lib_name, remove_file_extension,
-    supported_extensions, to_file_name_lower_case, to_path, to_path_in,
+    inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, lib_name,
+    remove_file_extension, supported_extensions, to_file_name_lower_case, to_path, to_path_in,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -3434,7 +3434,7 @@ impl<'s> Files<'s> {
                         let depth = depth + u32::from(increases_depth);
                         // `elideOnDepth`, `isJsFileFromNodeModules`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
                         let is_elided = increases_depth
-                            && is_javascript(path)
+                            && is_javascript_file(host, path)
                             && strings::contains(path, b"/node_modules/")
                             && depth > options.max_node_module_js_depth;
                         // `shouldAddFile`: with `noResolve` no import adds a file.
@@ -4083,7 +4083,7 @@ impl<'s> Files<'s> {
                                 .filter(|(_, _, path, brings_in, _)| {
                                     *brings_in
                                         && !options.no_resolve
-                                        && !(is_javascript(path)
+                                        && !(is_javascript_file(host, path)
                                             && strings::contains(path, b"/node_modules/"))
                                 })
                                 .map(|&(_, _, path, ..)| (path, false)),
@@ -4293,7 +4293,7 @@ impl<'s> Files<'s> {
             note_package(&mut resolved_packages, &resolved);
             let found = resolved.file_name;
             let tslib = known::tslib;
-            if is_javascript(found) {
+            if is_javascript_file(host, found) {
                 untyped_imports.push((tslib, default_mode));
                 let package = resolved.package_name.map(|name| atoms.intern(name));
                 untyped_import_files.push((atoms.intern(found), package));
@@ -4345,7 +4345,7 @@ impl<'s> Files<'s> {
         {
             note_package(&mut resolved_packages, &resolved);
             let found = resolved.file_name;
-            let is_untyped = is_javascript(found);
+            let is_untyped = is_javascript_file(host, found);
             if is_untyped {
                 untyped_imports.push((spec, default_mode));
                 if let Some(types) = resolved.alternate_result {
@@ -4436,7 +4436,7 @@ impl<'s> Files<'s> {
                 note_package(&mut resolved_packages, &resolved);
                 let increases_depth = resolved.is_external_library_import;
                 // `GetResolutionDiagnostic`, `needAllowJs`: the file is not added, so it is not redirected either.
-                let needs_allow_js = is_javascript(resolved.file_name)
+                let needs_allow_js = is_javascript_file(host, resolved.file_name)
                     && !options.allow_js
                     && options.no_implicit_any;
                 // `getParseFileRedirect`: the declaration file is read in place of a source of a referenced project.
@@ -4454,7 +4454,7 @@ impl<'s> Files<'s> {
                     continue;
                 }
                 match resolved.file_name {
-                    found if is_javascript(found) => {
+                    found if is_javascript_file(host, found) => {
                         untyped_imports.push((spec, mode));
                         if let Some(types) = resolved.alternate_result {
                             let types = atoms.intern(types);

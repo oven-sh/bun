@@ -161,6 +161,8 @@ pub struct Options<'a> {
     /// Reports syntax errors the way TypeScript's parser does and recovers. Only the type checker
     /// enables this.
     pub tolerant: bool,
+    /// `NodeFlagsJavaScriptFile`, with `tolerant`.
+    pub is_javascript: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -196,6 +198,7 @@ impl<'a> Default for Options<'a> {
             lower_toml_datetimes: false,
             is_entry_point: false,
             tolerant: false,
+            is_javascript: false,
         }
     }
 }
@@ -284,6 +287,7 @@ impl<'a> Options<'a> {
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
             tolerant: self.tolerant,
+            is_javascript: self.is_javascript,
         }
     }
 
@@ -359,6 +363,7 @@ impl<'a> Options<'a> {
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
             tolerant: false,
+            is_javascript: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -385,6 +390,7 @@ impl<'a> Parser<'a> {
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.tolerant = options.tolerant;
+        lexer.is_javascript = options.is_javascript;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance

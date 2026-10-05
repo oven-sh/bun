@@ -396,8 +396,17 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
 enum Paths<'a> {
     /// The arguments of `bun check`.
     Arguments(&'a [Vec<u8>]),
-    /// See `Request::are_entry_points`, `Request::script_kinds`.
-    EntryPoints(&'a [Vec<u8>], &'a [(Vec<u8>, ScriptKind)]),
+    /// See `Request::are_entry_points`.
+    EntryPoints(Entries<'a>),
+}
+
+/// See the fields of `Request` by these names.
+#[derive(Clone, Copy, Default)]
+struct Entries<'a> {
+    paths: &'a [Vec<u8>],
+    script_kinds: &'a [(Vec<u8>, ScriptKind)],
+    script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
+    conditions: &'a [Box<[u8]>],
 }
 
 fn run(
@@ -484,18 +493,24 @@ fn request<'a>(
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    let (paths, are_entry_points, script_kinds) = match paths {
-        Paths::Arguments(paths) => (paths, false, &[][..]),
-        Paths::EntryPoints(paths, script_kinds) => (paths, true, script_kinds),
+    let (entries, are_entry_points) = match paths {
+        Paths::Arguments(paths) => {
+            let paths = Entries {
+                paths,
+                ..Default::default()
+            };
+            (paths, false)
+        }
+        Paths::EntryPoints(entries) => (entries, true),
     };
     Request {
         cwd,
         project,
-        paths,
+        paths: entries.paths,
         are_entry_points,
-        script_kinds,
-        conditions: bun_options_types::context::try_get()
-            .map_or(&[][..], |ctx| &ctx.args.conditions[..]),
+        script_kinds: entries.script_kinds,
+        script_kinds_by_extension: entries.script_kinds_by_extension,
+        conditions: entries.conditions,
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -703,7 +718,34 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         before_read,
         ..Default::default()
     };
-    check_and_report(Paths::EntryPoints(&paths, &script_kinds), provided)
+    // `--loader`, `--conditions`
+    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
+    let loaders = args.and_then(|args| args.loaders.as_ref());
+    let by_extension: Vec<(Vec<u8>, ScriptKind)> = (loaders.into_iter())
+        .flat_map(|it| it.extensions.iter().zip(&it.loaders))
+        .filter_map(|(extension, &loader)| {
+            let loader = <bun_ast::Loader as bun_options_types::LoaderExt>::from_api(loader);
+            Some((extension.to_vec(), script_kind_of(loader)?))
+        })
+        .collect();
+    let entries = Entries {
+        paths: &paths,
+        script_kinds: &script_kinds,
+        script_kinds_by_extension: &by_extension,
+        conditions: args.map_or(&[][..], |args| &args.conditions[..]),
+    };
+    check_and_report(Paths::EntryPoints(entries), provided)
+}
+
+fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
+    use bun_ast::Loader;
+    Some(match loader {
+        Loader::Js => ScriptKind::Js,
+        Loader::Jsx => ScriptKind::Jsx,
+        Loader::Ts => ScriptKind::Ts,
+        Loader::Tsx => ScriptKind::Tsx,
+        _ => return None,
+    })
 }
 
 /// `before_read` of `check_before` under `--watch`. The file watcher of `vm` knows a file before the
@@ -737,22 +779,24 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 pub(crate) fn check_for_build_command(
     cwd: &[u8],
     tsconfig: Option<&[u8]>,
+    conditions: &[Box<[u8]>],
     entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
     log: &mut bun_ast::Log,
 ) -> bool {
-    check_for_build(cwd, tsconfig, entry_points, sources, log, true)
+    check_for_build(cwd, tsconfig, conditions, entry_points, sources, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
 pub(crate) fn check_for_bun_build(
     cwd: &[u8],
     tsconfig: Option<&[u8]>,
+    conditions: &[Box<[u8]>],
     entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
     log: &mut bun_ast::Log,
 ) -> bool {
-    check_for_build(cwd, tsconfig, entry_points, sources, log, false)
+    check_for_build(cwd, tsconfig, conditions, entry_points, sources, log, false)
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
@@ -760,23 +804,43 @@ pub(crate) fn check_for_bun_build(
 fn check_for_build(
     cwd: &[u8],
     tsconfig: Option<&[u8]>,
+    conditions: &[Box<[u8]>],
     entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
     log: &mut bun_ast::Log,
     shows_progress: bool,
 ) -> bool {
+    // The bundler knows what it loads each file with. What is installed is what its name says.
+    let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
+    let mut sources = sources.map(|(path, text, loader)| {
+        let script_kind = script_kind_of(loader);
+        if script_kind.is_some()
+            && script_kind != ScriptKind::from_file_name(path)
+            && !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE)
+        {
+            script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));
+        }
+        (path, text)
+    });
+    let provided = Provided {
+        already_read: already_read(cwd, &mut sources),
+        ..Default::default()
+    };
     // Not `App.svelte`, which a plugin turns into TypeScript.
-    let entry_points = entry_points.filter(|path| has_types(path));
-    let paths: Vec<Vec<u8>> = entry_points.map(<[u8]>::to_vec).collect();
+    let is_source = |path: &&[u8]| has_types(path) || script_kinds.iter().any(|it| it.0 == **path);
+    let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
+        .map(<[u8]>::to_vec)
+        .collect();
     // Only stylesheets and the like.
     if paths.is_empty() {
         return true;
     }
-    let paths = Paths::EntryPoints(&paths, &[]);
-    let provided = Provided {
-        already_read: already_read(cwd, sources),
+    let paths = Paths::EntryPoints(Entries {
+        paths: &paths,
+        script_kinds: &script_kinds,
+        conditions,
         ..Default::default()
-    };
+    });
     let then = |report| report;
     let report = match shows_progress {
         true => run(cwd, tsconfig, paths, &[], 0, provided, then),
@@ -853,27 +917,25 @@ fn what_to_check(
     cwd: &[u8],
     entry_points: &[EntryPoint],
 ) -> Option<(Vec<Vec<u8>>, Vec<(Vec<u8>, ScriptKind)>)> {
-    use bun_ast::Loader;
     let (mut paths, mut script_kinds) = (Vec::new(), Vec::new());
     for entry_point in entry_points {
         let path = entry_point.path;
-        let script_kind = match entry_point.loader {
-            Some(Loader::Js) => Some(ScriptKind::Js),
-            Some(Loader::Jsx) => Some(ScriptKind::Jsx),
-            Some(Loader::Ts) => Some(ScriptKind::Ts),
-            Some(Loader::Tsx) => Some(ScriptKind::Tsx),
-            _ => None,
-        };
-        if has_types(path) {
-            paths.push(path.to_vec());
-        } else if path.ends_with(b".html") {
+        if path.ends_with(b".html") {
             for page in pages_of(cwd, path) {
                 let scripts = imports_of_page(cwd, &page);
                 paths.extend(scripts.into_iter().filter(|path| has_types(path)));
             }
-        } else if let Some(script_kind) = script_kind {
+        } else if let Some(loader) = entry_point.loader {
+            // Whatever its name says.
+            let Some(script_kind) = script_kind_of(loader) else {
+                continue;
+            };
             paths.push(path.to_vec());
-            script_kinds.push((path.to_vec(), script_kind));
+            if Some(script_kind) != ScriptKind::from_file_name(path) {
+                script_kinds.push((path.to_vec(), script_kind));
+            }
+        } else if has_types(path) {
+            paths.push(path.to_vec());
         }
     }
     (!paths.is_empty()).then_some((paths, script_kinds))
@@ -934,7 +996,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(Paths::EntryPoints(&[], &[]), Provided::default())
+    check_and_report(Paths::EntryPoints(Entries::default()), Provided::default())
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

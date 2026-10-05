@@ -504,6 +504,7 @@ pub fn summarize<'s>(
             options.features.standard_decorators = !experimental_decorators;
             options.suppress_warnings_about_weird_code = true;
             options.tolerant = true;
+            options.is_javascript = is_js;
             let define = crate::Define::default();
             let mut log = bun_ast::Log::init();
             let (file, awaited) =

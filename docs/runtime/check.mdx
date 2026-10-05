@@ -348,10 +348,11 @@ A few more details:
 
 - `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
 - Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
-- Bun runs a file without an extension as TSX, for example a script that starts with `#!/usr/bin/env bun`. The same goes for `-e`, `-p`, and code from stdin. `--check` checks that code as TSX too. Errors in it appear at `[eval]` or `[stdin]`. If `--loader` maps the extension of the entry point, the check follows that.
+- Bun runs a file without an extension as TSX, for example a script that starts with `#!/usr/bin/env bun`. The same goes for `-e`, `-p`, and code from stdin. `--check` checks that code as TSX too. Errors in it appear at `[eval]` or `[stdin]`.
 - A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.
 - With `--tsconfig-override`, the check uses that `tsconfig.json`.
 - With `--conditions`, the check resolves packages with those conditions too.
+- With `--loader`, the check reads your files the way Bun does. For example, `--loader .js:ts` makes every `.js` file of your project TypeScript. The files in `node_modules` stay what their names say.
 
 ### Watch mode
 

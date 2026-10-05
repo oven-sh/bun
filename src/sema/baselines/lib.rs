@@ -368,6 +368,12 @@ impl Virtual {
 }
 
 impl Host for Virtual {
+    fn script_kind(&self, _path: &[u8]) -> Option<bun_sema::resolve::ScriptKind> {
+        None
+    }
+    fn scripts_of_page(&self, _page: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         if let Some(real) = self.on_disk(path) {
             return match self.bundle {
@@ -1794,6 +1800,7 @@ fn run_one(
             plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
             script_kinds: &[],
+            script_kinds_by_extension: &[],
             conditions: &[],
             stops_like_tsc: false,
             uses_typescript_wording: true,

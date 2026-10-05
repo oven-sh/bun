@@ -157,6 +157,7 @@ impl BuildCommand {
             if !crate::cli::check_command::check_for_build_command(
                 bun_resolver::fs::FileSystem::instance().top_level_dir,
                 ctx.args.tsconfig_override.as_deref(),
+                &ctx.args.conditions,
                 &mut (entry_points.map(|path| &**path))
                     .filter(|path| crate::cli::check_command::has_types(path)),
                 &mut core::iter::empty(),

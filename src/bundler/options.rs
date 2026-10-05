@@ -1195,15 +1195,17 @@ bun_core::comptime_string_map! {
 
 /// `BundleOptions::type_check`. `entry_points` yields the path of each JavaScript or TypeScript
 /// file that an entry point resolved to, or that a page which is an entry point imports. `sources`
-/// yields the path and the text of each JavaScript, TypeScript and JSON file of the bundle, which
-/// the type checker takes instead of reading the file again. `tsconfig`: `tsconfig_override`, which
-/// the resolver reads in place of every other. Errors are added to `log`, or reported in another
-/// way. Returns whether the build goes on.
+/// yields the path, the text and the loader of each JavaScript, TypeScript and JSON file of the
+/// bundle, which the type checker takes instead of reading the file again. `tsconfig`:
+/// `tsconfig_override`, which the resolver reads in place of every other. `conditions`:
+/// `custom_conditions`. Errors are added to `log`, or reported in another way. Returns whether the
+/// build goes on.
 pub type TypeCheck = fn(
     cwd: &[u8],
     tsconfig: Option<&[u8]>,
+    conditions: &[Box<[u8]>],
     entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8])>,
+    sources: &mut dyn Iterator<Item = (&[u8], &[u8], Loader)>,
     log: &mut bun_ast::Log,
 ) -> bool;
 
@@ -1344,6 +1346,8 @@ pub struct BundleOptions<'a> {
     /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
     /// checker.
     pub type_check: Option<TypeCheck>,
+    /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
+    pub custom_conditions: Vec<Box<[u8]>>,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1556,6 +1560,7 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             type_check: self.type_check,
+            custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1740,6 +1745,7 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: true,
             module_preload: true,
             type_check: None,
+            custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

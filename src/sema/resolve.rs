@@ -109,14 +109,10 @@ pub trait Host: Sync {
     /// its name is. typescript-go's language server has the language of an open file from the
     /// editor (`LanguageKindToScriptKind`), and loads it under `allowNonTsExtensions`. `None`:
     /// `GetScriptKindFromFileName`.
-    fn script_kind(&self, _path: &[u8]) -> Option<ScriptKind> {
-        None
-    }
+    fn script_kind(&self, path: &[u8]) -> Option<ScriptKind>;
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
-    fn scripts_of_page(&self, _page: &[u8]) -> Vec<Vec<u8>> {
-        Vec::new()
-    }
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -334,6 +330,24 @@ impl ScriptKind {
     pub fn is_javascript(self) -> bool {
         matches!(self, ScriptKind::Js | ScriptKind::Jsx)
     }
+
+    /// `GetScriptKindFromFileName`
+    pub fn from_file_name(path: &[u8]) -> Option<ScriptKind> {
+        let dot = strings::last_index_of_char(path, b'.')?;
+        Some(match &path[dot..].to_ascii_lowercase()[..] {
+            b".js" | b".cjs" | b".mjs" => ScriptKind::Js,
+            b".jsx" => ScriptKind::Jsx,
+            b".ts" | b".cts" | b".mts" => ScriptKind::Ts,
+            b".tsx" => ScriptKind::Tsx,
+            _ => return None,
+        })
+    }
+}
+
+/// `is_javascript`, unless the host knows better than the name.
+pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
+    let by_name = || is_javascript(path);
+    (host.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1833,7 +1847,7 @@ impl<'h> Resolver<'h> {
             Some(_) => {
                 !has_ts_implementation_extension(&path) || look.outcome.arbitrary_extension.get()
             }
-            None => is_javascript(&path),
+            None => is_javascript_file(self.host, &path),
         };
         if !(look.outcome.found_package.get()
             && !look.is_config_lookup
@@ -2487,6 +2501,10 @@ impl<'h> Resolver<'h> {
                     look.trace(6148, &[parent]);
                     return None;
                 }
+            }
+            // By that very name it is a source file.
+            if self.host.script_kind(path).is_some() && self.is_file(path) {
+                return Some(path.to_vec());
             }
             if let Some(found) = self.file(path, look) {
                 // Without a tracer, `resolve_with` finds the same directory.

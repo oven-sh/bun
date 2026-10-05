@@ -234,6 +234,8 @@ pub struct Lexer<'a> {
     /// token, as in TypeScript's parser, so that there is an AST to check no matter how many errors
     /// the file has.
     pub(crate) tolerant: bool,
+    /// `Options::is_javascript`
+    pub(crate) is_javascript: bool,
     /// Number of consecutive error recoveries at the same position.
     pub(crate) stuck: u32,
     /// Tolerant mode: the number of errors that were not logged because the log was disabled.
@@ -1293,13 +1295,7 @@ impl<'a> Lexer<'a> {
     /// `NodeFlagsJavaScriptFile`. The type checker has JavaScript parsed as TypeScript with JSX. Always false outside tolerant mode.
     #[inline]
     pub(crate) fn is_javascript_file(&self) -> bool {
-        self.tolerant && self.has_javascript_extension()
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn has_javascript_extension(&self) -> bool {
-        bun_sema::resolve::is_javascript(self.source.path.text)
+        self.tolerant && self.is_javascript
     }
 
     /// `TokenFullStart`, `nodePos()`: the end of the previous token, before the leading trivia
@@ -3131,6 +3127,7 @@ impl<'a> Lexer<'a> {
             is_legacy_octal_literal: false,
             is_log_disabled: false,
             tolerant: false,
+            is_javascript: false,
             stuck: 0,
             swallowed: 0,
             is_under_tag: false,

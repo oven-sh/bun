@@ -22,6 +22,51 @@ pub enum Json {
 }
 
 impl Json {
+    /// `core.StringifyJson` without indentation.
+    pub fn stringify(&self, out: &mut Vec<u8>) {
+        use std::io::Write;
+        let text = |text: &[u8], out: &mut Vec<u8>| {
+            out.push(b'"');
+            for &byte in text {
+                if matches!(byte, b'"' | b'\\') {
+                    out.push(b'\\');
+                }
+                out.push(byte);
+            }
+            out.push(b'"');
+        };
+        match self {
+            Json::Null => out.extend_from_slice(b"null"),
+            Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
+            Json::Number(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Json::String(value) => text(value, out),
+            Json::Array(items) => {
+                out.push(b'[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(b',');
+                    }
+                    item.stringify(out);
+                }
+                out.push(b']');
+            }
+            Json::Object(properties) => {
+                out.push(b'{');
+                for (index, (name, value)) in properties.iter().enumerate() {
+                    if index > 0 {
+                        out.push(b',');
+                    }
+                    text(name, out);
+                    out.push(b':');
+                    value.stringify(out);
+                }
+                out.push(b'}');
+            }
+        }
+    }
+
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
             Json::Object(entries) => entries.iter().find(|e| e.0 == key).map(|e| &e.1),

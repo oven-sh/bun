@@ -2,7 +2,7 @@
 //!
 //! A port of `internal/tsoptions/tsconfigparsing.go` and `internal/vfs/vfsmatch/vfsmatch.go`.
 
-use crate::config_options::is_file_path;
+use crate::config_options::{In, converted, is_file_path};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, contains_path, is_same_path, join, known_extension,
@@ -165,11 +165,53 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 struct Raw {
     /// `compilerOptions`. Paths are absolute, or start with `${configDir}`.
     compiler: Vec<(Vec<u8>, Json)>,
-    files: Option<Vec<Vec<u8>>>,
-    include: Option<Vec<Vec<u8>>>,
-    exclude: Option<Vec<Vec<u8>>>,
+    files: List,
+    include: List,
+    exclude: List,
     references: Option<Vec<ProjectReference>>,
+    /// `rawConfig.Has("references")`
+    has_references: bool,
     has_extends: bool,
+}
+
+/// `files`, `include` or `exclude`.
+#[derive(Default)]
+struct List {
+    /// `rawConfig.Has`: the property is there, whatever its value.
+    is_specified: bool,
+    /// `propOfRaw.sliceValue`. `convertArrayLiteralElementsToJson` leaves out the elements that are
+    /// `null`, and a list of nothing else is nil. An element of the wrong type is still in it.
+    items: Option<Vec<Json>>,
+}
+
+impl List {
+    fn of(value: Option<&Json>) -> List {
+        let items = value.and_then(Json::as_array).and_then(|items| {
+            let kept: Vec<Json> = (items.iter())
+                .filter(|item| !matches!(item, Json::Null))
+                .cloned()
+                .collect();
+            (items.is_empty() || !kept.is_empty()).then_some(kept)
+        });
+        List {
+            is_specified: value.is_some(),
+            items,
+        }
+    }
+
+    /// The elements that are strings.
+    fn strings(&self) -> Vec<Vec<u8>> {
+        let items = self.items.iter().flatten();
+        items
+            .filter_map(|item| item.as_str().map(<[u8]>::to_vec))
+            .collect()
+    }
+
+    fn stringify(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        Json::Array(self.items.clone().unwrap_or_default()).stringify(&mut out);
+        out
+    }
 }
 
 /// `startsWithConfigDirTemplate`
@@ -196,15 +238,6 @@ fn absolute_unless_template(value: &[u8], base: &[u8]) -> Vec<u8> {
     } else {
         join(base, &value)
     }
-}
-
-fn strings(json: &Json) -> Option<Vec<Vec<u8>>> {
-    Some(
-        json.as_array()?
-            .iter()
-            .filter_map(|s| s.as_str().map(<[u8]>::to_vec))
-            .collect(),
-    )
 }
 
 /// `mergeCompilerOptions`: the values of `source` take precedence. `null` unsets an earlier value,
@@ -281,13 +314,16 @@ fn parse_config(
     if let Some(compiler) = json.get(b"compilerOptions").and_then(Json::as_object)
         && let Some(written) = value_of(b"compilerOptions")
     {
-        let problems =
-            crate::config_options::problems(&file, written, compiler, as_typescript_does);
-        // `convertJsonOption`: an invalid value is treated as unspecified.
-        let omitted: Vec<Vec<u8>> = problems
+        let within = In::CompilerOptions { as_typescript_does };
+        let problems = crate::config_options::problems(&file, written, compiler, within);
+        // `convertJsonOption`: an invalid value is treated as unspecified. So is an invalid element
+        // of a list.
+        let omitted: Vec<(Vec<u8>, Option<usize>)> = problems
             .iter()
-            .map(|problem| problem.name.clone())
+            .map(|problem| (problem.name.clone(), problem.index))
             .collect();
+        let is_omitted =
+            |key: &[u8], index| (omitted.iter()).any(|it| it.0 == key && it.1 == index);
         errors.extend(problems.into_iter().map(|problem| ConfigError {
             code: problem.code,
             args: problem.args,
@@ -296,22 +332,22 @@ fn parse_config(
         }));
         let mut specified = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
-            if omitted.contains(key) {
+            if is_omitted(key, None) {
                 continue;
             }
-            let value = match value {
+            let value = match converted(key, value, |index| is_omitted(key, Some(index))) {
                 Json::String(s) if is_file_path(key) => {
-                    Json::String(absolute_unless_template(s, base))
+                    Json::String(absolute_unless_template(&s, base))
                 }
                 Json::Array(list) if is_file_path(key) => Json::Array(
-                    list.iter()
+                    list.into_iter()
                         .map(|item| match item {
-                            Json::String(s) => Json::String(absolute_unless_template(s, base)),
-                            other => other.clone(),
+                            Json::String(s) => Json::String(absolute_unless_template(&s, base)),
+                            other => other,
                         })
                         .collect(),
                 ),
-                other => other.clone(),
+                other => other,
             };
             // `PathsBasePath`: `paths` can be inherited from a configuration file in another directory.
             if key == b"paths" {
@@ -322,20 +358,19 @@ fn parse_config(
         merge_compiler_options(&mut own.compiler, specified);
     }
     // `convertJsonOption` for the properties outside `compilerOptions`.
-    for name in [b"files".as_slice(), b"include", b"exclude", b"references"] {
-        if json
-            .get(name)
-            .is_some_and(|value| !matches!(value, Json::Array(_) | Json::Null))
-        {
-            errors.push(ConfigError {
-                at: value_of(name).map(|value| at(file.span(value))),
-                ..ConfigError::new(5024, &[name, b"Array"])
-            });
-        }
+    if let (Some(root), Some(properties)) = (file.root, json.as_object()) {
+        let problems = crate::config_options::problems(&file, root, properties, In::Root);
+        errors.extend(problems.into_iter().map(|problem| ConfigError {
+            code: problem.code,
+            args: problem.args,
+            at: problem.span.map(at),
+            ..ConfigError::new(problem.code, &[])
+        }));
     }
-    own.files = json.get(b"files").and_then(strings);
-    own.include = json.get(b"include").and_then(strings);
-    own.exclude = json.get(b"exclude").and_then(strings);
+    own.files = List::of(json.get(b"files"));
+    own.include = List::of(json.get(b"include"));
+    own.exclude = List::of(json.get(b"exclude"));
+    own.has_references = json.get(b"references").is_some();
     own.references = json
         .get(b"references")
         .and_then(Json::as_array)
@@ -393,41 +428,46 @@ fn parse_config(
         // `relativeDifference`: from the directory of the extending file. 18003 prints the result.
         let extended_dir = dirname::<Posix>(&extended_path);
         let relative_difference = relative_normalized::<Posix, true>(base, extended_dir).to_vec();
-        let rebase = |specs: Vec<Vec<u8>>| -> Vec<Vec<u8>> {
+        let rebase = |specs: Vec<Json>| -> Vec<Json> {
             specs
                 .into_iter()
-                .map(|spec| {
-                    if starts_with_config_dir_template(&spec)
-                        || spec.starts_with(b"/")
-                        || relative_difference.is_empty()
+                .map(|spec| match spec {
+                    // Not normalized: `..` after `**` is an error that is still to be reported.
+                    Json::String(spec)
+                        if !(starts_with_config_dir_template(&spec)
+                            || spec.starts_with(b"/")
+                            || relative_difference.is_empty()) =>
                     {
-                        spec
-                    } else {
-                        // Not normalized: `..` after `**` is an error that is still to be reported.
-                        [&relative_difference[..], b"/", &spec[..]].concat()
+                        Json::String([&relative_difference[..], b"/", &spec[..]].concat())
                     }
+                    other => other,
                 })
                 .collect()
         };
-        if own.include.is_none() && extended.include.is_some() {
-            inherited.include = extended.include.map(rebase);
-        }
-        if own.exclude.is_none() && extended.exclude.is_some() {
-            inherited.exclude = extended.exclude.map(rebase);
-        }
-        if own.files.is_none() && extended.files.is_some() {
-            inherited.files = extended.files.map(rebase);
-        }
+        // `setPropertyValue`
+        let inherit = |own: &List, inherited: &mut List, extended: List| {
+            if !own.is_specified
+                && let Some(items) = extended.items
+            {
+                *inherited = List {
+                    is_specified: true,
+                    items: Some(rebase(items)),
+                };
+            }
+        };
+        inherit(&own.include, &mut inherited.include, extended.include);
+        inherit(&own.exclude, &mut inherited.exclude, extended.exclude);
+        inherit(&own.files, &mut inherited.files, extended.files);
         merge_compiler_options(&mut inherited.compiler, extended.compiler);
     }
     stack.pop();
-    if inherited.include.is_some() {
+    if inherited.include.is_specified {
         own.include = inherited.include;
     }
-    if inherited.exclude.is_some() {
+    if inherited.exclude.is_specified {
         own.exclude = inherited.exclude;
     }
-    if inherited.files.is_some() {
+    if inherited.files.is_specified {
         own.files = inherited.files;
     }
     let specified = std::mem::take(&mut own.compiler);
@@ -560,7 +600,10 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
             Json::Object(options) => options,
             _ => Vec::new(),
         },
-        files: (!files.is_empty()).then_some(files),
+        files: List {
+            is_specified: !files.is_empty(),
+            items: (!files.is_empty()).then(|| files.into_iter().map(Json::String).collect()),
+        },
         ..Raw::default()
     };
     project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new())
@@ -622,25 +665,27 @@ fn project_from_raw(
     let has_no_references = raw.references.as_ref().is_none_or(Vec::is_empty);
     // Errors outside `compilerOptions`.
     let mut problems = Vec::new();
-    if raw.files.as_ref().is_some_and(Vec::is_empty) && has_no_references && !raw.has_extends {
+    let has_empty_files = raw.files.items.as_ref().is_some_and(Vec::is_empty);
+    if has_empty_files && has_no_references && !raw.has_extends {
         problems.push(Problem::new(18002, &[config_path], Place::Top(b"files")));
     }
     // Emitted files are not read back in as input.
-    if raw.exclude.is_none() {
-        let written: Vec<Vec<u8>> = [b"outDir".as_slice(), b"declarationDir"]
+    if raw.exclude.items.is_none() {
+        let written: Vec<Json> = [b"outDir".as_slice(), b"declarationDir"]
             .iter()
             .filter_map(|key| compiler.get(key).and_then(Json::as_str))
             .filter(|dir| !dir.is_empty())
-            .map(<[u8]>::to_vec)
+            .map(|dir| Json::String(dir.to_vec()))
             .collect();
         if !written.is_empty() {
-            raw.exclude = Some(written);
+            raw.exclude.items = Some(written);
         }
     }
-    let can_report_no_inputs = raw.files.is_none() && raw.references.is_none();
-    options.is_default_include_spec = raw.files.is_none() && raw.include.is_none();
+    // `canJsonReportNoInputFiles`
+    let can_report_no_inputs = !raw.files.is_specified && !raw.has_references;
+    options.is_default_include_spec = raw.files.items.is_none() && raw.include.items.is_none();
     if options.is_default_include_spec {
-        raw.include = Some(vec![b"**/*".to_vec()]);
+        raw.include.items = Some(vec![Json::String(b"**/*".to_vec())]);
     }
     let substitute_all = |specs: Vec<Vec<u8>>| -> Vec<Vec<u8>> {
         specs
@@ -648,20 +693,14 @@ fn project_from_raw(
             .map(|spec| substitute_if_template(&spec, base).unwrap_or(spec))
             .collect()
     };
-    let raw_include = raw.include.clone().unwrap_or_default();
-    let raw_exclude = raw.exclude.clone().unwrap_or_default();
-    let validated_include = validate_specs(
-        raw.include.take().unwrap_or_default(),
-        b"include",
-        &mut problems,
-    );
+    let validated_include = validate_specs(raw.include.strings(), b"include", &mut problems);
     let include = substitute_all(validated_include.clone());
     options.include_specs = validated_include
         .into_iter()
         .zip(include.iter().cloned())
         .collect();
     let exclude = substitute_all(validate_specs(
-        raw.exclude.take().unwrap_or_default(),
+        raw.exclude.strings(),
         b"exclude",
         &mut problems,
     ));
@@ -669,20 +708,19 @@ fn project_from_raw(
         is_about_options: false,
         ..ConfigError::of_problem(host, session, config_path, problem)
     }));
-    let literal = substitute_all(raw.files.take().unwrap_or_default());
-    options.file_specs = literal.iter().map(|name| join(base, name)).collect();
+    let literal = substitute_all(raw.files.strings());
+    // `getMatchedFileSpec` returns the spec as it is written, and `""` is no match to its callers.
+    let written = literal.iter().filter(|name| !name.is_empty());
+    options.file_specs = written.map(|name| join(base, name)).collect();
     let files = file_names_from_specs(host, base, &options, &literal, &include, &exclude);
     if files.is_empty() && can_report_no_inputs && !config_path.is_empty() {
-        let list = |specs: &[Vec<u8>]| {
-            let quoted: Vec<Vec<u8>> = specs
-                .iter()
-                .map(|s| [b"\"", &s[..], b"\""].concat())
-                .collect();
-            [b"[", &quoted.join(&b","[..])[..], b"]"].concat()
-        };
         errors.push(ConfigError::new(
             18003,
-            &[config_path, &list(&raw_include), &list(&raw_exclude)],
+            &[
+                config_path,
+                &raw.include.stringify(),
+                &raw.exclude.stringify(),
+            ],
         ));
     }
     options.files.clone_from(&files);

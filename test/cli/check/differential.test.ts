@@ -561,6 +561,102 @@ async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
+differential(
+  "values of compiler options",
+  async () => {
+    // Valid, formerly valid, misspelled, empty and of the wrong type.
+    const values: Record<string, unknown[]> = {
+      target: ["es3", "ES3", "es5", "es6", "ES2015", "es2025", "es2026", "esnext", "latest", "foo", "", 5, true, null],
+      module: [
+        "none",
+        "amd",
+        "umd",
+        "system",
+        "commonjs",
+        "es6",
+        "es2022",
+        "node16",
+        "NodeNext",
+        "preserve",
+        "foo",
+        "",
+        1,
+      ],
+      moduleResolution: ["classic", "node", "node10", "node16", "nodenext", "bundler", "foo", ""],
+      jsx: ["preserve", "react", "react-jsx", "react-jsxdev", "react-native", "foo", false],
+      moduleDetection: ["auto", "legacy", "force", "foo"],
+      newLine: ["crlf", "lf", "foo", 1],
+      lib: [
+        ["es3"],
+        ["es5"],
+        ["foo"],
+        ["es5", "foo"],
+        ["foo", "es5", "bar"],
+        ["ES2025"],
+        ["esnext.foo"],
+        ["es5", 1],
+        ["es5", null],
+        ["es5", ""],
+        [],
+        "es5",
+        1,
+      ],
+      types: ["node", [1], [null], [""], [1, "missing", 2]],
+      moduleSuffixes: [[""], [1, ".ios"], ".ios"],
+      rootDirs: [[1], ["."], "."],
+      typeRoots: [[1], [null]],
+      plugins: [[1], [{}], {}],
+      customConditions: [[1], ["a"], "a"],
+      paths: [1, [], { "a": 1 }, { "a": ["./a"] }],
+      strict: ["true", 1, null, false],
+      maxNodeModuleJsDepth: ["1", 1],
+      ignoreDeprecations: ["5.0", "6.0", "7.0", "foo", 6],
+    };
+    // Next to `compilerOptions`.
+    const others: Record<string, unknown[]> = {
+      files: [[1], ["a.ts", 1], ["missing.ts"], [null], [""], [], "a.ts", 1, {}, null],
+      include: [[1], [1, "x"], [{}], ["*.ts", true], [null], [""], [], "*.ts", null],
+      exclude: [[1], ["a.ts"], [null], "a.ts", null],
+      references: [[1], [{}], [{ path: 1 }], [{ path: "" }], [null], [], {}, null],
+      extends: [1, true, {}, [1], [[]], [null], [""], "", [], ["./missing"], "./missing", null],
+      compileOnSave: [1, "true", true, null],
+      typeAcquisition: [1, {}],
+      watchOptions: [1],
+      buildOptions: [1],
+      unknown: [1],
+    };
+    const cases: { compilerOptions?: object }[] = [
+      ...Object.entries(values).flatMap(([name, all]) => all.map(value => ({ compilerOptions: { [name]: value } }))),
+      ...Object.entries(others).flatMap(([name, all]) => all.map(value => ({ [name]: value }))),
+    ].filter((_, i) => i % everyProject === 0);
+    using dir = withTypeScript(
+      Object.fromEntries(
+        cases.flatMap((options, i) => [
+          [
+            `c${i}/tsconfig.json`,
+            JSON.stringify({
+              ...options,
+              compilerOptions: { noEmit: true, skipLibCheck: true, ...options.compilerOptions },
+            }),
+          ],
+          [`c${i}/a.ts`, `export {};\n`],
+        ]),
+      ),
+    );
+    const root = String(dir);
+    const results: { options: object; bun: string[]; tsc: string[] }[] = [];
+    await inTurns([...cases.entries()], async ([i, options]) => {
+      const [bun, typescript] = await Promise.all([
+        linesOf([bunExe(), "check", "-p", `c${i}`], root, root),
+        linesOf([tsc!, "-p", `c${i}`, "--pretty", "false"], root, root),
+      ]);
+      results.push({ options, bun, tsc: typescript });
+    });
+    expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  },
+  timeout,
+);
+
 const casingOptions = { ...JSON.parse(tsconfig).compilerOptions };
 const casingConfig = (more: object, top: object = {}) =>
   JSON.stringify({ compilerOptions: { ...casingOptions, ...more }, exclude: ["**/hidden"], ...top });

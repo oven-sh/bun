@@ -343,7 +343,7 @@ pub enum FlagError {
     /// The option requires a value and none was given, or it cannot be given on a command line.
     NeedsValue,
     /// The value is not one the option accepts. The allowed values, if there is a fixed set.
-    BadValue(&'static [&'static [u8]]),
+    BadValue(Vec<&'static [u8]>),
 }
 
 /// Whether the compiler option `name`, matched case-insensitively, is a boolean, so that its value
@@ -357,7 +357,7 @@ pub fn compiler_option_from_flag(
     name: &[u8],
     value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
-    use bun_sema::config_options::{choices, from_text};
+    use bun_sema::config_options::{choices, choices_of_list, from_text};
     let allowed = choices(name);
     let value = match value {
         Some(value) => value,
@@ -372,12 +372,15 @@ pub fn compiler_option_from_flag(
     if let Some(allowed) = allowed
         && !allowed.iter().any(|a| a.eq_ignore_ascii_case(value))
     {
-        return Err(FlagError::BadValue(allowed));
+        return Err(FlagError::BadValue(allowed.to_vec()));
     }
     match from_text(name, value) {
-        Some((name, value)) => Ok(CompilerOption(name.to_vec(), value)),
+        Some((name, value)) => match choices_of_list(name, &value) {
+            Some(allowed) => Err(FlagError::BadValue(allowed)),
+            None => Ok(CompilerOption(name.to_vec(), value)),
+        },
         None if allowed.is_some() || from_text(name, b"0").is_some() => {
-            Err(FlagError::BadValue(&[]))
+            Err(FlagError::BadValue(Vec::new()))
         }
         None => Err(FlagError::Unknown),
     }

@@ -186,7 +186,7 @@ fn compiler_option(name: &[u8], value: Option<&[u8]>) -> CompilerOption {
         Ok(option) => option,
         Err(FlagError::Unknown) => usage_error(format_args!("Unknown flag \"--{name}\"")),
         Err(FlagError::NeedsValue) => usage_error(format_args!("--{name} needs a value")),
-        Err(FlagError::BadValue([])) => usage_error(format_args!(
+        Err(FlagError::BadValue(allowed)) if allowed.is_empty() => usage_error(format_args!(
             "--{name} does not take \"{}\"",
             BStr::new(value.unwrap_or_default())
         )),

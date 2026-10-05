@@ -232,6 +232,18 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
+  // The consumer rejects once, and nothing else reports the error (no unhandled rejection from a promise the
+  // consumer never saw).
+  "sync pull: close(error), then throws it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        throw error;
+      }),
+  },
 };
 
 // Each falsy argument as the first close(): a clean close, not close(error).

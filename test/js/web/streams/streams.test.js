@@ -4654,6 +4654,7 @@ describe("direct stream edge cases", () => {
         "thrown after close(error)",
       ],
     ])("close(error) from %s: the caller's try/catch is the only report", async (_, pull, message) => {
+      using dir = tempDir("direct-close-error-report", {});
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -4666,6 +4667,7 @@ describe("direct stream edge cases", () => {
             "new Response(s).arrayBuffer()": s => new Response(s).arrayBuffer(),
             "Bun.readableStreamToBytes": s => Bun.readableStreamToBytes(s),
             "Bun.readableStreamToArrayBuffer": s => Bun.readableStreamToArrayBuffer(s),
+            "Bun.write(file, new Response(s))": s => Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s)),
           };
           const out = {};
           for (const [name, consume] of Object.entries(consumers)) {
@@ -4689,6 +4691,7 @@ describe("direct stream edge cases", () => {
         "new Response(s).arrayBuffer()": "caught: " + message,
         "Bun.readableStreamToBytes": "caught: " + message,
         "Bun.readableStreamToArrayBuffer": "caught: " + message,
+        "Bun.write(file, new Response(s))": "caught: " + message,
       });
       expect(exitCode).toBe(0);
     });

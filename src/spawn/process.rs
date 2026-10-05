@@ -365,11 +365,7 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
-        // Mutated only on the macOS ESRCH retry path below.
-        #[cfg(target_os = "macos")]
         let mut rusage_result = *rusage;
-        #[cfg(not(target_os = "macos"))]
-        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -394,10 +390,10 @@ impl Process {
                             ),
                         );
                     }
-                    // Nothing will report this child's exit from here on, so nothing would reap it.
-                    let _ = self.kill(libc::SIGKILL as u8);
-                    let _ = posix_spawn::wait4(pid, 0, None);
-                    break 'brk Some(Status::Err(err_));
+                    break 'brk Some(
+                        self.kill_and_reap(&mut rusage_result)
+                            .unwrap_or(Status::Err(err_)),
+                    );
                 }
             }
             None
@@ -417,9 +413,16 @@ impl Process {
         match self.watch() {
             Err(err) => {
                 #[cfg(unix)]
-                if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
-                    return Ok(self.has_exited());
+                {
+                    if err.get_errno() == bun_sys::E::ESRCH {
+                        self.wait(true);
+                        return Ok(self.has_exited());
+                    }
+                    let mut rusage = rusage_zeroed();
+                    if let Some(status) = self.kill_and_reap(&mut rusage) {
+                        self.on_exit(status, &rusage);
+                        return Ok(true);
+                    }
                 }
                 Err(err)
             }
@@ -682,6 +685,52 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
+    #[cfg(unix)]
+    fn send_signal(&self, signal: u8) -> Maybe<()> {
+        // All by-value `pid_t`/`c_int`; the kernel validates pid/
+        // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
+        // memory-safety preconditions, so `safe fn` discharges the
+        // link-time proof here.
+        unsafe extern "C" {
+            #[link_name = "kill"]
+            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        }
+        let err = libc_kill(self.pid, signal as c_int);
+        if err != 0 {
+            let errno_ = bun_sys::get_errno(err as isize);
+            // if the process was already killed don't throw
+            if errno_ != bun_sys::E::ESRCH {
+                return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
+            }
+        }
+        Ok(())
+    }
+
+    /// For a child whose exit nothing is going to report: left alone it would keep running, and never be reaped.
+    /// Watched or not, unlike [`Self::kill`]. A child that cannot be signalled (it runs as another user by now)
+    /// is left alone after all, since the wait would last until it exits by itself.
+    ///
+    /// The status, with `rusage`, is that of a child which turns out to have ended by itself. It is for the caller
+    /// to report, or else the error that brought it here.
+    #[cfg(unix)]
+    #[cold]
+    #[inline(never)]
+    pub fn kill_and_reap(&mut self, rusage: &mut Rusage) -> Option<Status> {
+        // Reaped already, so the pid may be another process's by now.
+        if self.has_exited() {
+            return None;
+        }
+        self.send_signal(libc::SIGKILL as u8).ok()?;
+        let status = Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)));
+        // The same goes from here on, and `kill` leaves alone what is not watched.
+        self.close();
+        match status? {
+            Status::Signaled(signal) if signal == libc::SIGKILL as u8 => None,
+            status @ (Status::Exited(_) | Status::Signaled(_)) => Some(status),
+            Status::Running | Status::Err(_) => None,
+        }
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
@@ -694,24 +743,7 @@ impl Process {
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).
             match &self.poller {
-                Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    // All by-value `pid_t`/`c_int`; the kernel validates pid/
-                    // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
-                    // memory-safety preconditions, so `safe fn` discharges the
-                    // link-time proof here.
-                    unsafe extern "C" {
-                        #[link_name = "kill"]
-                        safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
-                    }
-                    let err = libc_kill(self.pid, signal as c_int);
-                    if err != 0 {
-                        let errno_ = bun_sys::get_errno(err as isize);
-                        // if the process was already killed don't throw
-                        if errno_ != bun_sys::E::ESRCH {
-                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
-                        }
-                    }
-                }
+                Poller::WaiterThread(_) | Poller::Fd(_) => return self.send_signal(signal),
                 _ => {}
             }
         }

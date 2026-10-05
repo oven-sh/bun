@@ -4704,7 +4704,7 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
         bun_io::AllocatorType::SpawnSync => {
             // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
             let vm = unsafe { &mut *bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr() };
-            // SAFETY: the call that is waiting on the loop borrows it from `RareData`; this only reads.
+            // SAFETY: shared, as is the borrow of the call that is waiting on the loop.
             let event_loop = unsafe { &*vm.rare_data_ptr() }
                 .existing_spawn_sync_event_loop()
                 .expect("a FilePoll of the spawnSync loop outlived it")

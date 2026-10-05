@@ -841,7 +841,7 @@ impl RareData {
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,
-    ) -> Option<&mut SpawnSyncEventLoop> {
+    ) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
@@ -856,7 +856,7 @@ impl RareData {
             // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_deref_mut()
+        self.spawn_sync_event_loop_.as_deref()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

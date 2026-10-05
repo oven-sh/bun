@@ -1549,8 +1549,8 @@ bun_io::link_impl_EventLoopCtx! {
     SpawnSync for EventLoop => |this| {
         platform_event_loop_ptr() => (*this).usockets_loop(),
         file_polls_ptr() => VirtualMachine::event_loop_ctx((*this).vm()).file_polls_ptr(),
-        increment_pending_unref_counter() =>
-            VirtualMachine::event_loop_ctx((*this).vm()).increment_pending_unref_counter(),
+        // The VM takes what it counts off its own loop, and nothing a spawnSync call makes asks for this.
+        increment_pending_unref_counter() => unreachable!(),
         after_event_loop_callback() =>
             VirtualMachine::event_loop_ctx((*this).vm()).after_event_loop_callback(),
         set_after_event_loop_callback(cb, ctx) =>

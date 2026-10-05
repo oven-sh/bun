@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -229,40 +229,55 @@ describe("uid/gid", () => {
 // A writer that is finalized while spawnSync waits has to leave the epoll it registered with. Its EPOLL_CTL_DEL went to
 // the loop spawnSync waits on, and the kernel keeps an entry for as long as the open file lives, which for a dup of
 // stderr is the whole process: the next dup to get that number failed to register with EEXIST.
+// BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option spawnSync
+// reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free list empty,
+// so what it allocates from there on takes the slow path, whatever ran before.
 it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number usable", async () => {
-  // A file: with `-e`, the collection Bun.gc(false) asks for does not finalize the writers during the call.
-  using dir = tempDir("spawnsync-finalized-writer", {
-    "fixture.js": `
-      import { fstatSync, readdirSync } from "node:fs";
-      const stderr = fstatSync(2).ino;
-      const dupsOfStderr = () =>
-        readdirSync("/proc/self/fd").filter(fd => {
-          try {
-            return fd !== "2" && fstatSync(Number(fd)).ino === stderr;
-          } catch {
-            return false;
-          }
-        }).length;
-      for (let i = 0; i < 4; i++) (() => void Bun.file(2).writer().write(""))();
-      const held = dupsOfStderr();
-      // The collection ends during the call: its sweep runs at the first allocation after the wait, the result's.
-      Bun.gc(false);
-      Bun.spawnSync({ cmd: ["sleep", "0.2"] });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      // On globalThis: a binding that is only written after the await is dead across it.
+      globalThis.writers = [];
+      const refs = [];
+      for (let i = 0; i < 4; i++) {
+        const writer = Bun.file(2).writer();
+        writer.write("");
+        globalThis.writers.push(writer);
+        refs.push(new WeakRef(writer));
+      }
+      // A WeakRef keeps its target alive until the job that made it ends.
+      await Bun.sleep(0);
+      // Through a child: loading node:fs under that GC setting takes a debug build many seconds.
+      const list = { cmd: ["ls", "-l", "/proc/" + process.pid + "/fd"], stdout: "pipe", stderr: "ignore" };
+      const dupsOfStderr = ({ stdout }) => {
+        const links = stdout.toString().split("\\n").map(line => line.match(/ (\\d+) -> (.+)$/)).filter(Boolean);
+        const stderr = links.find(([, fd]) => fd === "2")[2];
+        return links.filter(([, fd, target]) => fd !== "2" && target === stderr).length;
+      };
+      const heldBeforeCall = dupsOfStderr(Bun.spawnSync(list));
+      let listing = Bun.spawnSync({ ...list, get maxBuffer() { Bun.gc(true); globalThis.writers = null; } });
+      let collectedDuringCall = 0;
+      for (const ref of refs) if (ref.deref() === undefined) collectedDuringCall++;
       // The fds are closed on the work pool. Once they are, dup() hands their numbers out again.
-      while (dupsOfStderr() > 0) Bun.sleepSync(1);
+      const deadline = performance.now() + 3000;
+      while (dupsOfStderr(listing) > 0 && performance.now() < deadline) listing = Bun.spawnSync(list);
+      const stillOpen = dupsOfStderr(listing);
       const writer = Bun.file(2).writer();
       writer.write("registered");
       writer.flush();
-      console.log(held);
+      console.log(JSON.stringify({ heldBeforeCall, collectedDuringCall, stillOpen }));
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js"],
-    env: bunEnv,
-    cwd: String(dir),
+    ],
+    env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
     stdout: "pipe",
     stderr: "pipe", // pollable, so a writer registers its dup
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "4\n", stderr: "registered", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ heldBeforeCall: 4, collectedDuringCall: 4, stillOpen: 0 }),
+    stderr: "registered",
+    exitCode: 0,
+  });
 });

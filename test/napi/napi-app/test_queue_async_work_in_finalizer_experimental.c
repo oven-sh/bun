@@ -1,7 +1,8 @@
 // A module built with the experimental Node-API version has its finalizers run
 // synchronously from the garbage collector. napi_queue_async_work takes a
 // node_api_basic_env, so such a finalizer may call it, and the queued work
-// keeps the event loop alive until its complete callback has run.
+// keeps the event loop alive until its complete callback has run. So does
+// napi_unref_threadsafe_function, which stops its function from doing that.
 
 #define NAPI_EXPERIMENTAL
 
@@ -36,6 +37,27 @@ static napi_value make(napi_env env, napi_callback_info info) {
   return object;
 }
 
+static void call_js(napi_env env, napi_value callback, void *context,
+                    void *data) {}
+
+static void finalize_unref(node_api_basic_env env, void *data, void *hint) {
+  finalized++;
+  napi_unref_threadsafe_function(env, (napi_threadsafe_function)data);
+}
+
+// An object whose finalizer unrefs the threadsafe function created here.
+static napi_value make_threadsafe_function(napi_env env,
+                                           napi_callback_info info) {
+  napi_value object, name;
+  napi_threadsafe_function function;
+  napi_create_object(env, &object);
+  napi_create_string_utf8(env, "function", NAPI_AUTO_LENGTH, &name);
+  napi_create_threadsafe_function(env, NULL, NULL, name, 0, 1, NULL, NULL, NULL,
+                                  call_js, &function);
+  napi_add_finalizer(env, object, function, finalize_unref, NULL, NULL);
+  return object;
+}
+
 static napi_value get_finalized(napi_env env, napi_callback_info info) {
   napi_value value;
   napi_create_int32(env, finalized, &value);
@@ -52,6 +74,9 @@ NAPI_MODULE_INIT() {
   napi_value function;
   napi_create_function(env, "make", NAPI_AUTO_LENGTH, make, NULL, &function);
   napi_set_named_property(env, exports, "make", function);
+  napi_create_function(env, "makeThreadsafeFunction", NAPI_AUTO_LENGTH,
+                       make_threadsafe_function, NULL, &function);
+  napi_set_named_property(env, exports, "makeThreadsafeFunction", function);
   napi_create_function(env, "finalized", NAPI_AUTO_LENGTH, get_finalized, NULL,
                        &function);
   napi_set_named_property(env, exports, "finalized", function);

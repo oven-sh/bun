@@ -10,6 +10,7 @@ use bstr::{BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::relative_normalized;
+use bun_sema::resolve::is_same_path;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
 
@@ -42,6 +43,8 @@ pub struct Style<'a> {
     pub color: bool,
     /// The directory that displayed paths are relative to, in the checker's path format.
     pub cwd: &'a [u8],
+    /// `UseCaseSensitiveFileNames`: `Report::is_case_sensitive`.
+    pub is_case_sensitive: bool,
     /// Also print `::error` workflow commands, which GitHub Actions turns into annotations.
     pub github_annotations: bool,
     /// The terminal width in columns. 0: unknown, or not a terminal.
@@ -52,7 +55,7 @@ pub struct Style<'a> {
 
 /// Relative to the working directory, or absolute when that would need two or more `../`.
 fn display_path(path: &[u8], style: &Style) -> BString {
-    let relative = relative_path(path, style.cwd);
+    let relative = relative_path(path, style.cwd, style);
     if relative.starts_with(b"../../") {
         crate::host::to_native(path).into()
     } else {
@@ -61,12 +64,27 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 }
 
 /// `ConvertToRelativePath`
-pub fn relative_path(path: &[u8], cwd: &[u8]) -> BString {
-    // On Windows a path on another drive has no relative form.
-    if cfg!(windows) && path.get(..3) != cwd.get(..3) {
+fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
+    if style.is_case_sensitive || path.starts_with(from) {
+        return relative_normalized::<Posix, true>(from, path).into();
+    }
+    // `GetPathComponentsRelativeTo`: the names that both begin with are compared as the file system
+    // compares them.
+    fn names(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+        path.split(|&c| c == b'/')
+    }
+    let common = (names(path).zip(names(from)))
+        .take_while(|(a, b)| is_same_path(a, b, false))
+        .count();
+    // On Windows a path on another drive has no relative form: `/C:/a`.
+    if cfg!(windows) && common < 2 {
         return crate::host::to_native(path).into();
     }
-    relative_normalized::<Posix, true>(cwd, path).into()
+    let respelled: Vec<&[u8]> = names(from)
+        .take(common)
+        .chain(names(path).skip(common))
+        .collect();
+    relative_normalized::<Posix, true>(from, &respelled.join(&b'/')).into()
 }
 
 /// `1234` as `1,234`.
@@ -261,7 +279,7 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
         let _ = write!(
             out,
             "{}({},{}): ",
-            relative_path(&d.path, style.cwd),
+            relative_path(&d.path, style.cwd, style),
             d.line,
             d.column
         );
@@ -386,7 +404,7 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
         let _ = write!(
             out,
             "file={},line={},col={},endLine={},endColumn={},",
-            bun_core::fmt::github_action_property(&relative_path(&d.path, from)),
+            bun_core::fmt::github_action_property(&relative_path(&d.path, from, style)),
             d.line,
             d.column,
             d.end_line,
@@ -633,7 +651,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             out,
             style.color,
             "<red>error<r><d>:<r> ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.\n",
-            relative_path(path, style.cwd)
+            relative_path(path, style.cwd, style)
         );
     }
     if is_missing_bun_types(report) {
@@ -713,7 +731,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         .unwrap_or(1);
     for (first, count) in &by_file {
         let path = if style.layout == Layout::Plain {
-            relative_path(&first.path, style.cwd)
+            relative_path(&first.path, style.cwd, style)
         } else {
             display_path(&first.path, style)
         };

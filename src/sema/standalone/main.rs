@@ -197,6 +197,7 @@ fn main() {
                         layout: Layout::Pretty,
                         color: true,
                         cwd: b"",
+                        is_case_sensitive: true,
                         github_annotations: false,
                         width: bun_sema_standalone::terminal_width(),
                         show_all: false,
@@ -365,6 +366,7 @@ fn main() {
                     },
                     color: !has("--no-color") && !has("--plain") && !has("--agent"),
                     cwd: &cwd,
+                    is_case_sensitive: report.is_case_sensitive,
                     github_annotations: has("--github"),
                     width: args
                         .iter()

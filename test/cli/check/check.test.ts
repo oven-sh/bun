@@ -46,6 +46,12 @@ function project(files: Record<string, string>, { withTypeScript = true } = {}) 
   return dir;
 }
 
+// Whether the file system takes `A` for `a`, where the projects of these tests are.
+const foldsCase = (() => {
+  using dir = tempDir("bun-check", { "probe": "" });
+  return existsSync(join(String(dir), "PROBE"));
+})();
+
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
   ...bunEnv,
@@ -14075,7 +14081,7 @@ export function f<T>(rest: T) {
       },
     };
 
-    // Each starts up to 25 processes at once.
+    // Each starts up to 29 processes at once.
     test.serial.each(Object.keys(layouts))("%s", async layout => {
       const { files, file, directory } = layouts[layout];
       using dir = project(files);
@@ -14131,9 +14137,14 @@ export function f<T>(rest: T) {
       // Where the file system takes one spelling of a name for another, so does `bun check`. It prints the name that the
       // directory has.
       const inUpperCaseDirectories = `${dirname(file).toUpperCase()}/${basename(file)}`;
-      const foldsCase = existsSync(join(root, file.toUpperCase()));
       if (foldsCase) {
+        // On Windows the working directory is spelled as whoever started the process spelled it.
+        const respelled = join(dirname(root), basename(root).toUpperCase());
         commands.push(
+          ["file", respelled, ["check", file], root],
+          ["directory", respelled, ["check", directory], root],
+          ["directory", join(respelled, directory), ["check", "."], join(root, directory)],
+          ["file", respelled, ["--check", file], root],
           ["file", root, ["check", file.toUpperCase()]],
           ["file", root, ["check", `./${inUpperCaseDirectories}`]],
           ["file", root, ["check", join(root, inUpperCaseDirectories)]],
@@ -14176,12 +14187,11 @@ export function f<T>(rest: T) {
     });
 
     // The name in `files` is the name of the file in the program. The argument is spelled as the directory has it.
-    test("a file that the configuration file spells differently", async () => {
+    test.skipIf(!foldsCase)("a file that the configuration file spells differently", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["Src/One.ts"] }),
         "src/one.ts": bad,
       });
-      if (!existsSync(join(String(dir), "SRC"))) return;
       const whole = await check(dir);
       expect(whole.stdout).toContain("One.ts(1,14): error TS2322");
       for (const argument of ["src/one.ts", "Src/One.ts", "SRC/ONE.ts", "src", "SRC"]) {
@@ -14793,6 +14803,26 @@ describe.concurrent("--check", () => {
       Found 1 error in 1 file, checked 1 file [time]"
     `);
     expect(stopped.exitCode).toBe(1);
+  });
+
+  // Neither has an entry point to start from, like a script of a package.json.
+  describe.each([
+    ["an executable in node_modules/.bin", ["--check", "tool"]],
+    ["an executable in node_modules/.bin, with arguments", ["--check", "tool", "build", "--flag"]],
+    ["bun run and an executable in node_modules/.bin", ["run", "--check", "tool"]],
+    ["a shell script", ["--check", "./tool.sh"]],
+  ])("bun --check with %s", (_, cmd) => {
+    // There it would have to be a program: `bun` does not start a batch file.
+    test.skipIf(isWindows && cmd.includes("tool"))("type checks the project first", async () => {
+      const files = { "tool.sh": `echo ran\n`, "node_modules/.bin/tool": `#!/bin/sh\necho ran\n` };
+      using good = project({ ...files, "a.ts": `export const a: number = 1;\n` });
+      using bad = project({ ...files, "a.ts": `export const a: number = "1";\n` });
+      for (const dir of [good, bad]) chmodSync(join(String(dir), "node_modules", ".bin", "tool"), 0o755);
+      const [ran, stopped] = await Promise.all([run(String(good), cmd), run(String(bad), cmd)]);
+      expect([ran.stdout, ran.exitCode]).toEqual(["ran", 0]);
+      expect(stopped.stderr).toContain("a.ts(1,14): error TS2322");
+      expect([stopped.stdout, stopped.exitCode]).toEqual(["", 1]);
+    });
   });
 
   test("bun test --help lists --check", async () => {

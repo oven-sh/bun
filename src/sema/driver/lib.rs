@@ -534,6 +534,8 @@ pub struct Report {
     pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
+    /// `UseCaseSensitiveFileNames`
+    pub is_case_sensitive: bool,
     /// The configuration files of the projects that were checked.
     pub config_paths: Vec<Vec<u8>>,
     /// `listFiles`, `listFilesOnly`: the files of the program, in program order.
@@ -723,6 +725,7 @@ pub fn check_already_read_then<R>(
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
+    report.is_case_sensitive = disk.is_case_sensitive();
     if cfg!(windows) {
         for reported in &mut report.diagnostics {
             host::show_drives(&mut reported.text);

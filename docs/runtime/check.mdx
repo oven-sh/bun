@@ -151,17 +151,19 @@ bun --watch --check src/index.ts
 bun test --watch --check
 ```
 
-With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs. That goes for `--filter`, `--parallel` and `--sequential` too.
+With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs. That goes for `--filter`, `--parallel` and `--sequential` too, for an executable from `node_modules/.bin` or `$PATH`, and for a shell script.
 
 ```bash terminal icon="terminal"
 bun run --check dev
+bun --check vite build
+bun --check ./scripts/deploy.sh
 ```
 
 With `--tsconfig-override`, the check uses that `tsconfig.json`, like everything else.
 
 A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
 
-For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import.
+For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import. `bun --check` does that for every page it serves, as in `bun --check index.html about.html` and `bun --check './**/*.html'`.
 
 `bun build --check` runs the check once the bundler has read every file, and before it writes anything. The type checker gets the files of the bundle from the bundler, so they are read from disk once. A type error is printed like any other build error:
 

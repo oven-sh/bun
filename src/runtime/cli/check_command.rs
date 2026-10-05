@@ -516,6 +516,8 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
         layout,
         color: layout == Layout::Pretty && to.colors,
         cwd,
+        // Whoever prints a report has it from there.
+        is_case_sensitive: true,
         github_annotations: Output::is_github_action(),
         width: if to.is_tty {
             bun_core::output::File::from(to.fd)
@@ -583,12 +585,15 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     format::write_diagnostics(
         &mut out,
         report,
-        &style_for(
-            &shown_from,
-            options.pretty,
-            Destination::stdout(),
-            options.all,
-        ),
+        &Style {
+            is_case_sensitive: report.is_case_sensitive,
+            ..style_for(
+                &shown_from,
+                options.pretty,
+                Destination::stdout(),
+                options.all,
+            )
+        },
     );
     let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
@@ -597,6 +602,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
         report,
         &Style {
             color: Output::enable_ansi_colors_stderr(),
+            is_case_sensitive: report.is_case_sensitive,
             ..style_for(
                 &shown_from,
                 options.pretty,
@@ -879,7 +885,10 @@ fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> R
         return report;
     }
     let shown_from = bun_sema_driver::host::from_native(&cwd);
-    let style = style_for(&shown_from, None, Destination::stderr(), false);
+    let style = Style {
+        is_case_sensitive: report.is_case_sensitive,
+        ..style_for(&shown_from, None, Destination::stderr(), false)
+    };
     let mut out = Vec::new();
     // They are for the caller.
     let listed_files = std::mem::take(&mut report.listed_files);

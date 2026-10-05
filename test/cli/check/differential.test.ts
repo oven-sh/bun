@@ -572,7 +572,14 @@ const casingSettings: [string, object][] = [
 ];
 const isAboutCasing = (line: string) => /error TS(1149|1261):/.test(line);
 
-differential(
+const isCaseSensitive = (() => {
+  using probe = tempDir("bun-check-differential", { "probe": "" });
+  return !existsSync(join(String(probe), "PROBE"));
+})();
+// TypeScript takes every file system to be like the one that its executable is in. `bun check` looks at the project.
+const aboutCase = test.concurrent.skipIf(!tsc || isCaseSensitive !== !existsSync(swapCase(tsc)));
+
+aboutCase(
   "file names that differ only in case",
   async () => {
     const target = `export class T { private secret = 1; }\nexport const wrong: number = "1";\n`;
@@ -701,10 +708,6 @@ differential(
       };
     }
 
-    using probe = tempDir("bun-check-differential", { "probe": "" });
-    const isCaseSensitive = !existsSync(join(String(probe), "PROBE"));
-    // TypeScript takes every file system to be like the one that its executable is in.
-    if (isCaseSensitive !== !existsSync(swapCase(tsc!))) return;
     if (isCaseSensitive) {
       // Two files.
       const some: Spelling[][] = [["right"], ["wrong"], ["right", "wrong"], ["wrong", "right"]];
@@ -776,7 +779,7 @@ differential(
 
 // A project that is referenced in a spelling that the directory does not have, or in two, is one project, under the name
 // in the last reference. `tsc -b` is the oracle.
-differential(
+aboutCase(
   "project references that differ only in case",
   async () => {
     const options = { ...casingOptions, noEmit: false, composite: true, outDir: "out", rootDir: "." };

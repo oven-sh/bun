@@ -938,6 +938,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
+            // It has no entry point to start from, like a script of a package.json.
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+                Global::exit(1);
+            }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
             Global::exit(exit_code as u32);
         }
@@ -2611,8 +2615,9 @@ impl RunCommand {
         }
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
+        // With `--check` the way below is taken, on which the project is checked.
         #[cfg(windows)]
-        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && !ctx.runtime_options.check {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
@@ -2669,6 +2674,12 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    // It has no entry point to start from, like a script of a package.json.
+                    if ctx.runtime_options.check
+                        && !crate::cli::check_command::check_project_before()
+                    {
+                        Global::exit(1);
+                    }
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();

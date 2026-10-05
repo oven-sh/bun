@@ -416,20 +416,25 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
         // in-flight dispatch (node stages such mutations in tmp_array until
         // the emit completes).
         const hooks = tickInitHooks.slice();
-        for (let i = 0; i < hooks.length; i++) {
-          try {
-            hooks[i](asyncId, "TickObject", 0, tock);
-          } catch (err) {
-            // node: a throwing init hook is fatal (fatalError: print + exit 1),
-            // never surfaced to the process.nextTick() caller. console is a
-            // user-mutable global, so shield the print; exit regardless.
+        asyncHooksTick.beginHookDispatch();
+        try {
+          for (let i = 0; i < hooks.length; i++) {
             try {
-              console.error(
-                typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
-              );
-            } catch {}
-            process.exit(1);
+              hooks[i](asyncId, "TickObject", 0, tock);
+            } catch (err) {
+              // node: a throwing init hook is fatal (fatalError: print + exit 1),
+              // never surfaced to the process.nextTick() caller. console is a
+              // user-mutable global, so shield the print; exit regardless.
+              try {
+                console.error(
+                  typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+                );
+              } catch {}
+              process.exit(1);
+            }
           }
+        } finally {
+          asyncHooksTick.endHookDispatch();
         }
       }
       require("internal/process/tick_ring").pushTickObject(tock);

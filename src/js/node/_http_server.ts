@@ -64,6 +64,7 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
+const { lookupListenAddress } = require("internal/net/server");
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -87,6 +88,7 @@ const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kHandedOff = Symbol("http.server.socketHandedOff");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
+const kListeningId = Symbol("http.server.listeningId");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -532,14 +534,18 @@ Server.prototype.closeIdleConnections = function () {
 };
 
 Server.prototype.close = function (optionalCallback?) {
+  this[kListeningId] = (this[kListeningId] || 0) + 1;
   const server = this[serverSymbol];
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
   http1Fallback?.closeIdleHttp1Connections(this);
   if (!server) {
-    if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
-    // Like Node.js's net.Server#close, close() returns the server.
+    if (typeof optionalCallback === "function") {
+      this.once("close", () => optionalCallback($ERR_SERVER_NOT_RUNNING()));
+    }
+    this[kPendingDrainClose] = true;
+    process.nextTick(emitCloseServer, this);
     return this;
   }
   if (typeof optionalCallback === "function") this.once("close", optionalCallback);
@@ -592,6 +598,35 @@ Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
   return this[serverSymbol].address;
 };
+
+function startServerListen(server, tls, port, host, socketPath, serverNameHost) {
+  if (isPrimary) {
+    server[kRealListen](tls, port, host, socketPath, false, serverNameHost);
+    return;
+  }
+
+  if (cluster === undefined) cluster = require("node:cluster");
+
+  server.once("listening", () => {
+    // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
+    if (!process.connected) return;
+    cluster.worker.state = "listening";
+    const address = server.address();
+    const isObjectAddress = address !== null && typeof address === "object";
+    const boundHost = host && isObjectAddress ? address : null;
+    const message = {
+      cmd: "NODE_CLUSTER",
+      act: "listening",
+      port: socketPath ? -1 : (isObjectAddress && address.port) || port,
+      data: null,
+      address: socketPath ?? (boundHost && boundHost.address) ?? null,
+      addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
+    };
+    process.send!(message, undefined, kInternalSendOptions);
+  });
+
+  server[kRealListen](tls, port, host, socketPath, true, serverNameHost);
+}
 
 Server.prototype.listen = function () {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
@@ -648,35 +683,27 @@ Server.prototype.listen = function () {
     this.once("listening", lastArg);
   }
 
-  try {
-    // listenInCluster
+  const listeningId = (this[kListeningId] = (this[kListeningId] || 0) + 1);
+  const serverNameHost = host;
+  if (host && !socketPath) {
+    lookupListenAddress(host, (err, address) => {
+      if (listeningId !== server[kListeningId] || isStoppedModuleGraphRunning()) return;
+      if (err) {
+        server.emit("error", err);
+        return;
+      }
 
-    if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false);
-      return this;
-    }
-
-    if (cluster === undefined) cluster = require("node:cluster");
-
-    server.once("listening", () => {
-      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
-      cluster.worker.state = "listening";
-      const address = server.address();
-      const isObjectAddress = address !== null && typeof address === "object";
-      const boundHost = host && isObjectAddress ? address : null;
-      const message = {
-        cmd: "NODE_CLUSTER",
-        act: "listening",
-        port: socketPath ? -1 : (isObjectAddress && address.port) || port,
-        data: null,
-        address: socketPath ?? (boundHost && boundHost.address) ?? null,
-        addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
-      };
-      process.send!(message, undefined, kInternalSendOptions);
+      try {
+        startServerListen(server, tls, port, address, socketPath, serverNameHost);
+      } catch (err) {
+        process.nextTick(emitListenErrorNextTick, server, err);
+      }
     });
+    return this;
+  }
 
-    server[kRealListen](tls, port, host, socketPath, true);
+  try {
+    startServerListen(server, tls, port, host, socketPath, serverNameHost);
   } catch (err) {
     process.nextTick(emitListenErrorNextTick, server, err);
   }
@@ -684,7 +711,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, serverNameHost) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -693,7 +720,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     let listenerGeneration;
 
     if (tls) {
-      this.serverName = tls.serverName || host || "localhost";
+      this.serverName = tls.serverName || serverNameHost || host || "localhost";
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default

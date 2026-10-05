@@ -91,11 +91,6 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
     return std::nullopt;
 }
 
-template<> ASCIILiteral expectedEnumerationValues<CryptoKeyUsage>()
-{
-    return "\"encrypt\", \"decrypt\", \"sign\", \"verify\", \"deriveKey\", \"deriveBits\", \"wrapKey\", \"unwrapKey\", \"encapsulateBits\", \"decapsulateBits\", \"encapsulateKey\", \"decapsulateKey\""_s;
-}
-
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

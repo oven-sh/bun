@@ -296,3 +296,16 @@ it("getPriority system error object", () => {
     expect(err.syscall).toBe("uv_os_getpriority");
   }
 });
+
+it("setPriority throws ESRCH for a nonexistent pid", () => {
+  // 0x7ffffffe is above any pid the OS hands out.
+  expect(() => os.setPriority(0x7ffffffe, 0)).toThrow(
+    expect.objectContaining({
+      name: "SystemError",
+      message: "A system error occurred: uv_os_setpriority returned ESRCH (no such process)",
+      code: "ERR_SYSTEM_ERROR",
+      syscall: "uv_os_setpriority",
+      info: { errno: isWindows ? -4040 : -3, code: "ESRCH", message: "no such process", syscall: "uv_os_setpriority" },
+    }),
+  );
+});

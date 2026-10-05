@@ -477,6 +477,108 @@ describe("captured stdio backpressure", () => {
   });
 });
 
+// A synchronous worker exit leaves no loop turns for the reader's ack to release
+// the parked writev, so everything buffered behind it must be flushed from the
+// worker's process 'exit' (node's flushSync).
+describe("stdio is flushed when the worker exits synchronously", () => {
+  const N = 300;
+
+  test.each(["stdout", "stderr"] as const)("captured %s: console + raw write, then process.exit(0)", async name => {
+    const method = name === "stdout" ? "log" : "error";
+    const worker = new Worker(
+      `for (let i = 0; i < ${N}; i++) {
+         if (i % 2) console.${method}("W" + i); else process.${name}.write("W" + i + "\\n");
+       }
+       process.exit(0);`,
+      { eval: true, stdout: true, stderr: true },
+    );
+    let out = "";
+    worker[name].setEncoding("utf8").on("data", d => (out += d));
+    const [code] = await once(worker, "exit");
+    expect(out).toBe(Array.from({ length: N }, (_, i) => "W" + i + "\n").join(""));
+    expect(code).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["process.exit", "process.exit(0);", 0],
+    ["uncaught exception", 'throw new Error("boom");', 1],
+    ["unhandled rejection", 'Promise.reject(new Error("boom"));', 1],
+  ])("auto-piped stdout survives %s", async (_label, exit, expectedWorkerCode) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(`for (let i = 0; i < ${N}; i++) console.log("W" + i);\n${exit}`)}, { eval: true });
+         w.on("error", () => {});
+         w.on("exit", c => console.error("[exit " + c + "]"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(Array.from({ length: N }, (_, i) => "W" + i + "\n").join(""));
+    expect(stderr).toBe(`[exit ${expectedWorkerCode}]\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Output buffered behind the parked batch is flushed first, then each write
+  // from the user's 'exit' handler goes through synchronously; all of it arrives,
+  // in order, before the parent's 'exit', and the exitCode the handler sets wins.
+  test("buffered output, then 'exit' handler output, arrive in order; handler exitCode wins", async () => {
+    const M = 200;
+    const worker = new Worker(
+      `process.on("exit", code => {
+         for (let i = 0; i < ${M}; i++) process.stdout.write("L" + i + " " + code + " " + process._exiting + "\\n");
+         process.exitCode = 42;
+       });
+       for (let i = 0; i < ${N}; i++) console.log("W" + i);
+       process.exit(7);`,
+      { eval: true, stdout: true },
+    );
+    let out = "";
+    worker.stdout.setEncoding("utf8").on("data", d => (out += d));
+    const [code] = await once(worker, "exit");
+    expect(out).toBe(
+      Array.from({ length: N }, (_, i) => "W" + i + "\n").join("") +
+        Array.from({ length: M }, (_, i) => "L" + i + " 7 true\n").join(""),
+    );
+    expect(code).toBe(42);
+  });
+
+  // Same on an uncaught exception: the user's handler sees code 1 with _exiting
+  // set, buffered + exit-time output arrives, and its exitCode wins (as in node).
+  // Spawned so the test runner's unhandled-error hook doesn't intercept the
+  // worker's uncaught exception.
+  test.concurrent("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
+    const workerSrc = `process.on("exit", code => {
+        process.stdout.write("exit handler " + code + " " + process._exiting + "\\n");
+        process.exitCode = 42;
+      });
+      console.log("hello");
+      throw new Error("boom");`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
+         let out = "";
+         w.stdout.setEncoding("utf8").on("data", d => (out += d));
+         w.on("error", e => console.log("error " + e.message));
+         w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();
@@ -1336,6 +1438,164 @@ describe("postMessage transfer list", () => {
   });
 });
 
+// Serializing the message runs user code (the getters below), which can invalidate an entry
+// of the transfer list after the list was checked. The transfer must then fail as a whole:
+// node reports the DataCloneError with every listed ArrayBuffer still intact. Bun used to
+// detach the buffers first and reject the port afterwards, so the caller got an error and
+// lost its data.
+describe("transfer list invalidated while the message is serialized", () => {
+  const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
+
+  // `first` is serialized, then the getter closes `transferred`, then `last`.
+  function messageClosingListedPort(transferred: MessagePort) {
+    const first = new ArrayBuffer(8);
+    const last = new ArrayBuffer(8);
+    const message = {
+      first,
+      get closeIt() {
+        transferred.close();
+        return 1;
+      },
+      transferred,
+      last,
+    };
+    return { message, transfer: [first, transferred, last], buffers: [first, last] };
+  }
+
+  test("port.postMessage: a getter closing a listed port leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { message, transfer, buffers } = messageClosingListedPort(transferred);
+    expect(() => port1.postMessage(message, transfer)).toThrow(dataClone);
+    expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    peer.close();
+  });
+
+  test("worker.postMessage: a getter closing a listed port leaves the listed buffers intact", async () => {
+    const worker = new Worker("", { eval: true });
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => worker.postMessage(message, transfer)).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker.terminate();
+      peer.close();
+    }
+  });
+
+  test("new Worker: a workerData getter closing a listed port leaves the listed buffers intact", async () => {
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    let worker: Worker | undefined;
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => {
+        worker = new Worker("", { eval: true, workerData: message, transferList: transfer });
+      }).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker?.terminate();
+      peer.close();
+    }
+  });
+
+  // The invalidated port is only in the transfer list, not in the message, so only the
+  // post-serialization check can notice it.
+  test("port.postMessage: a getter transferring a listed port elsewhere leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { port1: elsewhere, port2: elsewherePeer } = new MessageChannel();
+    const buffer = new ArrayBuffer(8);
+    const message = {
+      buffer,
+      get moveIt() {
+        elsewhere.postMessage(null, [transferred]);
+        return 1;
+      },
+    };
+    expect(() => port1.postMessage(message, [buffer, transferred])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(8);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    elsewhere.close();
+    elsewherePeer.close();
+    peer.close();
+  });
+
+  // A mark applied by a getter counts like one applied before the call: the buffer is not
+  // detached. (Node also refuses, as a TypeError raised by the detach itself.)
+  function expectMarkDuringSerializationToBeHonored(send: (message: object, transfer: ArrayBuffer[]) => unknown) {
+    const buffer = new ArrayBuffer(16);
+    const message = {
+      get markIt() {
+        markAsUntransferable(buffer);
+        return 1;
+      },
+      buffer,
+    };
+    expect(() => send(message, [buffer])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(16);
+  }
+
+  test("structuredClone honors markAsUntransferable applied during serialization", () => {
+    expectMarkDuringSerializationToBeHonored((message, transfer) => structuredClone(message, { transfer }));
+  });
+
+  test("port.postMessage honors markAsUntransferable applied during serialization", () => {
+    const { port1, port2 } = new MessageChannel();
+    expectMarkDuringSerializationToBeHonored((message, transfer) => port1.postMessage(message, transfer));
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+  });
+
+  test("worker.postMessage honors markAsUntransferable applied during serialization", async () => {
+    const worker = new Worker("", { eval: true });
+    try {
+      expectMarkDuringSerializationToBeHonored((message, transfer) => worker.postMessage(message, transfer));
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // The other direction of the same rule: once the buffers are detached, the listed ports go
+  // with them even though the message itself is dropped because the sending port is closed.
+  // Node performs the transfer for a closed sender too; bun used to leave the port usable.
+  test.each([
+    ["before the call", true],
+    ["by a getter during serialization", false],
+  ])("port.postMessage on a port closed %s still detaches the listed port", async (_name, closeBeforeCall) => {
+    const { port1: sender, port2: senderPeer } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { promise: peerSawClose, resolve } = Promise.withResolvers<void>();
+    peer.on("close", () => resolve());
+    const buffer = new ArrayBuffer(8);
+    if (closeBeforeCall) sender.close();
+    const message = {
+      buffer,
+      get closeSender() {
+        sender.close();
+        return 1;
+      },
+      transferred,
+    };
+    expect(() => sender.postMessage(message, [buffer, transferred])).not.toThrow();
+    expect(buffer.byteLength).toBe(0);
+    const { port1: other, port2: otherPeer } = new MessageChannel();
+    expect(() => other.postMessage(null, [transferred])).toThrow("MessagePort in transfer list is already detached");
+    // The transferred endpoint had no receiver, which closes the channel from the peer's view.
+    await peerSawClose;
+    peer.close();
+    senderPeer.close();
+    other.close();
+    otherPeer.close();
+  });
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");
@@ -1995,6 +2255,55 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   expect(replies).toEqual(["got hi", "got bye"]);
 });
 
+// parentPort is a MessagePort: it queues what the parent posts until a 'message' listener is
+// attached, and again while none is, as in Node — unlike the Web Worker global scope, which drops
+// a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
+// parent posts everything, then says "go", so the listener is attached strictly afterwards.
+describe("parentPort queues messages until a 'message' listener is attached", () => {
+  async function run(workerSrc: string, batch: unknown[]) {
+    const { port1, port2 } = new MessageChannel();
+    const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
+    w.postMessage("early");
+    const replies: unknown[] = [];
+    w.on("message", m => {
+      if (m !== "started") return replies.push(m);
+      for (const item of batch) w.postMessage(item);
+      port1.postMessage("go");
+    });
+    const [code] = await once(w, "exit");
+    port1.close();
+    return { replies, code };
+  }
+
+  test("listener attached after a top-level await", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // All five are queued before the first listener exists, so one drain batch holds them; removing
+  // the listener after the first must put the rest back, in order, for the next one.
+  test("removing the last listener pauses delivery until one is attached again", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       const first = m => { parentPort.postMessage("first:" + m); parentPort.off("message", first); setImmediate(() => parentPort.on("message", second)); };
+       const second = m => { parentPort.postMessage("second:" + m); if (m === 3) process.exit(0); };
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", first);`,
+      [0, 1, 2, 3],
+    );
+    expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+});
+
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
@@ -2021,7 +2330,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 });
 
 // Static imports that are still being read/transpiled are loading, not a
-// top-level await: 'online' and message delivery wait for the graph to execute.
+// top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
@@ -2034,6 +2343,42 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   w.postMessage("hi");
   expect(await reply).toBe("got hi 0");
   await w.terminate();
+});
+
+// node posts 'online' before it evaluates the entry, so it always precedes a
+// message the entry's top-level code posts (#41375: @discordjs/ws attaches its
+// 'message' listener only after `once(worker, "online")`).
+describe("'online' precedes the worker's first message", () => {
+  test("in event order", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("message", m => order.push("message:" + m));
+    const [code] = await once(w, "exit");
+    expect(order).toEqual(["online", "message:ready"]);
+    expect(code).toBe(0);
+  });
+
+  test("a 'message' listener attached after 'online' sees it", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    await once(w, "online");
+    const ready = new Promise<string>(resolve => w.on("message", resolve));
+    const exited = once(w, "exit").then(() => "exited first");
+    expect(await Promise.race([ready, exited])).toBe("ready");
+    await exited;
+  });
+
+  test("a worker whose entry does not resolve reports 'online' then 'error'", async () => {
+    using dir = tempDir("worker-online-missing-entry", {});
+    const w = new Worker(join(String(dir), "missing.js"));
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("error", e => order.push("error:" + (e as any).code));
+    // not events.once(): it rejects on the 'error' event this test expects
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
+    expect(code).toBe(1);
+  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────
@@ -2167,8 +2512,8 @@ describe("terminate with work in flight", () => {
   });
 });
 
-// A JS preload's modules are not the entry: the worker counts as started (online,
-// parent messages delivered) only once its own entry graph has executed.
+// A JS preload's modules are not the entry: parent messages are delivered only
+// once the worker's own entry graph has executed.
 test("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,
@@ -2203,6 +2548,51 @@ test("closing the only ref'd port from setImmediate lets the process exit", asyn
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("closed\n");
   expect(exitCode).toBe(0);
+});
+
+// A worker's own stop requests (process.exit(), an uncaught error) have to wake
+// its loop the way the parent's terminate() does: made from an immediate they
+// land after the turn's tick and before its poll, and the run loop only looks
+// for them again once the poll returns. With a parentPort listener keeping the
+// loop alive, nothing else ends that poll: the exit used to wait for the idle GC
+// timer (about a second), and without it (disabled here) never happened.
+describe("a worker that stops itself from an immediate exits right away", () => {
+  test.concurrent.each([
+    ["process.exit()", "process.exit(7);", { errors: [], code: 7 }],
+    [
+      "process.exit() from a nextTick the immediate queued",
+      "process.nextTick(() => process.exit(7));",
+      { errors: [], code: 7 },
+    ],
+    ["an uncaught exception", 'throw new Error("boom");', { errors: ["boom"], code: 1 }],
+  ])("%s", async (_label, stop, expected) => {
+    const workerSrc = `const { parentPort } = require("node:worker_threads");
+      parentPort.on("message", () => {});
+      // Scheduled a little after startup so the worker's startup GC timers have
+      // fired by then and nothing is left that would end the poll on its own.
+      setTimeout(() => setImmediate(() => { parentPort.postMessage("stopping"); ${stop} }), 300);`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const seen = { messages: [], errors: [] };
+         w.on("message", m => seen.messages.push(m));
+         w.on("error", e => seen.errors.push(e.message));
+         w.on("exit", code => console.log(JSON.stringify({ ...seen, code })));`,
+      ],
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ messages: ["stopping"], ...expected }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
@@ -2584,4 +2974,116 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(tags).toEqual([TAG.ready, TAG.exitHandler]);
     expect(code).toBe(7);
   });
+});
+
+// Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
+// onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
+// nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+describe("nothing queued runs after the worker's VM stops", () => {
+  const cases: [string, string, (w: Worker) => void][] = [
+    [
+      "process.exit() in a timer",
+      `setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+         parentPort.postMessage("sync code after exit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in Bun.spawn onExit",
+      `Bun.spawn({ cmd: [process.execPath, "-e", "0"], env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" }, onExit() {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+       }});`,
+      () => {},
+    ],
+    [
+      "terminate() landing mid-callback",
+      `parentPort.on("message", () => {});
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         parentPort.postMessage("ready");
+         const t = Date.now(); while (Date.now() - t < 5000) {}
+         parentPort.postMessage("busy loop was not interrupted");
+       }, 5);`,
+      w => w.on("message", m => m === "ready" && w.terminate()),
+    ],
+  ];
+  for (const [name, body, arm] of cases) {
+    test(name, async () => {
+      const w = new Worker(`const { parentPort } = require("worker_threads");\n${body}`, { eval: true });
+      const messages: string[] = [];
+      w.on("message", m => m !== "ready" && messages.push(m));
+      arm(w);
+      const [code] = await once(w, "exit");
+      expect(messages).toEqual([]);
+      expect(typeof code).toBe("number");
+    });
+  }
+});
+
+// A worker's stop makes JSC forbid execution in the step that throws its TerminationException (WebCore's
+// forbidExecutionOnTermination, armed per stop). Whatever was queued or in flight when a callback got stuck —
+// due timers, immediates, nextTicks, microtasks, socket data, MessagePort deliveries, intervals, 'exit'
+// listeners — must not enter JS once the termination has unwound that callback: any such entry is one that
+// happened after termination, by construction (only the termination could have unwound the endless loop).
+describe("no JS entry after a worker's termination has been thrown", () => {
+  const worker = (stuckIn: "portMessage" | "socketData") => `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const c = new Int32Array(workerData.sab);
+    let armed = false;
+    const B = i => () => { if (armed) Atomics.add(c, i, 1); };
+    let stuckOnce = false;
+    function scheduleEverythingThenGetStuck() {
+      if (stuckOnce) return;
+      stuckOnce = true;
+      for (let k = 0; k < 50; k++) { setTimeout(B(0), 0); setImmediate(B(1)); process.nextTick(B(2)); queueMicrotask(B(3)); Promise.resolve().then(B(3)); }
+      setInterval(B(6), 1);
+      process.on("exit", B(7));
+      parentPort.postMessage("stuck");
+      const t = Date.now(); while (Date.now() - t < 30) {}
+      // Stuck in native code each iteration, so no JIT tier can turn this into a poll-free loop.
+      for (;;) Atomics.wait(c, 7, 0, 5);
+    }
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+      open(s) { setInterval(() => { for (let k = 0; k < 8; k++) s.write("x"); }, 1); }, data() {}, drain() {} } });
+    Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open() {}, drain() {},
+      data() { if (!armed) return; B(4)(); if (${JSON.stringify(stuckIn)} === "socketData") scheduleEverythingThenGetStuck(); } } });
+    parentPort.on("message", m => {
+      if (m !== "go") { B(5)(); return; }
+      armed = true;
+      if (${JSON.stringify(stuckIn)} === "portMessage") scheduleEverythingThenGetStuck();
+    });
+  `;
+  for (const stuckIn of ["portMessage", "socketData"] as const) {
+    test(`stuck in a ${stuckIn} callback`, async () => {
+      const sab = new SharedArrayBuffer(4 * 8);
+      const counts = new Int32Array(sab);
+      const w = new Worker(worker(stuckIn), { eval: true, workerData: { sab } });
+      w.postMessage("go");
+      expect(await once(w, "message")).toEqual(["stuck"]);
+      for (let k = 0; k < 200; k++) w.postMessage("flood");
+      const t = Date.now();
+      while (Date.now() - t < 50) {}
+      await w.terminate();
+      const names = [
+        "timeout",
+        "immediate",
+        "nextTick",
+        "microtask",
+        "socketData",
+        "portMessage",
+        "interval",
+        "exitHandler",
+      ];
+      const after = Object.fromEntries(names.map((n, i) => [n, counts[i]]));
+      // The one socket data callback the worker got stuck in ran before termination.
+      if (stuckIn === "socketData") after.socketData -= 1;
+      expect(after).toEqual(Object.fromEntries(names.map(n => [n, 0])));
+    });
+  }
 });

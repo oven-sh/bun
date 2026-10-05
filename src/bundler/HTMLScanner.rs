@@ -9,6 +9,43 @@ use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
+
+/// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
+/// with (here and in `HTMLRewriter`), so lol_html's rewriter/tokenizer
+/// machinery is instantiated once rather than once per sink closure type.
+pub enum OutputSink<'a> {
+    /// `HTMLRewriter`'s response pipe: every chunk is appended to its staging
+    /// buffer (statically dispatched — this is the throughput-sensitive user).
+    /// The pipe owns the rewriter that owns this sink, so the back-reference
+    /// invariant holds structurally.
+    Buffer(bun_ptr::BackRef<bun_ptr::JsCell<Vec<u8>>>),
+    /// The bundler's HTML scanner.
+    Callback(Box<dyn FnMut(&[u8]) + 'a>),
+}
+
+impl lol_html::OutputSink for OutputSink<'_> {
+    #[inline]
+    fn handle_chunk(&mut self, chunk: &[u8]) {
+        match self {
+            // lol-html signals end-of-document with one zero-length chunk.
+            OutputSink::Buffer(buffer) => {
+                if !chunk.is_empty() {
+                    buffer.with_mut(|buffer| buffer.extend_from_slice(chunk));
+                }
+            }
+            OutputSink::Callback(callback) => Self::call(callback, chunk),
+        }
+    }
+}
+
+impl OutputSink<'_> {
+    // Out of line so the per-chunk sink call lol_html inlines everywhere stays small.
+    #[cold]
+    #[inline(never)]
+    fn call(callback: &mut (dyn FnMut(&[u8]) + '_), chunk: &[u8]) {
+        callback(chunk)
+    }
+}
 use lol_html::html_content::Element;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
@@ -343,12 +380,12 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         // lol-html signals end-of-document with one zero-length chunk; the
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
-        let output_sink = move |chunk: &[u8]| {
+        let output_sink = OutputSink::Callback(Box::new(move |chunk: &[u8]| {
             if !chunk.is_empty() {
                 // SAFETY: see `on_tag` above.
                 unsafe { (*this_ptr).on_write_html(chunk) }
             }
-        };
+        }));
 
         // The rewriter — the sole holder of `this_ptr`-derived aliases — is
         // consumed (or dropped on a failed `write`) inside this closure, so

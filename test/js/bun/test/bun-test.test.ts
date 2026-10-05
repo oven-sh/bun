@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.version", () => {
   expect(process.versions.bun).toBe(Bun.version);
@@ -40,4 +40,46 @@ console.log("OK");`,
 
   expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
+});
+
+// toBeWithin() with one argument used to index past the argument slice and
+// abort the process instead of failing the test.
+test("toBeWithin() with missing or non-number arguments fails the test without crashing", async () => {
+  using dir = tempDir("to-be-within-args", {
+    "within.test.ts": `
+      import { test, expect } from "bun:test";
+
+      test("one argument", () => {
+        expect(1).toBeWithin(0);
+      });
+
+      test("no arguments", () => {
+        expect(1).toBeWithin();
+      });
+
+      test("start is not a number", () => {
+        expect(1).toBeWithin("0", 2);
+      });
+
+      test("end is not a number", () => {
+        expect(1).toBeWithin(0, "2");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "within.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("toBeWithin() requires 2 arguments");
+  expect(stderr).toContain("toBeWithin() requires the first argument to be a number");
+  expect(stderr).toContain("toBeWithin() requires the second argument to be a number");
+  expect(stderr).toContain("4 fail");
+  expect(exitCode).toBe(1);
 });

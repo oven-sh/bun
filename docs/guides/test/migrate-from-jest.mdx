@@ -68,7 +68,7 @@ If you use `testEnvironment: "jsdom"` to run your tests in a browser-like enviro
 
 ```toml bunfig.toml icon="settings"
 [test]
-preload = ["./happy-dom.ts"]
+preload = ["./happydom.ts"]
 ```
 
 ---
@@ -101,13 +101,22 @@ Many other Jest settings are irrelevant in `bun test`.
 
 - `transform` — Bun supports TypeScript & JSX. Configure other file types with [plugins](/runtime/plugins).
 - `extensionsToTreatAsEsm`
-- `haste` — Bun uses its own internal source maps
+- `haste` — Bun uses its own [module resolver](/runtime/module-resolution)
 - `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode
-- `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](/runtime/bunfig#loglevel)
+- `verbose` — `bun test` reports each test by default. Use `--only-failures` or `--dots` for less output (see [Test reporters](/test/reporters)).
 
 ---
 
-Settings that aren't mentioned here are not supported or have no equivalent. [File a feature request](https://github.com/oven-sh/bun) if something you need is missing.
+Many other settings have an equivalent in the `[test]` section of `bunfig.toml`. For example:
+
+- `setupFiles`/`setupFilesAfterEnv` → `preload`
+- `testPathIgnorePatterns` → `pathIgnorePatterns`
+- `rootDir` → `root`
+- `coverageDirectory` → `coverageDir`
+- `coverageReporters` → `coverageReporter`
+- `coverageThreshold` → `coverageThreshold` (as a fraction like `0.9`, not a percentage)
+
+See [Test configuration](/test/configuration). Settings without an equivalent are not supported. [File a feature request](https://github.com/oven-sh/bun/issues/new?template=4-feature-request.yml) if something you need is missing.
 
 ---
 

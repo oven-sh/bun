@@ -1,0 +1,8 @@
+{
+  "name": "outer",
+  "version": "1.0.0",
+  "dependencies": {
+    "config": "file:../shared/config",
+    "fork": "github:o/bar#aeb6b15"
+  }
+}

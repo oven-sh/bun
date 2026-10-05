@@ -26,8 +26,11 @@
 
 #include "config.h"
 #include "PerformanceServerTiming.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceServerTiming);
 
 Ref<PerformanceServerTiming> PerformanceServerTiming::create(String&& name, double duration, String&& description)
 {

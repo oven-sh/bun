@@ -7,10 +7,7 @@
 //      WARMUP_REQUESTS - warmup iterations to stabilize the RSS baseline (default 20000)
 //      MODE - "same" (same TLS config) or "distinct" (unique configs)
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const cert = process.env.TLS_CERT;
 const key = process.env.TLS_KEY;
 const numRequests = parseInt(process.env.NUM_REQUESTS || "50000", 10);

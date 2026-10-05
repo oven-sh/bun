@@ -21,6 +21,8 @@ extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 
 namespace Bun {
 
@@ -85,6 +87,13 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(p ? static_cast<double>(static_cast<const uint8_t*>(p) - haystack) : -1.0)));
     } else if (op == "memrmem"_s) {
         size_t r = highway_memrmem(haystack, len, needle, needle_len);
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(r == static_cast<size_t>(-1) ? -1.0 : static_cast<double>(r))));
+    } else if (op == "memmem16"_s || op == "memrmem16"_s) {
+        // Byte views reinterpreted as UTF-16 code units (any alignment, odd byte
+        // dropped, as JSBuffer.cpp does); result is in code units.
+        auto* h16 = reinterpret_cast<const uint16_t*>(haystack);
+        auto* n16 = reinterpret_cast<const uint16_t*>(needle);
+        size_t r = op == "memmem16"_s ? highway_memmem16(h16, len / 2, n16, needle_len / 2) : highway_memrmem16(h16, len / 2, n16, needle_len / 2);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(r == static_cast<size_t>(-1) ? -1.0 : static_cast<double>(r))));
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);

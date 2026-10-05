@@ -65,7 +65,6 @@ macro_rules! opaque_ffi {
             /// [`bun_opaque::opaque_deref`](crate::opaque_deref) for the
             /// soundness proof; panics on null.
             #[inline(always)]
-            #[allow(dead_code)]
             pub fn opaque_ref<'a>(p: *const Self) -> &'a Self {
                 $crate::opaque_deref(p)
             }
@@ -76,7 +75,6 @@ macro_rules! opaque_ffi {
             /// # Safety
             /// `p` must be non-null.
             #[inline(always)]
-            #[allow(dead_code)]
             pub unsafe fn opaque_ref_nn<'a>(p: *const Self) -> &'a Self {
                 // SAFETY: forwarded to caller.
                 unsafe { $crate::opaque_deref_nn(p) }
@@ -85,19 +83,8 @@ macro_rules! opaque_ffi {
             /// [`bun_opaque::opaque_deref_mut`](crate::opaque_deref_mut) for
             /// the soundness proof; panics on null.
             #[inline(always)]
-            #[allow(dead_code)]
             pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
                 $crate::opaque_deref_mut(p)
-            }
-            /// Unchecked `*mut Self → &mut Self`. See [`opaque_ref_nn`].
-            ///
-            /// # Safety
-            /// `p` must be non-null.
-            #[inline(always)]
-            #[allow(dead_code)]
-            pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
-                // SAFETY: forwarded to caller.
-                unsafe { $crate::opaque_deref_mut_nn(p) }
             }
             /// `&self → *mut Self` for FFI calls that take a non-const handle.
             ///
@@ -109,7 +96,6 @@ macro_rules! opaque_ffi {
             /// freely mutate the real allocation through the returned pointer;
             /// `&Self` covers zero Rust-visible bytes so cannot alias it.
             #[inline(always)]
-            #[allow(dead_code)]
             pub fn as_mut_ptr(&self) -> *mut Self {
                 self._p.get().cast::<Self>()
             }
@@ -271,7 +257,7 @@ macro_rules! assert_ffi_discr {
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
-    let p = ::core::ptr::NonNull::new(p.cast_mut()).expect("opaque_deref: null FFI handle");
+    let p = ::core::ptr::NonNull::new(p.cast_mut()).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
     unsafe { opaque_deref_nn(p.as_ptr()) }
 }
@@ -314,7 +300,7 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
-    let p = ::core::ptr::NonNull::new(p).expect("opaque_deref_mut: null FFI handle");
+    let p = ::core::ptr::NonNull::new(p).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
     unsafe { opaque_deref_mut_nn(p.as_ptr()) }
 }
@@ -427,4 +413,13 @@ pub mod ffi {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         }
     }
+}
+
+/// One shared, argument-free panic for the null checks above: thousands of
+/// call sites inline `opaque_deref`, and a `#[track_caller]` `expect` would
+/// give each its own message/location setup.
+#[cold]
+#[inline(never)]
+fn null_handle() -> ! {
+    panic!("opaque_deref: null FFI handle");
 }

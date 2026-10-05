@@ -100,7 +100,6 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/bun_bin",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -116,19 +115,19 @@ edition = "2024"
 # Zig's release build is one compilation unit with whole-program optimization.
 # Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
 # CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
-# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
-# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+# `#[inline]`-annotated leaf fns. Here each crate is one unit
+# (`codegen-units = 1`) of ThinLTO bitcode, and bun's link runs the LTO over
+# all of them (`scripts/build/rust.ts` adds `-C linker-plugin-lto`), together
+# with the C/C++ where that is LTO too. rustc runs no LTO of its own: it links
+# nothing of bun, so `lto = "off"`, which also leaves each crate's bitcode
+# with the summary a ThinLTO link imports through.
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
 # pads means smaller `.pdata`/`.xdata`.
 #
-# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
-# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
-# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
-# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
 [profile.release]
-lto = "fat"
+lto = "off"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
@@ -137,22 +136,12 @@ panic = "abort"
 [profile.dev]
 panic = "abort"
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
-# being packed into the rlibs and then re-packed into `libbun_rust.a`. The debug
-# `.a` was ~1.5 GB (≥80% debuginfo) and the `bun_bin` staticlib step alone spent
-# ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
-# codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
 # No effect on the compiled code. Windows uses PDB so this is a no-op there
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
-
-# Fast-iteration release build for local benching when fat LTO's link time
-# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
-[profile.release-dev]
-inherits = "release"
-lto = "thin"
-codegen-units = 16
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
@@ -161,7 +150,7 @@ inherits = "release"
 debug = "line-tables-only"
 strip = "none"
 
-# `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
+# `bun-shim-impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
 # `bun install`. Zig built it freestanding ReleaseFast (no libc,
 # single-threaded, ~13 KiB). The Rust port matches that with
@@ -182,7 +171,7 @@ codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
 # rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
-# bun_bin build and the shim build shares that env; without explicit values
+# bun_runtime build and the shim build shares that env; without explicit values
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
@@ -330,7 +319,7 @@ new_ret_no_self = "allow"
 map_identity = "allow"
 
 [workspace.dependencies]
-rust-argon2 = "3.0"
+rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
@@ -354,8 +343,8 @@ rustix = { version = "0.38", default-features = false, features = ["std", "fs", 
 bitflags = "2"
 thiserror = "2"
 smallvec = "1"
-typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
@@ -451,7 +440,6 @@ bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
-bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }

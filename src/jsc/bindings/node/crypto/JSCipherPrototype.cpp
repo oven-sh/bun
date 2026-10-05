@@ -34,8 +34,8 @@ static const JSC::HashTableValue JSCipherPrototypeTableValues[] = {
 void JSCipherPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCipherPrototype::info(), JSCipherPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSCipherPrototype::info(), JSCipherPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -52,9 +52,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
 
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
-
-    WTF::String dataString = WTF::nullString();
-    WTF::String encodingString = WTF::nullString();
 
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});

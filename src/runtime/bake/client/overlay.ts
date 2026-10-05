@@ -524,8 +524,6 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
 }
 
 function updateBuildErrorOverlay({ remountAll = false }) {
-  let totalCount = 0;
-
   const owners = remountAll ? buildErrors.keys() : updatedErrorOwners;
 
   for (const owner of owners) {
@@ -538,8 +536,6 @@ function updateBuildErrorOverlay({ remountAll = false }) {
       errorDoms.delete(owner);
       continue;
     }
-
-    totalCount += data.messages.length;
 
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {

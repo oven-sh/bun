@@ -6,6 +6,158 @@ import path from "node:path";
 // import fixtures from "./common/fixtures.js";
 
 describe("path.resolve", () => {
+  test.each([
+    [
+      "default",
+      path.resolve,
+      isWindows ? "C:\\virtual\\cwd" : "/virtual/cwd",
+      isWindows ? "C:\\virtual\\cwd\\child" : "/virtual/cwd/child",
+      isWindows ? "C:\\absolute\\child" : "/absolute/child",
+    ],
+    ["posix", path.posix.resolve, "/virtual/cwd", "/virtual/cwd/child", "/absolute/child"],
+    ["win32", path.win32.resolve, "C:\\virtual\\cwd", "C:\\virtual\\cwd\\child", "C:\\absolute\\child"],
+  ])("%s uses a replaced process.cwd for relative paths", (_, resolve, cwd, expectedRelative, absolute) => {
+    const originalCwd = process.cwd;
+    let calls = 0;
+    process.cwd = () => {
+      calls++;
+      return cwd;
+    };
+    try {
+      expect(resolve("child")).toBe(expectedRelative);
+      expect(calls).toBe(1);
+
+      calls = 0;
+      expect(resolve(absolute)).toBe(absolute);
+      expect(calls).toBe(0);
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("supports a replaced cwd longer than the platform path limit", () => {
+    const originalCwd = process.cwd;
+    const segment = Buffer.alloc(40000, "a").toString();
+    const cwd = `/${segment}`;
+    let calls = 0;
+    process.cwd = () => {
+      calls++;
+      return cwd;
+    };
+    try {
+      expect(path.posix.resolve("child")).toBe(`${cwd}/child`);
+      expect(calls).toBe(1);
+
+      calls = 0;
+      process.cwd = () => {
+        calls++;
+        return `C:\\${segment}`;
+      };
+      expect(path.win32.resolve("C:child")).toBe(`C:\\${segment}\\child`);
+      expect(calls).toBe(1);
+
+      const cwdBufferLimit = isWindows ? 32767 * 3 + 1 : 32767;
+      const boundarySegment = Buffer.alloc(cwdBufferLimit - 3, "b").toString();
+      calls = 0;
+      process.cwd = () => {
+        calls++;
+        return `C:\\${boundarySegment}`;
+      };
+      expect(path.win32.resolve("C:child")).toBe(`C:\\${boundarySegment}\\child`);
+      expect(calls).toBe(1);
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("normalizes a replaced cwd", () => {
+    const originalCwd = process.cwd;
+    process.cwd = () => "/virtual/a/../cwd/";
+    try {
+      expect(path.posix.resolve()).toBe("/virtual/a/../cwd/");
+      expect(path.posix.resolve("./")).toBe("/virtual/cwd");
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("uses an accessor replacement for process.cwd", () => {
+    const original = Object.getOwnPropertyDescriptor(process, "cwd");
+    let getterCalls = 0;
+    Object.defineProperty(process, "cwd", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return () => "/virtual/cwd";
+      },
+    });
+    try {
+      expect(path.posix.resolve("child")).toBe("/virtual/cwd/child");
+      expect(getterCalls).toBe(1);
+    } finally {
+      Object.defineProperty(process, "cwd", original);
+    }
+  });
+
+  test("uses an inherited replacement for process.cwd", () => {
+    const original = Object.getOwnPropertyDescriptor(process, "cwd");
+    const prototype = Object.getPrototypeOf(process);
+    const inherited = Object.getOwnPropertyDescriptor(prototype, "cwd");
+    delete process.cwd;
+    Object.defineProperty(prototype, "cwd", {
+      configurable: true,
+      value: () => "/virtual/cwd",
+    });
+    try {
+      expect(path.posix.resolve("child")).toBe("/virtual/cwd/child");
+    } finally {
+      if (inherited) Object.defineProperty(prototype, "cwd", inherited);
+      else delete prototype.cwd;
+      Object.defineProperty(process, "cwd", original);
+    }
+  });
+
+  test("preserves a lone UTF-16 surrogate in the resolved path", () => {
+    const originalCwd = process.cwd;
+    process.cwd = () => (isWindows ? "C:😀" : "\ude00");
+    try {
+      expect(path.posix.resolve("child")).toBe("\ude00/child");
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test.skipIf(isWindows)("preserves a lone surrogate in the win32 cwd shortcut", () => {
+    const originalCwd = process.cwd;
+    process.cwd = () => "/virtual/\ud800";
+    try {
+      expect(path.win32.resolve()).toBe("\\virtual\\\ud800");
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("does not hold path scratch across a reentrant process.cwd", () => {
+    const originalCwd = process.cwd;
+    let calls = 0;
+    let nested;
+    process.cwd = () => {
+      calls++;
+      if (calls === 1) {
+        nested = path.posix.resolve("nested");
+        return "/outer";
+      }
+      return "/inner";
+    };
+    try {
+      expect(path.posix.resolve("child")).toBe("/outer/child");
+      expect(nested).toBe("/inner/nested");
+      expect(calls).toBe(2);
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
   test("general", () => {
     const failures = [];
     const slashRE = /\//g;
@@ -200,4 +352,54 @@ describe("path.resolve", () => {
     const expectedEnding = isWindows ? "\\c" : "/c";
     assert.ok(result.endsWith(expectedEnding));
   });
+});
+
+test.skipIf(isWindows)("resolve cwd shortcuts throw when the working directory was removed", async () => {
+  const script = `
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const previous = process.cwd();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "resolve-deleted-cwd-"));
+    try {
+      process.chdir(dir);
+      fs.rmdirSync(dir);
+      for (const args of [[], ["."], ["./"], ["", ""]]) {
+        assert.throws(() => path.posix.resolve(...args), { code: "ENOENT" });
+      }
+      console.log("ok");
+    } finally { process.chdir(previous); }
+  `;
+  await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
+test("a replaced cwd on another drive preserves the win32 relative tail", () => {
+  const previous = process.cwd;
+  // A per-drive cwd takes precedence on Windows, so use a drive without one.
+  const drive = [..."CEFGHIJKLMNOPQRSTUVWXYZAB"].find(letter => !process.env["=" + letter + ":"]);
+  expect(drive).toBeDefined();
+  process.cwd = () => "D:\\base";
+  try {
+    expect(path.win32.resolve(drive + ":child")).toBe(drive + ":\\child");
+  } finally {
+    process.cwd = previous;
+  }
+});
+
+test("a relative replaced cwd retains Node's two calls for a dot shortcut", () => {
+  const previous = process.cwd;
+  let calls = 0;
+  process.cwd = () => {
+    calls++;
+    return "relative";
+  };
+  try {
+    expect(path.posix.resolve(".")).toBe("relative");
+    expect(calls).toBe(2);
+  } finally {
+    process.cwd = previous;
+  }
 });

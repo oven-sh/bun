@@ -2518,25 +2518,38 @@ pub mod bv2_impl {
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
-            let imports_of_page = |index: usize| {
-                let records = match loaders[index] {
-                    Loader::Html => import_records[index].as_slice(),
-                    _ => &[],
-                };
-                (records.iter().map(|record| record.source_index))
-                    .filter(|imported| imported.is_valid())
-                    .map(|imported| imported.get() as usize)
+            let flags = self.graph.input_files.items_flags();
+            let is_loaded_by_plugin = |index: usize| {
+                flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
-            let mut entry_points = (self.graph.entry_points.iter())
+            // What cannot be named stands for what it imports: a page, and what only a plugin can
+            // read, like `App.svelte`.
+            let mut named: Vec<usize> = Vec::new();
+            let mut is_named = vec![false; sources.len()];
+            let mut pending: Vec<usize> = (self.graph.entry_points.iter().rev())
                 .map(|entry_point| entry_point.get() as usize)
-                .flat_map(|index| std::iter::once(index).chain(imports_of_page(index)))
+                .collect();
+            while let Some(index) = pending.pop() {
+                if std::mem::replace(&mut is_named[index], true) {
+                    continue;
+                }
+                named.push(index);
+                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                    let records = import_records[index].as_slice().iter().rev();
+                    pending.extend(
+                        (records.map(|record| record.source_index))
+                            .filter(|imported| imported.is_valid())
+                            .map(|imported| imported.get() as usize),
+                    );
+                }
+            }
+            let mut entry_points = (named.iter().copied())
                 .filter(|&index| {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let flags = self.graph.input_files.items_flags();
             let mut sources = (sources.iter().zip(loaders).zip(flags))
                 .filter(|((source, loader), flags)| {
                     loader.is_javascript_like_or_json()

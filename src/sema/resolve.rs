@@ -423,6 +423,10 @@ pub struct Options {
     pub config_path: Vec<u8>,
     /// The configuration file has `references`.
     pub has_project_references: bool,
+    /// The first so many root files are those of the project. The others are added to it by name.
+    /// They, and what only they bring in, are not its sources: nothing is emitted for them, so
+    /// `rootDir` and `composite` have no say about them. `None`: all are its own.
+    pub own_roots: Option<usize>,
     /// `validatedFilesSpec`, as absolute paths.
     pub file_specs: Vec<Vec<u8>>,
     /// `validatedIncludeSpecsBeforeSubstitution`, each paired with the corresponding entry of

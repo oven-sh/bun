@@ -751,6 +751,9 @@ struct Projects {
     loaded: FxHashMap<Vec<u8>, config::Project>,
     /// `Project::files`, to look a file up in.
     files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
+    /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
+    /// have it under `allowJs`.
+    counts_javascript: bool,
 }
 
 impl Projects {
@@ -779,12 +782,24 @@ impl Projects {
         }
         seen.push(config.to_vec());
         let is_new = !self.files.contains_key(config);
+        let counts_javascript = self.counts_javascript;
         let project = self.load(disk, request, config);
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
             .collect();
-        if let Some(files) = is_new.then(|| project.files.iter().cloned().collect()) {
-            self.files.insert(config.to_vec(), files);
+        if is_new {
+            let files = match counts_javascript {
+                false => project.files.clone(),
+                true => {
+                    let with_javascript = |has_references: bool| {
+                        let mut options = overriding_options(request, has_references);
+                        options.push((b"allowJs".to_vec(), Json::Bool(true)));
+                        options
+                    };
+                    config::load_overriding(disk, &Session::new(), config, &with_javascript).files
+                }
+            };
+            (self.files).insert(config.to_vec(), files.into_iter().collect());
         }
         if self.files[config].contains(file) {
             return Some(config.to_vec());
@@ -930,7 +945,10 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         let nearest = || config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
         explicit.clone().or_else(nearest)
     };
-    let mut projects = Projects::default();
+    let mut projects = Projects {
+        counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
+        ..Default::default()
+    };
     if paths.is_empty() {
         match config_in(&cwd) {
             Some(config) => {
@@ -1113,6 +1131,9 @@ fn check_project_of(
                 .filter(|root| seen.insert(root.as_slice()))
                 .cloned()
                 .collect();
+            if !more.is_empty() {
+                project.options.own_roots = Some(project.files.len());
+            }
             project.files.extend(more);
             project.options.files.clone_from(&project.files);
             // An empty file set in the config file is not an error when path arguments provide the roots.

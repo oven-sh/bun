@@ -14355,6 +14355,78 @@ describe.concurrent("--check", () => {
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
   });
 
+  // Nothing is emitted for a file that is only named, so where the project emits from is not about it.
+  test.each([
+    ["rootDir", { rootDir: "src" }],
+    ["composite", { composite: true, noEmit: false, emitDeclarationOnly: true }],
+  ])("a file outside `include` is checked in a project with %s", async (_, more) => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...more },
+        include: ["src", "console.d.ts", "bun-test.d.ts"],
+      }),
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "src/a.ts": `export const a: number = 1;\n`,
+      "test/helper.ts": `export const helper: number = 1;\n`,
+      "test/a.test.ts": `import { test } from "bun:test";\nimport { a } from "../src/a";\nimport { helper } from "./helper";\ntest("t", () => void (a + helper));\n`,
+      "scripts/x.ts": `import { a } from "../src/a";\nimport { helper } from "../test/helper";\nconsole.log("ran", a + helper);\n`,
+    });
+    const results = await Promise.all([
+      check(dir),
+      check(dir, ["test/a.test.ts"]),
+      check(dir, ["test"]),
+      run(String(dir), ["--check", "scripts/x.ts"]),
+      run(String(dir), ["test", "--check"]),
+      run(String(dir), ["build", "--check", "scripts/x.ts", "--outdir", "out"]),
+    ]);
+    expect(results.map(it => [/TS\d+/.exec(it.stdout + it.stderr)?.[0], it.exitCode])).toEqual(
+      results.map(() => [undefined, 0]),
+    );
+    expect(results[3].stdout).toBe("ran 2");
+  });
+
+  test("`rootDir` is still about what the project itself brings in", async () => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, rootDir: "src" },
+        include: ["src", "console.d.ts"],
+      }),
+      "src/a.ts": `import { outside } from "../outside";\nexport const a: number = outside;\n`,
+      "outside.ts": `export const outside: number = 1;\n`,
+      "scripts/x.ts": `import { a } from "../src/a";\nconsole.log("ran", a);\n`,
+    });
+    const [plain, named] = await Promise.all([check(dir), run(String(dir), ["--check", "scripts/x.ts"])]);
+    expect(plain.stdout).toContain("TS6059");
+    expect([
+      named.stderr.includes("TS6059"),
+      named.stderr.includes("scripts/x.ts' is not under"),
+      named.exitCode,
+    ]).toEqual([true, false, 1]);
+  });
+
+  test("a JavaScript entry point under a solution has the options of the project that would have it", async () => {
+    const options = {
+      ...JSON.parse(tsconfig).compilerOptions,
+      noEmit: false,
+      composite: true,
+      emitDeclarationOnly: true,
+    };
+    using dir = project({
+      "console.d.ts": "",
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }),
+      "tsconfig.app.json": JSON.stringify({
+        compilerOptions: { ...options, paths: { "@/*": ["./src/*"] } },
+        include: ["src", "scripts"],
+      }),
+      "src/console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
+      "src/config.ts": `export const config: number = 1;\n`,
+      "src/db.ts": `import { config } from "@/config";\nexport const db: number = config;\n`,
+      "scripts/seed.js": `import { db } from "../src/db";\nconsole.log("ran", db);\n`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--check", "scripts/seed.js"]);
+    expect([/TS\d+/.exec(stderr)?.[0], stdout, exitCode]).toEqual([undefined, "ran 1", 0]);
+  });
+
   // `allowJs` cannot be specified with `isolatedDeclarations`.
   test("a JavaScript entry point leaves the options of the project as they are", async () => {
     const files = (n: string) => ({
@@ -14923,9 +14995,17 @@ describe.concurrent("--check", () => {
         console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => [log.message, log.position?.line]) }));
       `,
       "App.svelte": `<script lang='ts'>let a: number = 1;</script>\n`,
+      "Outer.svelte": `<script lang='ts'></script>\n`,
+      "store.ts": `export const n: number = '1';\n`,
       "uses.ts": `import { value } from './generated';\nexport const own: number = value;\n`,
     });
     const build = async (...args: string[]) => JSON.parse((await run(String(dir), ["build.mjs", ...args])).stdout);
+    // It cannot be named, so what it imports is.
+    const imported = await build("App.svelte", `import { n } from './store';\nexport const a: number = n;\n`);
+    expect(imported).toEqual({
+      success: false,
+      logs: [["TS2322: Type 'string' is not assignable to type 'number'.", 1]],
+    });
     const [component, right, wrong] = await Promise.all([
       build("App.svelte", `export const a: number = 1;\n`),
       build("uses.ts", `export const value: number = 1;\n`),

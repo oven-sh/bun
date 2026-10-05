@@ -2450,10 +2450,29 @@ fn output_path_errors(
     } else {
         b""
     };
+    // See `Options::own_roots`.
+    let reached_from_own_roots = options.own_roots.map(|count| {
+        let own = roots.iter().take(count);
+        let mut pending: Vec<FileId> = (own.filter_map(|it| by_path.get(it.as_slice())))
+            .copied()
+            .collect();
+        let mut is_reached = vec![false; modules.len()];
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(modules[file.idx()].edges);
+            }
+        }
+        is_reached
+    });
+    let is_own = |module: &Module| match &reached_from_own_roots {
+        Some(is_reached) => (by_path.get(module.path)).is_some_and(|file| is_reached[file.idx()]),
+        None => true,
+    };
     let sources: Vec<&Module> = modules
         .iter()
         .map(|module| &**module)
         .filter(|module| source_file_may_be_emitted(options, module, is_case_sensitive))
+        .filter(|module| is_own(module))
         .collect();
     let paths: Vec<&[u8]> = sources.iter().map(|module| module.path).collect();
     let explain = |code: u32, arg: &[u8], is_wrong: &dyn Fn(&Module, bool) -> bool| {
@@ -2463,7 +2482,9 @@ fn output_path_errors(
     };
     let mut explained = Vec::new();
     if options.composite {
-        explained = explain(6307, options.config_path.as_slice(), &|_, is_root| !is_root);
+        explained = explain(6307, options.config_path.as_slice(), &|module, is_root| {
+            !is_root && is_own(module)
+        });
     }
     // `CommonSourceDirectory`, if anything depends on it. `None`: there is none.
     let mut common = None;
@@ -2483,7 +2504,7 @@ fn output_path_errors(
             common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
             explained.extend(explain(6059, specified, &|module, _| {
-                !contains_path(specified, module.path, is_case_sensitive)
+                !contains_path(specified, module.path, is_case_sensitive) && is_own(module)
             }));
             common = Some(specified.to_vec());
         }

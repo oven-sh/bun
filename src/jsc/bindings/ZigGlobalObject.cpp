@@ -824,7 +824,15 @@ extern "C" bool Bun__standaloneModuleIsInternal(const Latin1Character*, size_t);
 
 static bool isInternalStandaloneModule(const StringImpl* key)
 {
-    return key && key->is8Bit() && Bun__standaloneModuleIsInternal(key->span8().data(), key->length());
+    if (!key)
+        return false;
+    if (key->is8Bit())
+        return Bun__standaloneModuleIsInternal(key->span8().data(), key->length());
+    String wide { const_cast<StringImpl*>(key) };
+    if (!wide.containsOnlyLatin1())
+        return false;
+    CString narrowed = wide.latin1();
+    return Bun__standaloneModuleIsInternal(std::bit_cast<const Latin1Character*>(narrowed.data()), narrowed.length());
 }
 
 // A key that is not an atom already names no module, and does not become one.
@@ -3617,18 +3625,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     return Identifier::fromString(vm, resolved);
 }
 
-static bool isEmbeddedModuleKey(JSValue value)
-{
-    if (!value || !value.isString() || asString(value)->isRope())
-        return false;
-    auto view = asString(value)->tryGetValue();
-    return view->is8Bit() && Bun__standaloneModuleHasModuleInfo(view->span8().data(), view->length());
-}
-
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool useImportMap)
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
         auto* string = uncheckedDowncast<JSString>(key);
         if (!string->isRope()) {
@@ -3636,7 +3637,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             if (view->is8Bit()) {
                 auto span = view->span8();
                 size_t canonicalLength = 0;
-                if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength); canonical && (!Bun__standaloneModuleIsInternal(canonical, canonicalLength) || isEmbeddedModuleKey(referrer))) {
+                if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength); canonical && !Bun__standaloneModuleIsInternal(canonical, canonicalLength)) {
                     // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
                     if (canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength))
                         return Identifier::fromString(globalObject->vm(), string->tryGetValue());
@@ -3645,7 +3646,13 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             }
         }
     }
-    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
+    Identifier resolved = GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isInternalStandaloneModule(resolved.impl())) [[unlikely]] {
+        throwTypeError(globalObject, scope, makeString("Cannot find module \""_s, resolved.string(), "\""_s));
+        return {};
+    }
+    return resolved;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

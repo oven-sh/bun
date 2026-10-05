@@ -391,6 +391,9 @@ describe("bundler", () => {
               "import() in made code": () => new Function("p", "return import(p)")(path).then(namesOf),
               "import() in indirect eval": () => (0, eval)("import(" + JSON.stringify(path) + ")").then(namesOf),
               "import() in node:vm": () => vm.runInThisContext("import(" + JSON.stringify(path) + ")", { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }).then(namesOf),
+              "import() in node:vm under the name of a chunk": () => vm.runInThisContext("import(" + JSON.stringify(path) + ")", { filename: target, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }).then(namesOf),
+              "import() of a computed name": () => import(path).then(namesOf),
+              "import() of a computed name in a chunk that imports it": () => a.importIt(path).then(namesOf),
               "import() in a file": () => import(join(dir, label + "-dynamic.mjs")).then(m => m.names),
               "static import in a file": () => import(join(dir, label + "-static.mjs")).then(m => m.names),
               "static import in a data: module": () => import("data:text/javascript," + encodeURIComponent(importing(path))).then(m => m.names),
@@ -409,8 +412,31 @@ describe("bundler", () => {
               }),
             };
           }
-          const routes = { internal: routesTo(internal, "internal"), target: routesTo(target, "target") };
-          for (const [label, table] of Object.entries(routes)) {
+          function routesByPluginsTo(path: string, label: string): Record<string, () => unknown> {
+            return {
+              "a plugin's onResolve gives it and its onLoad would serve it": () => {
+                Bun.plugin({
+                  name: label,
+                  setup(build) {
+                    build.onResolve({ filter: new RegExp("^" + label + "[.]virtual$") }, () => ({ path }));
+                    build.onLoad({ filter: /./ }, () => ({ contents: "export const served = 1;", loader: "js" }));
+                  },
+                });
+                return new Function("p", "return import(p)")(label + ".virtual").then(namesOf);
+              },
+              "a virtual module of its name": () => {
+                Bun.plugin({ name: label + " virtual", setup(build) { build.module(path, () => ({ exports: { virtual: 1 }, loader: "object" })); } });
+                return new Function("p", "return import(p)")(path).then(namesOf);
+              },
+            };
+          }
+          const routes = [
+            ["internal", routesTo(internal, "internal")],
+            ["target", routesTo(target, "target")],
+            ["internal", routesByPluginsTo(internal, "internal")],
+            ["target", routesByPluginsTo(target, "target")],
+          ] as const;
+          for (const [label, table] of routes) {
             for (const [name, route] of Object.entries(table)) {
               let said: string;
               try { said = String(await route()); } catch { said = "refused"; }
@@ -426,6 +452,7 @@ describe("bundler", () => {
           export function fromA() { return readTable() + ":" + table.kept + ":" + ready; }
           export const stackOfShared = stackInShared;
           export function stackInA() { return new Error("here").stack!; }
+          export function importIt(path: string) { return import(path); }
         `,
         "/b.ts": /* js */ `
           import { readTable, table } from "./shared";
@@ -445,6 +472,9 @@ describe("bundler", () => {
             "import() in made code",
             "import() in indirect eval",
             "import() in node:vm",
+            "import() in node:vm under the name of a chunk",
+            "import() of a computed name",
+            "import() of a computed name in a chunk that imports it",
             "import() in a file",
             "static import in a file",
             "static import in a data: module",
@@ -458,25 +488,78 @@ describe("bundler", () => {
             "require.cache gives it",
             "a worker on it",
           ].map(route => "internal: " + route + ": refused"),
-          "target: import() in made code: fromA,stackInA,stackOfShared",
-          "target: import() in indirect eval: fromA,stackInA,stackOfShared",
-          "target: import() in node:vm: fromA,stackInA,stackOfShared",
-          "target: import() in a file: fromA,stackInA,stackOfShared",
-          "target: static import in a file: fromA,stackInA,stackOfShared",
-          "target: static import in a data: module: fromA,stackInA,stackOfShared",
-          "target: require in a file: fromA,stackInA,stackOfShared",
-          "target: createRequire: fromA,stackInA,stackOfShared",
-          "target: import.meta.require: fromA,stackInA,stackOfShared",
+          "target: import() in made code: fromA,importIt,stackInA,stackOfShared",
+          "target: import() in indirect eval: fromA,importIt,stackInA,stackOfShared",
+          "target: import() in node:vm: fromA,importIt,stackInA,stackOfShared",
+          "target: import() in node:vm under the name of a chunk: fromA,importIt,stackInA,stackOfShared",
+          "target: import() of a computed name: fromA,importIt,stackInA,stackOfShared",
+          "target: import() of a computed name in a chunk that imports it: fromA,importIt,stackInA,stackOfShared",
+          "target: import() in a file: fromA,importIt,stackInA,stackOfShared",
+          "target: static import in a file: fromA,importIt,stackInA,stackOfShared",
+          "target: static import in a data: module: fromA,importIt,stackInA,stackOfShared",
+          "target: require in a file: fromA,importIt,stackInA,stackOfShared",
+          "target: createRequire: fromA,importIt,stackInA,stackOfShared",
+          "target: import.meta.require: fromA,importIt,stackInA,stackOfShared",
           "target: Bun.resolveSync: true",
           "target: require.resolve: true",
           "target: require.cache lists it: true",
           "target: require.cache has it: true",
-          "target: require.cache gives it: fromA,stackInA,stackOfShared",
+          "target: require.cache gives it: fromA,importIt,stackInA,stackOfShared",
           "target: a worker on it: ran",
+          "internal: a plugin's onResolve gives it and its onLoad would serve it: refused",
+          "internal: a virtual module of its name: refused",
+          "target: a plugin's onResolve gives it and its onLoad would serve it: fromA,importIt,stackInA,stackOfShared",
+          "target: a virtual module of its name: refused",
           "3:1:ready 3:2 true",
           "",
         ].join("\n"),
       ),
+    });
+
+    itBundled("InternalChunksHaveNoNameBeforeTheyLoad", {
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
+          if (process.argv[2] === "names") {
+            console.log(pathIn((await import("./lazy")).stackOfLate()));
+            process.exit(0);
+          }
+          const internal = Bun.spawnSync({ cmd: [process.execPath, "names"], env: process.env, stderr: "ignore" }).stdout.toString().trim();
+          console.log(internal.startsWith(root), internal.endsWith(".js"));
+          const spellings = { narrow: internal, wide: (String.fromCharCode(256) + internal).slice(1) };
+          Bun.plugin({
+            name: "gives",
+            setup(build) {
+              build.onResolve({ filter: /^(narrow|wide)[.]virtual$/ }, ({ path }) => ({ path: spellings[path.slice(0, path.indexOf(".")) as keyof typeof spellings] }));
+              build.onLoad({ filter: /./ }, () => ({ contents: "export const late = 'from the guest';", loader: "js" }));
+            },
+          });
+          for (const spelling of Object.keys(spellings)) {
+            let said: string;
+            try { said = Object.keys(await new Function("p", "return import(p)")(spelling + ".virtual")).join(); } catch { said = "refused"; }
+            console.log(spelling + ": " + said);
+          }
+          const [lazy, lazy2] = await Promise.all([import("./lazy"), import("./lazy2")]);
+          console.log(lazy.readLate(), lazy2.readLate2());
+          process.exit(0);
+        `,
+        "/lazy.ts": /* js */ `
+          import { late, stackInLate } from "./late";
+          export function readLate() { return late; }
+          export const stackOfLate = stackInLate;
+        `,
+        "/lazy2.ts": /* js */ `
+          import { late } from "./late";
+          export function readLate2() { return late + "2"; }
+        `,
+        "/late.ts": /* js */ `
+          export const late = "from the executable";
+          export function stackInLate() { return new Error("here").stack!; }
+        `,
+      },
+      run: usesImage("true true\nnarrow: refused\nwide: refused\nfrom the executable from the executable2\n"),
     });
 
     itBundled("CompiledModulesCannotBeMocked", {

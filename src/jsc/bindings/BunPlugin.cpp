@@ -26,6 +26,7 @@
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 #include "BunClientData.h"
@@ -96,6 +97,8 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     return JSValue::encode(callframe->thisValue());
 }
 
+extern "C" bool Bun__standaloneModuleIsCompiled(const Latin1Character*, size_t);
+
 static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -135,6 +138,14 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     if (moduleId.startsWith("."_s)) {
         throwException(globalObject, scope, createError(globalObject, "virtual module cannot start with \".\""_s));
         return {};
+    }
+
+    if (moduleId.containsOnlyLatin1()) {
+        CString narrowed = moduleId.latin1();
+        if (Bun__standaloneModuleIsCompiled(reinterpret_cast<const Latin1Character*>(narrowed.data()), narrowed.length())) {
+            throwException(globalObject, scope, createTypeError(globalObject, "module() cannot replace a module that was compiled ahead of time"_s));
+            return {};
+        }
     }
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);

@@ -717,7 +717,7 @@ pub fn check_already_read_then<R>(
         n => n,
     };
     let cwd = host::from_native(request.cwd);
-    let named = request.project.or(request.paths.first().map(Vec::as_slice));
+    let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
     let disk = host::Disk::with_already_read(threads, already_read, &project);
     // Work outside a parallel region runs on this thread.

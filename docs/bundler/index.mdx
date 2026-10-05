@@ -1287,6 +1287,27 @@ Removes function calls from a bundle. For example, `--drop=console` removes all 
   </Tab>
 </Tabs>
 
+### check
+
+Type checks the entry points, and everything they import, before Bun writes any output. A type error fails the build like any other build error. See [`bun check`](/runtime/check#bun-build).
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      check: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --check
+    ```
+  </Tab>
+</Tabs>
+
 ### features
 
 Enable compile-time feature flags for dead code elimination: conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
@@ -1924,6 +1945,15 @@ interface BuildConfig {
    * @default true
    */
   throw?: boolean;
+
+  /**
+   * Type check the entry points and everything they import before writing any output.
+   * A type error fails the build like any other build error.
+   * Equivalent to `--check` in the CLI.
+   *
+   * @default false
+   */
+  check?: boolean;
 
   /**
    * Custom tsconfig.json file path to use for path resolution.

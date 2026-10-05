@@ -1,9 +1,9 @@
 ---
 title: "Type checking"
-description: "Type check a TypeScript project with bun check"
+description: "Type check your TypeScript project with bun check"
 ---
 
-`bun check` type checks a TypeScript project. It reads your `tsconfig.json`, reports errors with the codes and messages of `tsc`, and uses every CPU core.
+`bun check` type checks your TypeScript project. It reads your `tsconfig.json`, reports the same errors as `tsc` from TypeScript 7, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun check
@@ -14,91 +14,236 @@ src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'numbe
 Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
-`bun check` exits with code `1` when it finds an error and `0` when it finds none. It never writes a file.
+`bun check` exits with code `1` if it finds an error and `0` if it finds none. It never writes files.
 
 ```txt
 ✓ No type errors in 2 files [14.00ms]
 ```
 
-### If `package.json` has a `check` script
-
-A `check` script comes first: `bun check` runs it, like `bun run check`. `bun --check` is the type checker in every project. Inside that script, and in the scripts it runs, `bun check` is the type checker too, so `"check": "bun check"` works.
-
-```json package.json icon="file-json"
-{
-  "scripts": {
-    "check": "biome check"
-  }
-}
-```
+To type check and then run, build, or test in one command, use the [`--check` flag](#check-before-you-run-build-or-test).
 
 ```bash terminal icon="terminal"
-bun check   # runs "biome check"
-bun --check # type checks the project
+bun --check src/index.ts
 ```
 
-With `--filter` or `--workspaces`, `check` is the script of each package, like any other name.
+## Set up a project
 
-```bash terminal icon="terminal"
-bun --filter '*' check # runs the "check" script of every package
-```
+[`bun init`](/runtime/templating/init) does all of this for you. In an existing project, follow these steps.
 
-## Install TypeScript's library files
+<Steps>
+  <Step title="Install the type declarations">
 
-The `typescript` package ships the `lib.*.d.ts` files that declare `Array`, `Promise`, and the rest of the language's built-in types. `bun check` reads those files from your project, so your editor and `bun check` see the same declarations.
+    ```bash terminal icon="terminal"
+    bun add -d typescript @types/bun
+    ```
 
-```bash terminal icon="terminal"
-bun add -d typescript @types/bun
-```
+    - `typescript` declares the types that are built into the language, such as `Array` and `Promise`.
+    - [`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
 
-A project made with [`bun init`](/runtime/templating/init) has both, and a `typecheck` script that runs `bun check`.
+  </Step>
+  <Step title="List them in tsconfig.json">
 
-Bun looks for `typescript` in these places, in order:
+    ```json tsconfig.json icon="file-json"
+    {
+      "compilerOptions": {
+        "types": ["bun"]
+      }
+    }
+    ```
 
-1. `node_modules` in the project directory
-2. `node_modules` in each parent directory
-3. Packages installed with `bun add -g`
+    Since TypeScript 6.0, a package in `node_modules/@types` counts only if `types` lists it. List every package your code relies on, for example `["bun", "react"]`.
 
-### Bun's own types
+  </Step>
+  <Step title="Add a script">
 
-[`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "typecheck": "bun check"
+      }
+    }
+    ```
 
-Since TypeScript 6.0, nothing in `node_modules/@types` is included unless `types` asks for it. `bun init` writes that line for you. In an older project, add it yourself:
+  </Step>
+</Steps>
+
+You don't need a `tsconfig.json`. Without one, `bun check` uses [default compiler options](#without-a-tsconfigjson) and includes `@types/bun` if you have installed it.
+
+## Replace `tsc`
+
+`bun check` reads the same `tsconfig.json` as `tsc`, so most projects only change the command.
+
+| Instead of                           | Run                            |
+| ------------------------------------ | ------------------------------ |
+| `tsc --noEmit`                       | `bun check`                    |
+| `tsc --noEmit -p packages/server`    | `bun check -p packages/server` |
+| `tsc -b`                             | `bun check`                    |
+| `tsc --noEmit && bun src/index.ts`   | `bun --check src/index.ts`     |
+| `tsc --noEmit && bun test`           | `bun test --check`             |
+| `tsc --noEmit && bun build ./app.ts` | `bun build --check ./app.ts`   |
+
+Keep `tsc` to generate `.d.ts` files. `bun check` only checks.
+
+### Coming from TypeScript 5
+
+`bun check` behaves like TypeScript 7, whichever version of `typescript` you have installed. TypeScript 6 and 7 changed some defaults and removed some compiler options.
+
+Three defaults changed:
+
+| Default                         | What you see                                                            | What to do                                                       |
+| ------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `strict` is on                  | New errors such as `TS7006: Parameter 'x' implicitly has an 'any' type` | Fix the errors, or set `"strict": false`                         |
+| `types` is empty                | `Cannot find name 'process'`, `'describe'`, `'Bun'`                     | List the packages, for example `"types": ["node"]`               |
+| Side-effect imports are checked | `TS2882` on `import "./index.css"`                                      | [Declare the file type](#cannot-find-module-logosvg-or-indexcss) |
+
+If `tsconfig.json` sets a removed option, `bun check` reports that option and checks no files until you fix it. `tsc` does the same.
+
+| In `tsconfig.json`                                    | What to do                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `"moduleResolution": "node"`, `"node10"`, `"classic"` | Use `"bundler"`. For code that Node.js runs without a bundler, use `"nodenext"` |
+| `"baseUrl": "."`                                      | Remove it, and start each entry in `paths` with `./`                            |
+| `"target": "es5"`                                     | Use `"es2015"` or later                                                         |
+| `"module": "amd"`, `"umd"`, `"system"`                | Use `"preserve"`, `"nodenext"`, or `"commonjs"`                                 |
+| `"downlevelIteration"`, `"outFile"`                   | Remove it                                                                       |
+| `"esModuleInterop": false`, `"alwaysStrict": false`   | Remove it. Both are always on                                                   |
 
 ```json tsconfig.json icon="file-json"
 {
   "compilerOptions": {
-    "types": ["bun"]
+    "target": "es5", // [!code --]
+    "target": "es2022", // [!code ++]
+    "moduleResolution": "node", // [!code --]
+    "moduleResolution": "bundler", // [!code ++]
+    "baseUrl": ".", // [!code --]
+    "paths": { "@/*": ["src/*"] }, // [!code --]
+    "paths": { "@/*": ["./src/*"] } // [!code ++]
   }
 }
 ```
 
-Your editor reads the same line. Without a `tsconfig.json`, `bun check` includes `@types/bun` if it is installed.
+See [TypeScript 6 and 7](/typescript-6) for the `tsconfig.json` that Bun recommends.
+
+## Run in CI
+
+Install your dependencies, then run `bun check`. A type error fails the job.
+
+### GitHub Actions
+
+```yaml .github/workflows/typecheck.yml icon="file-code"
+name: Type check
+on: [push, pull_request]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun check
+```
+
+In GitHub Actions, `bun check` also prints a workflow command for each error. GitHub shows those errors as annotations on the lines of the pull request diff. You don't need a problem matcher.
+
+```txt
+::error file=src/index.ts,line=3,col=25,endLine=3,endColumn=27,title=TS2322::Type 'string' is not assignable to type 'number'.
+```
+
+### GitLab CI and other providers
+
+Use the [`oven/bun`](https://hub.docker.com/r/oven/bun) image, or install Bun in an earlier step.
+
+```yaml .gitlab-ci.yml icon="file-code"
+typecheck:
+  image: oven/bun:latest
+  script:
+    - bun install --frozen-lockfile
+    - bun check
+```
+
+### What to expect in CI
+
+- **One line per error.** When the output is not a terminal, `bun check` prints errors in the format of `tsc --pretty false`. Problem matchers and scripts written for `tsc` keep working.
+- **Errors go to stdout.** The summary line goes to stderr.
+- **No cache to save or restore.** `bun check` does not write `.tsbuildinfo` files. Every run checks the whole project.
+- **An empty run fails.** If there is nothing to check, `bun check` exits with code `1`. A job that runs in the wrong directory fails instead of passing.
+- **Shared runners.** `bun check` starts one thread per CPU core. Use `--threads 4` to use fewer.
+
+To check types and run tests in one step, use `bun test --check`. Bun runs the tests only if the test files, and everything they import, have no type errors.
+
+```yaml .github/workflows/test.yml icon="file-code"
+- run: bun test --check
+```
+
+## Check before you commit
+
+Run `bun check` from a Git hook to catch type errors before they reach CI.
+
+```bash .git/hooks/pre-commit icon="terminal"
+#!/bin/sh
+bun check
+```
+
+```bash terminal icon="terminal"
+chmod +x .git/hooks/pre-commit
+```
+
+With [lint-staged](https://github.com/lint-staged/lint-staged), check only the files you staged and the files they import:
+
+```json package.json icon="file-json"
+{
+  "lint-staged": {
+    "*.{ts,tsx}": "bun check"
+  }
+}
+```
+
+lint-staged adds the staged file names to the command, as in `bun check src/a.ts src/b.ts`. `bun check` still uses your `tsconfig.json` for those files. `tsc` does not load `tsconfig.json` when you pass it file names.
+
+<Note>
+  A change to one file can break a file that imports it. Checking only staged files misses that error, so run `bun
+  check` on the whole project in CI as well.
+</Note>
 
 ## Choose what to check
 
-Without arguments, `bun check` finds the nearest `tsconfig.json`, starting from the current directory and going up. It checks the files that `files`, `include`, and `exclude` select.
+### The whole project
 
-Use `-p` to name a `tsconfig.json` or the directory that holds one.
+Without arguments, `bun check` looks for `tsconfig.json` in the current directory, then in each parent directory. It checks the files that `files`, `include`, and `exclude` select.
+
+```bash terminal icon="terminal"
+bun check
+```
+
+### Another project
+
+Use `-p` with a `tsconfig.json` or the directory that contains one.
 
 ```bash terminal icon="terminal"
 bun check -p packages/server
+bun check -p tsconfig.test.json
 ```
 
-Pass files or directories to check only those and what they import.
+### Some files or directories
+
+Pass files or directories to check only those files and what they import.
 
 ```bash terminal icon="terminal"
 bun check src/index.ts
 bun check packages/server packages/shared
 ```
 
-Each file is checked in the project your editor uses for it: the nearest `tsconfig.json`. If that one does not include the file but has `references`, like the `tsconfig.json` that `create vite` writes, it is the referenced project that includes the file.
+Bun checks each file with the same `tsconfig.json` your editor uses for it:
 
-A file that no project includes is checked with the options of the nearest `tsconfig.json` all the same.
+- Bun uses the nearest `tsconfig.json`.
+- If that `tsconfig.json` does not include the file but has `references`, Bun uses the referenced project that includes the file. The `tsconfig.json` from `create vite` works this way.
+- If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
 
-A directory stands for the part of the project that is in it, so `bun check .` is the same as `bun check`. If the project has no files there, as in `bun check scripts` when `include` is `["src"]`, every file in the directory that is not excluded is checked, each with the `tsconfig.json` nearest to it.
+A directory means the files of the project inside that directory, so `bun check .` is the same as `bun check`. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
-Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init`](/runtime/templating/init) writes, apart from the stricter rules that are a matter of taste (`noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`):
+### Without a `tsconfig.json`
+
+Bun uses the compiler options that [`bun init`](/runtime/templating/init) writes, without the three optional strictness rules `noUncheckedIndexedAccess`, `noImplicitOverride`, and `noFallthroughCasesInSwitch`.
 
 ```json
 {
@@ -117,24 +262,41 @@ Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init
 }
 ```
 
-If there is nothing to check, `bun check` reports an error and exits with code 1. A CI job that runs in the wrong directory fails instead of passing.
+## Monorepos
 
-### Project references
+Run `bun check` once at the root. How Bun finds the projects depends on the root `tsconfig.json`.
 
-`bun check` follows `references` in `tsconfig.json`, like `tsc -b`. Each referenced project is checked with its own options, and each file is checked once.
+**With `references` in the root `tsconfig.json`**, `bun check` follows them, like `tsc -b`. Bun checks each project with its own options.
 
-Bun reads a referenced project from its source files. You do not have to build the project first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
+Bun reads a referenced project from its source files. You don't have to build it first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
 
-### Monorepos
+**Without a root `tsconfig.json`**, `bun check` checks every TypeScript file below the current directory. Bun checks each file with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
 
-In a directory without a `tsconfig.json`, in it or above it, `bun check` checks every TypeScript file below it. Each file is checked with the options of the `tsconfig.json` nearest to it, and once. Files with no `tsconfig.json` near them get the options that `bun init` writes.
+```txt
+packages/web/src/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+Found 1 error in 1 file, checked 2 files across 2 projects [21.00ms]
+```
+
+Either way, Bun checks each file once.
+
+To check one package, name it:
+
+```bash terminal icon="terminal"
+bun check packages/web
+```
+
+To run the `typecheck` script of every workspace package, use [`--filter`](/pm/filter):
+
+```bash terminal icon="terminal"
+bun --filter '*' typecheck
+```
 
 ## Check before you run, build, or test
 
-The `--check` flag type checks the entry point and everything it imports, and the files that `--preload` or `preload` in `bunfig.toml` loads before it. If there is a type error, Bun prints it, exits with code `1`, and does nothing else.
+The `--check` flag type checks your code first. If there is a type error, Bun prints it, exits with code `1`, and does nothing else.
 
 ```bash terminal icon="terminal"
-bun --check src/index.ts          # run
+bun --check src/index.ts
 bun build --check src/index.ts --outdir out
 bun test --check
 ```
@@ -144,28 +306,46 @@ src/index.ts(3,21): error TS2322: Type 'string' is not assignable to type 'numbe
 Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
-With `--watch`, Bun checks again before every restart. After a type error it waits for the next change, in any file of the program, including files that only have types. `--hot --check` restarts the process like `--watch`, so that nothing runs unchecked.
+### What `--check` covers
+
+Nothing runs unchecked. What Bun checks depends on what you run.
+
+| You run                                               | Bun checks                                            |
+| ----------------------------------------------------- | ----------------------------------------------------- |
+| A TypeScript or JavaScript file                       | The file and everything it imports                    |
+| `bun test`                                            | The test files and everything they import             |
+| `bun build`                                           | The entry points and everything they import           |
+| An HTML file                                          | The local scripts in `<script src>` and their imports |
+| A `package.json` script                               | The whole project, like `bun check`                   |
+| An executable from `node_modules/.bin` or your `PATH` | The whole project                                     |
+| A shell script                                        | The whole project                                     |
+
+```bash terminal icon="terminal"
+bun run --check dev
+bun --check vite build
+bun --check ./scripts/deploy.sh
+bun --check index.html about.html
+```
+
+- Bun also checks the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point.
+- `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
+- Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
+- With `--tsconfig-override`, the check uses that `tsconfig.json`.
+
+### Watch mode
+
+With [`--watch`](/runtime/watch-mode), Bun checks again before every restart. After a type error, Bun waits for the next change to any file in the program, including files that contain only types.
 
 ```bash terminal icon="terminal"
 bun --watch --check src/index.ts
 bun test --watch --check
 ```
 
-With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs. That goes for `--filter`, `--parallel` and `--sequential` too, for an executable from `node_modules/.bin` or `$PATH`, and for a shell script.
+`--hot --check` restarts the process like `--watch`, so that nothing runs unchecked.
 
-```bash terminal icon="terminal"
-bun run --check dev
-bun --check vite build
-bun --check ./scripts/deploy.sh
-```
+### `bun build`
 
-With `--tsconfig-override`, the check uses that `tsconfig.json`, like everything else.
-
-A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
-
-For an HTML entry point, `bun build --check index.html` checks the local scripts the page loads with `<script src>`, and everything they import. `bun --check` does that for every page it serves, as in `bun --check index.html about.html` and `bun --check './**/*.html'`.
-
-`bun build --check` runs the check once the bundler has read every file, and before it writes anything. The type checker gets the files of the bundle from the bundler, so they are read from disk once. A type error is printed like any other build error:
+`bun build --check` runs the check after the bundler has read every file and before it writes any output. The type checker gets the files from the bundler, so Bun reads each file from disk once. Bun prints a type error like any other build error:
 
 ```txt
 3 | console.log(greet({ age: "36" }));
@@ -181,7 +361,7 @@ note: TS6500: The expected type comes from property 'age' which is declared here
 
 ### `Bun.build`
 
-Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like any other build error. Each one is a `BuildMessage` whose message starts with TypeScript's error code.
+Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like any other build error. Each one is a `BuildMessage` whose message starts with the TypeScript error code.
 
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -200,9 +380,36 @@ for (const log of result.logs) {
 /app/src/index.ts:3: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
+## If `package.json` has a `check` script
+
+Your script wins. `bun check` runs it, like `bun run check`. To run the type checker in that project, use `bun --check`.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "check": "biome check"
+  }
+}
+```
+
+```bash terminal icon="terminal"
+bun check   # runs "biome check"
+bun --check # type checks the project
+```
+
+Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
+
+With `--filter` or `--workspaces`, `check` always means the `check` script of each package.
+
+```bash terminal icon="terminal"
+bun --filter '*' check # runs the "check" script of every package
+```
+
 ## Output
 
-In a terminal, `bun check` shows the source around each error and the declarations the error refers to.
+### In a terminal
+
+`bun check` shows the source around each error and the declarations that the error refers to.
 
 ```txt
 1 | import { greet } from "./user";
@@ -220,13 +427,17 @@ note: The expected type comes from property 'id' which is declared here on type 
 Found 1 error in 1 file, checked 2 files [14.00ms]
 ```
 
-When the output is piped, `bun check` prints one line per error in the format of `tsc --pretty false`. Problem matchers and scripts written for `tsc` keep working. Use `--pretty` or `--no-pretty` to choose a format yourself.
+### Piped or redirected
 
-Errors go to stdout. The summary line goes to stderr.
+`bun check` prints one line per error, in the format of `tsc --pretty false`. Use `--pretty` or `--no-pretty` to choose a format yourself.
 
-### Many errors
+```txt
+src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
+```
 
-Above 50 errors, the terminal format shows each distinct error once. Under it, `bun check` prints how often the error occurs and in which files. The most frequent error comes first.
+### More than 50 errors
+
+In a terminal, `bun check` shows each distinct error once. Below it, `bun check` prints how many times the error occurs and in which files. The most frequent error comes first.
 
 ```txt
 1 | export const v0: number = "0";
@@ -239,14 +450,6 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
 Use `--all` to show every error. The one-line format always shows every error.
-
-### GitHub Actions
-
-When `GITHUB_ACTIONS` is set, `bun check` also prints a workflow command for each error. GitHub shows those errors as annotations on the pull request diff.
-
-```txt
-::error file=src/index.ts,line=3,col=25,endLine=3,endColumn=27,title=TS2322::Type 'string' is not assignable to type 'number'.
-```
 
 ### AI agents
 
@@ -266,9 +469,95 @@ Type 'string' is not assignable to type 'number'.
 </error>
 ```
 
+## Troubleshooting
+
+### Cannot find name 'console', 'Bun', or module 'bun:test'
+
+Bun's type declarations are missing. Install them, then add `"bun"` to `types` in `tsconfig.json`.
+
+```bash terminal icon="terminal"
+bun add -d @types/bun
+```
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "types": ["bun"]
+  }
+}
+```
+
+### Cannot find name 'process', 'describe', or 'expect'
+
+The package that declares the name is installed, but `types` does not list it. TypeScript 5 included every package in `node_modules/@types`. TypeScript 6 and 7 include only the ones you list.
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "types": ["node", "jest"]
+  }
+}
+```
+
+### Option 'baseUrl' has been removed
+
+TypeScript 7 removed the option. See [Coming from TypeScript 5](#coming-from-typescript-5) for what to use instead.
+
+### Cannot find module './logo.svg' or './index.css'
+
+Bun can import these files, but TypeScript needs a declaration for each file type. Add a `.d.ts` file to your project. The React templates of `bun init` include this one:
+
+```ts bun-env.d.ts icon="/icons/typescript.svg"
+declare module "*.svg" {
+  const path: `${string}.svg`;
+  export = path;
+}
+
+declare module "*.css" {}
+
+declare module "*.module.css" {
+  const classes: { readonly [key: string]: string };
+  export = classes;
+}
+```
+
+`@types/bun` already declares `.txt`, `.toml`, and `.html` imports.
+
+### Cannot find TypeScript's standard library
+
+`bun check` reads the declarations of `Array`, `Promise`, and the other built-in types from the `typescript` package. Install it:
+
+```bash terminal icon="terminal"
+bun add -d typescript
+```
+
+Bun looks in `node_modules` in the project directory, then in each parent directory, then in the packages you installed with `bun add -g`.
+
+### Cannot find global type 'String', or cannot read 'lib.es2025.full.d.ts'
+
+The `typescript` package in your project is older than 6.0, and `tsconfig.json` sets no `target`. The default `target` of TypeScript 7 needs declarations that older packages don't have. Upgrade the package:
+
+```bash terminal icon="terminal"
+bun add -d typescript@latest
+```
+
+### `bun check` runs a script instead of the type checker
+
+Your `package.json` has a `check` script. Use `bun --check`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
+
+### `bun check` and my editor disagree
+
+Your editor uses the version of `typescript` in your project. `bun check` behaves like TypeScript 7. Upgrade the package so that both follow the same rules:
+
+```bash terminal icon="terminal"
+bun add -d typescript@latest
+```
+
+If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
 ## Compiler options as flags
 
-Any compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`, including in referenced projects. Use flags to try a stricter option before you commit to it.
+Every compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`, including in referenced projects. Use a flag to try a stricter option before you commit to it.
 
 ```bash terminal icon="terminal"
 bun check --noUncheckedIndexedAccess
@@ -276,21 +565,17 @@ bun check --strict false
 bun check --target es2022
 ```
 
-Option names are not case-sensitive, and `--target=es2022` is the same as `--target es2022`.
+Option names are not case-sensitive. `--target=es2022` is the same as `--target es2022`.
 
 ## Differences from `tsc`
 
-`bun check` follows the type checker of TypeScript 7, whichever version of `typescript` your project installs. The installed version only provides the library files.
+`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. These differences are intentional:
 
-If `bun check` and `tsc` 7 disagree about an error, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with the code that shows the difference.
-
-These differences are intended:
-
-- The errors do not depend on the order of the files. `tsc` collects the errors of a file right after it checks that file, so it loses an error that a later file raises in an earlier one.
-- `bun check` only checks. It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, whatever `noEmit`, `declaration`, or `incremental` say. Use [`bun build`](/bundler) to produce JavaScript, and `tsc` to produce declaration files.
-- There is no `--watch` mode.
-- `bun check` does not load language service plugins from the `plugins` compiler option.
-- Of the options that only print information, `listFiles`, `listFilesOnly` and `traceResolution` work. The others, such as `explainFiles`, have no effect.
+- **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
+- **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
+- **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
+- **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
+- **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.
 
 ## CLI usage
 

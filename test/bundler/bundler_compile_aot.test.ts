@@ -655,7 +655,7 @@ describe("bundler", () => {
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
-      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0,useAOTFamilies=1` },
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -747,7 +747,7 @@ describe("bundler", () => {
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
-      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0,useAOTFamilies=1` },
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -1524,11 +1524,7 @@ test.each([
 
 test.each([
   ["by default", ""],
-  ["with families", "useAOTFamilies=1"],
-  [
-    "with guards over whole functions",
-    "useAOTFamilies=1,useAOTGuardsOverWholeFunctions=1,useAOTGuardsOverWholeFunctionsWithHandlers=1",
-  ],
+  ["with guards at every guessed place", "useAOTGuardsAtEveryGuessedPlaceForTesting=1"],
 ])("builds are reproducible %s", async (_, options) => {
   using dir = tempDir("compile-aot-reproducible", {
     "entry.ts": `
@@ -2746,12 +2742,12 @@ describe("--compile-aot with a type table", () => {
 
   describe("untyped code reads typed objects", () => {
     const fixture = join(import.meta.dir, "compile-aot-typed-names");
-    const families = "useAOTFamilies=1,useAOTGuardsOverWholeFunctions=1,minimumAOTGuardsOverWholeFunction=1";
+    const everywhere = "useAOTGuardsAtEveryGuessedPlaceForTesting=1";
     for (const [label, options] of [
       ["as it is", ""],
       ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
-      ["with families", families],
-      ["with families, validated", `${families},validateAOTInferredTypes=1,validateGraphAtEachPhase=1`],
+      ["with guards at every guessed place", everywhere],
+      ["with guards at every guessed place, validated", `${everywhere},validateAOTInferredTypes=1,validateGraphAtEachPhase=1`],
     ] as const) {
       test(label, async () => {
         using dir = tempDir("compile-aot-typed-names", {});
@@ -2784,9 +2780,106 @@ describe("--compile-aot with a type table", () => {
             .filter(([, remark]) => remark === "guards-over-whole-function")
             .map(([name]) => name),
         );
-        expect(["readsAll", "readsTwo"].filter(name => guarded.has(name))).toEqual(label.startsWith("with families") ? ["readsAll", "readsTwo"] : ["readsAll"]);
+        expect(["readsAll", "readsTwo"].filter(name => guarded.has(name))).toEqual(label.startsWith("with guards at every guessed place") ? ["readsAll", "readsTwo"] : ["readsAll"]);
       });
     }
+  });
+
+  describe("guards over whole functions meet typed objects", () => {
+    const fixture = join(import.meta.dir, "compile-aot-typed-twins");
+    const numberOfScenarios = 9;
+    const once = ["guard-checks-family:first", "guard-checks-nothing:second", "guard-checks-nothing:third"];
+    const again = ["guard-checks-family:first", "guard-checks-byte:second", "guard-checks-nothing:third"];
+    const behindCalls = { readsOn: again, writesOn: ["guard-checks-family:first", "guard-checks-byte:second", "guard-checks-byte:third"] };
+    const withoutEffects = { nothingBetween: once, readsAll: once, writesAll: once };
+    const untypedBetween = ["untypedCallBetween", "untypedWrapBetween", "untypedLiteralBetween"];
+    const typedBetween = ["checkBetween", "tagBetween", "narrowBetween", "literalBetween"];
+    const inlined: Record<string, string[]> = {
+      untypedCallBetween: ["inlined-call:same"],
+      untypedWrapBetween: ["inlined-call:wrapsUntyped"],
+      untypedLiteralBetween: ["inlined-call:makeUntyped"],
+      checkBetween: ["inlined-call:asTyped", "edge-check:1"],
+      tagBetween: ["inlined-call:firstOf", "typed-field-read:first"],
+      narrowBetween: ["inlined-call:wraps", "calls:operationAOTToFieldValue"],
+      literalBetween: ["inlined-call:makeTyped", "calls:operationAOTValidateTypedObject"],
+    };
+    const rejected = Array(5).fill('TypeError {"third":3,"first":7,"second":2} 12').join(" ");
+
+    test.each([
+      ["as it is", "", {}],
+      ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1", {}],
+      ["every second guard fails", "failEveryNthAOTGuardForTesting=2", {}],
+      ["without inlining", "useAOTInlining=0", {}],
+      [
+        "with a verified heap",
+        "",
+        { BUN_JSC_verifyGC: "1", BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+      ],
+      ["counted", "useAOTOperationCounters=1", { BUN_JSC_useAOTOperationCounters: "1" }],
+    ])("%s", async (label, options, env) => {
+      using dir = tempDir("compile-aot-typed-twins", {});
+      const out = join(String(dir), "out");
+      const remarksPath = join(String(dir), "remarks.txt");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
+        env: {
+          ...bunEnv,
+          BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
+          BUN_SOUND_TYPES_ORACLE_ROOT: fixture,
+          BUN_AOT_OPTIONS: ["useTypeTags=1", "useAOTTypedFields=1", `aotTypeTablePath=${join(fixture, "types.bin")}`, "useSoundTypes=1", `aotRemarksPath=${remarksPath}`, options]
+            .filter(Boolean)
+            .join(","),
+        },
+        cwd: fixture,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+
+      const remarks = new Map<string, string[]>();
+      for (const line of (await Bun.file(remarksPath).text()).split("\n")) {
+        const [name, remark] = line.split("\t");
+        if (remark) remarks.set(name, [...(remarks.get(name) ?? []), remark]);
+      }
+      const isInlining = label !== "without inlining";
+      const checks: Record<string, string[]> = { ...withoutEffects, ...behindCalls };
+      for (const name of typedBetween) checks[name] = again;
+      for (const name of untypedBetween) checks[name] = isInlining ? once : again;
+      for (const [name, expected] of Object.entries(checks)) {
+        const found = remarks.get(name) ?? [];
+        expect({ name, hasGuards: found.includes("guards-over-whole-function"), checks: found.filter(remark => remark.startsWith("guard-checks-")) }).toEqual({
+          name,
+          hasGuards: true,
+          checks: expected,
+        });
+        if (isInlining) expect({ name, found: (inlined[name] ?? []).filter(remark => found.includes(remark)) }).toEqual({ name, found: inlined[name] ?? [] });
+      }
+      if (isInlining) expect((remarks.get("narrowBetween") ?? []).filter(remark => remark.startsWith("calls:NewObjectLiteral"))).toEqual([]);
+
+      for (let first = 0; first < numberOfScenarios; ++first) {
+        const counts = join(String(dir), "counts" + first);
+        await using reference = Bun.spawn({ cmd: [bunExe(), "src/main.ts", String(first)], env: bunEnv, cwd: fixture, stdout: "pipe", stderr: "pipe" });
+        await using proc = Bun.spawn({
+          cmd: [out, String(first)],
+          env: { ...bunEnv, ...env, ...(label === "counted" ? { BUN_JSC_aotTypeCoverageCountsPath: counts } : {}) },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [expected, stdout, , exitCode] = await Promise.all([reference.stdout.text(), proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const values = (text: string) => text.split("\n").filter(line => line && !line.startsWith("STRICT "));
+        expect(values(expected).length).toBe(3 * numberOfScenarios);
+        expect({ first, values: values(stdout), exitCode, signalCode: proc.signalCode }).toEqual({ first, values: values(expected), exitCode: 0, signalCode: null });
+        expect({ first, strict: stdout.split("\n").filter(line => line.startsWith("STRICT ")) }).toEqual({ first, strict: ["STRICT " + rejected] });
+        if (label !== "counted") continue;
+        const count = new Map<string, number>();
+        for (const line of (await Bun.file(counts + ".operations").text()).split("\n")) {
+          const [n, name] = line.split("\t");
+          if (name) count.set(name, Number(n));
+        }
+        expect({ first, converted: count.get("Family::departed:typed-layout") }).toEqual({ first, converted: 21 });
+        for (const outcome of ["passes", "exits-departed", "exits-without-number"]) expect({ first, outcome, isCounted: (count.get("Family::guard:" + outcome) ?? 0) > 0 }).toEqual({ first, outcome, isCounted: true });
+      }
+    });
   });
 
   describe("a check of a declared type that names its layout", () => {
@@ -2936,7 +3029,7 @@ describe("--compile-aot with a type table", () => {
       expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
       await using proc = Bun.spawn({
         cmd: [out],
-        env: { ...bunEnv, ...env, BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: counts },
+        env: { ...bunEnv, ...env, BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: counts, BUN_DESTRUCT_VM_ON_EXIT: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });

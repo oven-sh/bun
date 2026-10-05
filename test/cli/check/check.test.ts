@@ -14419,8 +14419,9 @@ describe.concurrent("--check", () => {
         include: ["src", "scripts"],
       }),
       "src/console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
-      "src/config.ts": `export const config: number = 1;\n`,
-      "src/db.ts": `import { config } from "@/config";\nexport const db: number = config;\n`,
+      // Only a type: when it runs, `paths` are those of `tsconfig.json`.
+      "src/config.ts": `export type Config = number;\n`,
+      "src/db.ts": `import type { Config } from "@/config";\nexport const db: Config = 1;\n`,
       "scripts/seed.js": `import { db } from "../src/db";\nconsole.log("ran", db);\n`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["--check", "scripts/seed.js"]);

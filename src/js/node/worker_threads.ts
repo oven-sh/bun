@@ -98,7 +98,12 @@ const {
 ];
 
 // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
-type WebWorkerConstructor = new (filename: string | URL, options: object, nodeWorker: Worker) => WebWorker;
+type WebWorkerConstructor = new (
+  filename: string | URL,
+  options: object,
+  nodeWorker: Worker,
+  evalSource?: string,
+) => WebWorker;
 
 interface NodeWorkerOptions {
   argv?: unknown[];
@@ -867,6 +872,7 @@ class Worker extends EventEmitter {
 
     this.#name = normalizeWorkerName(options.name);
 
+    let evalSource: string | undefined;
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
       // node requires the source to be a string when eval is set, rather than
@@ -877,6 +883,7 @@ class Worker extends EventEmitter {
           options[builtinsGeneratorHatesEval],
           "must be false when 'filename' is not a string",
         );
+      evalSource = filename;
       // eval: the source becomes a blob: URL the worker imports as its entry point.
       // The URL must outlive the worker: revoked on constructor failure (catch below),
       // on exit (#onClose), and via urlRevokeRegistry as a GC safety net.
@@ -965,7 +972,7 @@ class Worker extends EventEmitter {
       }
       // Also the intrinsic constructor. Read here, so that importing this module is not starting a worker.
       const WebWorker = $cpp("Worker.cpp", "createNodeWorkerConstructor") as WebWorkerConstructor;
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this, evalSource);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).

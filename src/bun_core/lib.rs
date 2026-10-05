@@ -255,6 +255,7 @@ pub use code_generation::{
     is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
     runs_no_compiled_program,
 };
+pub mod node_options;
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports

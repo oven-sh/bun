@@ -1177,7 +1177,11 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         "console.d.ts": "",
         "tsconfig.json": JSON.stringify({
           files: [],
-          references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.node.json" }],
+          references: [
+            { path: "./tsconfig.app.json" },
+            { path: "./tsconfig.node.json" },
+            { path: "./tsconfig.worker.json" },
+          ],
         }),
         "tsconfig.app.json": JSON.stringify({
           compilerOptions: { ...options, jsx: "preserve", allowImportingTsExtensions: true, emitDeclarationOnly: true },
@@ -1190,6 +1194,12 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         "vite.config.ts": `export const port: number = "1";\n`,
         // No project has it.
         "scripts/s.ts": `export const s: number = "1";\n`,
+        // Its only file is JavaScript, which the solution itself does not allow.
+        "tsconfig.worker.json": JSON.stringify({
+          compilerOptions: { ...options, allowJs: true, checkJs: true, emitDeclarationOnly: true },
+          files: ["worker.js"],
+        }),
+        "worker.js": `/** @type {number} */\nexport const w = "1";\n`,
         // A project of its own, which the solution does not reference: `bun check` leaves it alone.
         "examples/x/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false } }),
         "examples/x/e.ts": `export const e: number = "1";\n`,
@@ -1208,7 +1218,8 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         check(dir, ["examples"]),
         run(String(dir), ["--check", "src/main.tsx"]),
       ]);
-      const whole = `${main}\n${other("vite.config.ts")}`;
+      const some = `${main}\n${other("vite.config.ts")}`;
+      const whole = `${some}\nworker.js(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
       expect(results.slice(0, 9).map(it => it.stdout)).toEqual([
         whole,
         whole,
@@ -1216,10 +1227,12 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         main,
         main,
         other("vite.config.ts"),
-        whole,
+        some,
         other("scripts/s.ts"),
         other("examples/x/e.ts"),
       ]);
+      // As much work, too.
+      expect(results[1].stderr).toBe(results[0].stderr);
       expect(results[9].stderr).toContain("TS2322");
       expect(results[9].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
     });

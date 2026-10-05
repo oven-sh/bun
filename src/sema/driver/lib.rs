@@ -786,6 +786,30 @@ impl Projects {
         (references.iter()).find_map(|it| self.find_project_with(disk, request, it, file, seen))
     }
 
+    /// Adds the configuration file and the files of `config` and of the projects that it references,
+    /// directly or not. `seen`: the configuration files.
+    fn files_of_graph(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+        seen: &mut Vec<Vec<u8>>,
+        files: &mut Vec<Vec<u8>>,
+    ) {
+        if seen.iter().any(|it| it == config) || !disk.is_file(config) {
+            return;
+        }
+        seen.push(config.to_vec());
+        let project = self.load(disk, request, config);
+        files.extend(project.files.iter().cloned());
+        let references: Vec<Vec<u8>> = (project.references.iter())
+            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+            .collect();
+        for it in &references {
+            self.files_of_graph(disk, request, it, seen, files);
+        }
+    }
+
     /// The project in which the file at `path` is checked, as the language service chooses it for
     /// an open file (`findDefaultConfiguredProject`): that of the nearest configuration file, or
     /// else the first of the projects it references that has the file, as under a solution.
@@ -935,19 +959,18 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         }
         // The directory stands for the part of the project that is in it: of the project that is
         // checked from there without an argument, so that `bun check .` is `bun check`.
+        // The projects know their files. A configuration file there is checked too.
+        let is_in_directory =
+            |file: &Vec<u8>| (file.strip_prefix(&path[..])).is_some_and(|it| it.starts_with(b"/"));
         if let Some(config) = config_in(path) {
-            let files = projects
-                .load(disk, request, &config)
-                .files_under(disk, path);
-            let mut has_files = false;
-            for file in files {
-                let seen = &mut Vec::new();
-                if (projects.find_project_with(disk, request, &config, &file, seen)).is_some() {
-                    add(Some(config.clone()), Extent::Graph, file);
-                    has_files = true;
-                }
-            }
-            if has_files {
+            let (mut configs, mut files) = (Vec::new(), Vec::new());
+            projects.files_of_graph(disk, request, &config, &mut configs, &mut files);
+            files.retain(is_in_directory);
+            if !files.is_empty() {
+                files.extend(configs.into_iter().filter(is_in_directory));
+                files.sort_unstable();
+                files.dedup();
+                (files.into_iter()).for_each(|file| add(Some(config.clone()), Extent::Graph, file));
                 continue;
             }
         }
@@ -1026,8 +1049,9 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
 enum Extent {
     /// In the project, or they are added to it. What it references is built whole.
     Project,
-    /// In the project and in those that it references, directly or not. Of these, one without such
-    /// a file is left out, unless one with such a file references it.
+    /// In the project and in those that it references, directly or not: files and configuration
+    /// files of theirs. Of these projects, one without such a file is left out, unless one with such
+    /// a file references it, and one with nothing but such files is checked whole.
     Graph,
 }
 
@@ -1087,17 +1111,27 @@ fn check_project_of(
     if !project.references.is_empty() {
         check_with_references(disk, project, request, report, started, named, of.elsewhere)
     } else {
+        // All of its files: the project, with what no file imports.
+        let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
+            *extent == Extent::Graph && project.files.iter().all(|file| is_among(named, file))
+        };
+        let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
         check_named_files(
             disk,
             project,
             request,
             report,
             started,
-            named.map(|it| it.1),
+            named,
             of.elsewhere,
             None,
         )
     }
+}
+
+/// `named` is sorted.
+fn is_among(named: &[Vec<u8>], file: &[u8]) -> bool {
+    named.binary_search_by(|it| it.as_slice().cmp(file)).is_ok()
 }
 
 struct ReferencedProject {
@@ -1398,11 +1432,10 @@ fn check_with_references(
     let is_read_later = |index: usize| references.iter().any(|of| of.contains(&index));
     let count = projects.len();
     // See `Extent::Graph`.
-    let has_named: Vec<bool> = (roots.iter())
-        .map(|files| match named {
-            Some((Extent::Graph, named)) => {
-                files.iter().any(|file| named.binary_search(file).is_ok())
-            }
+    let has_named: Vec<bool> = (projects.iter())
+        .map(|it| std::iter::once(&it.project.config_path).chain(&it.project.files))
+        .map(|mut files| match named {
+            Some((Extent::Graph, named)) => files.any(|file| is_among(named, file)),
             _ => true,
         })
         .collect();
@@ -1518,8 +1551,8 @@ fn check_with_references(
                 Some(files)
             }
             // What another project reads is built whole.
-            Some((Extent::Graph, files)) if has_named[index] && !is_read_later(index) => {
-                Some(files)
+            Some((Extent::Graph, files)) if !is_read_later(index) => {
+                Some(files).filter(|named| !roots[index].iter().all(|file| is_among(named, file)))
             }
             _ => None,
         };

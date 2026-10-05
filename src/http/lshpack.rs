@@ -29,11 +29,9 @@ pub struct HPACK {
     self_: *mut c_void,
 }
 
-pub struct DecodeResult {
-    // TODO: lifetime — name/value point into an FFI thread_local shared buffer,
-    // valid only until the next decode/encode call. Consider `DecodeResult<'a>`.
-    pub name: &'static [u8],
-    pub value: &'static [u8],
+pub struct DecodeResult<'a> {
+    pub name: &'a [u8],
+    pub value: &'a [u8],
     pub never_index: bool,
     pub well_know: u16,
     /// offset of the next header position in src
@@ -51,8 +49,9 @@ pub enum HpackError {
 }
 
 impl HPACK {
-    /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
-    pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
+    /// `name` and `value` point into a thread-local buffer that every `HPACK` on this thread decodes and encodes
+    /// through. The borrow only stops this instance from overwriting them.
+    pub fn decode<'a>(&'a mut self, src: &[u8]) -> Result<DecodeResult<'a>, HpackError> {
         let mut header = lshpack_header::default();
         // SAFETY: genuine FFI — only the `(src.as_ptr(), src.len())` pair carries
         // an obligation here (in-bounds read), discharged by `src: &[u8]`. The

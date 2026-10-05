@@ -451,6 +451,36 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
+        // Serialization can run user code, so the transfer list is checked again after it
+        // (step 5): a listed buffer that a getter detached is a DataCloneError. Bun checks the
+        // whole list before it detaches anything, so the failed call also leaves `first`
+        // intact (previously: TypeError, with `first` already detached). HTML detaches entry
+        // by entry, so this is stricter. `second` is kept out of the value so the serializer
+        // itself never sees it.
+        test("a listed ArrayBuffer detached during serialization fails without detaching the others", () => {
+          const first = new ArrayBuffer(8);
+          const second = new ArrayBuffer(8);
+          const value = {
+            first,
+            get detachSecond() {
+              structuredCloneFn(second, { transfer: [second] });
+              return 1;
+            },
+          };
+          let error: unknown;
+          try {
+            structuredCloneFn(value, { transfer: [first, second] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect({
+            name: (error as DOMException).name,
+            first: first.byteLength,
+            second: second.byteLength,
+          }).toEqual({ name: "DataCloneError", first: 8, second: 0 });
+        });
         // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
         // non-detachable without setting the C-API lock flag. Transferring a
         // pinned buffer must copy via transferTo()'s copyTo() fallback, not

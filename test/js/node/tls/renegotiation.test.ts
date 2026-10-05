@@ -402,11 +402,9 @@ it.concurrent.each([false, true])(
           setImmediate(() => socket.end());
         }
       },
-      // The TLS socket's write side ends locally. The transport stays open, so the renegotiation can still run.
-      final(callback: () => void) {
-        callback();
-      },
     });
+    // The TLS socket's write side ends locally. The transport stays open, so the renegotiation can still run.
+    duplex.end = () => duplex;
     raw.on("data", (chunk: Buffer) => duplex.push(chunk));
     raw.on("end", () => duplex.push(null));
     raw.on("close", () => duplex.destroy());

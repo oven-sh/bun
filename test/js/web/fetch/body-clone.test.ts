@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1171,6 +1172,18 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
   });
 
+  // Reads of one fd share its offset, so the second Blob would start where the first one ended.
+  test("a body over a regular file given by file descriptor is teed, not duped", async () => {
+    const fd = openSync(join(tempDirWithFiles("body-clone-fd", { "a.txt": "hello world" }), "a.txt"), "r");
+    try {
+      const original = new Response(Bun.file(fd));
+      const clone = original.clone();
+      expect(await Promise.all([original.text(), clone.text()])).toEqual(["hello world", "hello world"]);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   // The same store kind reached by path: stat says it is not a regular file.
   test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
@@ -1182,6 +1195,159 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a body over a FIFO given by path as the Blob itself is teed, not duped", async () => {
+    const fifo = join(tempDirWithFiles("body-clone-fifo-blob", {}), "body.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await cloneInChild("Bun.file(process.argv.at(-1))", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await writer.exited).toBe(0);
+  });
+
+  // The body shares its store with the Bun.file() it was made from. A stat cached
+  // there is what `size`, `lastModified`, `exists()` and a later `.body` answer from.
+  describe("clone() of a Bun.file() body does not change what the Bun.file() answers", () => {
+    const post = (body: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body });
+    const cloners: Array<[string, (file: Bun.BunFile) => unknown]> = [
+      ["Response.clone()", file => new Response(file).clone()],
+      ["Request.clone()", file => post(file).clone()],
+      ["new Request(request)", file => new Request(post(file))],
+      ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
+      // @ts-expect-error Bun takes a Response as init and clones its body.
+      ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
+    ];
+
+    async function afterClone<T>(
+      clone: (file: Bun.BunFile) => unknown,
+      change: (path: string) => void,
+      read: (file: Bun.BunFile) => T | Promise<T>,
+    ) {
+      const path = join(tempDirWithFiles("body-clone-answers", { "log.txt": "12345" }), "log.txt");
+      const file = Bun.file(path);
+      clone(file);
+      change(path);
+      return await read(file);
+    }
+    const grow = (path: string) => writeFileSync(path, "123456789");
+
+    test.each(cloners)("%s: size and a later body see a file that grew", async (_, clone) => {
+      expect({
+        size: await afterClone(clone, grow, file => file.size),
+        body: await afterClone(clone, grow, file => Bun.readableStreamToText(new Response(file).body!)),
+      }).toEqual({ size: 9, body: "123456789" });
+    });
+
+    test("lastModified and exists() see a file that changed", async () => {
+      const clone = cloners[0][1];
+      const mtime = new Date("2033-05-18T03:33:20.000Z");
+      expect({
+        lastModified: await afterClone(
+          clone,
+          path => utimesSync(path, mtime, mtime),
+          file => file.lastModified,
+        ),
+        exists: await afterClone(clone, unlinkSync, file => file.exists()),
+      }).toEqual({ lastModified: mtime.getTime(), exists: false });
+    });
+
+    test("both bodies see a file that grew", async () => {
+      const path = join(tempDirWithFiles("body-clone-grew", { "log.txt": "12345" }), "log.txt");
+      const original = new Response(Bun.file(path));
+      const clone = original.clone();
+      grow(path);
+      expect(await Promise.all([original.body, clone.body].map(body => Bun.readableStreamToText(body!)))).toEqual([
+        "123456789",
+        "123456789",
+      ]);
+    });
+
+    test("exists() sees a file that was created before the clone", async () => {
+      const path = join(tempDirWithFiles("body-clone-created", {}), "later.txt");
+      const file = Bun.file(path);
+      expect(await file.exists()).toBe(false);
+      writeFileSync(path, "12345");
+      new Response(file).clone();
+      expect(await file.exists()).toBe(true);
+    });
+
+    test("the size console.log prints for the clone", () => {
+      const sizeOf = (change: (path: string) => void, body: (file: Bun.BunFile) => Blob) => {
+        const path = join(tempDirWithFiles("body-clone-label", { "log.txt": "12345" }), "log.txt");
+        const clone = new Response(body(Bun.file(path))).clone();
+        change(path);
+        return [Bun.inspect(clone), Bun.inspect(clone)].map(printed => printed.split("\n")[0]).join(" ");
+      };
+      expect({
+        whole: sizeOf(
+          () => {},
+          file => file,
+        ),
+        slice: sizeOf(
+          () => {},
+          file => file.slice(1, 4),
+        ),
+        grew: sizeOf(grow, file => file),
+        deleted: sizeOf(unlinkSync, file => file),
+      }).toEqual({
+        whole: "Response (5 bytes) { Response (5 bytes) {",
+        slice: "Response (3 bytes) { Response (3 bytes) {",
+        grew: "Response (9 bytes) { Response (9 bytes) {",
+        deleted: "Response { Response {",
+      });
+    });
+
+    // procfs reports `st_size == 0` for a file that has content, so with that stat cached all three read "".
+    test.skipIf(!isLinux)("a procfs file is read whole", async () => {
+      const file = Bun.file("/proc/sys/kernel/ostype");
+      const original = new Response(file);
+      const clone = original.clone();
+      expect({
+        original: await original.text(),
+        clone: await clone.text(),
+        file: await file.text(),
+      }).toEqual({ original: "Linux\n", clone: "Linux\n", file: "Linux\n" });
+    });
+  });
+
+  // No bytes to compete for: it is duped like a regular file, and each body fails when it is read.
+  describe("clone() of a body that cannot be read does not throw", () => {
+    const sizeRead = (file: Bun.BunFile) => (file.size, file);
+    const directory = () => tempDirWithFiles("body-clone-dir", {});
+
+    async function codes(file: Bun.BunFile) {
+      const original = new Response(file);
+      const clone = original.clone();
+      const results = await Promise.allSettled([original.text(), clone.text()]);
+      return results.map(result => (result.status === "rejected" ? result.reason?.code : result.status));
+    }
+
+    test("a directory by path", async () => {
+      expect({
+        fresh: await codes(Bun.file(directory())),
+        sizeRead: await codes(sizeRead(Bun.file(directory()))),
+      }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+    });
+
+    test.skipIf(isWindows)("a directory by file descriptor", async () => {
+      const fd = openSync(directory(), "r");
+      try {
+        expect({
+          fresh: await codes(Bun.file(fd)),
+          sizeRead: await codes(sizeRead(Bun.file(fd))),
+        }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test.skipIf(isWindows)("a file descriptor that is not open", async () => {
+      expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
+    });
   });
 });
 

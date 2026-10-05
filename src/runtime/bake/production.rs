@@ -335,7 +335,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);

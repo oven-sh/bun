@@ -791,6 +791,8 @@ pub mod store {
         pub max_size: SizeType,
         /// Milliseconds since ECMAScript epoch.
         pub last_modified: crate::JSTimeType,
+        /// `st_mode` as a body's `clone()` saw it, kept apart from what the `Bun.file()` sharing this store answers from.
+        pub mode_seen_by_clone: Option<bun_sys::Mode>,
     }
 
     impl Default for File {
@@ -803,6 +805,7 @@ pub mod store {
                 seekable: None,
                 max_size: MAX_SIZE,
                 last_modified: crate::INIT_TIMESTAMP,
+                mode_seen_by_clone: None,
             }
         }
     }

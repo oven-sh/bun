@@ -57,6 +57,59 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/17502
+describe("--coverage-reporter without --coverage turns coverage on", () => {
+  const files = {
+    "math.ts": `export function add(a: number, b: number) {
+  return a + b;
+}
+export function sub(a: number, b: number) {
+  return a - b;
+}
+`,
+    "add.test.ts": `import { expect, test } from "bun:test";
+import { add } from "./math";
+test("add", () => {
+  expect(add(1, 2)).toBe(3);
+});
+`,
+    "sub.test.ts": `import { expect, test } from "bun:test";
+import { sub } from "./math";
+test("sub", () => {
+  expect(sub(3, 2)).toBe(1);
+});
+`,
+  };
+  const cases = [
+    { flags: ["--coverage-reporter=lcov"], lcov: true, table: false },
+    { flags: ["--coverage-reporter", "lcov"], lcov: true, table: false },
+    { flags: ["--coverage-reporter=text"], lcov: false, table: true },
+    { flags: ["--coverage-reporter=text", "--coverage-reporter=lcov"], lcov: true, table: true },
+    { flags: ["--coverage-reporter=lcov", "--parallel=2"], lcov: true, table: false },
+  ];
+
+  test.concurrent.each(cases.map(c => [c.flags.join(" "), c] as const))(
+    "bun test %s",
+    async (_, { flags, lcov, table }) => {
+      using dir = tempDir("cov-reporter-alone", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const report = Bun.file(path.join(String(dir), "coverage", "lcov.info"));
+      expect({
+        lcov: (await report.exists()) && (await report.text()).includes("SF:math.ts"),
+        table: / math\.ts +\| +100\.00 +\| +100\.00 +\|/.test(stderr),
+        exitCode,
+      }).toEqual({ lcov, table, exitCode: 0 });
+    },
+  );
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `

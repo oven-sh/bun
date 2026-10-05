@@ -659,24 +659,20 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if cb.manifests_only {
-                            continue;
+                        // A task that `populate_manifest_cache` started has no entry.
+                        if let Some(dependency_list_entry) =
+                            manager.task_queue.get_mut(&task.task_id)
+                        {
+                            let dependency_list = core::mem::take(dependency_list_entry);
+
+                            process_dependency_list_for_ctx(
+                                cb,
+                                manager,
+                                dependency_list,
+                                extract_ctx,
+                                install_peer,
+                            )?;
                         }
-
-                        let dependency_list_entry = manager
-                            .task_queue
-                            .get_mut(&task.task_id)
-                            .expect("infallible: task queued");
-
-                        let dependency_list = core::mem::take(dependency_list_entry);
-
-                        process_dependency_list_for_ctx(
-                            cb,
-                            manager,
-                            dependency_list,
-                            extract_ctx,
-                            install_peer,
-                        )?;
 
                         continue;
                     }
@@ -1060,30 +1056,25 @@ fn run_tasks_erased(
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
-                let progress_name: Option<Vec<u8>> = (!cb.manifests_only
-                    && log_level.show_progress()
-                    && !has_updated_this_run.get())
-                .then(|| manifest.name().to_vec());
+                let progress_name: Option<Vec<u8>> = (log_level.show_progress()
+                    && !has_updated_this_run.get()
+                    && !cb.manifests_only)
+                    .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
 
-                if cb.manifests_only {
-                    continue;
+                // A task that `populate_manifest_cache` started has no entry.
+                if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
+                    let dependency_list = core::mem::take(dependency_list_entry);
+
+                    process_dependency_list_for_ctx(
+                        cb,
+                        manager,
+                        dependency_list,
+                        extract_ctx,
+                        install_peer,
+                    )?;
                 }
-
-                let dependency_list_entry = manager
-                    .task_queue
-                    .get_mut(&task.id)
-                    .expect("infallible: task queued");
-                let dependency_list = core::mem::take(dependency_list_entry);
-
-                process_dependency_list_for_ctx(
-                    cb,
-                    manager,
-                    dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
 
                 if let Some(name) = progress_name {
                     manager.set_node_name::<true>(

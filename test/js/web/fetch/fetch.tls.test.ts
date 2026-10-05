@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -551,6 +551,74 @@ describe.concurrent("fetch-tls", () => {
         timeout,
       );
     }
+
+    // A pooled keep-alive socket is mid-handshake while its server
+    // renegotiates. The peer holds the client's renegotiation ClientHello, so
+    // the client's next request picks the socket up in that state. Node is the
+    // peer because BoringSSL cannot send a HelloRequest.
+    async function pickUpMidRenegotiation(...mode: string[]) {
+      await using peer = Bun.spawn({
+        cmd: [nodeExe()!, join(import.meta.dir, "fetch.tls.renegotiation-peer-fixture.mjs")],
+        env: { ...bunEnv, SERVER_CERT: validTls.cert, SERVER_KEY: validTls.key },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      // The peer prints "<relayPort> <controlPort>" when its servers listen.
+      let line = "";
+      for await (const chunk of peer.stdout) {
+        line += new TextDecoder().decode(chunk);
+        if (line.includes("\n")) break;
+      }
+      const ports = line.trim().split(" ");
+      expect(ports).toHaveLength(2);
+
+      await using client = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fetch.tls.renegotiation-client-fixture.ts"), ...ports, ...mode],
+        env: { ...bunEnv, CA_CERT: validTls.cert },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    // The TLS setup of a connection (SNI, ALPN, the cached session) ran again
+    // for the request that picked the socket up. BoringSSL aborts the process
+    // when a session is offered after the handshake has begun. The setup also
+    // took the session out of the cache.
+    it.skipIf(!nodeExe())(
+      "a request that reuses a pooled socket mid-renegotiation does not set up TLS again",
+      async () => {
+        const { stdout, stderr, exitCode } = await pickUpMidRenegotiation();
+        expect(stderr).toBe("");
+        expect(stdout).toEqual([
+          "first ok",
+          // 22 is a handshake record: the client's renegotiation ClientHello.
+          "held record type 22",
+          // The process died in the pooled pickup.
+          "after the pooled pickup pong",
+          "third ok",
+          // The third request is on a connection of its own, and it resumes
+          // the session that the first one cached.
+          "resumed [false,true]",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // Observed: the request gets no answer, and the test times out. Its write
+    // parks while the renegotiation runs, and uSockets does not retry it when
+    // the renegotiation ends.
+    it.todo(
+      "a request that reuses a pooled socket mid-renegotiation gets its answer",
+      async () => {
+        const { stdout, exitCode } = await pickUpMidRenegotiation("await-second");
+        expect(stdout).toEqual(["first ok", "held record type 22", "after the pooled pickup pong", "second ok"]);
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
   });
 
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where

@@ -497,10 +497,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
-          "js": "75d2ad2bc252c916f90f8ca85f53f0883ca46049c2700e3c1fe2337ec42d1142",
+          "js": "1415a67d0da987f3bb7fc68ca431e222b3898fa14be8af88e2845813c4120f43",
           "jsc": {
-            "bytes": 2217152,
-            "sha256": "6c3bbfc1c3a9296af6d4f6c29090f49f9f69a17add1ee67a15ec19621e9ae17e",
+            "bytes": 2217136,
+            "sha256": "8a7491fa66bc608ec7e5010cd21140effd23ce1f8b221dc2193491312631b403",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {

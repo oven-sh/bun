@@ -14,6 +14,13 @@ pub enum Decompressor {
     None,
 }
 
+pub(crate) fn has_zlib_header(buffer: &[u8]) -> bool {
+    let &[cmf, flg, ..] = buffer else {
+        return false;
+    };
+    (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 && u16::from_be_bytes([cmf, flg]).is_multiple_of(31)
+}
+
 impl Decompressor {
     // Note: each variant's `Drop` releases the underlying C state, so an
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
@@ -29,16 +36,19 @@ impl Decompressor {
         }
     }
 
-    fn init(&mut self, encoding: Encoding, first_chunk: &[u8]) -> crate::Result<()> {
+    fn init(
+        &mut self,
+        encoding: Encoding,
+        body_start: &[u8],
+        is_done: bool,
+    ) -> crate::Result<bool> {
         match encoding {
             Encoding::Gzip | Encoding::Deflate => {
-                // zlib.MAX_WBITS = 15
-                // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
-                // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
                 let window_bits = if encoding == Encoding::Gzip {
                     bun_zlib::MAX_WBITS | 16
-                } else if first_chunk.len() > 1 && first_chunk[0] == 120 {
+                } else if body_start.len() < 2 && !is_done {
+                    return Ok(false);
+                } else if has_zlib_header(body_start) {
                     0
                 } else {
                     -bun_zlib::MAX_WBITS
@@ -55,13 +65,14 @@ impl Decompressor {
             }
             _ => unreachable!("Invalid encoding. This code should not be reachable"),
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Feed one body chunk `buffer` through the decoder, appending the
     /// decompressed output to `body_out_str` until it holds `max_output` bytes. Creates the
     /// decoder on first call. Returns the input bytes consumed. Returns `ShortRead` when more
     /// input is needed and the stream is not yet done.
+    /// Returns 0 and creates no decoder while a deflate body is too short to tell zlib from raw.
     pub(crate) fn decompress_chunk(
         &mut self,
         encoding: Encoding,
@@ -73,8 +84,8 @@ impl Decompressor {
         if !encoding.is_compressed() {
             return Ok(buffer.len());
         }
-        if matches!(self, Decompressor::None) {
-            self.init(encoding, buffer)?;
+        if matches!(self, Decompressor::None) && !self.init(encoding, buffer, is_done)? {
+            return Ok(0);
         }
         let out = &mut body_out_str.list;
         match self {

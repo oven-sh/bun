@@ -649,9 +649,15 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
+            match self.platform.watch_dir(path) {
+                Ok(eventlist_index) => eventlist_index,
+                Err(err) => {
+                    if !stored_fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
+                    return Err(err.with_path(file_path));
+                }
+            }
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -717,22 +723,14 @@ impl Watcher {
             .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
             .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        if autowatch_parent_dir {
-            parent_watch_item = Some(match parent_watch_item {
-                Some(v) => v,
-                None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
-                    dir_fd,
-                    parent_dir,
-                    parent_dir_hash,
-                ) {
-                    Err(err) => {
-                        return Err(err.with_path(parent_dir));
-                    }
-                    Ok(r) => r,
-                },
-            });
+        if autowatch_parent_dir && parent_watch_item.is_none() {
+            // Only recovers a replaced file: the file watch must not depend on it.
+            let _ = self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                dir_fd,
+                parent_dir,
+                parent_dir_hash,
+            );
         }
-        let _ = parent_watch_item;
 
         match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
             fd,

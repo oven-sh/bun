@@ -4655,6 +4655,20 @@ pub(crate) fn js_upgrade_tls_deferred(
     Err(global.throw(format_args!("Expected a socket instance")))
 }
 
+/// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
+#[bun_jsc::host_fn]
+pub(crate) fn js_first_flight_before_fin(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket] = callframe.arguments_as_array::<1>();
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        this.socket.get().set_first_flight_before_fin();
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn js_upgrade_duplex_to_tls(
     global: &JSGlobalObject,

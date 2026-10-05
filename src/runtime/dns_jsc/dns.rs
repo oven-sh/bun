@@ -118,7 +118,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 const IANA_DNS_PORT: i32 = 53;
 
 // ──────────────────────────────────────────────────────────────────────────
-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
+// dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -1207,33 +1207,6 @@ impl GetAddrInfoRequest {
             }
         }
         request
-    }
-
-    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
-    /// # Safety
-    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
-    #[cfg(target_os = "macos")]
-    pub(crate) unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
-        let this: *mut Self = context.cast();
-        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*this)
-                .backend
-                .as_dns_sd_mut()
-                .query
-                .record_reply(flags, error_code, address, ttl);
-        }
     }
 
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
@@ -2779,39 +2752,7 @@ pub(crate) mod internal {
                 query: dns_sd::QueryState::new(protocol),
             };
         }
-        let Some(_) = shared.start(
-            dns_sd::Inflight::Internal(req),
-            protocol,
-            host,
-            dns_sd_reply,
-            req.cast::<c_void>(),
-        ) else {
-            return false;
-        };
-
-        true
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        let req: *mut Request = context.cast();
-        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*req)
-                .dns_sd
-                .query
-                .record_reply(flags, error_code, address, ttl)
-        };
+        shared.start(dns_sd::Inflight::Internal(req), protocol, host)
     }
 
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).

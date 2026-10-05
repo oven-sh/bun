@@ -309,16 +309,42 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
-        if let Some(err_) = self.global_object().try_take_exception() {
-            self.reject_with_js_value(queries_array, err_);
-        } else {
-            let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
-            instance.ensure_still_alive();
-            self.reject_with_js_value(queries_array, instance);
-        }
+        self.reject_with_js_value(queries_array, self.error_to_js(err));
+    }
+
+    /// The client cannot decode a row of this query's result. Reject the query
+    /// now, but leave it in flight (`MySQLQuery::discard_response`): the
+    /// connection keeps it at the queue head and skips the rest of its
+    /// response.
+    pub(crate) fn reject_undecodable_row(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
+        self.reject_when(
+            MySQLQuery::discard_response,
+            queries_array,
+            self.error_to_js(err),
+        );
     }
 
     pub(crate) fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
+        self.reject_when(MySQLQuery::fail, queries_array, err);
+    }
+
+    fn error_to_js(&self, err: AnyMySQLError::Error) -> JSValue {
+        if let Some(err_) = self.global_object().try_take_exception() {
+            return err_;
+        }
+        let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
+        instance.ensure_still_alive();
+        instance
+    }
+
+    /// `transition` moves the query to its rejected state, and returns whether
+    /// a rejection is still to be delivered to JS.
+    fn reject_when(
+        &self,
+        transition: fn(&mut MySQLQuery) -> bool,
+        queries_array: JSValue,
+        err: JSValue,
+    ) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
@@ -330,7 +356,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.with_mut(|q| q.fail()) {
+        if !self.query.with_mut(transition) {
             return;
         }
 
@@ -445,6 +471,10 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_pipelined(&self) -> bool {
         self.query.get().is_pipelined()
+    }
+    #[inline]
+    pub(crate) fn is_discarding_response(&self) -> bool {
+        self.query.get().is_discarding_response()
     }
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {

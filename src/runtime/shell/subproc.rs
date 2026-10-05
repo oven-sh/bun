@@ -404,9 +404,9 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
-    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
+    /// Tear down a subprocess whose stdio start() failed. Ends the child, marks pending pipe
+    /// readers as errored so PipeReader.deinit's done-assert passes, drops the exit handler so
+    /// a later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
@@ -417,7 +417,10 @@ impl ShellSubprocess {
         {
             // SAFETY: `this` is the live allocation; it is deliberately leaked below,
             // so release the Ctrl+C accounting by hand.
-            unsafe { (*this).ctrl_c_child = None };
+            unsafe {
+                let _ = (*this).try_kill(SignalCode::SIGKILL as i32);
+                (*this).ctrl_c_child = None;
+            }
             return;
         }
         #[cfg(not(windows))]
@@ -443,6 +446,10 @@ impl ShellSubprocess {
                     }
                 }
             }
+            // Nothing reports its exit from here on, so nothing would reap it either.
+            let _ = subproc
+                .proc()
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
             subproc.proc().set_exit_handler_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
@@ -881,9 +888,6 @@ impl ShellSubprocess {
         };
         if let Some(err) = stdin_start_err {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`
-            // then consumes the allocation.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -899,8 +903,6 @@ impl ShellSubprocess {
             )
         } {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -915,8 +917,6 @@ impl ShellSubprocess {
             )
         } {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -942,8 +942,9 @@ impl ShellSubprocess {
                 break 'brk Some(exited.code);
             }
 
+            // How it ended is not known. The command has to finish all the same.
             if matches!(status, Status::Err(_)) {
-                // TODO: handle error
+                break 'brk Some(1);
             }
 
             if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {

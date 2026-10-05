@@ -135,6 +135,9 @@ impl Drop for Process {
     /// The allocation itself is freed by the `heap::take` in `destructor`
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
+        #[cfg(unix)]
+        self.poller.deinit(self.event_loop);
+        #[cfg(windows)]
         self.poller.deinit();
     }
 }
@@ -362,11 +365,7 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
-        // Mutated only on the macOS ESRCH retry path below.
-        #[cfg(target_os = "macos")]
         let mut rusage_result = *rusage;
-        #[cfg(not(target_os = "macos"))]
-        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -391,7 +390,10 @@ impl Process {
                             ),
                         );
                     }
-                    break 'brk Some(Status::Err(err_));
+                    break 'brk Some(
+                        self.kill_and_reap(&mut rusage_result)
+                            .unwrap_or(Status::Err(err_)),
+                    );
                 }
             }
             None
@@ -411,9 +413,18 @@ impl Process {
         match self.watch() {
             Err(err) => {
                 #[cfg(unix)]
-                if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
-                    return Ok(self.has_exited());
+                {
+                    if err.get_errno() == bun_sys::E::ESRCH {
+                        self.wait(true);
+                        return Ok(self.has_exited());
+                    }
+                    let mut rusage = rusage_zeroed();
+                    if let Some(status) = self.kill_and_reap(&mut rusage) {
+                        self.on_exit(status, &rusage);
+                        return Ok(true);
+                    }
+                    // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
+                    self.close();
                 }
                 Err(err)
             }
@@ -621,7 +632,7 @@ impl Process {
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
-                waiter.disable();
+                waiter.unref(event_loop_handle_to_ctx(self.event_loop));
             }
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {
@@ -676,6 +687,49 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
+    #[cfg(unix)]
+    fn send_signal(&self, signal: u8) -> Maybe<()> {
+        // All by-value `pid_t`/`c_int`; the kernel validates pid/
+        // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
+        // memory-safety preconditions, so `safe fn` discharges the
+        // link-time proof here.
+        unsafe extern "C" {
+            #[link_name = "kill"]
+            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        }
+        let err = libc_kill(self.pid, signal as c_int);
+        if err != 0 {
+            let errno_ = bun_sys::get_errno(err as isize);
+            // if the process was already killed don't throw
+            if errno_ != bun_sys::E::ESRCH {
+                return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
+            }
+        }
+        Ok(())
+    }
+
+    /// For a child whose exit nothing is going to report: left alone it would keep running, and never be reaped.
+    /// Watched or not, unlike [`Self::kill`]. A child that cannot be signalled (it runs as another user by now)
+    /// is left alone after all, since the wait would last until it exits by itself.
+    ///
+    /// The status, with `rusage`, is that of a child which turns out to have ended by itself. It is for the caller
+    /// to report, or else the error that brought it here.
+    #[cfg(unix)]
+    #[cold]
+    #[inline(never)]
+    pub fn kill_and_reap(&mut self, rusage: &mut Rusage) -> Option<Status> {
+        // Reaped already, so the pid may be another process's by now.
+        if self.has_exited() {
+            return None;
+        }
+        self.send_signal(libc::SIGKILL as u8).ok()?;
+        match Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)))? {
+            Status::Signaled(signal) if signal == libc::SIGKILL as u8 => None,
+            status @ (Status::Exited(_) | Status::Signaled(_)) => Some(status),
+            Status::Running | Status::Err(_) => None,
+        }
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
@@ -688,24 +742,7 @@ impl Process {
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).
             match &self.poller {
-                Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    // All by-value `pid_t`/`c_int`; the kernel validates pid/
-                    // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
-                    // memory-safety preconditions, so `safe fn` discharges the
-                    // link-time proof here.
-                    unsafe extern "C" {
-                        #[link_name = "kill"]
-                        safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
-                    }
-                    let err = libc_kill(self.pid, signal as c_int);
-                    if err != 0 {
-                        let errno_ = bun_sys::get_errno(err as isize);
-                        // if the process was already killed don't throw
-                        if errno_ != bun_sys::E::ESRCH {
-                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
-                        }
-                    }
-                }
+                Poller::WaiterThread(_) | Poller::Fd(_) => return self.send_signal(signal),
                 _ => {}
             }
         }
@@ -856,13 +893,14 @@ impl PollerPosix {
     /// already performs the same teardown explicitly before reassigning. A
     /// `Drop` impl would double-free the hive slot on those reassignments.
     /// Called only from `Process` drop.
-    pub(crate) fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self, event_loop: EventLoopHandle) {
         // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
         // instead of open-coding the `NonNull` deref here.
         if let Some(poll) = self.fd_poll_mut() {
             poll.deinit();
         } else if let PollerPosix::WaiterThread(w) = self {
-            w.disable();
+            // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
+            w.unref(event_loop_handle_to_ctx(event_loop));
         }
     }
 

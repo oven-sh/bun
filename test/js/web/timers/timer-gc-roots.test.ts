@@ -133,6 +133,9 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
           await new Promise(r => setTimeout(r, 10));
         }
       }
+      // RSS still climbs to its plateau in the first rounds
+      await round();
+      await round();
       await round();
       const before = process.memoryUsage().rss;
       await round();

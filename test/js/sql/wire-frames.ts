@@ -408,6 +408,62 @@ export async function pgMockServer(
   return { port, server, release: () => releases.forEach(release => release()) };
 }
 
+/**
+ * TCP proxy in front of a real PostgreSQL (no TLS). Every byte goes through
+ * unchanged and in order; only the segmentation of the backend stream differs.
+ * After `holdAfterError()`, the proxy forwards the backend stream up to the end
+ * of the next ErrorResponse and keeps back what follows, the ReadyForQuery of
+ * the failed query first, until `release()`.
+ */
+export async function pgHoldingProxy(
+  upstreamHost: string,
+  upstreamPort: number,
+): Promise<{ port: number; server: net.Server; holdAfterError(): void; release(): void }> {
+  let armed = false;
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(client => {
+    const upstream = net.connect(upstreamPort, upstreamHost);
+    let buffered = Buffer.alloc(0);
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) client.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    client.on("data", chunk => upstream.write(chunk));
+    upstream.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      let end = 0;
+      while (buffered.length - end >= 5) {
+        const frameEnd = end + 1 + buffered.readInt32BE(end + 1);
+        if (buffered.length < frameEnd) break;
+        (held ?? out).push(buffered.subarray(end, frameEnd));
+        if (armed && buffered[end] === 0x45 /* 'E' ErrorResponse */) {
+          armed = false;
+          held = [];
+        }
+        end = frameEnd;
+      }
+      buffered = buffered.subarray(end);
+      if (out.length) client.write(Buffer.concat(out));
+    });
+    client.on("close", () => {
+      releases.delete(release);
+      upstream.destroy();
+    });
+    upstream.on("close", () => client.destroy());
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  return {
+    port,
+    server,
+    holdAfterError: () => void (armed = true),
+    release: () => releases.forEach(release => release()),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // MySQL client/server protocol — https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 // ---------------------------------------------------------------------------
@@ -486,10 +542,21 @@ export function mysqlHandshakeV10(
   return mysqlRawPacket(0, payload);
 }
 
+// Server status flags — SERVER_STATUS_flags_enum in mysql__com_8h.html (subset used by the mocks).
+export const MYSQL_SERVER_STATUS_AUTOCOMMIT = 0x0002;
+export const MYSQL_SERVER_MORE_RESULTS_EXISTS = 0x0008; // another result set of the same response follows
+
 // MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
-export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+export function mysqlOkPacket(
+  seq: number,
+  header: 0x00 | 0xfe = 0x00,
+  statusFlags: number = MYSQL_SERVER_STATUS_AUTOCOMMIT,
+): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.from([header, 0x00, 0x00, statusFlags & 0xff, (statusFlags >> 8) & 0xff, 0x00, 0x00]),
+  );
 }
 
 // MySQL ERR_Packet — page_protocol_basic_err_packet.html:
@@ -649,16 +716,70 @@ export function mysqlTextResultSetRow(seq: number, cols: (string | Buffer)[]): B
 // MySQL Textual Resultset — page_protocol_com_query_response_text_resultset.html, in the
 // CLIENT_DEPRECATE_EOF framing: lenenc(column_count) packet, one ColumnDefinition41 per
 // column, one row packet per row, then an OK packet with the 0xFE header as the terminator.
+// A response with several result sets (CALL, multi-statement) is these back to back: every
+// terminator but the last carries MYSQL_SERVER_MORE_RESULTS_EXISTS in `statusFlags`, and the
+// sequence ids run on (this result set takes 2 + columns.length + rows.length of them).
 export function mysqlTextResultSet(
   startSeq: number,
   columns: { name: string; type: number }[],
   rows: string[][],
+  statusFlags?: number,
 ): Buffer {
   let seq = startSeq;
   const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
   for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
   for (const row of rows) parts.push(mysqlTextResultSetRow(seq++, row));
-  parts.push(mysqlOkPacket(seq, 0xfe));
+  parts.push(mysqlOkPacket(seq, 0xfe, statusFlags));
+  return Buffer.concat(parts);
+}
+
+// MySQL Binary Protocol Resultset Row — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row:
+//   Int<1>(0x00) Byte<(column_count + 7 + 2) / 8>(NULL bitmap, first column at bit 2) then every non-NULL value.
+// Each value is already in its column type's binary encoding (mysqlBinaryLong, mysqlLenencStr, ...),
+// so a fault-injection test can put bytes here that no server sends.
+export function mysqlBinaryResultSetRow(seq: number, values: (Buffer | null)[]): Buffer {
+  const nullBitmap = Buffer.alloc((values.length + 7 + 2) >> 3);
+  values.forEach((value, i) => {
+    if (value === null) nullBitmap[(i + 2) >> 3] |= 1 << ((i + 2) & 7);
+  });
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([0x00]), nullBitmap, ...values.filter((value): value is Buffer => value !== null)]),
+  );
+}
+
+// Binary protocol value of MYSQL_TYPE_LONG — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row_value_long: Int<4>
+export function mysqlBinaryLong(n: number): Buffer {
+  const value = Buffer.alloc(4);
+  value.writeInt32LE(n);
+  return value;
+}
+
+// Binary protocol value of MYSQL_TYPE_DATE — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row_value_date:
+//   Int<1>(length) Int<2>(year) Int<1>(month) Int<1>(day). With a time part (DATETIME, TIMESTAMP) the length is 7 or 11.
+// `declaredLength` is the fault-injection escape hatch (mirrors mysqlRawPacket): a server only sends 0, 4, 7 or 11.
+export function mysqlBinaryDate(year: number, month: number, day: number, declaredLength: number = 4): Buffer {
+  const value = Buffer.alloc(5);
+  value[0] = declaredLength;
+  value.writeUInt16LE(year, 1);
+  value[3] = month;
+  value[4] = day;
+  return value;
+}
+
+// MySQL Binary Protocol Resultset — page_protocol_binary_resultset.html: what COM_STMT_EXECUTE answers with.
+// The framing is mysqlTextResultSet's (see there for `statusFlags`); only the rows differ.
+export function mysqlBinaryResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: (Buffer | null)[][],
+  statusFlags?: number,
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlBinaryResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe, statusFlags));
   return Buffer.concat(parts);
 }
 

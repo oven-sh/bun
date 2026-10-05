@@ -12,6 +12,7 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
+use crate::socket::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -1549,6 +1550,53 @@ where
             compress,
         );
         Ok(send_status_to_js(status, bytes.len(), "publish"))
+    }
+
+    pub(crate) fn set_node_https_secure_context(
+        &self,
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+        additional_ca: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let options = options.to_js();
+        let additional_ca = additional_ca.to_js();
+        if !SSL {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot set a TLS context on a non-TLS server",
+            )));
+        }
+        let Some(config) = SSLConfig::from_js(global.bun_vm_ref(), global, options)? else {
+            return Err(global
+                .throw_invalid_arguments(format_args!("setSecureContext requires TLS options",)));
+        };
+        let additional_ca_config = if additional_ca.is_empty_or_undefined_or_null() {
+            None
+        } else {
+            SSLConfig::from_js(global.bun_vm_ref(), global, additional_ca)?
+        };
+        let native_options = config.as_usockets();
+        let additional_ca_options = additional_ca_config
+            .as_ref()
+            .map(SSLConfig::as_usockets)
+            .unwrap_or_default();
+        let Some(app) = self.app.get() else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot set a TLS context after the server has stopped",
+            )));
+        };
+        // SAFETY: app is the live SSL NewApp owned by this running server.
+        if !bun_opaque::opaque_deref_mut(app).set_secure_context(
+            &native_options,
+            &additional_ca_options,
+            config.protos_bytes(),
+        ) {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Failed to set the TLS context",))
+            );
+        }
+        self.config.with_mut(|server_config| server_config.ssl_config = Some(config));
+        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn request_ip(

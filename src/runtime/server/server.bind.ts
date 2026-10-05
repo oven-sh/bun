@@ -60,6 +60,14 @@ function server(name: string) {
         passThis: true,
         length: 2,
       },
+      _setNodeHTTPSSecureContext: {
+        args: { options: b.any, additionalCA: b.any },
+        returns: b.any,
+        capability: "js",
+        throws: true,
+        rustName: "set_node_https_secure_context",
+        length: 2,
+      },
       requestIP: {
         args: { request: b.any },
         returns: b.any,

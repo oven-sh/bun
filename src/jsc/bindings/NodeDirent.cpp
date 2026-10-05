@@ -327,7 +327,7 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString name, BunString path, JSString** previousPath)
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, JSC::EncodedJSValue encodedName, BunString path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
 
@@ -358,8 +358,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         }
     }
 
-    auto nameString = name.transferToWTFString();
-    auto nameValue = jsString(vm, WTF::move(nameString));
+    auto nameValue = JSValue::decode(encodedName);
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);

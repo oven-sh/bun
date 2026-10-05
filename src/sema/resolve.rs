@@ -286,12 +286,14 @@ impl Options {
 
     /// The index of the file with this name in a table that is sorted by `tspath.Path`.
     fn find_by_path<T>(&self, table: &[T], path: fn(&T) -> &Vec<u8>, name: &[u8]) -> Option<usize> {
+        let find = |name: &[u8]| table.binary_search_by(|it| path(it)[..].cmp(name)).ok();
         if table.is_empty() {
             return None;
         }
-        let mut buffer = path_buffer_pool::get();
-        let name = to_path_in(name, self.use_case_sensitive_file_names, &mut buffer[..]);
-        table.binary_search_by(|it| path(it)[..].cmp(&name)).ok()
+        if self.use_case_sensitive_file_names {
+            return find(name);
+        }
+        find(&to_path_in(name, false, &mut path_buffer_pool::get()[..]))
     }
 
     /// `GetSourceOfProjectReferenceIfOutputIncluded`: the source that the declaration file at `path` is read in place of, else `path`.
@@ -896,8 +898,11 @@ pub fn to_path_in<'a>(
 /// The file with this name. `text` is its `tspath.Path`, which identifies it: tables of files have
 /// that as the key. `pretty` is `FileName()`, the name as it is spelled.
 pub fn file_path<'s>(file_name: &'s [u8], is_case_sensitive: bool, arena: &'s Arena) -> Path<'s> {
+    if is_case_sensitive {
+        return Path::init(file_name);
+    }
     let mut buffer = path_buffer_pool::get();
-    let text = to_path_in(file_name, is_case_sensitive, &mut buffer[..]);
+    let text = to_path_in(file_name, false, &mut buffer[..]);
     match std::ptr::eq(text.as_ptr(), file_name.as_ptr()) {
         true => Path::init(file_name),
         false => Path::init_with_pretty(arena.alloc_slice_copy(&text), file_name),

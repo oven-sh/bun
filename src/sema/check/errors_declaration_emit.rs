@@ -806,11 +806,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `sourceFileMayBeEmitted`
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
             || strings::contains(module.file_name(), b"/node_modules/")
-                && !files
-                    .options
-                    .files
-                    .iter()
-                    .any(|listed| listed == module.file_name())
+                && !(files.options.files.iter())
+                    .any(|listed| files.by_path.get(listed) == Some(file))
         {
             return None;
         }

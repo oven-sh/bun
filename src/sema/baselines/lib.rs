@@ -9,7 +9,7 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, Options, join, to_file_name_lower_case};
+use bun_sema::resolve::{Host, Options, join, to_path};
 use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
@@ -307,11 +307,7 @@ impl Virtual {
     }
 
     fn key(&self, path: &[u8]) -> Vec<u8> {
-        if self.is_case_sensitive {
-            path.to_vec()
-        } else {
-            to_file_name_lower_case(path)
-        }
+        to_path(path, self.is_case_sensitive).into_owned()
     }
 
     fn add_directories_above(&mut self, path: &[u8]) {
@@ -1153,12 +1149,8 @@ fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
     use bstr::ByteSlice;
     let mut package_json_cache: BTreeSet<Vec<u8>> = BTreeSet::new();
     // Whether this is the first line about `file`.
-    let mut is_new = |file: &[u8]| {
-        package_json_cache.insert(match is_case_sensitive {
-            true => file.to_vec(),
-            false => to_file_name_lower_case(file),
-        })
-    };
+    let mut is_new =
+        |file: &[u8]| package_json_cache.insert(to_path(file, is_case_sensitive).into_owned());
     let file_of = |line: &[u8]| line.strip_prefix(b"File '").unwrap_or(line).to_vec();
     let mut trace = Vec::new();
     for line in lines {

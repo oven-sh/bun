@@ -2238,21 +2238,19 @@ impl Included<'_, '_> {
         let (resolver, from) = program_resolver.redirect_for_resolution(module.file_name());
         let options = resolver.options();
         let mut references = Vec::new();
-        let mut refer = |name: Vec<u8>, code: u32, start: u32, end: u32| -> Option<FileId> {
-            let target = by_path.get(&name)?;
-            let reference = Reference {
-                target,
-                code,
-                from: file,
-                start,
-                end,
-                package_id: None,
-            };
-            references.push((reference, name));
-            Some(target)
+        let mut refer = |name: Vec<u8>, code: u32, (start, end), package_id: Option<Vec<u8>>| {
+            if let Some(target) = by_path.get(&name) {
+                let reference = Reference {
+                    target,
+                    code,
+                    from: file,
+                    start,
+                    end,
+                    package_id,
+                };
+                references.push((reference, name));
+            }
         };
-        let mut ids: Vec<(usize, Option<Vec<u8>>)> = Vec::new();
-        let mut count = 0;
         // They are processed by kind: paths, then types, then libraries.
         for of_kind in [
             ReferenceKind::Path,
@@ -2266,6 +2264,7 @@ impl Included<'_, '_> {
                 }
                 let value = atoms.bytes(value);
                 let end = pos + value.len() as u32;
+                let mut package_id = None;
                 let (name, code) = match kind {
                     ReferenceKind::Path => {
                         let written = referenced_path(value, module.file_name());
@@ -2293,7 +2292,7 @@ impl Included<'_, '_> {
                         {
                             let with_id =
                                 resolver.resolve_type_reference_with_package_id(value, from, mode);
-                            ids.push((count, with_id.and_then(|it| it.1)));
+                            package_id = with_id.and_then(|it| it.1);
                         }
                         (found, 1402)
                     }
@@ -2307,10 +2306,8 @@ impl Included<'_, '_> {
                         (found, 1405)
                     }
                 };
-                if let Some(name) = name
-                    && refer(name, code, pos, end).is_some()
-                {
-                    count += 1;
+                if let Some(name) = name {
+                    refer(name, code, (pos, end), package_id);
                 }
             }
         }
@@ -2342,21 +2339,15 @@ impl Included<'_, '_> {
                 continue;
             };
             // The name is that of the file, unless somebody asks.
-            let mut name = self.modules[target.idx()].file_name().to_vec();
-            if is_asked[target.idx()]
-                && let Some((found, id)) =
-                    resolver.resolve_module_name_with_package_id(atoms.bytes(spec), from, mode)
-            {
-                name = found.file_name.to_vec();
-                ids.push((count, id));
-            }
-            if refer(name, code, start, end).is_some() {
-                count += 1;
-            }
-        }
-        for (at, id) in ids {
-            if let Some(reference) = references.get_mut(at) {
-                reference.0.package_id = id;
+            let asked = is_asked[target.idx()].then(|| {
+                resolver.resolve_module_name_with_package_id(atoms.bytes(spec), from, mode)
+            });
+            match asked.flatten() {
+                Some((found, id)) => refer(found.file_name.to_vec(), code, (start, end), id),
+                None => {
+                    let name = self.modules[target.idx()].file_name().to_vec();
+                    refer(name, code, (start, end), None);
+                }
             }
         }
         references

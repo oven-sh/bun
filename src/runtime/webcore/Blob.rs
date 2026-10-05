@@ -1567,12 +1567,12 @@ impl BlobExt for Blob {
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
         // SAFETY: sole owner so far; `&mut` scoped to the call.
-        let result =
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) };
-        if let Some(err) = result.to_error() {
-            return Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        match unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) } {
+            Ok(promise) => Ok(promise),
+            Err(err) => {
+                Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
+            }
         }
-        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

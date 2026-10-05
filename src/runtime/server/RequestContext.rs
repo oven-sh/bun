@@ -372,13 +372,17 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
-/// monomorphizations share one copy.
+/// monomorphizations share one copy. Returns what [`Body::Value::discard`] does.
 #[inline(never)]
-fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+#[must_use]
+fn release_body_stream(
+    response: &mut Response,
+    global_this: &JSGlobalObject,
+) -> WebCore::streams::SourceHandle {
     if let Body::Value::Locked(locked) = response.get_body_value()
         && locked.has_consumer()
     {
-        return;
+        return WebCore::streams::SourceHandle::None;
     }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
@@ -388,8 +392,9 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     // Read after the stream calls: the check observes the post-detach state.
     let body_value = response.get_body_value();
     if matches!(body_value, Body::Value::Locked(_)) {
-        *body_value = Body::Value::Used;
+        return body_value.discard();
     }
+    WebCore::streams::SourceHandle::None
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -744,7 +749,7 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
+    /// Cancel the body stream or producer of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
         if let Body::Value::Locked(locked) = response.get_body_value()
             && locked.has_consumer()
@@ -757,7 +762,10 @@ where
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
         }
-        *response.get_body_value() = Body::Value::Used;
+        response
+            .get_body_value()
+            .discard()
+            .cancel(JSValue::UNDEFINED);
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
@@ -861,7 +869,7 @@ where
         };
         // SAFETY: `response` is the live cell pointer; `value` is rooted by the
         // caller's frame and protect()'d below.
-        if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
+        if unsafe { self.reject_unsendable_response(response) } {
             return;
         }
         self.response_root.set_rooted(value, global_this);
@@ -1607,7 +1615,7 @@ where
         // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
         // runs: release the body's hold on the stream here.
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this).cancel(JSValue::UNDEFINED);
         }
 
         self.response_root.clear();
@@ -2767,7 +2775,7 @@ where
         // for as long as `response` is used.
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
-            if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+            if unsafe { ctx.reject_unsendable_response(response) } {
                 return;
             }
             ctx.response_root.clear();
@@ -2824,7 +2832,7 @@ where
                     };
 
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                    if unsafe { ctx.reject_unsendable_response(response) } {
                         return;
                     }
 
@@ -2926,9 +2934,10 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            let mut producer = release_body_stream(resp, global_this);
             // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
+            producer.cancel(JSValue::UNDEFINED);
         }
 
         if self.is_aborted_or_ended() {
@@ -3016,7 +3025,7 @@ where
         }
 
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this).cancel(JSValue::UNDEFINED);
         }
 
         // aborted so call finalizeForAbort
@@ -3576,9 +3585,15 @@ where
     /// has no HTTP status line, so the Response can never reach the client:
     /// report it like a thrown error rather than writing an unparseable one.
     ///
-    /// Takes the status, not the Response: `run_error_handler` below runs user
+    /// Takes the cell pointer, not a borrow: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
-    fn reject_unsendable_response(&self, status: u16) -> bool {
+    ///
+    /// # Safety
+    /// Same contract as [`Self::set_response`].
+    unsafe fn reject_unsendable_response(&self, response: *mut Response) -> bool {
+        // SAFETY: caller contract. Last used before `run_error_handler`.
+        let response = unsafe { &*response };
+        let status = response.status_code();
         if HTTPStatusText::is_sendable(status) {
             return false;
         }
@@ -3587,6 +3602,9 @@ where
             return true;
         };
         let global_this = (*server).global_this();
+        if matches!(response.get_body_value(), Body::Value::Locked(_)) {
+            Self::cancel_unread_body(response, global_this);
+        }
         let err = global_this.create_error_instance(format_args!(
             "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
         ));

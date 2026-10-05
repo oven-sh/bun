@@ -950,6 +950,15 @@ impl Interpreter {
         }
     }
 
+    pub(crate) fn js_thread(&self) -> Option<bun_jsc::JsThread<'_>> {
+        let global = self.global_this_ref()?;
+        let vm = global.bun_vm();
+        Some(global.js_thread(match self.context.get() {
+            Some(context) => vm.context_of(context),
+            None => vm.root_context(),
+        }))
+    }
+
     /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
     pub(crate) fn context_stopped(&self) -> bool {
         self.context

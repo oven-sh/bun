@@ -3102,8 +3102,10 @@ where
                         on_readable_stream_available: Some(
                             Ctx::on_request_body_readable_stream_available,
                         ),
-                        producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_slot),
+                        producer: crate::webcore::body::PendingProducer::new(
+                            crate::webcore::streams::SourceHandle::ServerRequestBody(
+                                AnyRequestContext::init(ctx_slot),
+                            ),
                         ),
                         ..Default::default()
                     });

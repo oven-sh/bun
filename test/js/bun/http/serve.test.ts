@@ -262,6 +262,132 @@ describe("HEAD request with a ReadableStream body", () => {
     });
   }
 });
+describe("a pending Response body that the server does not send", () => {
+  // The body never ends, so only a closed connection ends the upstream request.
+  function serveEndlessBody(requests: number) {
+    let aborted = 0;
+    const allAborted = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => {
+          if (++aborted === requests) allAborted.resolve();
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("<p>pending</p>"));
+            },
+          }),
+        );
+      },
+    });
+    return { server, allAborted: allAborted.promise };
+  }
+
+  const producers = {
+    "fetch()": (url: URL) => fetch(url),
+    "HTMLRewriter.transform(await fetch())": async (url: URL) => new HTMLRewriter().transform(await fetch(url)),
+  };
+
+  for (const [name, produce] of Object.entries(producers)) {
+    it(`HEAD closes the upstream request of ${name}`, async () => {
+      const { server: upstream, allAborted } = serveEndlessBody(3);
+      await using _ = upstream;
+      await using proxy = Bun.serve({
+        port: 0,
+        fetch: () => produce(upstream.url),
+      });
+
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(proxy.url, { method: "HEAD" });
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("");
+      }
+      await allAborted;
+    });
+
+    it(`a client that left before the handler returned closes the upstream request of ${name}`, async () => {
+      const { server: upstream, allAborted } = serveEndlessBody(1);
+      await using _ = upstream;
+      const client = new AbortController();
+      await using proxy = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const response = await produce(upstream.url);
+          const left = Promise.withResolvers<void>();
+          request.signal.addEventListener("abort", () => left.resolve());
+          client.abort();
+          await left.promise;
+          return response;
+        },
+      });
+
+      await expect(fetch(proxy.url, { signal: client.signal })).rejects.toThrow("The operation was aborted");
+      await allAborted;
+    });
+  }
+
+  it("a null-body status closes the upstream request", async () => {
+    const { server: upstream, allAborted } = serveEndlessBody(2);
+    await using _ = upstream;
+    await using proxy = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { body } = await fetch(upstream.url);
+        const status = Number(new URL(request.url).pathname.slice(1));
+        return new HTMLRewriter().transform(new Response(body, { status }));
+      },
+    });
+
+    for (const status of [204, 304]) {
+      const response = await fetch(new URL(`/${status}`, proxy.url));
+      expect(response.status).toBe(status);
+      expect(await response.text()).toBe("");
+    }
+    await allAborted;
+  });
+
+  it("a status the server refuses to send closes the upstream request", async () => {
+    const closed = Promise.withResolvers<void>();
+    using upstream = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 099 Unsendable\r\nTransfer-Encoding: chunked\r\n\r\n7\r\npending\r\n");
+        },
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+    await using proxy = Bun.serve({
+      port: 0,
+      fetch: () => fetch(`http://127.0.0.1:${upstream.port}/`),
+      error: error => new Response(error.message, { status: 502 }),
+    });
+
+    const response = await fetch(proxy.url);
+    expect(await response.text()).toStartWith("Cannot send a Response with status 99.");
+    expect(response.status).toBe(502);
+    await closed.promise;
+  });
+
+  it("a status the server refuses to send leaves a null body unused", async () => {
+    const unsendable = Response.error();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => unsendable,
+      error: () => new Response("refused", { status: 502 }),
+    });
+
+    expect(await fetch(server.url).then(response => response.text())).toBe("refused");
+    expect(unsendable.bodyUsed).toBe(false);
+    expect(await unsendable.text()).toBe("");
+  });
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {

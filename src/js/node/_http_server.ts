@@ -1711,6 +1711,7 @@ function getNodeHTTPServerSocket() {
     [kDestroySoon] = false;
     [kHandedOff] = false;
     server: Server;
+    #listenerServer: Server | undefined;
     _httpMessage;
     _secureEstablished = false;
     // Node's connectionListener sets socket._paused when it stops reading a
@@ -1743,6 +1744,7 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
+      this.#listenerServer = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
@@ -1870,7 +1872,9 @@ function getNodeHTTPServerSocket() {
           this.#closeError = er.code === closeError.code ? er : closeError;
         }
       }
-      const server = this.server;
+      // Re-emitting a handed-off socket changes its public server, not its native listener owner.
+      const server = this.#listenerServer;
+      this.#listenerServer = undefined;
       const tracked = server?.[kTrackedConnections];
       if (tracked) {
         tracked.delete(this);

@@ -5386,10 +5386,12 @@ it("https wraps a handed-off native CONNECT tunnel", async () => {
     res.writeHead(200, { Connection: "close" });
     res.end(req.socket.encrypted ? "tunnel-ok" : "plaintext");
   });
+  const frontClosed = Promise.withResolvers<void>();
   const front = createServer();
   front.on("connect", (_req, socket) => {
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     server.emit("connection", socket);
+    front.close(err => (err ? frontClosed.reject(err) : frontClosed.resolve()));
   });
   let client;
   try {
@@ -5415,10 +5417,11 @@ it("https wraps a handed-off native CONNECT tunnel", async () => {
     });
     expect(result).toContain("HTTP/1.1 200 OK");
     expect(result).toContain("tunnel-ok");
+    await frontClosed.promise;
   } finally {
     client?.destroy();
     front.closeAllConnections();
-    front.close();
+    if (front.listening) front.close();
   }
 });
 

@@ -149,10 +149,21 @@ long syscall(long number, ...) {
 // pidfd once its exit is reaped, a wrapper that becomes collectable only then)
 // get a bounded window; whatever is still there when it lapses is reported.
 const FIXTURE = /* js */ `
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
 const openFds = () => readdirSync("/proc/self/fd").length;
+// Running or zombie: the field after the parenthesized name and the state is the parent's pid.
+const children = () =>
+  readdirSync("/proc").filter(pid => {
+    if (!/^\\d+$/.test(pid)) return false;
+    try {
+      const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] === String(process.pid);
+    } catch {
+      return false;
+    }
+  }).length;
 const wrappers = () => {
   const counts = heapStats().objectTypeCounts;
   return (counts.Subprocess ?? 0) + (counts.Terminal ?? 0);
@@ -169,6 +180,8 @@ if (kind !== "terminal") {
   globalThis.anchor.push(child);
   await child.exited;
 }
+// The first spawnSync of a process creates the loop it waits on, which stays.
+if (kind === "sync-stdin-buffer") Bun.spawnSync({ cmd: ["true"] });
 const fdBaseline = openFds();
 const wrapperBaseline = wrappers();
 
@@ -184,6 +197,7 @@ function writeToTerminal(writes) {
 
 let error = null;
 let write;
+let sync;
 try {
   switch (kind) {
     case "stdin-pipe":
@@ -191,6 +205,10 @@ try {
       break;
     case "stdin-buffer":
       Bun.spawn({ cmd: ["true"], stdin: Buffer.from("data"), stdout: "ignore", stderr: "ignore" });
+      break;
+    case "sync-stdin-buffer":
+      // The child outlives the call unless the call ends it.
+      Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: Buffer.from("data"), stdout: "pipe", stderr: "pipe" });
       break;
     case "terminal":
       new Bun.Terminal({});
@@ -208,12 +226,16 @@ try {
 } catch (e) {
   error = { code: e.code, message: e.message };
 }
+if (kind === "sync-stdin-buffer") {
+  // Read before anything else runs: spawnSync has no later moment to clean up in.
+  sync = { children: children(), next: Bun.spawnSync({ cmd: ["echo", "next"], stderr: "pipe" }).stdout.toString() };
+}
 const deadline = performance.now() + 2000;
 while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -281,6 +303,21 @@ describe.skipIf(!isLinux || !cc)(
         });
       },
     );
+
+    // A sync Subprocess has no wrapper for the GC to finalize, and the call that made it is the only one that can reap
+    // its child. What it left registered on spawnSync's loop was still there for the next call.
+    test.concurrent("Bun.spawnSync with a buffer stdin ends its child and releases its pipes", async () => {
+      expect(await runFixture("sync-stdin-buffer", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: "next\n" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
     test.concurrent("new Bun.Terminal() closes the pty fds exactly once", async () => {
       expect(await runFixture("terminal")).toEqual({

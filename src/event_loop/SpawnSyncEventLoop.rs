@@ -9,7 +9,9 @@
 //! Implementation approach:
 //! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or libuv loop (Windows)
 //! - Wraps it in a full jsc.EventLoop instance whose `uws_loop` is the isolated loop
-//! - Temporarily overrides vm.event_loop_handle to point to the isolated loop
+//! - What the call makes for its child is handed that EventLoop, and so counts on the isolated loop
+//! - Nothing else can reach it: a finalizer that runs during the wait finds the thread's own loop
+//!   (Windows still overrides vm.event_loop_handle, where a libuv handle keeps the loop it was made on)
 //! - Minimal handler callbacks (wakeup/pre/post are no-ops)
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
@@ -29,9 +31,6 @@ use bun_uws as uws;
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
-// On POSIX this is `?*uws.Loop`, on Windows `?*libuv.Loop`.
-#[cfg(unix)]
-pub type VmEventLoopHandle = Option<NonNull<uws::Loop>>;
 #[cfg(windows)]
 pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 
@@ -51,7 +50,9 @@ unsafe extern "Rust" {
     /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
     safe fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ());
     safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
+    #[cfg(windows)]
     safe fn __bun_spawn_sync_vm_get_event_loop_handle(vm: *mut ()) -> VmEventLoopHandle;
+    #[cfg(windows)]
     safe fn __bun_spawn_sync_vm_set_event_loop_handle(vm: *mut (), h: VmEventLoopHandle);
     /// Swap `vm.suppress_microtask_drain`, return previous.
     safe fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool;
@@ -99,6 +100,7 @@ pub struct SpawnSyncEventLoop {
 
     /// `prepare` overrides the VM's event_loop_handle; the original, restored
     /// by `cleanup`.
+    #[cfg(windows)]
     original_event_loop_handle: VmEventLoopHandle,
 
     #[cfg(windows)]
@@ -157,6 +159,7 @@ impl SpawnSyncEventLoop {
 
         this.write(Self {
             uws_loop: loop_,
+            #[cfg(windows)]
             original_event_loop_handle: None, // overwritten in `prepare`
             #[cfg(windows)]
             uv_timer: None,
@@ -283,31 +286,36 @@ impl Drop for SpawnSyncEventLoop {
 impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+        #[cfg(unix)]
+        debug_assert!(
+            self.uws_loop().num_polls == 0 && self.uws_loop().active == 0,
+            "the last spawnSync left num_polls={} active={} on its loop",
+            self.uws_loop().num_polls,
+            self.uws_loop().active,
+        );
         __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm);
         self.did_timeout.set(false);
         self.vm = vm;
 
-        self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
-        #[cfg(unix)]
-        let new_handle: VmEventLoopHandle = Some(self.uws_loop);
         #[cfg(windows)]
-        let new_handle: VmEventLoopHandle = Some(
-            NonNull::new(self.uws_loop().uv_loop)
-                .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
-        );
-        __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
+        {
+            self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
+            let new_handle: VmEventLoopHandle = Some(
+                NonNull::new(self.uws_loop().uv_loop)
+                    .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
+            );
+            __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
+        }
     }
 
     /// Restore the original event loop handle after spawnSync completes
+    #[cfg(windows)]
     pub fn cleanup(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
 
-        #[cfg(windows)]
-        {
-            if let Some(timer) = self.uv_timer_mut() {
-                timer.stop();
-                timer.unref();
-            }
+        if let Some(timer) = self.uv_timer_mut() {
+            timer.stop();
+            timer.unref();
         }
     }
 }

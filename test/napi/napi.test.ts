@@ -1907,6 +1907,49 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(bun).toEqual({ stdout: ["create_error_status=0", "worker exited with 1"], stderr: "", exitCode: 0 });
   });
 
+  // Bun.spawnSync waits on a loop of its own. The ref that queued work takes on the event loop used to land on
+  // whichever loop was being waited on, and the one its completion released was always the thread's: that loop ended
+  // up short of a ref per work item, and the process exited with this timer still ref'd.
+  // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. A warmed-up spawnSync makes its first
+  // ones while it waits, so the collection that follows the drop runs in there, which `finalizedDuringCall` checks.
+  it.skipIf(isWindows)(
+    "async work queued by a finalizer during Bun.spawnSync keeps the event loop alive",
+    async () => {
+      const code = `
+        const { getEventLoopStats } = require("bun:internal-for-testing");
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
+        // In a frame of its own: an object left in a register of this one would outlive the drop.
+        (() => { globalThis.held = [addon.make(), addon.make(), addon.make()]; })();
+        const options = { cmd: ["true"], stdout: "pipe", stderr: "pipe" };
+        Bun.spawnSync(options);
+        const before = getEventLoopStats().numPolls;
+        globalThis.held = null;
+        Bun.spawnSync(options);
+        const finalizedDuringCall = addon.finalized();
+        const refsWhileQueued = getEventLoopStats().numPolls - before;
+        const timer = setInterval(() => {
+          if (addon.completed() < 3) return;
+          clearInterval(timer);
+          console.log(JSON.stringify({ finalizedDuringCall, refsWhileQueued, refsOnceCompleted: getEventLoopStats().numPolls - before }));
+        }, 1);
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "--expose-internals", "-e", code],
+        env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "5" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ finalizedDuringCall: 3, refsWhileQueued: 3, refsOnceCompleted: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    // Loading bun:internal-for-testing under that GC setting takes a debug build 8s.
+    60_000,
+  );
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.

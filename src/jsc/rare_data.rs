@@ -832,6 +832,11 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// The loop a first `spawn_sync_event_loop` call made.
+    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
+        self.spawn_sync_event_loop_.as_deref()
+    }
+
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,

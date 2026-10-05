@@ -135,6 +135,9 @@ impl Drop for Process {
     /// The allocation itself is freed by the `heap::take` in `destructor`
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
+        #[cfg(unix)]
+        self.poller.deinit(self.event_loop);
+        #[cfg(windows)]
         self.poller.deinit();
     }
 }
@@ -621,7 +624,7 @@ impl Process {
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
-                waiter.disable();
+                waiter.unref(event_loop_handle_to_ctx(self.event_loop));
             }
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {
@@ -856,13 +859,14 @@ impl PollerPosix {
     /// already performs the same teardown explicitly before reassigning. A
     /// `Drop` impl would double-free the hive slot on those reassignments.
     /// Called only from `Process` drop.
-    pub(crate) fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self, event_loop: EventLoopHandle) {
         // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
         // instead of open-coding the `NonNull` deref here.
         if let Some(poll) = self.fd_poll_mut() {
             poll.deinit();
         } else if let PollerPosix::WaiterThread(w) = self {
-            w.disable();
+            // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
+            w.unref(event_loop_handle_to_ctx(event_loop));
         }
     }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -224,4 +224,45 @@ describe("uid/gid", () => {
     }
     expect(thrown?.code).toBe("EPERM");
   });
+});
+
+// A writer that is finalized while spawnSync waits has to leave the epoll it registered with. Its EPOLL_CTL_DEL went to
+// the loop spawnSync waits on, and the kernel keeps an entry for as long as the open file lives, which for a dup of
+// stderr is the whole process: the next dup to get that number failed to register with EEXIST.
+it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number usable", async () => {
+  // A file: with `-e`, the collection Bun.gc(false) asks for does not finalize the writers during the call.
+  using dir = tempDir("spawnsync-finalized-writer", {
+    "fixture.js": `
+      import { fstatSync, readdirSync } from "node:fs";
+      const stderr = fstatSync(2).ino;
+      const dupsOfStderr = () =>
+        readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return fd !== "2" && fstatSync(Number(fd)).ino === stderr;
+          } catch {
+            return false;
+          }
+        }).length;
+      for (let i = 0; i < 4; i++) (() => void Bun.file(2).writer().write(""))();
+      const held = dupsOfStderr();
+      // The collection ends during the call: its sweep runs at the first allocation after the wait, the result's.
+      Bun.gc(false);
+      Bun.spawnSync({ cmd: ["sleep", "0.2"] });
+      // The fds are closed on the work pool. Once they are, dup() hands their numbers out again.
+      while (dupsOfStderr() > 0) Bun.sleepSync(1);
+      const writer = Bun.file(2).writer();
+      writer.write("registered");
+      writer.flush();
+      console.log(held);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe", // pollable, so a writer registers its dup
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "4\n", stderr: "registered", exitCode: 0 });
 });

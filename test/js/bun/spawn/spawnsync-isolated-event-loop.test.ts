@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("spawnSync isolated event loop", () => {
@@ -187,5 +187,56 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(stdout).toContain("SUCCESS");
     expect(stdout).not.toContain("FAIL");
     expect(exitCode).toBe(0);
+  });
+
+  // What a garbage collection finalizes while spawnSync waits belongs to the thread's loop, not to the one spawnSync
+  // waits on. Released there, three polls brought that loop's count to zero for the three polls of the next call
+  // (process, stdout, stderr), which then never polled: it spun until its timeout and lost the child's output.
+  // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. A warmed-up spawnSync makes its first
+  // ones while it waits, so the collection that follows the drop runs in there, which `collectedDuringCall` checks.
+  test.skipIf(isWindows)("what is finalized during spawnSync is released on the thread's loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // stderr is a pipe here, so each writer registers a poll. On globalThis: a binding that is only
+        // written after the await is dead across it, and the warm-up would already collect them.
+        globalThis.writers = [];
+        const refs = [];
+        for (let i = 0; i < 3; i++) {
+          const writer = Bun.stderr.writer();
+          writer.write("");
+          writer.flush();
+          globalThis.writers.push(writer);
+          refs.push(new WeakRef(writer));
+        }
+        // A WeakRef keeps its target alive until the job that made it ends.
+        await Bun.sleep(0);
+        const warmUp = { cmd: ["true"], stdout: "pipe", stderr: "ignore" };
+        Bun.spawnSync(warmUp);
+        globalThis.writers = null;
+        Bun.spawnSync(warmUp);
+        let collectedDuringCall = 0;
+        for (const ref of refs) if (ref.deref() === undefined) collectedDuringCall++;
+        // The child outlives the registration of its polls, so the call has to poll for it.
+        const { stdout, exitedDueToTimeout } = Bun.spawnSync({
+          cmd: ["sh", "-c", "sleep 0.1; echo polled"],
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 2000,
+        });
+        console.log(JSON.stringify({ collectedDuringCall, stdout: stdout.toString(), exitedDueToTimeout }));
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "5" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ collectedDuringCall: 3, stdout: "polled\n", exitedDueToTimeout: false }),
+      exitCode: 0,
+    });
   });
 });

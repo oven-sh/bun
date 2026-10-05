@@ -1058,7 +1058,9 @@ fn spawn_maybe_sync(
     // would capture the *place* `*jsc_vm_ptr` and conflict with later
     // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
     // local so the closure's captured place is disjoint.
+    #[cfg(windows)]
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
+    #[cfg(windows)]
     scopeguard::defer! {
         if is_sync {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
@@ -1721,12 +1723,16 @@ fn spawn_maybe_sync(
         Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
         _ => None,
     };
-    if let Some(err) = stdin_start_err {
+    if let Some(err) = &stdin_start_err {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
-        let _ = subprocess.try_kill(subprocess.kill_signal);
-        return Err(cx.global().throw_value(err.to_js(cx.global())));
+        // No wrapper finalizes a sync Subprocess, and only this call can reap its child: it is killed once
+        // it is watched, and the error is thrown after the wait below has released everything.
+        if !is_sync {
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            return Err(cx.global().throw_value(err.to_js(cx.global())));
+        }
     }
 
     // Every `return Err` above is past; the Subprocess will be returned to
@@ -1803,8 +1809,17 @@ fn spawn_maybe_sync(
             }
         }
         sys::Result::Err(_) => {
+            if stdin_start_err.is_some() {
+                let _ = subprocess.try_kill(SignalCode::SIGKILL);
+            }
             subprocess.process_mut().wait(true);
         }
+    }
+
+    if stdin_start_err.is_some() {
+        // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
+        let _ = subprocess.try_kill(SignalCode::SIGKILL);
+        subprocess.close_readable_pipes();
     }
 
     if !subprocess.has_exited() {
@@ -1992,6 +2007,9 @@ fn spawn_maybe_sync(
     unsafe {
         bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
     };
+    if let Some(err) = stdin_start_err {
+        return Err(cx.global().throw_value(err.to_js(cx.global())));
+    }
     let (stdout, stderr, resource_usage) = output?;
     if let Some(read_error) = read_error {
         // The process ran to completion and its output was lost. `pid`, `exitCode` and `signalCode`

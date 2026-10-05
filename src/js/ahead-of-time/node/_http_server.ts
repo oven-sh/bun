@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 2415cbe2fb0df177b10248dddbfd75dced790984a5ff5c022cb37cd3266f9ac1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -51,6 +51,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
+const { lookupListenAddress } = require("internal/net/server");
 const http = require("internal/http");
 const {
   STATUS_CODES,
@@ -188,6 +189,7 @@ function closeHandle(handle: $Node.NodeHTTPServerSocket) {
 }
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
+const kListeningId = Symbol("http.server.listeningId");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // created when a server listens, and emission is gated per-request on the
@@ -548,6 +550,7 @@ declare global {
       [kListenerGeneration]: ListenerGeneration | undefined;
       [kHttpAllowHalfOpen]: boolean;
       [kMaxHeadersCount]: number | null;
+      [kListeningId]?: number;
       [kOptimizeEmptyRequests]: boolean;
     }
 
@@ -938,14 +941,18 @@ Server.prototype.closeIdleConnections = function (this: $Node.HttpServer) {
 };
 
 Server.prototype.close = function (this: $Node.HttpServer, optionalCallback?: (error?: Error) => void) {
+  this[kListeningId] = (this[kListeningId] || 0) + 1;
   const server = this[serverSymbol];
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
   http1Fallback?.closeIdleHttp1Connections(this);
   if (!server) {
-    if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
-    // Like Node.js's net.Server#close, close() returns the server.
+    if (typeof optionalCallback === "function") {
+      this.once("close", () => optionalCallback($ERR_SERVER_NOT_RUNNING()));
+    }
+    this[kPendingDrainClose] = true;
+    process.nextTick(emitCloseServer, this);
     return this;
   }
   if (typeof optionalCallback === "function") this.once("close", optionalCallback);
@@ -1004,6 +1011,44 @@ Server.prototype.address = function (this: $Node.HttpServer) {
   return this[serverSymbol].address;
 };
 
+function startServerListen(
+  server: $Node.HttpServer,
+  tls: $Node.HttpServerTLSOptions | null,
+  port: number | string | undefined,
+  host: string | undefined,
+  socketPath: string | undefined,
+  serverNameHost: string | undefined,
+) {
+  if (isPrimary) {
+    server[kRealListen](tls, port, host, socketPath, false, serverNameHost);
+    return;
+  }
+
+  if (cluster === undefined) cluster = loadChild();
+
+  if (CAN_BE_CLUSTER_WORKER) {
+    server.once("listening", () => {
+      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
+      if (!process.connected) return;
+      cluster!.worker!.state = "listening";
+      const address = server.address();
+      const isObjectAddress = address !== null && typeof address === "object";
+      const boundHost = host && isObjectAddress ? address : null;
+      const message = {
+        cmd: "NODE_CLUSTER",
+        act: "listening",
+        port: socketPath ? -1 : (isObjectAddress && address.port) || port,
+        data: null,
+        address: socketPath ?? (boundHost && boundHost.address) ?? null,
+        addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
+      };
+      process.send!(message, undefined, kInternalSendOptions);
+    });
+
+    server[kRealListen](tls, port, host, socketPath, true, serverNameHost);
+  }
+}
+
 Server.prototype.listen = function (this: $Node.HttpServer) {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
   if (this[serverSymbol]) throw $ERR_SERVER_ALREADY_LISTEN();
@@ -1059,37 +1104,25 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
     this.once("listening", lastArg);
   }
 
+  const listeningId = (this[kListeningId] = (this[kListeningId] || 0) + 1);
+  const serverNameHost = host;
+  if (host && !socketPath) {
+    lookupListenAddress(host, (err, address) => {
+      if (listeningId !== server[kListeningId] || isStoppedModuleGraphRunning()) return;
+      if (err) {
+        server.emit("error", err);
+        return;
+      }
+      try {
+        startServerListen(server, tls, port, address, socketPath, serverNameHost);
+      } catch (err) {
+        process.nextTick(emitListenErrorNextTick, server, err);
+      }
+    });
+    return this;
+  }
   try {
-    // listenInCluster
-
-    if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false);
-      return this;
-    }
-
-    if (cluster === undefined) cluster = loadChild();
-
-    if (CAN_BE_CLUSTER_WORKER) {
-      server.once("listening", () => {
-        // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-        if (!process.connected) return;
-        cluster!.worker!.state = "listening";
-        const address = server.address();
-        const isObjectAddress = address !== null && typeof address === "object";
-        const boundHost = host && isObjectAddress ? address : null;
-        const message = {
-          cmd: "NODE_CLUSTER",
-          act: "listening",
-          port: socketPath ? -1 : (isObjectAddress && address.port) || port,
-          data: null,
-          address: socketPath ?? (boundHost && boundHost.address) ?? null,
-          addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
-        };
-        process.send!(message, undefined, kInternalSendOptions);
-      });
-
-      server[kRealListen](tls, port, host, socketPath, true);
-    }
+    startServerListen(server, tls, port, host, socketPath, serverNameHost);
   } catch (err) {
     process.nextTick(emitListenErrorNextTick, server, err);
   }
@@ -1104,6 +1137,7 @@ Server.prototype[kRealListen] = function (
   host: string | undefined,
   socketPath: string | undefined,
   reusePort: boolean,
+  serverNameHost: string | undefined,
 ) {
   {
     // What the first connection and the first request need, so that neither waits for it.
@@ -1123,7 +1157,7 @@ Server.prototype[kRealListen] = function (
       !this[kOptimizeEmptyRequests];
 
     if (tls) {
-      this.serverName = tls.serverName || host || "localhost";
+      this.serverName = tls.serverName || serverNameHost || host || "localhost";
     }
     const dispatchInFull = function onNodeHTTPRequest(
       bunServer: $Node.NativeHTTPServer,

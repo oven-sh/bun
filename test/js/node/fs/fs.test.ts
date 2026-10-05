@@ -3235,6 +3235,15 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+it.if(isPosix)("realpath preserves literal backslashes", async () => {
+  using dir = tempDir("fs-realpath-backslash", {});
+  const target = join(String(dir), "artifact\\root");
+  fs.mkdirSync(target);
+  const expected = realpathSync.native(target);
+  expect(realpathSync(target)).toBe(expected);
+  expect(await promises.realpath(target)).toBe(expected);
+});
+
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every

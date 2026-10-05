@@ -290,7 +290,6 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
-    pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
@@ -3204,7 +3203,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
-            addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -3935,10 +3933,9 @@ impl ResolveMode {
 /// Output slot for module resolution: the resolved path and query string.
 #[derive(Default)]
 pub struct ResolveFunctionResult {
-    // LIFETIME-ERASED: `path`/`query_string` borrow argv or the resolver's
-    // process-lifetime arena (`detach_lifetime` in `resolve_maybe_need_dirname_uncached`),
-    // which outlives every `ResolveFunctionResult`.
-    pub path: &'static [u8],
+    // Borrowed paths and queries outlive the result (argv or resolver arena).
+    // Paths produced in temporary buffers are owned until copied into the JS result.
+    pub path: std::borrow::Cow<'static, [u8]>,
     pub(crate) query_string: &'static [u8],
 }
 
@@ -5016,16 +5013,6 @@ impl VirtualMachine {
         result
     }
 
-    /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
-    fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
-        let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
-        // SAFETY: `boxed`'s heap allocation has a stable address for as long
-        // as the owning `Box` lives in `resolved_path_dups` (drained in `destroy()`).
-        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
-        self.resolved_path_dups.push(boxed);
-        slice
-    }
-
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(
@@ -5049,19 +5036,19 @@ impl VirtualMachine {
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
         if bun_paths::basename(specifier) == b"bun:wrap" {
-            ret.path = b"bun:wrap";
+            ret.path = b"bun:wrap".as_slice().into();
             return Ok(());
         }
         if specifier == MAIN_FILE_NAME && self.entry_point.generated {
-            ret.path = MAIN_FILE_NAME;
+            ret.path = MAIN_FILE_NAME.into();
             return Ok(());
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier.to_vec().into();
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier.to_vec().into();
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -5069,14 +5056,14 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            ret.path = result.path.as_bytes();
+            ret.path = result.path.as_bytes().into();
             return Ok(());
         }
         if self.module_loader.eval_source.is_some()
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier.to_vec().into();
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -5086,7 +5073,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = self.dupe_resolved_path(specifier);
+                ret.path = specifier.to_vec().into();
                 return Ok(());
             }
             return Err(crate::CrateError::ModuleNotFound);
@@ -5095,6 +5082,9 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
+        // see lifetime erasure note above).
+        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -5114,6 +5104,46 @@ impl VirtualMachine {
         } else {
             top_level_dir
         };
+
+        #[cfg(not(windows))]
+        if bun_core::strings::contains_char(normalized_specifier, b'\\')
+            && !bun_core::strings::contains_char(normalized_specifier, 0)
+            && (bun_paths::is_absolute(normalized_specifier)
+                || normalized_specifier.starts_with(b"./")
+                || normalized_specifier.starts_with(b"../"))
+        {
+            // Runtime file keys preserve POSIX filename bytes; the bundler's loose paths do not.
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let source_dir = if bun_paths::is_absolute(source_to_use) {
+                source_to_use
+            } else {
+                top_level_dir
+            };
+            let parts: &[&[u8]] = if bun_paths::is_absolute(normalized_specifier) {
+                &[normalized_specifier]
+            } else {
+                &[source_dir, normalized_specifier]
+            };
+            if parts.iter().map(|part| part.len() + 1).sum::<usize>() < path_buf.len() {
+                let path = bun_paths::resolve_path::join_string_buf_z::<
+                    bun_paths::resolve_path::platform::Posix,
+                >(&mut path_buf, parts);
+                if matches!(
+                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
+                    Ok(bun_sys::ExistsAtType::File)
+                ) {
+                    if self.transpiler.resolver.opts.preserve_symlinks {
+                        ret.path = path.as_bytes().to_vec().into();
+                        return Ok(());
+                    }
+                    let mut realpath_buf = bun_paths::path_buffer_pool::get();
+                    if let Ok(realpath) = bun_sys::realpath(path, &mut realpath_buf) {
+                        ret.path = realpath.to_vec().into();
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
@@ -5194,16 +5224,13 @@ impl VirtualMachine {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
-        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
-        // see lifetime erasure note above).
-        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) }.into();
 
         Ok(())
     }
@@ -5467,7 +5494,7 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        Ok(Ok(bun_core::String::clone_utf8(&result.path)))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
@@ -5526,7 +5553,6 @@ impl VirtualMachine {
         // `transpiler` is never auto-dropped after `deinit` clears its fields.
         unsafe { self.transpiler.deinit() };
 
-        drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();

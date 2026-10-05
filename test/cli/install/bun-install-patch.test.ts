@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, symlinkSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1030,6 +1030,33 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
     expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
   });
+});
+
+test("a patch path that cannot be stat'd reports the errno", async () => {
+  using dir = tempDir("patch-stat-eloop", {
+    "package.json": JSON.stringify({
+      name: "app",
+      dependencies: { "local-pkg": "file:./local-pkg" },
+      patchedDependencies: { "local-pkg@1.0.0": "patches/loop" },
+    }),
+    "local-pkg/package.json": JSON.stringify({ name: "local-pkg", version: "1.0.0" }),
+    "local-pkg/index.js": "module.exports = 1;\n",
+    "patches/.keep": "",
+  });
+  symlinkSync("loop", join(String(dir), "patches", "loop"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("installed");
+  expect(stderr).toContain("failed to stat patch file: ELOOP");
+  expect(stderr).toContain(join(String(dir), "patches", "loop"));
+  expect(exitCode).toBe(1);
 });
 
 describe("patchedDependencies contents_hash", () => {

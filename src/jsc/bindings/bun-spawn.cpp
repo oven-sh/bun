@@ -260,7 +260,8 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
-    sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+    // sigprocmask uses the process mask on Darwin; concurrent spawns need the calling thread's mask.
+    pthread_sigmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 #endif
@@ -457,7 +458,7 @@ extern "C" ssize_t posix_spawn_bun(
         }
 #endif
 
-        sigprocmask(SIG_SETMASK, &childmask, 0);
+        pthread_sigmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
 
@@ -607,7 +608,7 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #endif
 
-    sigprocmask(SIG_SETMASK, &oldmask, 0);
+    pthread_sigmask(SIG_SETMASK, &oldmask, 0);
 #if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
 #else

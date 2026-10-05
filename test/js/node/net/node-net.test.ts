@@ -3542,3 +3542,83 @@ it.skipIf(isWindows || isMusl).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
+
+describe("socket close is independent of user timer replacements", () => {
+  it.each(["peer", "local"])("preserves %s end/finish/close ordering", async mode => {
+    for (const replaceBeforeImport of [true, false]) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `(${closeWithReplacedTimers.toString()})(${JSON.stringify(mode)}, ${replaceBeforeImport})`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const sequence =
+        mode === "peer"
+          ? ["end", "end:nextTick", "finish", "end:immediate", "close:false"]
+          : ["finish", "end", "end:nextTick", "end:immediate", "close:false"];
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(sequence) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+});
+
+function closeWithReplacedTimers(mode, replaceBeforeImport) {
+  const timers = require("node:timers");
+  const realImmediate = timers.setImmediate;
+  const replace = () => {
+    timers.setImmediate = () => {};
+    globalThis.setImmediate = timers.setImmediate;
+  };
+  if (replaceBeforeImport) replace();
+  const net = require("node:net");
+  if (!replaceBeforeImport) replace();
+  const events: string[] = [];
+  const sockets: any[] = [];
+  const deadline = setTimeout(() => {
+    console.error("missing close: " + JSON.stringify(events));
+    for (const socket of sockets) socket.destroy();
+    server.close();
+    process.exitCode = 1;
+  }, 3000);
+  const failed = error => {
+    console.error(error);
+    process.exitCode = 1;
+  };
+  const server = net.createServer(socket => {
+    sockets.push(socket);
+    socket.on("error", failed);
+    socket.resume();
+    if (mode === "peer") socket.end("hello");
+    else socket.on("end", () => socket.end());
+  });
+  server.on("error", failed);
+  server.listen(0, "127.0.0.1", () => {
+    const client = net.connect(server.address().port, "127.0.0.1");
+    sockets.push(client);
+    client.resume();
+    client.on("error", failed);
+    client.on("connect", () => {
+      if (mode === "local") client.end("hello");
+    });
+    client.on("end", () => {
+      events.push("end");
+      process.nextTick(() => events.push("end:nextTick"));
+      realImmediate(() => events.push("end:immediate"));
+    });
+    client.on("finish", () => events.push("finish"));
+    client.on("close", hadError => {
+      events.push("close:" + hadError);
+      clearTimeout(deadline);
+      server.close();
+      console.log(JSON.stringify(events));
+    });
+  });
+}

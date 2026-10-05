@@ -1962,3 +1962,65 @@ it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledR
     exitCode: 0,
   });
 });
+
+// The server sends block i (the letter a + i) when the client asks for it, so the read that gets a block already
+// waits and push() runs in its reaction. The listener keeps every chunk.
+describe.concurrent(
+  "Readable.fromWeb over a fetch body: a chunk that a 'data' listener keeps is not written over",
+  () => {
+    const BLOCKS = 6;
+    const SIZE = 1024;
+    const expected = Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" ");
+
+    it.each([
+      ["the listener calls read(0)", `r.read(0);`, ``],
+      // Node's fromWeb stops reading after the throw. The program reads on by itself.
+      [
+        "the listener throws and the 'unhandledRejection' handler resumes the stream",
+        `r.pause(); throw new Error("data-throw");`,
+        `r.resume();`,
+      ],
+    ])("%s", async (_label, inListener, inHandler) => {
+      const script = `
+      const { Readable } = require("node:stream");
+      let next;
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/next") { next(); return new Response(); }
+          return new Response(new ReadableStream({
+            async pull(controller) {
+              for (let i = 0; i < ${BLOCKS}; i++) {
+                controller.enqueue(new Uint8Array(${SIZE}).fill(97 + i));
+                await new Promise(resolve => (next = resolve));
+              }
+              controller.close();
+            },
+          }));
+        },
+      });
+      process.on("uncaughtException", e => { console.log("uncaughtException: " + e.message); process.exit(1); });
+      process.on("unhandledRejection", e => {
+        if (e.message !== "data-throw") { console.log("unexpected: " + e.message); process.exit(1); }
+        ${inHandler}
+      });
+      const res = await fetch(server.url);
+      const r = Readable.fromWeb(res.body);
+      const kept = [];
+      r.on("data", chunk => {
+        kept.push(chunk);
+        fetch(server.url + "next");
+        ${inListener}
+      });
+      r.on("end", () => {
+        // "a1024 b1024 ...": each run of one letter and its length.
+        console.log(Buffer.concat(kept).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim());
+        server.stop(true);
+      });
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  },
+);

@@ -1534,12 +1534,12 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
-// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
-// result synchronously, so while the stream flows Readable holds the next chunk
-// in its buffer when a 'data' listener runs. destroy() left that chunk there and
-// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
-// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
-// destroy() there.
+// child.stdout and child.stderr used to read ahead: `_read()` pushed each native
+// pull result synchronously, so while the stream flowed Readable held the next
+// chunk in its buffer when a 'data' listener ran. destroy() left that chunk there
+// and flow() emitted it after destroy() returned, with `destroyed === true`.
+// Node's child stdio is a net.Socket that pushes asynchronously, so no 'data'
+// follows destroy() there.
 it.concurrent.each(["stdout", "stderr"] as const)(
   "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
   async name => {
@@ -1842,5 +1842,96 @@ it("throw from a child stdio 'data' listener with no handler is fatal", async ()
     stdout: "",
     stderr: true,
     exitCode: 1,
+  });
+});
+
+// A writer that never pauses makes most native reads return at once. A push inside _read() only buffers, so 'data'
+// came out of flow(), and a listener throw there left the next chunk buffered with no read scheduled.
+describe.concurrent("a 'data' listener that throws while the child writes without gaps", () => {
+  const SIZE = 4 * 1024 * 1024;
+  // `throws`: how many calls of the listener throw. `rejectionHandler`: also install an 'unhandledRejection' handler.
+  function run(name: "stdout" | "stderr", throws: number, rejectionHandler: boolean) {
+    const script = `
+      const { spawn } = require("node:child_process");
+      let bytes = 0, data = 0, uncaught = 0, rejections = 0, end = 0, close = 0;
+      process.on("uncaughtException", (e, origin) => {
+        if (origin !== "uncaughtException" || e.message !== "data-throw") {
+          console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+          process.exit(1);
+        }
+        uncaught++;
+      });
+      ${rejectionHandler ? `process.on("unhandledRejection", () => { rejections++; });` : ""}
+      const child = spawn(process.execPath, ["-e", "process.${name}.write(Buffer.alloc(${SIZE}, 97))"], {
+        stdio: ["ignore", "${name === "stdout" ? "pipe" : "ignore"}", "${name === "stderr" ? "pipe" : "ignore"}"],
+      });
+      // Then only the stream holds the process: one that stops reading ends the run and does not hang it.
+      child.unref();
+      child.${name}.on("data", chunk => { bytes += chunk.length; if (++data <= ${throws}) throw new Error("data-throw"); });
+      child.${name}.on("end", () => end++);
+      child.${name}.on("close", () => close++);
+      process.on("exit", () => {
+        console.log(JSON.stringify({ bytes, everyThrowWasUncaught: uncaught === Math.min(data, ${throws}), rejections, end, close }));
+      });
+    `;
+    return Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  }
+
+  it.each([
+    ["stdout", 3, false],
+    ["stdout", Infinity, false],
+    ["stderr", Infinity, true],
+  ] as const)("child.%s, %d throws, 'unhandledRejection' handler: %p", async (name, throws, rejectionHandler) => {
+    await using proc = run(name, throws, rejectionHandler);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ bytes: SIZE, everyThrowWasUncaught: true, rejections: 0, end: 1, close: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// The child writes block i (the letter a + i) when it gets a line on stdin, so the read that gets a block already
+// waits and push() runs in its reaction. The listener keeps every chunk.
+describe.concurrent("a chunk that a child stdio 'data' listener keeps is not written over", () => {
+  const BLOCKS = 8;
+  const SIZE = 1024;
+  const writer = `let i = 0; const next = () => i < ${BLOCKS} ? process.stdout.write(Buffer.alloc(${SIZE}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
+  const expected = Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" ");
+
+  it.each([
+    ["the listener calls read(0)", `child.stdout.read(0);`, ``],
+    ["the listener calls read()", `child.stdout.read();`, ``],
+    [
+      "the listener throws and the 'uncaughtException' handler calls read(0)",
+      `throw new Error("data-throw");`,
+      `child.stdout.read(0);`,
+    ],
+  ])("%s", async (_label, inListener, inHandler) => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      // The last line can reach a child that already exited.
+      child.stdin.on("error", () => {});
+      const kept = [];
+      process.on("uncaughtException", e => {
+        if (e.message !== "data-throw") { console.log("unexpected: " + e.message); process.exit(1); }
+        ${inHandler}
+      });
+      process.on("unhandledRejection", e => { console.log("unhandledRejection: " + e.message); process.exit(1); });
+      child.stdout.on("data", chunk => {
+        kept.push(chunk);
+        child.stdin.write("\\n");
+        ${inListener}
+      });
+      child.stdout.on("end", () => {
+        // "a1024 b1024 ...": each run of one letter and its length.
+        console.log(Buffer.concat(kept).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim());
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
 });

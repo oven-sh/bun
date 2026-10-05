@@ -348,6 +348,23 @@ console.log(
 );
 `;
 
+// node:child_process: the child wrote before the parent's first read, so that one read gets the bytes and then the
+// failed recv().
+const CHILD_PROCESS_FIRST_READ_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+const child = spawn("sh", ["-c", 'printf hello; : > "$SPAWN_FAULT_MARKER"; read done'], { stdio: ["pipe", "pipe", "inherit"] });
+// The child creates the marker after it wrote.
+while (!existsSync(process.env.SPAWN_FAULT_MARKER)) await new Promise(resolve => setImmediate(resolve));
+const events = [];
+child.stdout.on("data", chunk => events.push("data:" + chunk.length));
+child.stdout.on("error", e => events.push("error:" + e.code));
+child.stdout.on("close", () => {
+  child.stdin.end();
+  console.log(JSON.stringify({ events }));
+});
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -389,6 +406,7 @@ beforeAll(async () => {
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
+    "child-process-first-read.mjs": CHILD_PROCESS_FIRST_READ_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -501,8 +519,8 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     });
   });
 
-  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
-  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  // A later read fails while the stream flows. The stream is destroyed with the error, and every chunk read before
+  // it has to reach 'data' first.
   test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
     const report = join(String(dir), "recv-report.txt");
     expect(
@@ -580,6 +598,21 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  // With a 'data' listener the bytes of a read go out one tick after it. The error of that same read has to wait for
+  // them.
+  test.concurrent("node:child_process: 'data' gets the bytes of the first read before its error", async () => {
+    expect(
+      await runWithFault("child-process-first-read.mjs", {
+        SPAWN_FAULT_RECV_MID_FILL: "1",
+        SPAWN_FAULT_MARKER: join(String(dir), "first-read-marker"),
+      }),
+    ).toEqual({
+      parsed: { events: ["data:5", "error:EIO"] },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

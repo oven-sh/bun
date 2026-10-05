@@ -22,6 +22,7 @@ const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
 const kUncaughtOnListenerThrow = Symbol("uncaughtOnListenerThrow");
+const kDeferredPushes = Symbol("deferredPushes");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -52,6 +53,7 @@ interface NativeReadable extends NodeReadable {
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
   [kUncaughtOnListenerThrow]: boolean;
+  [kDeferredPushes]: number;
   debugId: number;
 }
 
@@ -95,6 +97,7 @@ function constructNativeReadable(
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
   stream[kUncaughtOnListenerThrow] = uncaughtOnListenerThrow;
+  stream[kDeferredPushes] = 0;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -177,7 +180,15 @@ function read(this: NativeReadable, maxToRead: number) {
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
-  var result = ptr.pull(chunk, this[kCloseState]);
+  var result;
+  try {
+    result = ptr.pull(chunk, this[kCloseState]);
+  } catch (e) {
+    if (this[kDeferredPushes] === 0) throw e;
+    // The chunks this _read() deferred come before its error.
+    process.nextTick(errorOrDestroy, this, e);
+    return;
+  }
   $assert(result !== undefined);
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
@@ -226,10 +237,29 @@ function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
 
+function pushAndCheck(stream: NativeReadable, chunk: any) {
+  if (stream[kUncaughtOnListenerThrow]) {
+    const state = stream._readableState;
+    // A push inside _read() only buffers, and flow() emits 'data' from that buffer later, where a listener throw
+    // ends the read loop. Node's handle pushes one chunk per callback, outside _read().
+    if (stream[kDeferredPushes] !== 0 || (state.sync && state.flowing && stream.listenerCount("data") !== 0)) {
+      stream[kDeferredPushes]++;
+      process.nextTick(pushDeferred, stream, chunk);
+      return;
+    }
+  }
+  pushNow(stream, chunk);
+}
+
+function pushDeferred(stream: NativeReadable, chunk: any) {
+  stream[kDeferredPushes]--;
+  pushNow(stream, chunk);
+}
+
 // `push()` returning false means the Readable's buffer is at/above hwm (or
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
-function pushAndCheck(stream: NativeReadable, chunk: any) {
+function pushNow(stream: NativeReadable, chunk: any) {
   let wantMore: boolean;
   try {
     wantMore = stream.push(chunk);
@@ -295,7 +325,8 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   }
 }
 
-// `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
+// Readable.fromWeb pushes inside `_read()`, so flow() stays one chunk ahead of the 'data' listener. Node's async
+// sources do not.
 function dropReadAhead(stream: NativeReadable) {
   const state = stream._readableState;
   // Paused: Node has this buffered too, and a later read() returns it.

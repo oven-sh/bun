@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -10,13 +10,19 @@ import { dirname, join } from "node:path";
 // These found what TypeScript's own tests and hundreds of open source projects did not: `bun check` reported nothing in
 // a third of the loops in which TypeScript finds a circular reference.
 
-const typescript = dirname(require.resolve("typescript/package.json"));
-// `bun check` follows TypeScript 7. `TSC` is the path of a native `tsc` to compare with, next to its `lib.*.d.ts`.
-const isTypeScript7 = parseInt(require("typescript/package.json").version) >= 7;
-const tsc = process.env.TSC ? [process.env.TSC] : [bunExe(), join(typescript, "bin", "tsc")];
-const [libraries, linkedAs] = process.env.TSC
-  ? [dirname(dirname(process.env.TSC)), "@typescript/typescript-local"]
-  : [typescript, "typescript"];
+// `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
+// test/package.json, beside the `typescript` that has the API in JavaScript. `TSC` is the path of another to compare with.
+function nativeTypeScript() {
+  if (process.env.TSC) return process.env.TSC;
+  try {
+    const paths = [dirname(require.resolve("typescript7/package.json"))];
+    const name = `@typescript/typescript-${process.platform}-${process.arch}`;
+    return join(dirname(require.resolve(`${name}/package.json`, { paths })), "lib", isWindows ? "tsc.exe" : "tsc");
+  } catch {
+    // There is none for this system.
+  }
+}
+const tsc = nativeTypeScript();
 
 // A debug build is 10 to 100 times slower, so it checks a sample. It is always the same sample.
 const every = isDebug || isASAN ? 25 : 1;
@@ -60,10 +66,10 @@ async function checkBoth(declarations: string[], functions: string[]) {
   const sample = functions.filter((_, index) => index % every === 0);
   const source = [...declarations, ...sample.map((body, index) => `export async function f${index}${body}`)];
   using dir = tempDir("bun-check-differential", { "tsconfig.json": tsconfig, "a.ts": source.join("\n") + "\n" });
-  mkdirSync(dirname(join(String(dir), "node_modules", linkedAs)), { recursive: true });
-  symlinkSync(libraries, join(String(dir), "node_modules", linkedAs), "junction");
+  mkdirSync(join(String(dir), "node_modules", "@typescript"), { recursive: true });
+  symlinkSync(dirname(dirname(tsc!)), join(String(dir), "node_modules", "@typescript", "typescript-local"), "junction");
   const [theirs, ours] = await Promise.all([
-    errorsOf([...tsc, "-p", ".", "--pretty", "false"], String(dir)),
+    errorsOf([tsc!, "-p", ".", "--pretty", "false"], String(dir)),
     errorsOf([bunExe(), "check"], String(dir)),
   ]);
   // A syntax error would end both before anything is checked.
@@ -81,8 +87,8 @@ function* product<T extends unknown[][]>(...lists: T): Generator<{ [K in keyof T
   for (const item of first) for (const others of product(...rest)) yield [item, ...others] as never;
 }
 
-const timeout = 10 * 60_000;
-const differential = test.skipIf(!isTypeScript7 && !process.env.TSC);
+const timeout = 60_000;
+const differential = test.concurrent.skipIf(!tsc);
 
 // `while (s) { const cur = INITIALIZER; s = ASSIGNED; }`: the type of `cur` needs the type of `s`, which needs what the
 // back edge of the loop assigns.

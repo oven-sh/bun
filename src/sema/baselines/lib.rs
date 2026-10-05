@@ -1722,6 +1722,7 @@ fn run_one(
             cwd: cwd.as_bytes(),
             project: None,
             paths: &[],
+            are_entry_points: false,
             threads: 1,
             lib_dir: Some(setup.lib_dir.as_bytes()),
             global_node_modules: None,

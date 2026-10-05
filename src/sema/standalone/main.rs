@@ -291,6 +291,7 @@ fn main() {
                 cwd: cwd.as_bytes(),
                 project: project.as_deref().map(str::as_bytes),
                 paths: &paths,
+                are_entry_points: false,
                 threads: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--threads="))

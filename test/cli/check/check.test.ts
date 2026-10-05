@@ -14355,6 +14355,38 @@ describe.concurrent("--check", () => {
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
   });
 
+  // `allowJs` cannot be specified with `isolatedDeclarations`.
+  test("a JavaScript entry point leaves the options of the project as they are", async () => {
+    const files = (n: string) => ({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, declaration: true, isolatedDeclarations: true },
+      }),
+      "app.js": `import { n } from "./n";\nconsole.log("ran", n);\n`,
+      "app.test.js": `import { n } from "./n";\nimport { test } from "bun:test";\ntest("t", () => void n);\n`,
+      "n.ts": `export const n: number = ${n};\n`,
+    });
+    using good = project(files("1"));
+    using bad = project(files(`"1"`));
+    const commands = [
+      ["--check", "app.js"],
+      ["build", "--check", "app.js", "--outdir", "out"],
+      ["test", "--check", "app.test.js"],
+    ];
+    const [passed, failed, plain] = await Promise.all([
+      Promise.all(commands.map(cmd => run(String(good), cmd))),
+      Promise.all(commands.map(cmd => run(String(bad), cmd))),
+      check(good),
+    ]);
+    expect([plain.stdout, plain.exitCode]).toEqual(["", 0]);
+    expect(passed.map(it => [/TS\d+/.exec(it.stdout + it.stderr)?.[0], it.exitCode])).toEqual(
+      commands.map(() => [undefined, 0]),
+    );
+    expect(passed[0].stdout).toBe("ran 1");
+    expect(failed.map(it => [/TS\d+/.exec(it.stdout + it.stderr)?.[0], it.exitCode])).toEqual(
+      commands.map(() => ["TS2322", 1]),
+    );
+  });
+
   test("bun --check -e: there is no file to check", async () => {
     using dir = project({});
     const { stdout, exitCode } = await run(String(dir), [

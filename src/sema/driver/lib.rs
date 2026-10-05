@@ -24,7 +24,7 @@ use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, inside, is_declaration_file_name, join,
+    Host, Options, Phase, ancestors, inside, is_declaration_file_name, is_javascript, join,
     output_declaration_file_name,
 };
 use bun_sema::session::{Arena, Session};
@@ -416,6 +416,9 @@ pub struct Request<'a> {
     /// Files and directories to check instead of all the files of the project. The options are
     /// still the project's.
     pub paths: &'a [Vec<u8>],
+    /// `paths` are the entry points of what is then run or bundled. JavaScript among them is loaded
+    /// for what it imports, whatever `allowJs` says. Its own errors are those of `checkJs`.
+    pub are_entry_points: bool,
     /// Compiler options given on the command line. They override the configuration file, also of referenced projects.
     pub compiler_options: &'a [CompilerOption],
     /// `0`: the number of cores.
@@ -713,7 +716,9 @@ pub fn check_already_read_then<R>(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
-    let project = host::from_native(request.cwd);
+    let cwd = host::from_native(request.cwd);
+    let named = request.project.or(request.paths.first().map(Vec::as_slice));
+    let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
     let disk = host::Disk::with_already_read(threads, already_read, &project);
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
@@ -1120,6 +1125,12 @@ fn check_project_of(
         (extent, named)
     });
     let named = (named.as_ref()).map(|(extent, files)| (*extent, files.as_slice()));
+    // After the configuration file is read: what it includes and whether its options agree with each
+    // other is as `bun check` finds it.
+    let names_javascript = |it: (Extent, &[Vec<u8>])| it.1.iter().any(|file| is_javascript(file));
+    if request.are_entry_points && named.is_some_and(names_javascript) {
+        project.options.allow_js = true;
+    }
     if !project.references.is_empty() {
         check_with_references(disk, project, request, report, started, named, of.elsewhere)
     } else {

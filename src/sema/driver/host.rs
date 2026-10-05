@@ -409,7 +409,8 @@ impl Disk {
         if !name.is_empty()
             && !Self::is_above_listings(parent)
             && let Directory::Listed(listing) = self.directory(parent)
-            && !matches!(listing.find(name, self.case_sensitive), Some((_, true)))
+            && let Some(found) = self.find_in(listing, name)
+            && !matches!(found, Some((_, true)))
         {
             return self
                 .directories
@@ -449,7 +450,17 @@ impl Disk {
         match self.directory(parent) {
             Directory::Missing => Some(None),
             Directory::Unreadable => None,
-            Directory::Listed(listing) => Some(listing.find(name, self.case_sensitive)),
+            Directory::Listed(listing) => self.find_in(listing, name),
+        }
+    }
+
+    /// `Listing::find`. `None`: the system has to be queried. The name is there in another
+    /// spelling, and the file system of that directory may take one for the other, whatever that of
+    /// the project does: a project can have several.
+    fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
+        match listing.find(name, self.case_sensitive) {
+            None if self.case_sensitive && listing.find(name, false).is_some() => None,
+            found => Some(found),
         }
     }
 
@@ -468,7 +479,10 @@ impl Disk {
         let Directory::Listed(listing) = self.directory(parent) else {
             return Self::ask_for_real_path(path);
         };
-        let Some((written, _)) = listing.find(name, self.case_sensitive) else {
+        let Some(found) = self.find_in(listing, name) else {
+            return Self::ask_for_real_path(path);
+        };
+        let Some((written, _)) = found else {
             return path.to_vec();
         };
         if listing
@@ -555,21 +569,33 @@ fn list(path: &[u8]) -> Directory {
     Directory::Listed(listing)
 }
 
-/// `isFileSystemCaseSensitive`, for the file system that has `path`: whether `path` is no longer
-/// found when the case of its name is swapped. Only of its name: what is above it can be on another
-/// file system, like `/mnt` of `/mnt/c`. TypeScript asks about itself, which is in the project.
+/// `isFileSystemCaseSensitive`, for the file system that has `path`: whether something on it is no
+/// longer found when the case of its name is swapped. TypeScript asks about itself, which is in the
+/// project.
 fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     if cfg!(windows) {
         return false;
     }
-    for path in ancestors(path) {
-        let Split { parent, name } = split(path);
+    let swapped = |name: &[u8]| {
         let mut swapped = name.to_vec();
         for c in &mut swapped {
             *c ^= u8::from(c.is_ascii_alphabetic()) << 5;
         }
-        if swapped != name {
-            return !bun_sys::exists(&join(parent, &swapped));
+        (swapped != name).then_some(swapped)
+    };
+    // What is in a directory is on its file system. Its own name is not, if it is where that file
+    // system is mounted, like `/app` in a container.
+    if let Directory::Listed(listing) = list(path) {
+        let mut names = listing.files.iter().chain(&listing.directories);
+        if let Some(other) = names.find_map(|name| swapped(name)) {
+            return !bun_sys::exists(&join(path, &other));
+        }
+    }
+    // Only the name: what is above it can be on another file system, like `/mnt` of `/mnt/c`.
+    for path in ancestors(path) {
+        let Split { parent, name } = split(path);
+        if let Some(other) = swapped(name) {
+            return !bun_sys::exists(&join(parent, &other));
         }
     }
     true

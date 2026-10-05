@@ -379,10 +379,19 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     }
 }
 
+/// The paths that a check names.
+#[derive(Clone, Copy)]
+enum Paths<'a> {
+    /// The arguments of `bun check`.
+    Arguments(&'a [Vec<u8>]),
+    /// See `Request::are_entry_points`.
+    EntryPoints(&'a [Vec<u8>]),
+}
+
 fn run(
     cwd: &[u8],
     project: Option<&[u8]>,
-    paths: &[Vec<u8>],
+    paths: Paths,
     compiler_options: &[CompilerOption],
     threads: usize,
     already_read: AlreadyRead,
@@ -429,7 +438,7 @@ fn run(
 fn run_quietly(
     cwd: &[u8],
     project: Option<&[u8]>,
-    paths: &[Vec<u8>],
+    paths: Paths,
     compiler_options: &[CompilerOption],
     threads: usize,
     progress: Option<&Progress>,
@@ -437,10 +446,15 @@ fn run_quietly(
     then: impl FnOnce(Report) -> Report,
 ) -> Report {
     let global = global_node_modules();
+    let (paths, are_entry_points) = match paths {
+        Paths::Arguments(paths) => (paths, false),
+        Paths::EntryPoints(paths) => (paths, true),
+    };
     let request = Request {
         cwd,
         project,
         paths,
+        are_entry_points,
         compiler_options,
         threads,
         lib_dir: None,
@@ -547,7 +561,7 @@ impl CheckCommand {
         let report = run(
             &cwd,
             options.project.as_deref(),
-            &options.paths,
+            Paths::Arguments(&options.paths),
             &options.compiler_options,
             options.threads,
             AlreadyRead::default(),
@@ -621,16 +635,14 @@ pub(crate) struct CheckedBefore {
 /// on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[&[u8]]) -> CheckedBefore {
     let cwd = working_directory();
-    let Some((paths, mut options)) = what_to_check(&cwd, entry_points) else {
+    let Some(paths) = what_to_check(&cwd, entry_points) else {
         return CheckedBefore {
             has_errors: false,
             files: Vec::new(),
         };
     };
-    options.extend(bun_sema_driver::compiler_option_from_flag(
-        b"listFiles",
-        None,
-    ));
+    let options = bun_sema_driver::compiler_option_from_flag(b"listFiles", None);
+    let options: Vec<CompilerOption> = options.into_iter().collect();
     let report = check_and_report(&paths, &options);
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
@@ -699,11 +711,11 @@ fn check_for_build(
     if paths.is_empty() {
         return true;
     }
-    let options = options_for(&paths);
+    let paths = Paths::EntryPoints(&paths);
     let (already_read, then) = (already_read(cwd, sources), |report| report);
     let report = match shows_progress {
-        true => run(cwd, tsconfig, &paths, &options, 0, already_read, then),
-        false => run_quietly(cwd, tsconfig, &paths, &options, 0, None, already_read, then),
+        true => run(cwd, tsconfig, paths, &[], 0, already_read, then),
+        false => run_quietly(cwd, tsconfig, paths, &[], 0, None, already_read, then),
     };
     for reported in &report.diagnostics {
         let kind = match reported.category {
@@ -770,12 +782,9 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
     Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_javascript_like)
 }
 
-/// The files to name in the check of `entry_points`, which are relative to `cwd`, and the compiler
-/// options that go with them. `None` if none of them has types to check.
-fn what_to_check(
-    cwd: &[u8],
-    entry_points: &[&[u8]],
-) -> Option<(Vec<Vec<u8>>, Vec<CompilerOption>)> {
+/// The files to name in the check of `entry_points`, which are relative to `cwd`. `None` if none of
+/// them has types to check.
+fn what_to_check(cwd: &[u8], entry_points: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
     let mut paths: Vec<Vec<u8>> = Vec::new();
     for &entry_point in entry_points {
         if has_types(entry_point) {
@@ -785,25 +794,7 @@ fn what_to_check(
             paths.extend(scripts.into_iter().filter(|path| has_types(path)));
         }
     }
-    if paths.is_empty() {
-        return None;
-    }
-    let options = options_for(&paths);
-    Some((paths, options))
-}
-
-/// The compiler options that go with naming `paths` in a check. A JavaScript entry point is loaded
-/// for its imports, regardless of `allowJs`. Its own errors are reported only under `checkJs`.
-fn options_for(paths: &[Vec<u8>]) -> Vec<CompilerOption> {
-    use bun_ast::Loader;
-    let is_typescript = |path: &Vec<u8>| {
-        Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_typescript)
-    };
-    (!paths.iter().all(is_typescript))
-        .then(|| bun_sema_driver::compiler_option_from_flag(b"allowJs", None).ok())
-        .flatten()
-        .into_iter()
-        .collect()
+    (!paths.is_empty()).then_some(paths)
 }
 
 /// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot
@@ -849,7 +840,7 @@ fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> R
     let mut report = run(
         &cwd,
         tsconfig_override(),
-        paths,
+        Paths::EntryPoints(paths),
         compiler_options,
         0,
         AlreadyRead::default(),

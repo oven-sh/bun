@@ -394,6 +394,9 @@ impl Process {
                             ),
                         );
                     }
+                    // Nothing will report this child's exit from here on, so nothing would reap it.
+                    let _ = self.kill(libc::SIGKILL as u8);
+                    let _ = posix_spawn::wait4(pid, 0, None);
                     break 'brk Some(Status::Err(err_));
                 }
             }

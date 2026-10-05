@@ -1719,11 +1719,11 @@ fn spawn_maybe_sync(
         }
     }
 
-    let stdin_start_err = match subprocess.stdin.get() {
+    let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
         _ => None,
     };
-    if let Some(err) = &stdin_start_err {
+    if let Some(err) = &setup_err {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
@@ -1808,15 +1808,17 @@ fn spawn_maybe_sync(
                 unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
             }
         }
-        sys::Result::Err(_) => {
-            if stdin_start_err.is_some() {
-                let _ = subprocess.try_kill(SignalCode::SIGKILL);
+        sys::Result::Err(err) => {
+            // Not a blocking wait: nothing would serve the child's stdio meanwhile, or end it at the timeout.
+            // A child that is still running and still cannot be watched is killed and reaped here.
+            subprocess.process_mut().wait(false);
+            if matches!(subprocess.process().status, bun_spawn::Status::Err(_)) {
+                setup_err.get_or_insert(err);
             }
-            subprocess.process_mut().wait(true);
         }
     }
 
-    if stdin_start_err.is_some() {
+    if setup_err.is_some() {
         // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
         let _ = subprocess.try_kill(SignalCode::SIGKILL);
         subprocess.close_readable_pipes();
@@ -2007,7 +2009,7 @@ fn spawn_maybe_sync(
     unsafe {
         bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
     };
-    if let Some(err) = stdin_start_err {
+    if let Some(err) = setup_err {
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
     let (stdout, stderr, resource_usage) = output?;

@@ -95,6 +95,10 @@ try {
 // through. The kernel does not fail that MOD either. The mode stands in for
 // any error that ends the writer inside write(), such as EBADF after other
 // code closed the writer's fd by number.
+//
+// FAIL_EPOLL_CTL=pidfd-add fails the EPOLL_CTL_ADD of a pidfd and nothing else:
+// the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
+// first n of them through.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -102,19 +106,36 @@ const SHIM_C = /* c */ `
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 static long (*real_syscall)(long, ...);
 static int writer_mods;
+static int pidfd_adds;
+
+static int is_pidfd(int fd) {
+  char path[32], target[32];
+  snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+  ssize_t length = readlink(path, target, sizeof(target) - 1);
+  if (length < 0) return 0;
+  target[length] = 0;
+  return strstr(target, "pidfd") != NULL;
+}
 
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
+  if (strcmp(mode, "pidfd-add") == 0) {
+    if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
+    const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
+    return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+  }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
   if (strcmp(mode, "pty-writer-mod") == 0) {
@@ -180,8 +201,10 @@ if (kind !== "terminal") {
   globalThis.anchor.push(child);
   await child.exited;
 }
-// The first spawnSync of a process creates the loop it waits on, which stays.
-if (kind === "sync-stdin-buffer") Bun.spawnSync({ cmd: ["true"] });
+// The first spawnSync of a process creates the loop it waits on, which stays. Without pipes: theirs are closed on
+// the work pool, some time after the call.
+const quiet = { cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" };
+if (kind.startsWith("sync-") || kind === "unwatchable") Bun.spawnSync(quiet);
 const fdBaseline = openFds();
 const wrapperBaseline = wrappers();
 
@@ -210,6 +233,20 @@ try {
       // The child outlives the call unless the call ends it.
       Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: Buffer.from("data"), stdout: "pipe", stderr: "pipe" });
       break;
+    // Each of these children outlives the call unless the call ends it.
+    case "unwatchable":
+      await Bun.spawn({ cmd: ["sleep", "1000"], stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
+      break;
+    case "sync-unwatchable-stdin":
+      Bun.spawnSync({ cmd: ["cat"], stdin: Buffer.from("data"), stdout: "pipe", stderr: "pipe" });
+      break;
+    case "sync-unwatchable-output":
+      // More than a pipe holds.
+      Bun.spawnSync({ cmd: ["sh", "-c", "head -c 1000000 /dev/zero"], stdout: "pipe", stderr: "pipe" });
+      break;
+    case "sync-unwatchable-timeout":
+      Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 1 });
+      break;
     case "terminal":
       new Bun.Terminal({});
       break;
@@ -229,6 +266,9 @@ try {
 if (kind === "sync-stdin-buffer") {
   // Read before anything else runs: spawnSync has no later moment to clean up in.
   sync = { children: children(), next: Bun.spawnSync({ cmd: ["echo", "next"], stderr: "pipe" }).stdout.toString() };
+} else if (kind.includes("unwatchable")) {
+  // A call without pipes or a timeout waits for its child without registering it.
+  sync = { children: children(), next: Bun.spawnSync(quiet).exitCode };
 }
 const deadline = performance.now() + 2000;
 while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
@@ -322,6 +362,34 @@ describe.skipIf(!isLinux || !cc)(
     test.concurrent("new Bun.Terminal() closes the pty fds exactly once", async () => {
       expect(await runFixture("terminal")).toEqual({
         report: { error: { message: "Failed to start terminal writer" }, leakedFds: 0, leakedWrappers: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// A child whose exit cannot be registered for was reported as exited with that error while it was still running, and
+// nothing reaped it afterwards. Bun.spawnSync blocked in wait4() instead, where nothing serves the child's stdio and
+// no timeout applies: a child that reads its stdin or fills a pipe never exits. Either way the child is ended now.
+describe.skipIf(!isLinux || !cc)(
+  "a child whose pidfd fails to register with the event loop is ended and reaped",
+  () => {
+    test.concurrent.each([
+      ["Bun.spawn", "unwatchable"],
+      ["Bun.spawnSync of a child that reads its stdin", "sync-unwatchable-stdin"],
+      ["Bun.spawnSync of a child that fills its stdout", "sync-unwatchable-output"],
+      ["Bun.spawnSync with a timeout", "sync-unwatchable-timeout"],
+    ])("%s", async (_, kind) => {
+      // The one let through is the fixture's own child, which it takes its baseline after.
+      const env = { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_SKIP: "1", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
+      expect(await runFixture(kind, env)).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
         stderr: "",
         exitCode: 0,
       });

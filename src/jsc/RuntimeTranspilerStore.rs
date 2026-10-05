@@ -303,7 +303,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
-        package_json: Option<&PackageJSON>,
+        module_type: ModuleType,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
         module_loader: JSValue,
@@ -314,15 +314,13 @@ impl RuntimeTranspilerStore {
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
         let mut resolved_source = ResolvedSource::default();
-        if let Some(pkg) = package_json {
-            match pkg.module_type {
-                ModuleType::Cjs => {
-                    resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
-                    resolved_source.is_commonjs_module = true;
-                }
-                ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
-                ModuleType::Unknown => {}
+        match module_type {
+            ModuleType::Cjs => {
+                resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
+                resolved_source.is_commonjs_module = true;
             }
+            ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
+            ModuleType::Unknown => {}
         }
 
         // Build the job by value and `get_init` it into the hive — the `Box`

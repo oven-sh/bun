@@ -540,12 +540,15 @@ impl Request {
         } else {
             "BunRequest"
         };
-        writeln!(
-            writer,
-            "{} ({}) {{",
-            class_label,
-            bun_fmt::size(self.body_value_mut().size() as usize, Default::default())
-        )?;
+        match self.body_value_mut().known_size() {
+            Some(size) => writeln!(
+                writer,
+                "{} ({}) {{",
+                class_label,
+                bun_fmt::size(size, Default::default())
+            )?,
+            None => writeln!(writer, "{} {{", class_label)?,
+        }
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
             // Shadows `formatter` for the block; auto-derefs to `&mut F`.

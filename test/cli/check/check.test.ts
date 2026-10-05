@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 
 // `bun check` reads `lib.*.d.ts` from the `typescript` package installed in the project.
 const typescript = dirname(require.resolve("typescript/package.json"));
@@ -13997,6 +13997,158 @@ export function f<T>(rest: T) {
         note: run 'bun check --help' for more information"
       `);
       expect([short.exitCode, valueless.exitCode]).toEqual([1, 1]);
+    });
+  });
+
+  // What `bun check` reports for a file or in a directory is what is reported when that is named, however it is
+  // spelled, from wherever, and by whichever command.
+  describe("a path means the same however it is spelled", () => {
+    const bad = `export const bad: string = 1;\n`;
+    const options = {
+      ...JSON.parse(tsconfig).compilerOptions,
+      noEmit: false,
+      composite: true,
+      emitDeclarationOnly: true,
+    };
+    const config = (more: object) => JSON.stringify({ compilerOptions: options, ...more });
+    const layouts: Record<string, { files: Record<string, string>; file: string; directory: string }> = {
+      "one project": {
+        files: { "src/a.ts": bad, "src/deep/b.ts": bad, "other/c.ts": bad },
+        file: "src/deep/b.ts",
+        directory: "src",
+      },
+      "a solution": {
+        files: {
+          "console.d.ts": "",
+          "tsconfig.json": JSON.stringify({
+            files: [],
+            references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.tools.json" }],
+          }),
+          "tsconfig.app.json": config({ include: ["src", "test"] }),
+          "tsconfig.tools.json": config({ include: ["tools"] }),
+          "src/a.ts": bad,
+          "src/deep/b.ts": bad,
+          "test/t.ts": bad,
+          "tools/x.ts": bad,
+        },
+        file: "src/deep/b.ts",
+        directory: "src",
+      },
+      "a project that references another": {
+        files: {
+          "console.d.ts": "",
+          "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./packages/app" }] }),
+          "packages/lib/tsconfig.json": config({}),
+          "packages/lib/index.ts": `export const lib = 1;\n`,
+          "packages/app/tsconfig.json": config({ references: [{ path: "../lib" }] }),
+          "packages/app/src/a.ts": `import { lib } from "../../lib/index";\nexport const a: string = lib;\n`,
+          "packages/app/src/deep/b.ts": bad,
+          "packages/app/other/c.ts": bad,
+        },
+        file: "packages/app/src/deep/b.ts",
+        directory: "packages/app/src",
+      },
+      "no tsconfig.json at the root": {
+        files: {
+          "tsconfig.json": "",
+          "console.d.ts": "",
+          "packages/x/tsconfig.json": tsconfig,
+          "packages/x/src/a.ts": bad,
+          "packages/x/src/deep/b.ts": bad,
+          "packages/y/tsconfig.json": tsconfig,
+          "packages/y/c.ts": bad,
+          "loose/d.ts": bad,
+        },
+        file: "packages/x/src/deep/b.ts",
+        directory: "packages/x/src",
+      },
+      "a tsconfig.json below that of the project": {
+        files: {
+          "a.ts": bad,
+          "nested/tsconfig.json": tsconfig,
+          "nested/src/a.ts": bad,
+          "nested/src/deep/b.ts": bad,
+          "nested/other/c.ts": bad,
+        },
+        file: "nested/src/deep/b.ts",
+        directory: "nested/src",
+      },
+    };
+
+    // Each starts 18 processes at once.
+    test.serial.each(Object.keys(layouts))("%s", async layout => {
+      const { files, file, directory } = layouts[layout];
+      using dir = project(files);
+      const root = String(dir);
+      if (files["tsconfig.json"] === "") rmSync(join(root, "tsconfig.json"));
+      const inRoot = (cwd: string, path: string) => {
+        const full = path.startsWith("<dir>")
+          ? cwd + path.slice("<dir>".length)
+          : isAbsolute(path)
+            ? path
+            : join(cwd, path);
+        const name = `/${basename(root)}/`;
+        const slashes = full.replaceAll("\\", "/");
+        return slashes.slice(slashes.lastIndexOf(name) + name.length);
+      };
+      // `path:line:column TS2322`, sorted, with the path from the root of the project.
+      const reported = (cwd: string, text: string) =>
+        [
+          ...text.matchAll(/^(.+?)\((\d+),(\d+)\): error TS(\d+):/gm),
+          // As the bundler prints it.
+          ...[...text.matchAll(/^error: TS(\d+):.*\n\s+at (.+?):(\d+):(\d+)$/gm)].map(it => [
+            it[0],
+            it[2],
+            it[3],
+            it[4],
+            it[1],
+          ]),
+        ]
+          .map(it => `${inRoot(cwd, it[1])}:${it[2]}:${it[3]} TS${it[4]}`)
+          .sort();
+
+      const below = join(root, dirname(file));
+      // What is named, where `bun` is started, its arguments, and what the paths that it prints are relative to.
+      const commands: ["file" | "directory", string, string[], string?][] = [
+        ["file", root, ["check", file]],
+        ["file", root, ["check", `./${file}`]],
+        ["file", root, ["check", join(root, file)]],
+        ["file", below, ["check", basename(file)]],
+        ["file", below, ["check", `./${basename(file)}`]],
+        ["file", below, ["check", "--cwd", root, file], root],
+        ["directory", root, ["check", directory]],
+        ["directory", root, ["check", `${directory}/`]],
+        ["directory", root, ["check", `./${directory}`]],
+        ["directory", root, ["check", join(root, directory)]],
+        ["directory", join(root, directory), ["check", "."]],
+        ["directory", below, ["check", ".."]],
+        ["file", root, ["--check", file]],
+        ["file", root, ["--check", `./${file}`]],
+        ["file", root, ["--check", join(root, file)]],
+        ["file", root, ["build", "--check", file, "--outdir", "out"]],
+        ["file", below, ["build", "--check", `./${basename(file)}`, "--outdir", "out"]],
+      ];
+      const [whole, ...results] = await Promise.all([
+        run(root, ["check"]),
+        ...commands.map(([, cwd, cmd]) => run(cwd, cmd)),
+      ]);
+      const all = reported(root, whole.stdout);
+      const expected = {
+        file: all.filter(it => it.startsWith(`${file}:`)),
+        directory: all.filter(it => it.startsWith(`${directory}/`)),
+      };
+      expect(expected.file).toHaveLength(1);
+      expect(expected.directory.length).toBeGreaterThan(1);
+      expect(all.length).toBeGreaterThan(expected.directory.length);
+      const name = ([, cwd, cmd]: (typeof commands)[number]) =>
+        `${inRoot(root, cwd) || "."}$ bun ${cmd.join(" ").replaceAll(root, "<root>")}`;
+      expect(
+        results.map((it, i) => [
+          name(commands[i]),
+          reported(commands[i][3] ?? commands[i][1], `${it.stdout}\n${it.stderr}`),
+          it.exitCode,
+        ]),
+      ).toEqual(commands.map(command => [name(command), expected[command[0]], 1]));
     });
   });
 

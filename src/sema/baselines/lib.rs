@@ -52,7 +52,7 @@ fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
 /// For a file that is only written to be looked at: a failure is reported, and the run goes on.
 pub fn write_file_to_look_at(path: &str, contents: &[u8]) {
     if let Err(error) = write_file(path, contents) {
-        error_line!("cannot write {path}: {error}");
+        error_line!("cannot write {path}: {:?}", error.get_errno());
     }
 }
 
@@ -2449,7 +2449,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             })
             .collect();
         if let Err(error) = write_file(&path, (lines.join("\n") + "\n").as_bytes()) {
-            error_line!("cannot write {path}: {error}");
+            error_line!("cannot write {path}: {:?}", error.get_errno());
             return false;
         }
     }

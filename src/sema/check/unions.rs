@@ -918,6 +918,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if mapped[..] == *types {
                     ty
+                } else if let Some(kept) = self.union_of_kept_members(types, &mapped) {
+                    debug_assert_eq!(
+                        kept,
+                        match no_reductions {
+                            true => self.union_unreduced(&mapped),
+                            false => self.union(&mapped),
+                        }
+                    );
+                    kept
                 } else if no_reductions {
                     self.union_unreduced(&mapped)
                 } else {
@@ -932,6 +941,32 @@ impl<'p, 's> Checker<'p, 's> {
             ) => ty,
             _ => f(self, ty),
         }
+    }
+
+    /// FOR SPEED: the union of `mapped`, if each is the member of `types` it was mapped from or
+    /// `never`, as when a type guard narrows a union of object types. What is kept is in order, and
+    /// no reduction applies to object types, so there is nothing to sort or to remove.
+    fn union_of_kept_members(&self, types: &[TypeId], mapped: &[TypeId]) -> Option<TypeId> {
+        let is_object = |t: TypeId| self.flags(t) & tf::OBJECT != 0;
+        let mut kept: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
+        for (&from, &to) in types.iter().zip(mapped) {
+            if to == TypeId::NEVER {
+                continue;
+            }
+            let is_reduced = match self.data(to) {
+                TypeData::Intersection(parts) => parts.iter().all(|&part| is_object(part)),
+                _ => is_object(to),
+            };
+            if to != from || !is_reduced {
+                return None;
+            }
+            kept.push(to);
+        }
+        Some(match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => self.union_of_named_unions(mapped, &kept),
+        })
     }
 
     /// `isPatternLiteralPlaceholderType`

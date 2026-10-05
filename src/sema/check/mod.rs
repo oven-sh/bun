@@ -660,6 +660,7 @@ impl<'s> Program<'s> {
             declaration_indent: None,
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
+            alias_symbols: Default::default(),
             parsed_again_for_await: None,
             flow_analysis_disabled_in: None,
             inline_level: 0,
@@ -1201,6 +1202,8 @@ pub struct Checker<'p, 's> {
     /// Whether anything in the file that is being checked is in an ambient context.
     has_ambient_context: bool,
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
+    /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
+    alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,

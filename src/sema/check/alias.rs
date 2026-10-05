@@ -100,11 +100,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `t.alias.symbol`, without computing the alias type arguments.
     pub(super) fn alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
-        if let Some((alias, _)) = self.stored_alias(ty) {
-            return Some(*alias);
+        // FOR SPEED: tsgo reads a field of the type. `CompareTypes` asks for both types of every
+        // comparison, and for the members of intersections.
+        if let Some(&known) = self.alias_symbols.borrow().get(&ty) {
+            return known;
         }
-        let (file, node, _) = self.alias_node_of_type(ty)?;
-        self.alias_symbol_for_type_node(file, self.bound(file).type_scope[node.idx()], node)
+        let alias = match self.stored_alias(ty) {
+            Some((alias, _)) => Some(*alias),
+            None => self.alias_node_of_type(ty).and_then(|(file, node, _)| {
+                let scope = self.bound(file).type_scope[node.idx()];
+                self.alias_symbol_for_type_node(file, scope, node)
+            }),
+        };
+        self.alias_symbols.borrow_mut().insert(ty, alias);
+        alias
     }
 
     /// The type node that identifies `ty`, and its mapper. A type that stores no alias has the alias whose body is that node.

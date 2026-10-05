@@ -6315,6 +6315,111 @@ const outcome = async fn => {
   expect(exitCode).toBe(0);
 });
 
+// Under gVisor, unlink(2) of a missing path written with a trailing slash
+// ("out/") fails with ENOTDIR instead of ENOENT (google/gvisor#15303), while
+// lstat(2) of the same path reports ENOENT. Node lstat()s before removing, so
+// rm(..., { force: true }) succeeds there; Nitro runs exactly that before every
+// build. LD_PRELOAD a shim that turns unlink's ENOENT into ENOTDIR for such
+// paths. glibc-only, same as the shims above.
+it.skipIf(!isGlibc || !cc)("fs.rm treats a missing path as missing when unlink reports ENOTDIR (#44587)", async () => {
+  using dir = tempDir("rm-force-enotdir", {
+    "file.txt": "x",
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <string.h>
+
+static int trailing_slash(const char *path) {
+  size_t n = strlen(path);
+  return n > 1 && path[n - 1] == '/';
+}
+
+int unlink(const char *path) {
+  static int (*next)(const char *);
+  if (!next) next = dlsym(RTLD_NEXT, "unlink");
+  int rc = next(path);
+  if (rc == -1 && errno == ENOENT && trailing_slash(path)) errno = ENOTDIR;
+  return rc;
+}
+
+int unlinkat(int dirfd, const char *path, int flags) {
+  static int (*next)(int, const char *, int);
+  if (!next) next = dlsym(RTLD_NEXT, "unlinkat");
+  int rc = next(dirfd, path, flags);
+  if (rc == -1 && errno == ENOENT && flags == 0 && trailing_slash(path)) errno = ENOTDIR;
+  return rc;
+}
+`,
+    "child.js": `
+const fs = require("node:fs");
+const sync = fn => {
+  try {
+    fn();
+    return "ok";
+  } catch (e) {
+    return e.code + " " + e.syscall;
+  }
+};
+const settle = fn => fn().then(() => "ok", e => e.code + " " + e.syscall);
+(async () => {
+  const out = {};
+  // Proves the shim interposed.
+  out.unlinkSync = sync(() => fs.unlinkSync("missing/"));
+  out.rmSyncRecursiveForce = sync(() => fs.rmSync("missing/", { recursive: true, force: true }));
+  out.rmSyncForce = sync(() => fs.rmSync("missing/", { force: true }));
+  out.promisesRecursiveForce = await settle(() => fs.promises.rm("missing/", { recursive: true, force: true }));
+  out.promisesForce = await settle(() => fs.promises.rm("missing/", { force: true }));
+  out.callbackRecursiveForce = await settle(
+    () => new Promise((resolve, reject) => fs.rm("missing/", { recursive: true, force: true }, e => (e ? reject(e) : resolve()))),
+  );
+  // Without force a missing path is ENOENT from lstat, as in node.
+  out.rmSyncRecursive = sync(() => fs.rmSync("missing/", { recursive: true }));
+  out.rmSync = sync(() => fs.rmSync("missing/"));
+  // A real ENOTDIR (a regular file used as a directory) is not swallowed.
+  out.fileAsDir = await settle(() => fs.promises.rm("file.txt/missing/", { recursive: true, force: true })).then(
+    r => r.split(" ")[0],
+  );
+  out.fileLeft = fs.existsSync("file.txt");
+  console.log(JSON.stringify(out));
+})();
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build unlink shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    unlinkSync: "ENOTDIR unlink",
+    rmSyncRecursiveForce: "ok",
+    rmSyncForce: "ok",
+    promisesRecursiveForce: "ok",
+    promisesForce: "ok",
+    callbackRecursiveForce: "ok",
+    rmSyncRecursive: "ENOENT lstat",
+    rmSync: "ENOENT lstat",
+    fileAsDir: "ENOTDIR",
+    fileLeft: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

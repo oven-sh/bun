@@ -4,7 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -379,7 +379,6 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
-    #[allow(dead_code)]
     pub(crate) fn name(self) -> &'static [u8] {
         match self {
             PackageField::Name => b"name",
@@ -867,17 +866,6 @@ impl Package<u64> {
 
             // Shrink off the unused default-initialized tail (`new_length <= total_len`).
             dependencies_list.truncate(new_length);
-
-            #[cfg(debug_assertions)]
-            {
-                if package.resolution.npm().url.is_empty() {
-                    Output::panic(format_args!(
-                        "tarball_url is empty for package {}@{}",
-                        bstr::BStr::new(manifest.name()),
-                        version.fmt(&manifest.string_buf),
-                    ));
-                }
-            }
 
             string_builder.clamp();
             return Ok(package);
@@ -1863,7 +1851,7 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let mut folder_buf = PathBuffer::uninit();
+                let mut folder_buf = bun_paths::path_buffer_pool::get();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut folder_buf.0,
@@ -1982,7 +1970,7 @@ impl Package<u64> {
                             b"*"
                         } else {
                             'brk: {
-                                let mut buf2 = PathBuffer::uninit();
+                                let mut buf2 = bun_paths::path_buffer_pool::get();
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
                                         FileSystem::instance().top_level_dir(),
@@ -2263,8 +2251,11 @@ impl Package<u64> {
                 }
                 if bin.expr.is_string() {
                     if let Some(str_) = bin.expr.as_utf8(&bump) {
-                        string_builder.count(str_);
-                        break 'bin;
+                        // The build pass reads `directories.bin` when `bin` is empty.
+                        if !str_.is_empty() {
+                            string_builder.count(str_);
+                            break 'bin;
+                        }
                     }
                 }
             }
@@ -2816,7 +2807,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
+                        let mut cwd_buf = bun_paths::path_buffer_pool::get();
                         // `bun_sys::getcwd` returns the byte length — slice
                         // the buffer ourselves.
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
@@ -3202,15 +3193,12 @@ pub mod serializer {
                     &*sliced.column_bytes_mut(field as usize)
                 }
             };
-            #[cfg(debug_assertions)]
-            {
-                bun_output::scoped_log!(
-                    Lockfile,
-                    "save(\"{}\") = {} bytes",
-                    bstr::BStr::new(field.name()),
-                    bytes.len(),
-                );
-            }
+            bun_output::scoped_log!(
+                Lockfile,
+                "save(\"{}\") = {} bytes",
+                bstr::BStr::new(field.name()),
+                bytes.len(),
+            );
             // No uninitialized padding: `Package`'s field types are all
             // `#[repr(C)]` with explicit padding zeroed by their
             // `Default`/`init` paths.

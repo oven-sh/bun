@@ -613,3 +613,81 @@ test("cached module still works", () => {
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(1);
 });
+
+test("rejects a cached entry whose sourcemap section header is corrupt", () => {
+  // A cache hit hands the stored sourcemap section to SavedSourceMap, which
+  // reads it as an InternalSourceMap blob. Stack remapping then walks the
+  // blob's SyncEntry array and window streams by the offsets in its header.
+  // A damaged header (for example an inflated sync_count) must be rejected so
+  // the entry regenerates, not read out of bounds.
+  //
+  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+  //   then twelve u64 fields; sourcemap_byte_offset @ 54,
+  //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
+  // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
+  //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
+  //   24: sync_count u32, 28: stream_offset u32.
+  const SOURCEMAP_BYTE_OFFSET_AT = 54;
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+
+  function corruptSourceMapHeader(file: string): boolean {
+    const data = readFileSync(file);
+    if (data.length < 102) return false;
+    const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+    const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+    if (smLen < 32 || smOff + smLen > data.length) return false;
+    // Inflate sync_count so the SyncEntry array claims far more entries than
+    // the section holds.
+    data.writeUInt32LE(0x0fffffff, smOff + 24);
+    writeFileSync(file, data);
+    return true;
+  }
+
+  // A module large enough for the cache (>= 4 KiB) that throws. Reading the
+  // error's stack forces the runtime to remap the captured frame through the
+  // cached sourcemap while the process still exits 0.
+  const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+  const filler = Buffer.alloc(120 * line.length, line).toString();
+  writeFileSync(
+    join(temp_dir, "boom.ts"),
+    `${filler}
+function boom(): number {
+  throw new Error("boom");
+}
+try {
+  boom();
+} catch (e) {
+  void (e as Error).stack;
+}
+console.log("OK");
+`,
+  );
+
+  const run = () => Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env });
+
+  // First run writes the cache entry. Second run serves the intact entry and
+  // still remaps the stack and prints the marker.
+  const first = run();
+  expect(first.stdout.toString()).toContain("OK");
+  expect(existsSync(cache_dir)).toBeTrue();
+  expect(first.exitCode).toBe(0);
+
+  const second = run();
+  expect(second.stdout.toString()).toContain("OK");
+  expect(second.exitCode).toBe(0);
+
+  // Corrupt the stored sourcemap header.
+  let corrupted = 0;
+  for (const name of readdirSync(cache_dir)) {
+    if (name.endsWith(".pile") && corruptSourceMapHeader(join(cache_dir, name))) corrupted++;
+  }
+  expect(corrupted).toBeGreaterThanOrEqual(1);
+
+  // Third run: the corrupt section is rejected, the entry regenerates, and the
+  // module runs clean with a normal (non-signal) exit.
+  const third = run();
+  expect(third.stdout.toString()).toContain("OK");
+  expect(third.signalCode).toBeUndefined();
+  expect(third.exitCode).toBe(0);
+});

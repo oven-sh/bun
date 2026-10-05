@@ -74,6 +74,11 @@ private:
     }
 
     static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {
+        if (reason.empty()) {
+            /* The reason length doubles as the close code, and code 0 is the graceful close. */
+            ((WebSocket<SSL, isServer, USERDATA> *) s)->close();
+            return;
+        }
         us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
     }
 
@@ -270,7 +275,7 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, 0, false);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */

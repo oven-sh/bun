@@ -34,6 +34,7 @@ use bun_url::URL;
 // down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
 // init. The full waiter-thread machinery (queue, signalfd, loop) lives in
 // `bun_runtime::api::bun::process` and *reads* the same flag.
+#[cfg(unix)]
 use bun_spawn::process::WaiterThread;
 
 use crate::RunCommand;
@@ -326,9 +327,6 @@ pub struct PackageManager {
     pub(crate) progress_name_buf: [u8; 768],
 
     pub(crate) track_installed_bin: TrackInstalledBin,
-
-    // progress bar stuff when not stack allocated
-    pub(crate) root_progress_node: *mut ProgressNode, // BORROW_FIELD — self.progress.start() returns &self.progress.root
 
     pub to_update: bool,
 
@@ -671,7 +669,6 @@ impl PackageManager {
     /// responsibility not to alias the returned `&mut Log` (single-threaded by
     /// construction — only the main install loop touches `log`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
         let p = self.log;
         // SAFETY: `self.log` is non-null for the manager's lifetime (set in
@@ -689,7 +686,6 @@ impl PackageManager {
     /// leaked-singleton manager and callers interleave node updates with
     /// disjoint `&mut self.X` field writes.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
         let p = self.downloads_node.expect("downloads_node active");
         // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
@@ -709,7 +705,6 @@ impl PackageManager {
     /// Single-threaded by construction (main install loop only — see
     /// `lifecycle_script_runner` "monotonic is okay" comments).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
         let mut p = self.scripts_node?;
         // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
@@ -1037,7 +1032,6 @@ impl PackageManager {
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
@@ -1121,7 +1115,7 @@ fn configure_env_for_scripts_run(
     }
 
     {
-        let mut node_path = PathBuffer::uninit();
+        let mut node_path = bun_paths::path_buffer_pool::get();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
             let _ = this
                 .env_mut()
@@ -1154,7 +1148,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     }
 
     let tempdir = get_temporary_directory(manager);
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
         fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
 
@@ -1583,7 +1577,7 @@ pub fn init(
             let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
 
             loop {
-                let mut package_json_path_buf = PathBuffer::uninit();
+                let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
                 package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
                 package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
                     .copy_from_slice(b"/package.json");
@@ -1681,7 +1675,7 @@ pub fn init(
             if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
-                    let mut parent_path_buf = PathBuffer::uninit();
+                    let mut parent_path_buf = bun_paths::path_buffer_pool::get();
                     parent_path_buf[..parent_without_trailing_slash.len()]
                         .copy_from_slice(parent_without_trailing_slash);
                     parent_path_buf[parent_without_trailing_slash.len()
@@ -1929,7 +1923,7 @@ pub fn init(
         let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts = [b"./.npmrc" as &[u8]];
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
@@ -1982,6 +1976,7 @@ pub fn init(
         PackageManager::set_verbose_install(true);
     }
 
+    #[cfg(unix)]
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
         WaiterThread::set_should_use_waiter_thread();
     }
@@ -2092,7 +2087,6 @@ pub fn init(
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
-        wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
@@ -2183,7 +2177,7 @@ pub fn init(
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
         let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
@@ -2302,7 +2296,7 @@ pub fn init(
             if bun_paths::is_absolute(options.ca_file_name) {
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 abs_ca_file_name =
                     ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
                         &original_cwd_clone,
@@ -2497,6 +2491,7 @@ fn init_with_runtime_once(
                 max_concurrent_lifecycle_scripts: cli
                     .concurrent_scripts
                     .unwrap_or((cpu_count * 2) as usize),
+                runtime_auto_install: true,
                 ..Default::default()
             }
         );
@@ -2552,7 +2547,6 @@ fn init_with_runtime_once(
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
-        wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
@@ -2628,11 +2622,7 @@ fn init_with_runtime_once(
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
-        // Coerce to a raw pointer immediately so the borrow doesn't outlive the
-        // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.
-        let node: *mut ProgressNode = manager.progress.start(b"", 0);
-        manager.root_progress_node = node;
+        let _ = manager.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }

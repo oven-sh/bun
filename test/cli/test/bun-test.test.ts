@@ -114,6 +114,34 @@ describe("bun test", () => {
     expect(stderr).toContain(path);
   });
 
+  test.each([
+    ["arrays and objects", "i % 2 ? [value] : { a: value }"],
+    ["instances of a class", "new (class A { a = value; })()"],
+    ["JSX children", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { children: value } }`],
+    ["JSX props", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
+    ["the data of events", `new MessageEvent("message", { data: value })`],
+    ["asymmetric matchers", "expect.objectContaining({ a: value })"],
+  ])("%s nested too deeply to print are a RangeError", (_, wrap) => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        function thrownFor(depth) {
+          let value = 1;
+          for (let i = 0; i < depth; i++) value = ${wrap};
+          try {
+            expect(value).toMatchInlineSnapshot('"x"');
+          } catch (error) {
+            return error.constructor.name;
+          }
+        }
+        test("deep", () => {
+          expect([thrownFor(10), thrownFor(100_000)]).toEqual(["Error", "RangeError"]);
+        });
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("1 pass");
+  });
   describe("when filters are provided", () => {
     let dir: string;
     beforeAll(() => {

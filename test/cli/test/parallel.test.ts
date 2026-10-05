@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
@@ -126,6 +126,35 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(stderr).toContain("(worker crashed: exit code 7)");
   // summary counts the crash as one failure
   expect(stderr).toContain("Ran 3 tests across 3 files.");
+  expect(exitCode).toBe(1);
+});
+
+// The label must use the OS's name for the number the worker died from. Signal
+// 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
+// macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash
+// signal that aborted the whole run. Neither signal is a crash.
+const deathSignal = isLinux ? "SIGSTKFLT" : "SIGUSR2";
+test.skipIf(isWindows)(`--parallel labels a worker killed by ${deathSignal} with that name`, async () => {
+  using dir = tempDir("parallel-signal-name", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "die.test.js": `
+      import {test} from "bun:test";
+      import {constants} from "os";
+      test("die", () => process.kill(process.pid, constants.signals.${deathSignal}));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`(worker crashed: ${deathSignal})`);
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
   expect(exitCode).toBe(1);
 });
 
@@ -1352,6 +1381,119 @@ test("--parallel: SIGTERM on coordinator kills workers and their grandchildren",
     } catch {}
   expect(outstanding).toEqual([]);
 }, 15000);
+
+test.skipIf(isWindows).each([
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+] as const)("--parallel: %s on the coordinator exits with %d", async (signal, code) => {
+  const fixture = `
+    import { test } from "bun:test";
+    import { appendFileSync } from "fs";
+    test("slow", async () => {
+      appendFileSync(process.env.PIDS, "started\\n");
+      await Bun.sleep(60000);
+    });
+  `;
+  using dir = tempDir("parallel-signal-code", {
+    "a.test.ts": fixture,
+    "b.test.ts": fixture,
+  });
+  const pids = String(dir) + "/pids.txt";
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+    env: { ...bunEnv, PIDS: pids },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  for (let i = 0; i < 400; i++) {
+    const text = await Bun.file(pids)
+      .text()
+      .catch(() => "");
+    if ([...text.matchAll(/^started$/gm)].length >= 2) break;
+    await Bun.sleep(25);
+  }
+
+  proc.kill(signal);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Interrupted");
+  expect(exitCode).toBe(code);
+});
+
+test.skipIf(isWindows)(
+  "--parallel: a worker that dies mid-file takes the processes its test spawned with it",
+  async () => {
+    // The grandchild is orphaned when the worker dies, so a zombie could still
+    // answer kill(pid, 0). It records its own termination instead. A shell
+    // keeps its startup out of the timing; the trap is armed before the pid
+    // is logged.
+    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
+    const crasher = (how: string) => `
+    import { test } from "bun:test";
+    test("spawn then die", async () => {
+      const child = Bun.spawn({
+        cmd: ["sh", "-c", ${JSON.stringify(grandchild)}],
+        env: process.env,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      child.unref();
+      // Wait until the grandchild has logged its pid.
+      while (!(await Bun.file(process.env.PIDS).text().catch(() => "")).includes("grandchild=" + child.pid + "\\n")) {
+        await Bun.sleep(10);
+      }
+      ${how};
+    });
+  `;
+    using dir = tempDir("parallel-crash-grandchildren", {
+      "a.test.ts": crasher(`process.kill(process.pid, "SIGKILL")`),
+      "b.test.ts": crasher(`process.exit(0)`),
+      "c.test.ts": `import { test } from "bun:test"; test("ok", () => {});`,
+    });
+    const pids = String(dir) + "/pids.txt";
+    // The ASAN lanes run every test with no-orphans on. That makes the kernel
+    // SIGKILL the grandchild when the worker dies, before the coordinator's
+    // SIGTERM (the path under test) can reach it.
+    const env: Record<string, string | undefined> = { ...bunEnv, PIDS: pids };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    const read = async (re: RegExp) => [...(await Bun.file(pids).text()).matchAll(re)].map(m => Number(m[1]));
+    const grandchildren = await read(/^grandchild=(\d+)$/gm);
+    let terminated: number[] = [];
+    try {
+      // The coordinator signals the group when it reaps the worker. The
+      // grandchildren need a moment to handle SIGTERM and log it.
+      for (let i = 0; i < 120; i++) {
+        terminated = await read(/^terminated=(\d+)$/gm);
+        if (terminated.length >= grandchildren.length) break;
+        await Bun.sleep(25);
+      }
+    } finally {
+      // Clean up survivors so a failing run does not leak processes.
+      for (const pid of grandchildren)
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+    }
+
+    expect(stderr).toContain("worker crashed");
+    expect(stderr).toContain(" 2 fail");
+    expect(grandchildren).toHaveLength(2);
+    expect(terminated.sort()).toEqual(grandchildren.sort());
+    expect(exitCode).toBe(1);
+  },
+);
 
 test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {
   const files: Record<string, string> = {

@@ -1455,7 +1455,7 @@ pub(crate) fn parse_with_tag(
                 // check for absolute windows paths
                 #[cfg(windows)]
                 {
-                    if protocol == 1 && strings::starts_with_windows_drive_letter(dependency) {
+                    if protocol == 1 && strings::starts_with_windows_drive_letter_t(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
                             value: Value {

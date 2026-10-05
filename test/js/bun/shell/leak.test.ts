@@ -119,7 +119,7 @@ describe.concurrent("fd leak", () => {
       const impl = /* ts */ `
               import { heapStats } from "bun:jsc";
               const TestBuilder = createTestBuilder(import.meta.path);
-              const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+              const rss = process.memoryUsage.rss;
 
               const threshold = ${threshold}
               let prev: number | undefined = undefined;

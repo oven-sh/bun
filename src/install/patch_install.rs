@@ -6,7 +6,7 @@ use bun_ast::{Loc, Log};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths as path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
@@ -393,7 +393,7 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
 
-        let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
         // 1. Parse the patch file
         let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
@@ -567,7 +567,7 @@ impl PatchTask {
         }
 
         // 6. rename to cache dir
-        let mut path_in_tmpdir_buf = PathBuffer::uninit();
+        let mut path_in_tmpdir_buf = bun_paths::path_buffer_pool::get();
         let path_in_tmpdir = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut path_in_tmpdir_buf.0,
             &[
@@ -608,7 +608,7 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &calc_hash.patchfile_path;
 
-        let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
         // parse the patch file
         let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
@@ -766,7 +766,7 @@ impl PatchTask {
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
-        let mut folder_path_buf = PathBuffer::uninit();
+        let mut folder_path_buf = bun_paths::path_buffer_pool::get();
         let stuff = package_manager::compute_cache_dir_and_subpath(
             pkg_manager,
             &pkg_name_slice,

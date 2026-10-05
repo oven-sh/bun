@@ -160,6 +160,7 @@ declare global {
       };
       binding(m: "uv"): {
         errname(code: number): string;
+        getErrorMap(): Map<number, [name: string, description: string]>;
         UV_E2BIG: number;
         UV_EACCES: number;
         UV_EADDRINUSE: number;

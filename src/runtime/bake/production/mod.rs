@@ -125,6 +125,13 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
+        vm.worker_preloads.set(ctx.preloads.clone());
+        vm.worker_eval_preloads.set(ctx.worker_eval_preloads.clone());
+        vm.worker_preload_require_start.set(ctx.worker_preload_require_start);
+        vm.worker_preload_require_count.set(ctx.worker_preload_require_count);
+        vm.worker_eval_mode.set(ctx.worker_eval_mode);
+        vm.preload_require_start.set(ctx.worker_preload_require_start);
+        vm.preload_require_count.set(ctx.worker_preload_require_count);
     vm.transpiler.with_mut(|b| {
         // `BundleOptions.install` is `Option<NonNull<_>>`, so no
         // lifetime-extension cast is needed.

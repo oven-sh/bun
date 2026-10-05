@@ -762,8 +762,10 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         GlobalCache::disable
     };
 
+    let require_start = vm.preload_require_start.get();
+    let require_end = require_start.saturating_add(vm.preload_require_count.get());
     // Nothing writes `vm.preload` meanwhile: `reload()` defers while `is_in_preload`.
-    for preload_slice in vm.preload.get() {
+    for (i, preload_slice) in vm.preload.get().iter().enumerate() {
         // Strip "file://".
         let normalized: &[u8] = preload_slice
             .strip_prefix(b"file://".as_slice())
@@ -775,12 +777,17 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
+            let import_kind = if i >= require_start && i < require_end {
+                ImportKind::Require
+            } else {
+                ImportKind::Stmt
+            };
             // SAFETY: nothing up the stack borrows the resolver.
             let mut result = match unsafe {
                 (*transpiler).resolver.resolve_and_auto_install(
                     top_level_dir,
                     normalized,
-                    ImportKind::Stmt,
+                    import_kind,
                     global_cache,
                 )
             } {

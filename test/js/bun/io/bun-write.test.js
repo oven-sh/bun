@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -22,6 +23,67 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
+
+  // The macOS fcopyfile fallback must still read non-seekable sources sequentially.
+  it.skipIf(!isMacOS || !Bun.which("cc"))("copies piped stdin to a file when fcopyfile returns EBADF", async () => {
+    using dir = tempDir("bun-write-fcopyfile-fallback", {
+      "fault.c": `
+        #include <copyfile.h>
+        #include <errno.h>
+        #include <stdint.h>
+        static int fail_fcopyfile(int from, int to, copyfile_state_t state, copyfile_flags_t flags) {
+          errno = EBADF;
+          return -1;
+        }
+        __attribute__((used)) static struct {
+          const void *replacement;
+          const void *original;
+        } hook __attribute__((section("__DATA,__interpose"))) = {
+          (const void *)(uintptr_t)&fail_fcopyfile,
+          (const void *)(uintptr_t)&fcopyfile,
+        };
+      `,
+    });
+    const library = join(String(dir), "fault.dylib");
+    await using compiler = Bun.spawn({
+      cmd: [Bun.which("cc"), "-dynamiclib", join(String(dir), "fault.c"), "-o", library],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [compileOut, compileErr, compileExit] = await Promise.all([
+      compiler.stdout.text(),
+      compiler.stderr.text(),
+      compiler.exited,
+    ]);
+    expect({ stdout: compileOut, stderr: compileErr, exitCode: compileExit }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const contents = Buffer.alloc(8193, 0x5a);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'console.log(await Bun.write("output", Bun.stdin))'],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        DYLD_INSERT_LIBRARIES: [library, bunEnv.DYLD_INSERT_LIBRARIES].filter(Boolean).join(":"),
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(contents);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+      proc.stdin.end(),
+    ]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "8193\n", stderr: "", exitCode: 0 });
+    expect(await Bun.file(join(String(dir), "output")).bytes()).toEqual(contents);
+  });
 
   it("Bun.write blob", async () => {
     using tmpbase = tempDir("bun-write-blob", {});

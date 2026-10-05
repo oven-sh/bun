@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -917,6 +918,80 @@ describe("writeFile with a preallocate-sized buffer", () => {
 });
 
 describe("copyFileSync", () => {
+  describe.skipIf(!isMacOS)("/dev/fd sources", () => {
+    for (const [api, copy] of [
+      ["sync", fs.copyFileSync],
+      ["callback", promisify(fs.copyFile)],
+      ["promise", fs.promises.copyFile],
+    ] as const) {
+      for (const sourceKind of ["descriptor", "symlink"] as const) {
+        for (const mode of [0, constants.COPYFILE_FICLONE]) {
+          it.each([131072, 131073, 172832])(`${api} copies a ${sourceKind} at %i bytes (mode ${mode})`, async size => {
+            const contents = Buffer.alloc(size, 0x5a);
+            contents[0] = 0x41;
+            contents[1] = 0x42;
+            using dir = tempDir("copy-devfd", {
+              source: contents,
+              destination: Buffer.alloc(size + 16, 0x7f),
+            });
+            const fd = openSync(join(String(dir), "source"), "r");
+            try {
+              expect(readSync(fd, Buffer.alloc(1), 0, 1, null)).toBe(1);
+              let source = `/dev/fd/${fd}`;
+              if (sourceKind === "symlink") {
+                const link = join(String(dir), "source-link");
+                symlinkSync(source, link);
+                source = link;
+              }
+              const destination = join(String(dir), "destination");
+              await copy(source, destination, mode);
+              expect(readFileSync(destination)).toEqual(contents);
+              expect(readFileSync(join(String(dir), "source"))).toEqual(contents);
+              expect(fstatSync(fd).size).toBe(size);
+              const next = Buffer.alloc(1);
+              expect(readSync(fd, next, 0, 1, null)).toBe(1);
+              expect(next[0]).toBe(contents[1]);
+            } finally {
+              closeSync(fd);
+            }
+          });
+        }
+      }
+
+      it(`${api} does not fall back from forced cloning of /dev/fd`, async () => {
+        using dir = tempDir("copy-devfd-force", { source: Buffer.alloc(172832, 0x5a) });
+        const fd = openSync(join(String(dir), "source"), "r");
+        try {
+          const destination = join(String(dir), "destination");
+          await expect(
+            Promise.resolve().then(() => copy(`/dev/fd/${fd}`, destination, constants.COPYFILE_FICLONE_FORCE)),
+          ).rejects.toThrow(expect.objectContaining({ code: "EINVAL" }));
+          expect(existsSync(destination)).toBe(false);
+          expect(fstatSync(fd).size).toBe(172832);
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      it(`${api} preserves an existing destination with COPYFILE_EXCL`, async () => {
+        using dir = tempDir("copy-devfd-exclusive", {
+          source: Buffer.alloc(172832, 0x5a),
+          destination: "keep me",
+        });
+        const fd = openSync(join(String(dir), "source"), "r");
+        try {
+          const destination = join(String(dir), "destination");
+          await expect(
+            Promise.resolve().then(() => copy(`/dev/fd/${fd}`, destination, constants.COPYFILE_EXCL)),
+          ).rejects.toThrow(expect.objectContaining({ code: "EEXIST" }));
+          expect(readFileSync(destination, "utf8")).toBe("keep me");
+        } finally {
+          closeSync(fd);
+        }
+      });
+    }
+  });
+
   it("should work for files < 128 KB", () => {
     const tempdir = tmpdirTestMkdir();
 

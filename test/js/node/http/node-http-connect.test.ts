@@ -1237,6 +1237,7 @@ describe("HTTP server CONNECT", () => {
   ])("https upgrade sockets honor the %s half-open policy", async (_label, expected) => {
     const fixture = /* js */ `
       const https = require("node:https");
+      const tls = require("node:tls");
       const explicit = process.env.ALLOW_HALF_OPEN === "true";
       const deadline = setTimeout(() => {
         console.error("upgrade socket did not close");
@@ -1262,17 +1263,15 @@ describe("HTTP server CONNECT", () => {
             console.log("server:close");
           });
         });
-        request.destroy();
+        request.end();
       });
       server.listen(0, "127.0.0.1", () => {
-        request = https.request({
-          hostname: "127.0.0.1",
+        request = tls.connect({
+          host: "127.0.0.1",
           port: server.address().port,
           rejectUnauthorized: false,
-          headers: { Connection: "Upgrade", Upgrade: "websocket" },
-        });
+        }, () => request.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n"));
         request.on("error", () => {});
-        request.end();
       });
     `;
     await using proc = Bun.spawn({

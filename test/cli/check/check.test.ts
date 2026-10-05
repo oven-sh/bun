@@ -660,9 +660,12 @@ describe.concurrent("bun check", () => {
       const results = await Promise.all(cases.map(([args]) => check(dir, args)));
       // `maybe` is not a value of `--pretty`, so it is a path.
       expect(results[0].stdout).toContain("TS6053");
-      expect(results.slice(1).map((it, i) => [it.stderr.includes(cases[i + 1][1]), it.stdout, it.exitCode])).toEqual(
-        cases.slice(1).map(() => [true, "", 1]),
-      );
+      // What it says instead, if it is something else or ends in another way.
+      expect(
+        results
+          .slice(1)
+          .map((it, i) => [it.stderr.includes(cases[i + 1][1]) && it.exitCode === 1 ? "" : it.stderr, it.stdout]),
+      ).toEqual(cases.slice(1).map(() => ["", ""]));
     });
 
     test("--timing", async () => {

@@ -88,8 +88,9 @@ fn parse(args: &[&ZStr]) -> Options {
         Global::exit(0);
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
-        let path = bun_core::ZBox::from_bytes(cwd);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&path) {
+        // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
+        let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+        if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
                 "Could not change directory to \"{}\"",

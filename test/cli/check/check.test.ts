@@ -164,6 +164,7 @@ describe.concurrent("bun check", () => {
       "node_modules/installed/package.json": `{ "name": "installed", "version": "1.0.0" }`,
     });
     using unlisted = project({ "a.ts": `import "unlisted";\n`, "package.json": JSON.stringify(manifest) });
+    using plugAndPlay = project({ "a.ts": source, "package.json": JSON.stringify(manifest), ".pnp.cjs": "" });
     // In a workspace, what a package lists may be installed at the root.
     using workspace = project({
       "packages/a/a.ts": `import "react";\nimport "@scope/a";\n`,
@@ -173,15 +174,38 @@ describe.concurrent("bun check", () => {
     const bun = { "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, types: ["bun"] } }), "a.ts": "" };
     using listed = project({ ...bun, "package.json": `{ "devDependencies": { "@types/bun": "1" } }` });
     using notListed = project({ ...bun, "package.json": `{}` });
-    const results = await Promise.all([none, one, unlisted, workspace, listed, notListed].map(dir => check(dir)));
+    // What it declares is used, and `types` does not ask for it.
+    using used = project({
+      "console.d.ts": "",
+      "a.ts": `import "bun:test";\nconsole.log(Bun.version);\n`,
+      "package.json": `{ "devDependencies": { "@types/bun": "1" } }`,
+    });
+    // An optional peer of a package: the project does not list it, and `bun install` does not install it.
+    using ofAPackage = project({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, skipLibCheck: false } }),
+      "a.ts": `import "installed";\n`,
+      "package.json": JSON.stringify(manifest),
+      "node_modules/installed/package.json": `{ "name": "installed", "version": "1.0.0", "types": "index.d.ts", "peerDependencies": { "peer": "1" } }`,
+      "node_modules/installed/index.d.ts": `import "peer";\nexport {};\n`,
+    });
+    // It is not Bun's to declare.
+    using dom = project({ "a.ts": `export const a = document;\n` });
+    const projects = [none, one, unlisted, plugAndPlay, workspace, listed, notListed, used, ofAPackage, dom];
+    const results = await Promise.all(projects.map(dir => check(dir)));
     expect(results.map(it => note(it.stderr))).toEqual([
       ["note: 3 dependencies in package.json are not installed. Run: bun install"],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       [],
+      [],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       ["note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"],
+      ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      [],
+      [],
     ]);
+    expect(results.at(-2)!.stdout).toContain("node_modules/installed/index.d.ts(1,8): error TS2882");
+    expect(results.at(-1)!.stdout).toContain("TS2584: Cannot find name 'document'.");
   });
 
   // `lib.*.d.ts` are in the executable, so they are those of the TypeScript that the type checker is a port of.
@@ -195,6 +219,17 @@ describe.concurrent("bun check", () => {
         "index.ts(2,14): error TS2322: Type 'number | undefined' is not assignable to type 'string'.
           Type 'undefined' is not assignable to type 'string'."
       `);
+      expect(exitCode).toBe(1);
+    });
+
+    // Nothing in it is about the type checker.
+    test("bunfig.toml is not read", async () => {
+      using dir = project({
+        "index.ts": `export const a: number = "1";\n`,
+        "bunfig.toml": `[install]\nglobalDir = 1\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`index.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
       expect(exitCode).toBe(1);
     });
 

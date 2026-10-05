@@ -1502,7 +1502,6 @@ pub(crate) mod command {
 
         // `bun --check` is `bun check`, also where that is a script.
         if tag == Tag::AutoCommand && ctx.runtime_options.check {
-            ::bun_bunfig::arguments::load_config(Tag::InstallCommand, None, ctx)?;
             super::check_command::CheckCommand::exec_without_arguments();
         }
 
@@ -1577,10 +1576,8 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
-        // CheckCommand parses its own argv. The context holds `install.globalDir` of bunfig,
-        // which is read as `bun install` reads it.
-        let ctx = init(Tag::CheckCommand, log)?;
-        ::bun_bunfig::arguments::load_config(Tag::InstallCommand, None, ctx)?;
+        // CheckCommand parses its own argv.
+        init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
         super::check_command::CheckCommand::exec(&argv[2.min(argv.len())..])
     }

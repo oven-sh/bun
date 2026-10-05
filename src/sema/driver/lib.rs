@@ -777,14 +777,21 @@ fn dependencies_not_installed(
     // The name of a package in each message, and the package that has its types.
     let mut missing: Vec<(&[u8], Vec<u8>)> = Vec::new();
     for reported in diagnostics {
+        // What a package needs and does not have is not for `bun install` here to install.
+        if strings::contains(&reported.path, b"/node_modules/") {
+            continue;
+        }
         let before: &[u8] = match reported.code {
             2307 => b"Cannot find module '",
             2688 => b"Cannot find type definition file for '",
             2882 => b"Cannot find module or type declarations for side-effect import of '",
-            _ => continue,
+            _ => b"",
         };
-        let Some(specifier) = reported.text.strip_prefix(before) else {
-            continue;
+        let specifier = match reported.text.strip_prefix(before) {
+            // `console`, `Bun`, `bun:test`
+            _ if format::is_about_bun_types(reported) => b"bun'",
+            Some(specifier) if !before.is_empty() => specifier,
+            _ => continue,
         };
         let specifier = &specifier[..strings::index_of_char_usize(specifier, b'\'').unwrap_or(0)];
         if specifier.is_empty()
@@ -812,6 +819,10 @@ fn dependencies_not_installed(
         let Some(manifest) = { manifest }.find(|path| host.is_file(path)) else {
             continue;
         };
+        // Yarn Plug'n'Play installs no `node_modules`.
+        if ancestors(from).any(|dir| host.is_file(&join(dir, b".pnp.cjs"))) {
+            continue;
+        }
         let text = host.read(&manifest);
         let Some(json) = text.and_then(|text| host.parse_package_json(&arena, &text)) else {
             continue;

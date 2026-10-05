@@ -565,8 +565,11 @@ These differences are intentional:
 - **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A misspelled compiler option gets a suggestion.** For `"strct": true`, `bun check` reports `TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?`. `tsc` reports `TS5023: Unknown compiler option 'strct'.`
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
+- **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that says to run `bun install`.
 - **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
 - **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.
+
+`bun check` finds packages in `node_modules`, like `tsc`. It does not support Yarn Plug'n'Play. In a Yarn project, set `nodeLinker: node-modules` in `.yarnrc.yml`.
 
 ## CLI usage
 

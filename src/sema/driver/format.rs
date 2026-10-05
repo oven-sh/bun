@@ -622,9 +622,15 @@ pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
 /// Whether any diagnostic is about a global or module that `@types/bun` declares.
 fn is_missing_bun_types(report: &Report) -> bool {
-    report.diagnostics.iter().any(|d| match d.code {
-        // `Cannot find name 'console'. Do you need to change your target library? ..`
-        2584 => true,
+    report.diagnostics.iter().any(is_about_bun_types)
+}
+
+/// Whether `d` is about a global or module that `@types/bun` declares.
+pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
+    match d.code {
+        // `Cannot find name 'console'. Do you need to change your target library? ..` It is also
+        // what `document` gets, which is not Bun's.
+        2584 => d.text.starts_with(b"Cannot find name 'console'."),
         // `Cannot find module 'bun:test' or its corresponding type declarations.`
         2307 => {
             d.text.starts_with(b"Cannot find module 'bun:")
@@ -636,7 +642,7 @@ fn is_missing_bun_types(report: &Report) -> bool {
             .text
             .starts_with(b"Cannot find type definition file for 'bun'."),
         _ => false,
-    })
+    }
 }
 
 /// Warnings, notes, the error count, then a per-file error count for every file.

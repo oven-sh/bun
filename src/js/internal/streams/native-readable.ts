@@ -190,14 +190,14 @@ function read(this: NativeReadable, maxToRead: number) {
           `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
         );
         this[kPendingRead] = false;
-        this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+        handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
         errorOrDestroy(this, reason);
       },
     );
   } else {
-    this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    handleResult(this, result, chunk, this[kCloseState][0]);
   }
 }
 
@@ -207,16 +207,15 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
     if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);
     }
-    return handleNumberResult(stream, result, chunk, isClosed);
+    handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
     $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
     process.nextTick(pushEof, stream);
-    return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);
     }
-    return handleArrayBufferViewResult(stream, result, chunk, isClosed);
+    handleArrayBufferViewResult(stream, result, isClosed);
   } else {
     $assert(false, "Invalid result from pull");
   }
@@ -257,7 +256,8 @@ function readAfterListenerThrow(stream: NativeReadable) {
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {
   if (result > 0) {
     const slice = chunk.subarray(0, result);
-    chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
+    // Before the push: a 'data' listener can read again or throw, and the next pull must not write over `slice`.
+    stream[kRemainingChunk] = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
     if (slice.byteLength > 0) {
       pushAndCheck(stream, slice);
     }
@@ -266,11 +266,9 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   if (isClosed) {
     process.nextTick(pushEof, stream);
   }
-
-  return chunk;
 }
 
-function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk: any, isClosed: boolean) {
+function handleArrayBufferViewResult(stream: NativeReadable, result: any, isClosed: boolean) {
   if (result.byteLength > 0) {
     pushAndCheck(stream, result);
   }
@@ -278,8 +276,6 @@ function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk:
   if (isClosed) {
     process.nextTick(pushEof, stream);
   }
-
-  return chunk;
 }
 
 function adjustHighWaterMark(stream: NativeReadable) {

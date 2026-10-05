@@ -56,6 +56,7 @@ const env = {
   GITHUB_WORKSPACE: undefined,
   // Of the script that runs the tests.
   npm_lifecycle_event: undefined,
+  npm_package_json: undefined,
   BUN_INTERNAL_CHECK_SCRIPTS: undefined,
   NO_COLOR: "1",
   // Prevent fallback to globally installed packages.
@@ -601,6 +602,80 @@ describe.concurrent("bun check", () => {
         "../../other.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
         a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."
       `);
+    });
+
+    test("every spelling of a flag", async () => {
+      using dir = project({
+        "a.ts": `export const a: string = 1;\n`,
+        "other/tsconfig.json": tsconfig,
+        "other/b.ts": `export const b: string = 1;\n`,
+      });
+      const error = (file: string) => `${file}(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+      const whole = `${error("a.ts")}\n${error("other/b.ts")}`;
+      const cases: [string[], string][] = [
+        [[], whole],
+        // One line per error, whatever else is said.
+        [["--no-pretty"], whole],
+        [["--pretty", "--no-pretty"], whole],
+        [["--no-pretty", "--pretty"], whole],
+        // It never emits.
+        [["--no-emit"], whole],
+        [["--noEmit"], whole],
+        [["-p", "other"], error("other/b.ts")],
+        [["--project", "other"], error("other/b.ts")],
+        [["--project=other"], error("other/b.ts")],
+        [["--tsconfig-override", "other/tsconfig.json"], error("other/b.ts")],
+        [["-b", "other"], error("other/b.ts")],
+        [["--build", "other"], error("other/b.ts")],
+        [["--build", "-p", "other"], error("other/b.ts")],
+        [["-b"], whole],
+        [["--cwd", "other"], error("b.ts")],
+        [["--cwd=other"], error("b.ts")],
+        [["--threads", "1"], whole],
+        [["--threads=2"], whole],
+      ];
+      const results = await Promise.all(cases.map(([args]) => check(dir, args)));
+      expect(results.map((it, i) => [cases[i][0], it.stdout, it.exitCode])).toEqual(
+        cases.map(([args, stdout]) => [args, stdout, 1]),
+      );
+    });
+
+    test("a flag with a value that it does not take", async () => {
+      using dir = project({ "a.ts": `export const a = 1;\n` });
+      const cases: [string[], string][] = [
+        [["--pretty", "maybe", "a.ts"], ""],
+        [["--pretty=maybe"], `--pretty does not take "maybe"`],
+        [["--threads", "0"], `--threads takes a number above zero, not "0"`],
+        [["--threads", "many"], `--threads takes a number above zero, not "many"`],
+        [["-b", "a", "b"], `--build takes one project`],
+        [["-b", "-p", "a", "b"], `--build takes one project`],
+        [["--cwd", "nowhere"], `Could not change directory to "nowhere"`],
+      ];
+      const results = await Promise.all(cases.map(([args]) => check(dir, args)));
+      // `maybe` is not a value of `--pretty`, so it is a path.
+      expect(results[0].stdout).toContain("TS6053");
+      expect(results.slice(1).map((it, i) => [it.stderr.includes(cases[i + 1][1]), it.stdout, it.exitCode])).toEqual(
+        cases.slice(1).map(() => [true, "", 1]),
+      );
+    });
+
+    test("--timing", async () => {
+      using dir = project({ "a.ts": `export const a = 1;\n` });
+      const [timed, plain] = await Promise.all([check(dir, ["--timing"]), check(dir)]);
+      expect(timed.stderr).toMatch(/\d+ files loaded in [\d.]+ms, \d+ checked in [\d.]+ms/);
+      expect(plain.stderr).not.toContain("files loaded in");
+      expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
+    });
+
+    test("two directories", async () => {
+      using dir = project({
+        "a/a.ts": `export const a: string = 1;\n`,
+        "b/b.ts": `export const b: string = 1;\n`,
+        "c/c.ts": `export const c: string = 1;\n`,
+      });
+      const error = (file: string) => `${file}(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+      const { stdout } = await check(dir, ["a", "b"]);
+      expect(stdout).toBe(`${error("a/a.ts")}\n${error("b/b.ts")}`);
     });
 
     test("a flag before `--pretty false` keeps its own value", async () => {
@@ -13925,6 +14000,12 @@ export function f<T>(rest: T) {
     });
   });
 
+  test("-h is --help", async () => {
+    using dir = project({});
+    const [short, long] = await Promise.all([check(dir, ["-h"]), check(dir, ["--help"])]);
+    expect([short.stdout, short.exitCode]).toEqual([long.stdout, 0]);
+  });
+
   test("--help", async () => {
     using dir = project({});
     const { stdout, exitCode } = await check(dir, ["--help"]);
@@ -14122,6 +14203,16 @@ describe.concurrent("--check", () => {
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
   });
 
+  test("bun --check -e: there is no file to check", async () => {
+    using dir = project({});
+    const { stdout, exitCode } = await run(String(dir), [
+      "--check",
+      "-e",
+      `const n: number = "1"; console.log("ran", n)`,
+    ]);
+    expect([stdout, exitCode]).toEqual(["ran 1", 0]);
+  });
+
   // These take a shorter way to the file, on which less is set up.
   test("bun --check with an entry point that starts with `./` or is absolute", async () => {
     using dir = project({
@@ -14174,6 +14265,29 @@ describe.concurrent("--check", () => {
     expect(without.stderr).toContain("TS2307");
     expect(alone.stdout + ran.stderr + built.stderr).not.toContain("TS2307");
     expect([alone.exitCode, ran.stdout, ran.exitCode, built.exitCode]).toEqual([0, "ran 1", 0, 0]);
+  });
+
+  // npm, pnpm and yarn say which script they run, and the first two of which package.
+  test("a `check` script that another package manager runs", async () => {
+    using dir = project({
+      "a.ts": `export const a: number = "1";\n`,
+      "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+      "other/package.json": JSON.stringify({ scripts: { check: "echo no" } }),
+    });
+    const own = join(String(dir), "package.json");
+    const other = join(String(dir), "other", "package.json");
+    const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const cases: [Record<string, string>, string][] = [
+      [{}, "the script ran"],
+      [{ npm_lifecycle_event: "lint" }, "the script ran"],
+      // In the script, `bun check` is the type checker.
+      [{ npm_lifecycle_event: "check" }, error],
+      [{ npm_lifecycle_event: "check", npm_package_json: own }, error],
+      // The script of another package is running.
+      [{ npm_lifecycle_event: "check", npm_package_json: other }, "the script ran"],
+    ];
+    const results = await Promise.all(cases.map(([extra]) => check(dir, [], extra)));
+    expect(results.map(it => it.stdout)).toEqual(cases.map(it => it[1]));
   });
 
   test("the `check` scripts of several packages are scripts, and each runs once", async () => {

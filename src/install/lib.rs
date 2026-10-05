@@ -403,16 +403,18 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
-    /// at runtime via GetTempPathW, so this constant is POSIX-only.
-    ///
-    /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// Basename of the shared `node` / `bun` shim directory (ASCII-only).
+    pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
+        "bun-node-debug"
+    } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+        "bun-node"
+    } else {
+        const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
+    };
+
+    /// `/tmp/bun-node-<sha>`. Windows picks its directory at runtime in `windows_node_shim`.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
         use const_format::concatcp;
         const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
@@ -421,14 +423,7 @@ impl RunCommand {
         } else {
             "/tmp"
         };
-        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
-        } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
-        };
-        concatcp!(TMP, SUFFIX)
+        concatcp!(TMP, "/", RunCommand::BUN_NODE_DIR_NAME)
     };
 
     #[cfg(not(windows))]
@@ -562,13 +557,6 @@ impl RunCommand {
                 }
             };
 
-            #[cfg(bun_debug)]
-            {
-                // Debug-only cleanup; failures are ignored. The EEXIST branch
-                // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
-            }
-
             const NODE_LINK: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
@@ -597,9 +585,10 @@ impl RunCommand {
                             == bun_sys::FileKind::Directory
                             && st.st_uid == bun_sys::c::getuid()
                             && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
-                    _ => return Ok(()),
+                    Ok(_) => return Err(bun_errno::SystemErrno::EACCES.into()),
+                    Err(e) => return Err(e.into()),
                 },
-                Err(_) => return Ok(()),
+                Err(e) => return Err(e.into()),
             }
 
             for dest in [NODE_LINK, BUN_LINK] {
@@ -625,7 +614,7 @@ impl RunCommand {
                             let _ = bun_sys::unlink(dest);
                             replaced = true;
                         }
-                        Err(_) => return Ok(()),
+                        Err(e) => return Err(e.into()),
                     }
                 }
             }
@@ -644,113 +633,389 @@ impl RunCommand {
 
         #[cfg(windows)]
         {
-            use bun_core::strings;
-            use bun_sys::windows as win;
-
-            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
-            let prefix: &[u16] = strings::w!("\\??\\");
-
-            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
-            // trailing NUL) into the offset slice; we reserve `prefix.len()` at
-            // the front for the NT object prefix.
-            let len = unsafe {
-                win::GetTempPathW(
-                    (target_path_buffer.len() - prefix.len()) as u32,
-                    target_path_buffer.as_mut_ptr().add(prefix.len()),
-                )
-            } as usize;
-            if len == 0 {
-                // Non-fatal; fall through and leave
-                // PATH unmodified. (No `RUN` scope is declared in this crate.)
-                return Ok(());
-            }
-
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-
-            // The dir name is ASCII-only, so widen the const `&str` byte-by-
-            // byte into a small stack buffer at runtime (Rust macros require a
-            // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
-            };
-            let mut dir_name_buf = [0u16; 64];
-            for (i, b) in dir_name_str.bytes().enumerate() {
-                debug_assert!(b < 0x80, "dir_name is ASCII-only");
-                dir_name_buf[i] = b as u16;
-            }
-            let dir_name: &[u16] = &dir_name_buf[..dir_name_str.len()];
-            target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
-            let dir_slice_len = prefix.len() + len + dir_name.len();
-
-            #[cfg(bun_debug)]
-            {
-                // Debug builds wipe and recreate the bun-node temp dir so the
-                // ALREADY_EXISTS short-circuit below never reuses a stale
-                // hardlink at a previous debug binary.
-                //
-                // The wipe does not always leave the path absent:
-                // `bun-run.test.ts` uses
-                // `describe.concurrent`, so multiple debug processes race on
-                // this shared dir and `make_dir` can legitimately observe
-                // `PathAlreadyExists` after a sibling re-created it. Swallow
-                // the error — the `CreateHardLinkW` retry below already
-                // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
-                    &target_path_buffer[..dir_slice_len],
-                );
-                let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
-                let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
-            }
-
-            let image_path = win::exe_path_w();
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
-                target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `target_path_buffer` is mutated in place between FFI calls
-                // (the dir-NUL/backslash toggle below).
-                // Under Stacked Borrows a `*const` derived via `Deref::deref`
-                // is invalidated by the intervening `&mut` from `IndexMut`, so
-                // re-derive `as_ptr()` at each FFI call site instead of caching.
-                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0
-                {
-                    match win::Win32Error::get() {
-                        win::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
-                            target_path_buffer[dir_slice_len] = 0;
-                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
-                            // `dir_slice_len` was just set to NUL.
-                            let dir_w =
-                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
-                            let _ = bun_sys::mkdir_w(dir_w);
-                            target_path_buffer[dir_slice_len] = b'\\' as u16;
-
-                            if win::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
+            let shim = Self::windows_node_shim()?;
 
             if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
                 path.push(bun_paths::DELIMITER);
             }
 
-            // The reason for the extra delim is because we are going to append the system PATH
-            // later on. this is done by the caller, and explains why we are adding bun_node_dir
-            // to the end of the path slice rather than the start.
-            strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
+            path.extend_from_slice(&shim.dir);
             path.push(bun_paths::DELIMITER);
-            let _ = optional_bun_path;
+            if optional_bun_path.is_empty() {
+                *optional_bun_path = shim.bun_exe.as_bytes();
+            }
             Ok(())
+        }
+    }
+
+    /// Printed when no `node` shim could be created. The script still runs.
+    pub fn warn_node_shim_failed(err: crate::Error) {
+        bun_core::pretty_errorln!(
+            "<r><yellow>warn<r>: could not create the <b>node<r> alias for bun: {}. Scripts that run <b>node<r> will not find it.",
+            err
+        );
+    }
+}
+
+/// Where the Windows `node.exe` and `bun.exe` shims for the running bun live.
+#[cfg(windows)]
+pub struct WindowsNodeShim {
+    /// UTF-8, no trailing separator.
+    pub dir: Box<[u8]>,
+    /// UTF-8 `<dir>\node.exe`.
+    pub node_exe: bun_core::ZBox,
+    /// UTF-8 path of the running `bun.exe`.
+    pub bun_exe: bun_core::ZBox,
+}
+
+#[cfg(windows)]
+static WINDOWS_NODE_SHIM: std::sync::OnceLock<Result<WindowsNodeShim, crate::Error>> =
+    std::sync::OnceLock::new();
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum ShimKind {
+    /// Identity: volume serial + file index.
+    HardLink,
+    /// Identity: size + last-write time (`CopyFileW` preserves both; FAT rounds to 2 s).
+    Copy,
+}
+
+#[cfg(windows)]
+impl RunCommand {
+    /// Not sha-keyed: the directory belongs to one install and stale links are relinked.
+    const BESIDE_EXE_DIR_NAME: &'static str = "bun-node";
+
+    /// Plants the shims once per process: beside `bun.exe` (same volume), else under `%TEMP%`.
+    pub fn windows_node_shim() -> Result<&'static WindowsNodeShim, crate::Error> {
+        match WINDOWS_NODE_SHIM.get_or_init(Self::plant_windows_node_shim) {
+            Ok(shim) => Ok(shim),
+            Err(e) => Err(*e),
+        }
+    }
+
+    fn plant_windows_node_shim() -> Result<WindowsNodeShim, crate::Error> {
+        use bun_core::WStr;
+        use bun_sys::windows as win;
+
+        // Link the file a symlinked `bun.exe` (winget `Links`, mklink) resolves to.
+        let mut scratch = bun_paths::w_path_buffer_pool::get();
+        let mut image_buf = bun_paths::w_path_buffer_pool::get();
+        let launched = win::exe_path_w();
+        let (image, image_stat): (&WStr, Option<bun_sys::Stat>) =
+            match bun_sys::File::openat_os_path(bun_sys::Fd::cwd(), launched, bun_sys::O::RDONLY, 0)
+            {
+                Ok(file) => {
+                    let stat = file.stat().ok();
+                    match bun_sys::get_fd_path_w(file.fd(), &mut scratch[..]) {
+                        Ok(resolved) => {
+                            let len = resolved.len();
+                            image_buf[..len].copy_from_slice(resolved);
+                            image_buf[len] = 0;
+                            (WStr::from_buf(&image_buf[..], len), stat)
+                        }
+                        Err(_) => (launched, stat),
+                    }
+                }
+                Err(_) => (launched, None),
+            };
+        let exe_dir = bun_paths::resolve_path::dirname_w(image);
+
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+
+        // Running as a shim already (nested `--bun`): reuse its directory.
+        buf[..exe_dir.len()].copy_from_slice(exe_dir);
+        let len = if Self::ends_with_dir_name(exe_dir, Self::BESIDE_EXE_DIR_NAME)
+            || Self::ends_with_dir_name(exe_dir, Self::BUN_NODE_DIR_NAME)
+        {
+            exe_dir.len()
+        } else {
+            Self::append_dir_name(&mut buf, exe_dir.len(), Self::BESIDE_EXE_DIR_NAME)?
+        };
+        let beside_exe_err = match Self::plant_windows_node_shims_in(
+            &mut buf,
+            len,
+            image,
+            image_stat.as_ref(),
+            ShimKind::HardLink,
+        ) {
+            Ok(()) => return Ok(Self::windows_node_shim_at(&buf[..len], image)),
+            Err(e) => e,
+        };
+
+        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
+        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+        if temp_len == 0 || temp_len >= buf.len() {
+            return Err(beside_exe_err);
+        }
+        let mut temp_dir_len = temp_len;
+        while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
+            temp_dir_len -= 1;
+        }
+        let len = Self::append_dir_name(&mut buf, temp_dir_len, Self::BUN_NODE_DIR_NAME)?;
+        if Self::plant_windows_node_shims_in(
+            &mut buf,
+            len,
+            image,
+            image_stat.as_ref(),
+            ShimKind::HardLink,
+        )
+        .is_err()
+        {
+            Self::plant_windows_node_shims_in(
+                &mut buf,
+                len,
+                image,
+                image_stat.as_ref(),
+                ShimKind::Copy,
+            )?;
+        }
+        Ok(Self::windows_node_shim_at(&buf[..len], image))
+    }
+
+    /// `path` ends with `\<name>` (ASCII, case-insensitive).
+    fn ends_with_dir_name(path: &[u16], name: &str) -> bool {
+        path.len() > name.len()
+            && bun_paths::is_sep_any_t::<u16>(path[path.len() - name.len() - 1])
+            && path[path.len() - name.len()..]
+                .iter()
+                .zip(name.bytes())
+                .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
+    }
+
+    /// Appends `\<name>` to `buf[..dir_len]`, keeping room for `SHIM_NAME_ROOM`.
+    fn append_dir_name(buf: &mut [u16], dir_len: usize, name: &str) -> Result<usize, crate::Error> {
+        let len = dir_len + 1 + name.len();
+        if len + Self::SHIM_NAME_ROOM > buf.len() {
+            return Err(crate::Error::NameTooLong);
+        }
+        buf[dir_len] = b'\\' as u16;
+        for (dst, b) in buf[dir_len + 1..len].iter_mut().zip(name.bytes()) {
+            debug_assert!(b < 0x80, "shim dir names are ASCII-only");
+            *dst = b as u16;
+        }
+        Ok(len)
+    }
+
+    /// `\node.exe.<pid>.tmp\0` at its longest.
+    const SHIM_NAME_ROOM: usize = b"\\node.exe.".len() + 10 + b".tmp\0".len();
+
+    /// Plants both shims in `buf[..dir_len]`. In `Copy` mode `bun.exe` hard-links the `node.exe` copy.
+    fn plant_windows_node_shims_in(
+        buf: &mut [u16],
+        dir_len: usize,
+        image: &bun_core::WStr,
+        image_stat: Option<&bun_sys::Stat>,
+        kind: ShimKind,
+    ) -> Result<(), crate::Error> {
+        use bun_core::WStr;
+        use bun_core::strings;
+
+        let node = strings::w!("\\node.exe\0");
+        let mut made_dir = false;
+        Self::plant_windows_node_shim_file(
+            buf,
+            dir_len,
+            node,
+            image,
+            image_stat,
+            kind,
+            &mut made_dir,
+        )?;
+
+        let bun = strings::w!("\\bun.exe\0");
+        match kind {
+            ShimKind::HardLink => Self::plant_windows_node_shim_file(
+                buf,
+                dir_len,
+                bun,
+                image,
+                image_stat,
+                kind,
+                &mut made_dir,
+            ),
+            ShimKind::Copy => {
+                let mut node_path = bun_paths::w_path_buffer_pool::get();
+                let node_len = dir_len + node.len() - 1;
+                node_path[..node_len].copy_from_slice(&buf[..node_len]);
+                node_path[node_len] = 0;
+                let node_path = WStr::from_buf(&node_path[..], node_len);
+                let node_stat = bun_sys::File::openat_os_path(
+                    bun_sys::Fd::cwd(),
+                    node_path,
+                    bun_sys::O::RDONLY,
+                    0,
+                )
+                .and_then(|f| f.stat())
+                .ok();
+                // FAT volumes have no hard links: copy the copy.
+                Self::plant_windows_node_shim_file(
+                    buf,
+                    dir_len,
+                    bun,
+                    node_path,
+                    node_stat.as_ref(),
+                    ShimKind::HardLink,
+                    &mut made_dir,
+                )
+                .or_else(|_| {
+                    Self::plant_windows_node_shim_file(
+                        buf,
+                        dir_len,
+                        bun,
+                        node_path,
+                        node_stat.as_ref(),
+                        ShimKind::Copy,
+                        &mut made_dir,
+                    )
+                })
+            }
+        }
+    }
+
+    /// Keeps a matching shim, makes a missing one, renames a fresh one over a stale one.
+    fn plant_windows_node_shim_file(
+        buf: &mut [u16],
+        dir_len: usize,
+        name: &[u16],
+        src: &bun_core::WStr,
+        src_stat: Option<&bun_sys::Stat>,
+        kind: ShimKind,
+        made_dir: &mut bool,
+    ) -> Result<(), crate::Error> {
+        use bun_core::WStr;
+
+        buf[dir_len..][..name.len()].copy_from_slice(name);
+        let dest_len = dir_len + name.len() - 1;
+        loop {
+            let result = match Self::shim_matches(buf, dest_len, src_stat, kind) {
+                Some(true) => return Ok(()),
+                Some(false) => Self::replace_windows_node_shim(buf, dest_len, src, kind),
+                None => match kind {
+                    ShimKind::HardLink => match bun_sys::link_w(src, WStr::from_buf(buf, dest_len))
+                    {
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+                            // Another process made it first. Keep it when it matches.
+                            if Self::shim_matches(buf, dest_len, src_stat, kind) == Some(true) {
+                                return Ok(());
+                            }
+                            Self::replace_windows_node_shim(buf, dest_len, src, kind)
+                        }
+                        other => other,
+                    },
+                    ShimKind::Copy => Self::replace_windows_node_shim(buf, dest_len, src, kind),
+                },
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(_) if !*made_dir => {
+                    *made_dir = true;
+                    buf[dir_len] = 0;
+                    match bun_sys::mkdir_w(WStr::from_buf(buf, dir_len)) {
+                        Ok(()) => {}
+                        Err(m) if m.get_errno() == bun_sys::E::EEXIST => {}
+                        Err(m) => return Err(m.into()),
+                    }
+                    buf[dir_len..][..name.len()].copy_from_slice(name);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    /// `None` when no file is at `buf[..dest_len]`. Without `src_stat`, never a match.
+    fn shim_matches(
+        buf: &[u16],
+        dest_len: usize,
+        src_stat: Option<&bun_sys::Stat>,
+        kind: ShimKind,
+    ) -> Option<bool> {
+        let dest = bun_sys::File::openat_os_path(
+            bun_sys::Fd::cwd(),
+            bun_core::WStr::from_buf(buf, dest_len),
+            bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+            0,
+        )
+        .and_then(|f| f.stat());
+        let dest = match dest {
+            Ok(st) => st,
+            Err(e) if e.get_errno() == bun_sys::E::ENOENT => return None,
+            Err(_) => return Some(false),
+        };
+        let Some(src) = src_stat else {
+            return Some(false);
+        };
+        Some(match kind {
+            ShimKind::HardLink => dest.st_dev == src.st_dev && dest.st_ino == src.st_ino,
+            ShimKind::Copy => {
+                dest.st_size == src.st_size && (dest.mtim.sec - src.mtim.sec).abs() <= 2
+            }
+        })
+    }
+
+    /// Makes the shim as `<dest>.<pid>.tmp`, then renames it over `<dest>`.
+    fn replace_windows_node_shim(
+        buf: &mut [u16],
+        dest_len: usize,
+        src: &bun_core::WStr,
+        kind: ShimKind,
+    ) -> bun_sys::Maybe<()> {
+        use bun_core::WStr;
+        use bun_core::strings;
+        use bun_sys::windows as win;
+
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+
+        let mut dest = bun_paths::w_path_buffer_pool::get();
+        dest[..dest_len].copy_from_slice(&buf[..dest_len]);
+        dest[dest_len] = 0;
+
+        let mut tmp_len = dest_len;
+        buf[tmp_len] = b'.' as u16;
+        tmp_len += 1;
+        let mut pid_buf = bun_core::fmt::ItoaBuf::new();
+        for &b in bun_core::fmt::itoa(&mut pid_buf, win::GetCurrentProcessId()) {
+            buf[tmp_len] = b as u16;
+            tmp_len += 1;
+        }
+        let suffix = strings::w!(".tmp\0");
+        buf[tmp_len..][..suffix.len()].copy_from_slice(suffix);
+        tmp_len += suffix.len() - 1;
+        let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
+
+        match kind {
+            ShimKind::HardLink => bun_sys::link_w(src, WStr::from_buf(buf, tmp_len))?,
+            ShimKind::Copy => {
+                if let Err(err) = bun_sys::copy_file::copy_file(src, WStr::from_buf(buf, tmp_len)) {
+                    let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
+                    return Err(err);
+                }
+            }
+        }
+        // SAFETY: both arguments are NUL-terminated wide strings.
+        if unsafe {
+            win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
+        } == 0
+        {
+            let err = bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::rename);
+            let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
+            return Err(err);
+        }
+        buf[dest_len] = 0;
+        Ok(())
+    }
+
+    fn windows_node_shim_at(dir: &[u16], image: &bun_core::WStr) -> WindowsNodeShim {
+        use bun_core::strings;
+
+        let dir_utf8 = strings::to_utf8_alloc_with_type(dir);
+        let mut node_exe = Vec::with_capacity(dir_utf8.len() + b"\\node.exe".len());
+        node_exe.extend_from_slice(&dir_utf8);
+        node_exe.extend_from_slice(b"\\node.exe");
+        WindowsNodeShim {
+            dir: dir_utf8.into_boxed_slice(),
+            node_exe: bun_core::ZBox::from_vec(node_exe),
+            bun_exe: bun_core::ZBox::from_vec(strings::to_utf8_alloc_with_type(image)),
         }
     }
 }

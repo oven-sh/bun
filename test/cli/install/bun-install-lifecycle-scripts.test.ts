@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -3721,6 +3722,56 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
+
+    // https://github.com/oven-sh/bun/issues/44033 — the `node.exe` bun plants
+    // for scripts is a hard link, which cannot cross volumes. A %TEMP% on
+    // another drive (or one that does not exist) must not cost the script its
+    // `node`.
+    test.if(isWindows)("node works in lifecycle scripts when %TEMP% cannot hold the node shim", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: `node -p "require('fs').writeFileSync('postinstall.txt', process.execPath)"`,
+          },
+        }),
+      );
+
+      const missingTemp = join(packageDir, "missing", "deeper");
+      // No node anywhere: drop every spelling of PATH (Windows env keys are
+      // case-insensitive) and the NODE vars an outer `bun run` exports.
+      const spawnEnv = Object.fromEntries(
+        Object.entries(testEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
+      );
+      spawnEnv.PATH = (process.env.PATH ?? "")
+        .split(";")
+        .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+        .join(";");
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: { ...spawnEnv, TEMP: missingTemp, TMP: missingTemp },
+      });
+
+      const err = await stderr.text();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(await exited).toBe(0);
+
+      const execPath = await file(join(packageDir, "postinstall.txt")).text();
+      expect(execPath).toEndWith(`${sep}node.exe`);
+      expect(execPath).toContain(`${sep}bun-node`);
     });
 
     test("ensureTempNodeGypScript works", async () => {

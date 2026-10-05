@@ -1748,8 +1748,7 @@ impl RunCommand {
     #[cfg(not(windows))]
     pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
-    /// Returns the path to the
-    /// fake `node` shim that points back at the running `bun` binary.
+    /// Path of the fake `node` shim. On Windows, call after `create_fake_temporary_node_executable`.
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
@@ -1758,66 +1757,10 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
-            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
-            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
-            // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                    temp_path_buffer.as_mut_ptr(),
-                )
-            };
-            if len == 0 {
-                return Err(crate::Error::FailedToGetTempPath);
-            }
-
-            let converted = strings::convert_utf16_to_utf8_in_buffer(
-                &mut target_path_buffer,
-                &temp_path_buffer[..len as usize],
-            );
-
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
-            let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
-            target_path_buffer[total] = 0;
-
-            // Park the
-            // bytes in the per-process `runner_arena()` instead of leaking
-            // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] =
-                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(bun_install::RunCommand::windows_node_shim()?
+                .node_exe
+                .as_zstr())
         }
-    }
-
-    /// Creates
-    /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
-    /// links on Windows) pointing at the running `bun` binary, then appends
-    /// that directory to `path` so child processes resolve `node` to bun.
-    ///
-    /// Implementation lives in `bun_install::RunCommand` (lower tier) so the
-    /// package manager can call it without depending on `bun_runtime`; this is
-    /// a thin delegate so existing `Self::` callers keep compiling.
-    #[inline]
-    pub(crate) fn create_fake_temporary_node_executable(
-        path: &mut Vec<u8>,
-        optional_bun_path: &mut &[u8],
-    ) -> crate::Result<()> {
-        bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
-            .map_err(Into::into)
     }
 
     /// Prepends workspace
@@ -1881,19 +1824,10 @@ impl RunCommand {
             op.clone_from(&path);
         }
 
-        let bun_node_exe = Self::bun_node_file_utf8()?;
-        let bun_node_dir_win =
-            bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
-            .unwrap_or(false);
+        let found_node = !force_using_bun
+            && env_loader
+                .load_node_js_config(bun_paths::fs::FileSystem::instance(), b"")
+                .unwrap_or(false);
 
         let mut needs_to_force_bun = force_using_bun || !found_node;
         let mut optional_bun_self_path: &[u8] = b"";
@@ -1918,39 +1852,38 @@ impl RunCommand {
                 strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
         }
 
-        if needs_to_force_bun {
-            new_path_len += bun_node_dir_win.len() + 1;
-        }
-
         let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
 
         if needs_to_force_bun {
-            match Self::create_fake_temporary_node_executable(
+            match bun_install::RunCommand::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
             ) {
-                Ok(()) => {}
-                Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-                Err(other) => panic!(
-                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
-                    other.name()
-                ),
-            }
-
-            if !force_using_bun {
-                let env_mut = this_transpiler.env_mut();
-                env_mut
-                    .map
-                    .put(b"NODE", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_node_execpath", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_execpath", optional_bun_self_path)
-                    .unwrap_or_oom();
+                Ok(()) => {
+                    let bun_node_exe = Self::bun_node_file_utf8()?;
+                    let env_mut = this_transpiler.env_mut();
+                    if force_using_bun {
+                        let _ = env_mut.load_node_js_config(
+                            bun_paths::fs::FileSystem::instance(),
+                            bun_node_exe.as_bytes(),
+                        );
+                    } else {
+                        env_mut
+                            .map
+                            .put(b"NODE", bun_node_exe.as_bytes())
+                            .unwrap_or_oom();
+                        env_mut
+                            .map
+                            .put(b"npm_node_execpath", bun_node_exe.as_bytes())
+                            .unwrap_or_oom();
+                        env_mut
+                            .map
+                            .put(b"npm_execpath", optional_bun_self_path)
+                            .unwrap_or_oom();
+                    }
+                }
+                Err(bun_install::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
+                Err(other) => bun_install::RunCommand::warn_node_shim_failed(other),
             }
 
             needs_to_force_bun = false;

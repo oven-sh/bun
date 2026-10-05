@@ -1522,6 +1522,44 @@ test.each([
   expect(actual).toBe(expected);
 });
 
+test.each([
+  ["by default", ""],
+  ["with families", "useAOTFamilies=1"],
+  [
+    "with guards over whole functions",
+    "useAOTFamilies=1,useAOTGuardsOverWholeFunctions=1,useAOTGuardsOverWholeFunctionsWithHandlers=1",
+  ],
+])("builds are reproducible %s", async (_, options) => {
+  using dir = tempDir("compile-aot-reproducible", {
+    "entry.ts": `
+      const classes = [
+        (() => class { a; b; c; constructor(x) { this.a = x; this.b = x + 1; this.c = x + 2; } sum() { return this.a + this.b + this.c; } })(),
+        (() => class { d; e; f; constructor(x) { this.d = x; this.e = x + 1; this.f = x + 2; } sum() { return this.d + this.e + this.f; } })(),
+        (() => class { g; h; i; constructor(x) { this.g = x; this.h = x + 1; this.i = x + 2; } sum() { return this.g + this.h + this.i; } })(),
+        (() => class { j; k; l; constructor(x) { this.j = x; this.k = x + 1; this.l = x + 2; } sum() { return this.j + this.k + this.l; } })(),
+      ];
+      console.log(classes.map((C, i) => new C(i).sum()).join());
+    `,
+  });
+  const hashes = await Promise.all(
+    Array.from({ length: 6 }, async (_, i) => {
+      const outfile = join(String(dir), String(i), "out");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", outfile],
+        env: { ...bunEnv, BUN_AOT_OPTIONS: options },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
+      return Bun.SHA256.hash(await Bun.file(outfile).bytes(), "hex");
+    }),
+  );
+  expect(new Set(hashes).size).toBe(1);
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "0", "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  expect([await proc.stdout.text(), await proc.exited]).toEqual(["3,6,9,12\n", 0]);
+});
+
 test("compiles RegExps with the u and v flags", async () => {
   using dir = tempDir("compile-aot-regexps", {
     "none.ts": `console.log("none");`,

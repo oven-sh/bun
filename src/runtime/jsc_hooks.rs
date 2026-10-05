@@ -765,6 +765,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: per fn contract.
     let n = unsafe { &*vm }.preload.len();
+    // SAFETY: per fn contract; these scalar fields are immutable during loading.
+    let require_start = unsafe { &*vm }.preload_require_start;
+    let require_end = require_start.saturating_add(unsafe { &*vm }.preload_require_count);
     for i in 0..n {
         // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
         // `resolve_and_auto_install` call below (which only touches
@@ -786,11 +789,16 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             // ── resolve ─────────────────────────────────────────────────────
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
             // singleton field.
+            let import_kind = if i >= require_start && i < require_end {
+                ImportKind::Require
+            } else {
+                ImportKind::Stmt
+            };
             let mut result = match unsafe {
                 (*vm).transpiler.resolver.resolve_and_auto_install(
                     &*top_level_dir,
                     normalized,
-                    ImportKind::Stmt,
+                    import_kind,
                     global_cache,
                 )
             } {

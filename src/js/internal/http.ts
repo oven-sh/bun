@@ -29,7 +29,6 @@ const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
@@ -538,7 +537,6 @@ export {
   hasServerResponseFinished,
   headerStateSymbol,
   http1ServerPipeline,
-  isTlsSymbol,
   kAbortController,
   kCloseCallback,
   kHandle,

@@ -7185,3 +7185,14 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
     server.close();
   }
 });
+
+it("http.Server can be called again on an https.Server, without TLS options", () => {
+  const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert });
+  http.Server.call(server, { keepAliveTimeout: 1234 });
+  expect(server.keepAliveTimeout).toBe(1234);
+});
+
+it("createServer() does not read _pfxExtraCACerts from the caller's options", () => {
+  const server = createServer({ _pfxExtraCACerts: ["not a certificate"] } as http.ServerOptions);
+  expect(server).toBeInstanceOf(http.Server);
+});

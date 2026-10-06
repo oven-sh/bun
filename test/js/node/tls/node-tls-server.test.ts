@@ -4212,6 +4212,9 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
     "Bun.connect, tls: true": row,
     "Bun.SQL postgres, tls: true": row,
     "Bun.SQL mysql, tls: true": row,
+    "S3Client, text()": row,
+    "S3Client, stream()": row,
+    "S3Client, list()": row,
     worker: AES128,
   });
   expect(exitCode).toBe(0);

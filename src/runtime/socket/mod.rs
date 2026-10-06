@@ -76,7 +76,8 @@ pub(crate) mod uws_jsc;
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
 pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults,
+    SSLConfig, SSLConfigFromJs, http_client_defaults, resolve_reject_unauthorized,
+    tls_true_defaults,
 };
 
 // ─── canonical type surface ──────────────────────────────────────────────────

@@ -1759,7 +1759,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // RFC 6066 section 3: an IP literal is not sent as SNI.
             let sni = Self::configured_hostname(this);
             if !sni.is_empty()
-                && !bun_core::ip_address::is_ip_address(sni)
+                && !bun_core::ip_address::is_ip_host(sni)
                 && let Some(ssl) = socket.ssl_mut()
             {
                 ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());

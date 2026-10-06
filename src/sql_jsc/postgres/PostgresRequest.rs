@@ -503,6 +503,39 @@ pub(crate) fn execute_query<Context: WriterContext>(
     Ok(())
 }
 
+fn on_ssl_request_reply(
+    connection: &PostgresSQLConnection,
+    c: u8,
+    sent: u8,
+) -> Result<(), AnyPostgresError> {
+    match c {
+        b'S' => {
+            debug_assert!(sent == 8);
+            connection.tls_status.set(TlsStatus::SslOk);
+            connection.setup_tls();
+            Ok(())
+        }
+        b'N' => {
+            connection.tls_status.set(TlsStatus::SslNotAvailable);
+            bun_core::scoped_log!(Postgres, "Server does not support SSL");
+            if matches!(
+                connection.ssl_mode,
+                SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+            ) {
+                connection.fail(
+                    b"Server does not support SSL",
+                    AnyPostgresError::TLSNotAvailable,
+                );
+                return Ok(());
+            }
+            // Nothing the server sent before our StartupMessage is a reply to it.
+            connection.start();
+            Ok(())
+        }
+        _ => Err(AnyPostgresError::UnexpectedMessage),
+    }
+}
+
 pub(crate) fn on_data<Context: ReaderContext>(
     connection: &PostgresSQLConnection,
     mut reader: protocol::NewReader<Context>,
@@ -523,32 +556,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
         // it is the only unframed backend byte and must be handled before the
         // frame peek below.
         if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
-            match c {
-                b'S' => {
-                    debug_assert!(n == 8);
-                    connection.tls_status.set(TlsStatus::SslOk);
-                    connection.setup_tls();
-                    return Ok(());
-                }
-                b'N' => {
-                    connection.tls_status.set(TlsStatus::SslNotAvailable);
-                    bun_core::scoped_log!(Postgres, "Server does not support SSL");
-                    if matches!(
-                        connection.ssl_mode,
-                        SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
-                    ) {
-                        connection.fail(
-                            b"Server does not support SSL",
-                            AnyPostgresError::TLSNotAvailable,
-                        );
-                        return Ok(());
-                    }
-                    // Nothing the server sent before our StartupMessage is a reply to it.
-                    connection.start();
-                    return Ok(());
-                }
-                _ => return Err(AnyPostgresError::UnexpectedMessage),
-            }
+            return on_ssl_request_reply(connection, c, n);
         }
 
         // Every other backend message is Byte1(type) Int32(length) body[length-4].

@@ -623,7 +623,7 @@ pub mod stdio {
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
         /// No preconditions; restores TTY state on the standard streams.
-        #[allow(dead_code)]
+        #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
     }
 
@@ -982,7 +982,6 @@ fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static
     unsafe { &mut *p }
 }
 
-#[allow(clippy::mut_from_ref)]
 pub fn error_writer() -> &'static mut io::Writer {
     source_writer_escape(Source::error_stream)
 }
@@ -2839,7 +2838,6 @@ mod output_macro_tests {
                 n += 1;
                 n
             });
-            let _ = n;
 
             let s = String::from("x");
             crate::pretty_errorln!("{} {}", s, s.len());

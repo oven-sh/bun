@@ -31,23 +31,17 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
 /// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
+    // memfd is Linux; FD_CLOEXEC is POSIX (Win32 handles are non-inheritable unless asked).
     #[cfg(unix)]
-    pub use bun_sys::{can_use_memfd, set_close_on_exec};
+    pub use bun_sys::set_close_on_exec;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, can_use_memfd, memfd_create};
 }
 
 bun_core::declare_scope!(PROCESS, visible);
@@ -56,12 +50,14 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub use bun_spawn_sys::PidFdType;
 pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 pub use bun_spawn_sys::uv_getrusage;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
-    PosixStdio, Rusage, StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio,
+    Rusage, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -139,6 +135,9 @@ impl Drop for Process {
     /// The allocation itself is freed by the `heap::take` in `destructor`
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
+        #[cfg(unix)]
+        self.poller.deinit(self.event_loop);
+        #[cfg(windows)]
         self.poller.deinit();
     }
 }
@@ -366,11 +365,7 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
-        // Mutated only on the macOS ESRCH retry path below.
-        #[cfg(target_os = "macos")]
         let mut rusage_result = *rusage;
-        #[cfg(not(target_os = "macos"))]
-        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -395,7 +390,10 @@ impl Process {
                             ),
                         );
                     }
-                    break 'brk Some(Status::Err(err_));
+                    break 'brk Some(
+                        self.kill_and_reap(&mut rusage_result)
+                            .unwrap_or(Status::Err(err_)),
+                    );
                 }
             }
             None
@@ -415,9 +413,18 @@ impl Process {
         match self.watch() {
             Err(err) => {
                 #[cfg(unix)]
-                if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
-                    return Ok(self.has_exited());
+                {
+                    if err.get_errno() == bun_sys::E::ESRCH {
+                        self.wait(true);
+                        return Ok(self.has_exited());
+                    }
+                    let mut rusage = rusage_zeroed();
+                    if let Some(status) = self.kill_and_reap(&mut rusage) {
+                        self.on_exit(status, &rusage);
+                        return Ok(true);
+                    }
+                    // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
+                    self.close();
                 }
                 Err(err)
             }
@@ -625,7 +632,7 @@ impl Process {
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
-                waiter.disable();
+                waiter.unref(event_loop_handle_to_ctx(self.event_loop));
             }
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {
@@ -680,6 +687,49 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
+    #[cfg(unix)]
+    fn send_signal(&self, signal: u8) -> Maybe<()> {
+        // All by-value `pid_t`/`c_int`; the kernel validates pid/
+        // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
+        // memory-safety preconditions, so `safe fn` discharges the
+        // link-time proof here.
+        unsafe extern "C" {
+            #[link_name = "kill"]
+            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        }
+        let err = libc_kill(self.pid, signal as c_int);
+        if err != 0 {
+            let errno_ = bun_sys::get_errno(err as isize);
+            // if the process was already killed don't throw
+            if errno_ != bun_sys::E::ESRCH {
+                return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
+            }
+        }
+        Ok(())
+    }
+
+    /// For a child whose exit nothing is going to report: left alone it would keep running, and never be reaped.
+    /// Watched or not, unlike [`Self::kill`]. A child that cannot be signalled (it runs as another user by now)
+    /// is left alone after all, since the wait would last until it exits by itself.
+    ///
+    /// The status, with `rusage`, is that of a child which turns out to have ended by itself. It is for the caller
+    /// to report, or else the error that brought it here.
+    #[cfg(unix)]
+    #[cold]
+    #[inline(never)]
+    pub fn kill_and_reap(&mut self, rusage: &mut Rusage) -> Option<Status> {
+        // Reaped already, so the pid may be another process's by now.
+        if self.has_exited() {
+            return None;
+        }
+        self.send_signal(libc::SIGKILL as u8).ok()?;
+        match Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)))? {
+            Status::Signaled(signal) if signal == libc::SIGKILL as u8 => None,
+            status @ (Status::Exited(_) | Status::Signaled(_)) => Some(status),
+            Status::Running | Status::Err(_) => None,
+        }
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
@@ -692,24 +742,7 @@ impl Process {
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).
             match &self.poller {
-                Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    // All by-value `pid_t`/`c_int`; the kernel validates pid/
-                    // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
-                    // memory-safety preconditions, so `safe fn` discharges the
-                    // link-time proof here.
-                    unsafe extern "C" {
-                        #[link_name = "kill"]
-                        safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
-                    }
-                    let err = libc_kill(self.pid, signal as c_int);
-                    if err != 0 {
-                        let errno_ = bun_sys::get_errno(err as isize);
-                        // if the process was already killed don't throw
-                        if errno_ != bun_sys::E::ESRCH {
-                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
-                        }
-                    }
-                }
+                Poller::WaiterThread(_) | Poller::Fd(_) => return self.send_signal(signal),
                 _ => {}
             }
         }
@@ -860,13 +893,14 @@ impl PollerPosix {
     /// already performs the same teardown explicitly before reassigning. A
     /// `Drop` impl would double-free the hive slot on those reassignments.
     /// Called only from `Process` drop.
-    pub(crate) fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self, event_loop: EventLoopHandle) {
         // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
         // instead of open-coding the `NonNull` deref here.
         if let Some(poll) = self.fd_poll_mut() {
             poll.deinit();
         } else if let PollerPosix::WaiterThread(w) = self {
-            w.disable();
+            // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
+            w.unref(event_loop_handle_to_ctx(event_loop));
         }
     }
 
@@ -1439,17 +1473,6 @@ pub mod waiter_thread_posix {
             }
         }
     }
-}
-
-/// Windows stub mirroring the unix `WaiterThreadPosix as WaiterThread` re-export.
-/// An uninhabited type with associated fns so callers can use
-/// `WaiterThread::should_use_waiter_thread()` uniformly on both platforms.
-#[cfg(not(unix))]
-pub enum WaiterThread {}
-
-#[cfg(not(unix))]
-impl WaiterThread {
-    pub fn set_should_use_waiter_thread() {}
 }
 
 // (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
@@ -2327,8 +2350,6 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
-            #[cfg(not(windows))]
-            pub windows: (),
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2394,8 +2415,6 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
-                    #[cfg(not(windows))]
-                    windows: (),
                 }
             }
         }
@@ -2415,8 +2434,6 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 }
             }

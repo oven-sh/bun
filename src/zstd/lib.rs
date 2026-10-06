@@ -6,7 +6,7 @@ use bun_core::ZStr;
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
-#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#[allow(non_camel_case_types, non_upper_case_globals)]
 pub mod c {
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 

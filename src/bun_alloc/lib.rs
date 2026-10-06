@@ -768,7 +768,6 @@ impl WTFStringImplStruct {
                 > old / Self::S_REF_COUNT_INCREMENT
                 || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
         );
-        let _ = old;
     }
     /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
     ///

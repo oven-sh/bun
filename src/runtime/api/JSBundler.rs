@@ -248,6 +248,8 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_package_json: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
+        /// `compile.bytecodeOrder`: payload order files, most important first.
+        pub(crate) bytecode_order: Vec<Box<[u8]>>,
     }
 
     impl Default for CompileOptions {
@@ -270,6 +272,7 @@ pub(crate) mod js_bundler {
                 autoload_tsconfig: false,
                 autoload_package_json: false,
                 jit_policy: 1.0,
+                bytecode_order: Vec::new(),
             }
         }
     }
@@ -446,6 +449,38 @@ pub(crate) mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
+            // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            path,
+                        ));
+                    }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        push(path)?;
+                    }
+                } else {
+                    push(bytecode_order)?;
+                }
+            }
+
             if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
                 if !jit_policy.is_undefined() {
                     if !jit_policy.is_number() {
@@ -557,9 +592,9 @@ pub(crate) mod js_bundler {
                             let p = Plugin::create(
                                 global_this,
                                 match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
+                                    Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
+                                    Target::Node => BunPluginTarget::Node,
+                                    _ => BunPluginTarget::Browser,
                                 },
                             );
                             **plugins = Some(p);
@@ -1347,6 +1382,17 @@ pub(crate) mod js_bundler {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
             }
 
+            if !this.bytecode
+                && this
+                    .compile
+                    .as_ref()
+                    .is_some_and(|compile| !compile.bytecode_order.is_empty())
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "compile.bytecodeOrder requires bytecode: true"
+                )));
+            }
+
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
             if this.compile.is_some() && this.target == Target::Browser {
                 let has_all_html = 'brk: {
@@ -1677,6 +1723,21 @@ pub(crate) mod js_bundler {
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub(crate) enum BunPluginTarget {
+        Bun = 0,
+        Node = 1,
+        Browser = 2,
+    }
+
+    // Crosses FFI by-value to `JSBundlerPlugin__create`
+    // (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
+    // C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
+    // disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
+    // is what matters at the ABI.
+    bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
+
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
     // validity proof lives in the type. `runSetupFunction` and `globalObject`
@@ -1685,7 +1746,7 @@ pub(crate) mod js_bundler {
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
-            target: jsc::BunPluginTarget,
+            target: BunPluginTarget,
         ) -> *mut Plugin;
         safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
@@ -1719,7 +1780,7 @@ pub(crate) mod js_bundler {
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
     pub(crate) trait PluginJscExt {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1755,7 +1816,7 @@ pub(crate) mod js_bundler {
     }
 
     impl PluginJscExt for Plugin {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
             let plugin = JSBundlerPlugin__create(global, target);
             JSValue::from_cell(plugin).protect();
@@ -1958,6 +2019,7 @@ pub(crate) fn js_worker_live_count(
     ))
 }
 
+pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

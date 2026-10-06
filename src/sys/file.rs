@@ -5,7 +5,6 @@
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
-#![allow(clippy::module_inception)]
 
 use super::*;
 

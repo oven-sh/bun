@@ -1,4 +1,4 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod AnyTaskWithExtraContext;
 pub mod ConcurrentTask;
@@ -49,6 +49,7 @@ bun_dispatch::link_interface! {
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
+        fn event_loop_ctx() -> bun_io::EventLoopCtx;
         fn tick();
         fn auto_tick();
         fn auto_tick_active();

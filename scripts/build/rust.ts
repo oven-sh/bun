@@ -129,7 +129,7 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * The C++ side's `cpuTargetFlags` (flags.ts) spelled as rustflags, derived
  * from that table so the two halves of the binary can't drift apart. They
  * have to agree: the Rust half runs on whatever CPU the C++ baseline admits,
- * and under cross-language LTO (`cfg.crossLangLto`) LLVM only inlines a call
+ * and under LTO (`cfg.lto`, which is cross-language: rustc's bitcode joins the C++ link) LLVM only inlines a call
  * when the callee's CPU feature set is a subset of the caller's (a CPU's own
  * tuning features and the tune CPU count too), so a mismatch turns off
  * inlining across the Rust/C++ boundary in both directions.
@@ -502,7 +502,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
     // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //
-    // The linker has to read rustc's bitcode, which rests on rustc's LLVM and clang's being the same major version.
+    // The linker has to read rustc's bitcode, which it can because rustc's LLVM and clang's are the same major
+    // version (resolveConfig() refuses anything else).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
@@ -514,7 +515,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // unconditionally above — under LTO it doubles as making rustc's bitcode
     // link go through the LTO-aware linker our final link uses, not BFD
     // `/usr/bin/ld`.)
-    if (cfg.crossLangLto && !cfg.darwin && !cfg.windows) {
+    if (cfg.lto && !cfg.darwin && !cfg.windows) {
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the

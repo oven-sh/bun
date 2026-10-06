@@ -427,10 +427,6 @@ impl BlockList {
         _ = writer.write_int_le(this.serialize_nonce);
     }
 
-    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
-    // signature is fixed by `generate-classes.ts`, so the deref is documented with
-    // the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,

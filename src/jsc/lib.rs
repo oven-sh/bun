@@ -412,8 +412,6 @@ pub mod http_server_agent;
 pub mod js_secrets;
 #[path = "NodeModuleModule.rs"]
 pub mod node_module_module;
-#[path = "PluginRunner.rs"]
-pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
 pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
@@ -1058,12 +1056,6 @@ pub struct ValidateObjectOpts {
     pub(crate) allow_function: bool,
     pub(crate) nullable: bool,
 }
-
-/// `BunPluginTarget` is defined once
-/// in `bun_bundler::transpiler` (lowest tier) and re-exported via
-/// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
-/// nominal type.
-pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSObject (real module in JSObject.rs).

@@ -597,7 +597,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."
+        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
@@ -1796,6 +1796,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {
+        ctx.test_options.coverage.enabled = true;
         ctx.test_options.coverage.reporters = CoverageReporters {
             text: false,
             lcov: false,

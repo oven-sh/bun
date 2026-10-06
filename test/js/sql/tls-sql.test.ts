@@ -6,6 +6,12 @@ import path from "node:path";
 import tls from "node:tls";
 import {
   listeningServer,
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
+  mysqlAckSessionSetup,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
   pgAuthenticationCleartextPassword,
   pgAuthenticationOk,
   pgCommandComplete,
@@ -594,49 +600,70 @@ test("postgres sslmode=prefer takes the 'N', and nothing that comes with it or i
 
 // Reads the client's TLS records off the wire, which a container cannot show. A PostgreSQL server
 // logs "could not receive data from client" for a TLS connection that ends without a close_notify.
-test.each(["idleTimeout", "maxLifetime"])(
-  "postgres sends a close_notify when %s closes a TLS connection",
-  async option => {
-    // TLS 1.2 leaves a record's type in the clear.
-    const ALERT = 21;
-    const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
-      socket.on("error", () => {});
+test.each([
+  ["postgres", "idleTimeout"],
+  ["postgres", "maxLifetime"],
+  ["postgres", "close"],
+  ["mysql", "idleTimeout"],
+  ["mysql", "close"],
+] as const)("%s sends a close_notify when %s closes a TLS connection", async (adapter, option) => {
+  // TLS 1.2 leaves a record's type in the clear.
+  const ALERT = 21;
+  const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
+    socket.on("error", () => {});
+    if (adapter === "postgres") {
       socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
-    });
-    await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
-
-    let records = Buffer.alloc(0);
-    const closed = Promise.withResolvers<void>();
-    const { port, server } = await listeningServer(client => {
-      client.on("error", () => {});
-      client.on("close", () => closed.resolve());
-      client.once("data", () => {
-        client.write(pgSSLResponse("S"));
-        const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
-        upstream.on("error", () => {});
-        client.on("data", (chunk: Buffer) => {
-          records = Buffer.concat([records, chunk]);
-        });
-        client.pipe(upstream).pipe(client);
-      });
-    });
-
-    try {
-      await using sql = new SQL({
-        url: `postgres://postgres@127.0.0.1:${port}/bun_sql_test`,
-        max: 1,
-        tls: { rejectUnauthorized: false },
-        [option]: 0.05,
-      });
-      await sql.connect();
-      await closed.promise;
-
-      const types: number[] = [];
-      for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
-      expect(types.at(-1)).toBe(ALERT);
-    } finally {
-      server.close();
-      terminator.close();
+      return;
     }
-  },
-);
+    let buffered = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!mysqlAckSessionSetup(socket, payload)) socket.write(mysqlOkPacket(seq + 1));
+      });
+    });
+  });
+  await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
+
+  // The client's plaintext request for TLS: the SSLRequest message, resp. packet.
+  const requestLength = adapter === "postgres" ? 8 : 36;
+  let records = Buffer.alloc(0);
+  const closed = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(client => {
+    client.on("error", () => {});
+    client.on("close", () => closed.resolve());
+    if (adapter === "mysql") {
+      client.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    }
+    client.once("data", request => {
+      if (adapter === "postgres") client.write(pgSSLResponse("S"));
+      const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
+      upstream.on("error", () => {});
+      records = request.subarray(requestLength);
+      upstream.write(records);
+      client.on("data", chunk => {
+        records = Buffer.concat([records, chunk]);
+      });
+      client.pipe(upstream).pipe(client);
+    });
+  });
+
+  try {
+    await using sql = new SQL({
+      url: `${adapter}://postgres@127.0.0.1:${port}/bun_sql_test`,
+      max: 1,
+      tls: { rejectUnauthorized: false },
+      // The lifetime starts before the handshake, and has to outlast it.
+      ...(option !== "close" && { [option]: option === "maxLifetime" ? 0.5 : 0.05 }),
+    });
+    await sql.connect();
+    if (option === "close") await sql.close();
+    await closed.promise;
+
+    const types: number[] = [];
+    for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
+    expect(types.at(-1)).toBe(ALERT);
+  } finally {
+    server.close();
+    terminator.close();
+  }
+});

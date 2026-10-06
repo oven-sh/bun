@@ -287,6 +287,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Always true for a connected plain TCP socket.
+    pub fn is_ssl_handshake_finished(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.is_ssl_handshake_finished(),
+            duplex d => d.is_established(),
+            pipe p => p.is_established(),
+            else => false,
+        )
+    }
+
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
@@ -956,6 +966,7 @@ impl AnySocket {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
+        fn is_ssl_handshake_finished(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
@@ -963,5 +974,18 @@ impl AnySocket {
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
         fn get_native_handle(&self) -> Option<*mut c_void>;
+    }
+
+    /// Sends close_notify and closes without waiting for the peer's, which `CloseCode::Normal` does.
+    pub fn close_now(&self) {
+        // usockets reports a FIN sent mid-handshake as a failed handshake with no reason.
+        if matches!(self, AnySocket::SocketTls(_)) && self.is_ssl_handshake_finished() {
+            self.shutdown();
+        }
+        self.close(CloseCode::FastShutdown);
+        // usockets parks one fast shutdown behind ciphertext the kernel would not take.
+        if !self.is_closed() {
+            self.close(CloseCode::FastShutdown);
+        }
     }
 }

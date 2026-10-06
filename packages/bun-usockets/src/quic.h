@@ -144,16 +144,12 @@ void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 
-/* Abort the send half with RESET_STREAM(error_code) and close the stream.
- * us_quic_stream_close/shutdown queue a FIN, and in HTTP/3 a FIN marks a
- * complete message; RESET_STREAM is the only way to tell the peer that the
- * bytes it has are not the whole message. error_code is an application
- * (RFC 9114 §8.1) code; the caller picks it. */
+/* RESET_STREAM(error_code) instead of FIN: in HTTP/3 a FIN marks the bytes
+ * sent so far as a complete message. */
 void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
-/* Non-zero once the peer has sent RESET_STREAM for the half we read from,
- * with its error code in *code. The stream then closes without
- * on_stream_data ever reporting fin. Read from lsquic, so it answers only
- * while the stream is live, up to and including on_stream_close. */
+/* Non-zero, with the code in *code, once the peer has sent RESET_STREAM for
+ * the half we read from. Answers only while the stream is live, up to and
+ * including on_stream_close. */
 int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 

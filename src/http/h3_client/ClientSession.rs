@@ -350,10 +350,10 @@ impl ClientSession {
         self.fail(stream, err);
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data},
-    /// and via `on_stream_closed` before the response headers. `done` = the
-    /// peer's FIN arrived; deliver whatever is buffered then detach. Mirrors
-    /// H2's `ClientSession.deliverStream`.
+    /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
+    /// `done` = the lsquic stream is gone; deliver whatever is buffered then
+    /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
+    /// machine sees the same call sequence regardless of transport.
     pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {

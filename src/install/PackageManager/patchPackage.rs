@@ -19,7 +19,8 @@ use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
-    compute_cache_dir_and_subpath, get_temporary_directory,
+    compute_cache_dir_and_subpath, get_temporary_directory, is_package_in_cache_at,
+    is_patched_package_in_cache_at,
 };
 use crate::{
     BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
@@ -732,7 +733,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
-    let patch_hash: Option<u64>;
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -864,7 +864,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 );
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
-                patch_hash = existing_patchfile_hash;
+                exit_if_missing_from_cache(
+                    cache_dir,
+                    cache_dir_subpath,
+                    &actual_package.resolution,
+                    existing_patchfile_hash,
+                    &name,
+                );
 
                 #[cfg(windows)]
                 let buf = resolve_path::path_to_posix_buf::<u8>(argument, &mut win_normalizer[..])
@@ -926,7 +932,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
-                patch_hash = existing_patchfile_hash;
+                exit_if_missing_from_cache(
+                    cache_dir,
+                    cache_dir_subpath,
+                    &pkg_resolution,
+                    existing_patchfile_hash,
+                    &pkg_name,
+                );
 
                 let module_folder_ =
                     resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
@@ -943,19 +955,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
     let module_folder: &[u8] = &module_folder;
     let pkg_name: &[u8] = &pkg_name;
-
-    // This copy has no way to rebuild the entry, so an incomplete one is an error, not an editing base.
-    if let Some(patch_hash) = patch_hash {
-        let subpath = bun_core::ZBox::from_bytes(cache_dir_subpath);
-        if !super::directories::is_patched_package_in_cache_at(cache_dir, &subpath, patch_hash) {
-            bun_core::pretty_error!(
-                "<r><red>error<r>: the patched copy of <b>{}<r> in the cache is incomplete: {}\n\nRun <cyan>bun install --force<r> to rebuild it, then try again.<r>\n",
-                bstr::BStr::new(pkg_name),
-                bstr::BStr::new(cache_dir_subpath),
-            );
-            Global::crash();
-        }
-    }
 
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.
@@ -1054,6 +1053,37 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
             Err(_) => false,
         }
     }
+}
+
+/// `bun patch <pkg>` copies this cache folder over `node_modules/<pkg>` and cannot build it, so a miss ends the command before anything is deleted.
+fn exit_if_missing_from_cache(
+    cache_dir: Fd,
+    cache_dir_subpath: &ZStr,
+    resolution: &Resolution,
+    patch_hash: Option<u64>,
+    pkg_name: &[u8],
+) {
+    if !resolution.can_enqueue_install_task() {
+        return;
+    }
+    let in_cache = match patch_hash {
+        Some(patch_hash) => {
+            is_patched_package_in_cache_at(cache_dir, cache_dir_subpath, patch_hash)
+        }
+        None => is_package_in_cache_at(cache_dir, cache_dir_subpath, resolution.tag),
+    };
+    if in_cache {
+        return;
+    }
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: the cache folder of <b>{}<r> is missing or incomplete: {}",
+        bstr::BStr::new(pkg_name),
+        bstr::BStr::new(cache_dir_subpath.as_bytes()),
+    );
+    bun_core::note!(
+        "run <cyan>bun install --force<r> to rebuild it, then run <cyan>bun patch<r> again"
+    );
+    Global::crash();
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {

@@ -295,9 +295,7 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
 
-        // Every peer variant shares one patched cache dir (named by the patch
-        // contents hash, not the peer set). Once it is complete, reuse it: rebuilding
-        // it replaces the directory under earlier entries' running hardlink tasks.
+        // Peer variants share one patched cache dir. Reuse a complete one: a rebuild replaces it under earlier entries' running hardlink tasks.
         {
             let lockfile = self.lockfile();
             let pkg_name = lockfile.packages.items_name()[pkg_id as usize];

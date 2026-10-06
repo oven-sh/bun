@@ -54,6 +54,9 @@ pub(crate) fn to_be_empty(
                         skip_empty_name: false,
                         own_properties_only: false,
                         include_value: true,
+                        // jest-extended compares against `{}` with an equality
+                        // that sees enumerable Symbol keys, so count them too.
+                        include_symbols: true,
                         // FIXME: can we do this?
                         ..Default::default()
                     },

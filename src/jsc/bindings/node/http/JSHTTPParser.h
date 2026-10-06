@@ -36,15 +36,16 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSHTTPParser*>(cell)->~JSHTTPParser();
+    }
+
     void finishCreation(JSC::VM&);
 
     JSHTTPParser(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, structure)
         , m_impl(globalObject)
-    {
-    }
-
-    ~JSHTTPParser()
     {
     }
 

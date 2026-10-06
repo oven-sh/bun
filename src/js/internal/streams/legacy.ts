@@ -124,7 +124,23 @@ Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
   return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 };
 
+type NodeStream = typeof import("node:stream").Stream;
+
+interface StreamConstructor extends Omit<NodeStream, "Stream" | "pipeline" | "finished"> {
+  new (opts?: ConstructorParameters<NodeStream>[0]): import("node:stream").Stream;
+  Stream: StreamConstructor;
+  pipeline: typeof import("internal/streams/pipeline").default.pipeline;
+  finished: typeof import("internal/streams/end-of-stream").default;
+  eos?: typeof import("internal/streams/end-of-stream").default;
+  destroy: typeof import("internal/streams/destroy").default.destroyer;
+  isDestroyed: typeof import("internal/streams/utils").default.isDestroyed;
+  isDisturbed: typeof import("internal/streams/utils").default.isDisturbed;
+  _isArrayBufferView: typeof Stream._isArrayBufferView;
+  _isUint8Array: typeof Stream._isUint8Array;
+  _uint8ArrayToBuffer: typeof Stream._uint8ArrayToBuffer;
+}
+
 export default { Stream, prependListener } as unknown as {
-  Stream: typeof import("node:stream").Stream;
+  Stream: StreamConstructor;
   prependListener: typeof prependListener;
 };

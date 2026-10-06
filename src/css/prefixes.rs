@@ -2190,7 +2190,6 @@ impl Feature {
         prefixes
     }
 
-    #[allow(non_snake_case)]
     pub(crate) fn is_flex_2009(browsers: &Browsers) -> bool {
         if let Some(version) = browsers.android {
             if version >= 131328 && version <= 262656 {

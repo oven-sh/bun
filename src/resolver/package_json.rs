@@ -167,9 +167,6 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
     fn version(&self) -> &[u8] {
         &self.version
     }
-    fn source_path(&self) -> &[u8] {
-        self.source.path.text
-    }
     fn dependency_source_buf(&self) -> &[u8] {
         self.dependencies.source_buf
     }

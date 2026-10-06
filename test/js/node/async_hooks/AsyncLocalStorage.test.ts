@@ -779,8 +779,7 @@ describe("async context passes through", () => {
     await promise;
     expect(value).toBe("value");
   });
-  // blocked by a bug with .cancel
-  test.todo("readable stream direct .cancel", async () => {
+  test("readable stream direct .cancel", async () => {
     const s = new AsyncLocalStorage<string>();
     let stream!: ReadableStream;
     let value: string | undefined;
@@ -795,7 +794,6 @@ describe("async context passes through", () => {
           controller.write("hello");
         },
         cancel(reason) {
-          console.log("1");
           value2 = s.getStore();
           resolve();
         },
@@ -805,7 +803,6 @@ describe("async context passes through", () => {
     const reader = stream.getReader();
     await reader.read();
     await reader.cancel();
-    await stream.cancel();
     await promise;
     expect(value).toBe("value");
     expect(value2).toBe("value");
@@ -1624,4 +1621,158 @@ test("exit() and nested run() release the shadowed outer store", async () => {
   // without the fix every store of an affected mode is retained
   for (const n of alive()) expect(n).toBeLessThanOrEqual(N / 2);
   for (const t of timers) clearTimeout(t);
+});
+
+// node runs 'uncaughtException' handlers inside the async context the failing callback was STARTED in:
+// not whatever was current where the exception is finally reported, and not a context the callback
+// entered itself before it threw.
+test("an uncaughtException handler reads the store the callback that threw was started in", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const fs = require("node:fs");
+        const { EventEmitter } = require("node:events");
+        const als = new AsyncLocalStorage();
+        const seen = {};
+        // How each callback is scheduled; every one is scheduled inside als.run("outer").
+        const sources = {
+          "process.nextTick": boom => process.nextTick(boom),
+          setTimeout: boom => setTimeout(boom, 1),
+          setImmediate: boom => setImmediate(boom),
+          "fs.readFile callback": boom => fs.readFile(__filename, boom),
+          "an EventEmitter listener, emitted from a timer": boom => { const e = new EventEmitter(); e.on("x", boom); setTimeout(() => e.emit("x"), 1); },
+        };
+        const names = [];
+        for (const name of Object.keys(sources)) names.push(name + ": throws", name + ": throws inside its own run()");
+        // A timer made with no store at all, whose callback enters one and throws there.
+        names.push("setTimeout with no store: throws inside its own run()");
+        process.on("uncaughtException", error => {
+          seen[error.message] = String(als.getStore());
+          if (Object.keys(seen).length === names.length) {
+            console.log(JSON.stringify(seen));
+            process.exit(0);
+          }
+        });
+        for (const [name, schedule] of Object.entries(sources)) {
+          als.run("outer", () => schedule(() => { throw new Error(name + ": throws"); }));
+          als.run("outer", () => schedule(() => als.run("inner", () => { throw new Error(name + ": throws inside its own run()"); })));
+        }
+        setTimeout(() => als.run("inner", () => { throw new Error("setTimeout with no store: throws inside its own run()"); }), 1);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected: Record<string, string> = {};
+  for (const name of [
+    "process.nextTick",
+    "setTimeout",
+    "setImmediate",
+    "fs.readFile callback",
+    "an EventEmitter listener, emitted from a timer",
+  ]) {
+    expected[name + ": throws"] = "outer";
+    expected[name + ": throws inside its own run()"] = "outer";
+  }
+  expected["setTimeout with no store: throws inside its own run()"] = "undefined";
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: expected,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// What node does, with no Bun.ModuleGraph anywhere: a server socket's own events arrive in nobody's async
+// context, and a request's events keep the context its socket became ready in.
+test("node:http: socket events of a server and of a client request run in the async context node runs them in", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const net = require("node:net");
+        const util = require("node:util");
+        const als = new AsyncLocalStorage();
+        const out = {};
+        const store = () => String(als.getStore());
+
+        // 1. A server started inside a store: what its connections' sockets hear is not in that store.
+        const server = http.createServer((request, response) => {
+          request.socket.on("close", () => { out["server: request.socket 'close'"] = store(); step2(); });
+          response.end("ok");
+        });
+        server.on("upgrade", (request, socket) => {
+          socket.on("data", () => { out["server: upgraded socket 'data'"] = store(); });
+          socket.on("end", () => socket.end());
+          socket.on("close", () => { out["server: upgraded socket 'close'"] = store(); step3(); });
+        });
+        als.run("the store at listen()", () => server.listen(0, "127.0.0.1", () => {
+          // A plain request whose connection closes.
+          const socket = net.connect(server.address().port, "127.0.0.1", () => socket.end("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"));
+          socket.resume();
+        }));
+        function step2() {
+          // An upgrade: the peer writes, then closes.
+          const socket = net.connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: probe\\r\\n\\r\\n");
+            setTimeout(() => { socket.write("hello"); setTimeout(() => socket.end(), 20); }, 20);
+          });
+          socket.resume();
+        }
+
+        // 2. An Agent whose createConnection answers later, from a store of its own: the request's events
+        // keep that one, as in node.
+        function step3() {
+          const agent = new http.Agent();
+          out["util.inspect(agent) mentions ownerFrame"] = util.inspect(agent).includes("ownerFrame");
+          out["own symbols of an Agent"] = Object.getOwnPropertySymbols(agent).map(String).filter(name => name.includes("ownerFrame"));
+          agent.createConnection = (options, callback) => {
+            als.run("the store createConnection answered in", () => setTimeout(() => callback(null, net.connect(options)), 5));
+          };
+          als.run("the requester's store", () => {
+            const request = http.get({ port: server.address().port, host: "127.0.0.1", agent }, response => {
+              out["client: 'response'"] = store();
+              response.resume();
+              response.on("end", () => {
+                console.log(JSON.stringify(out));
+                process.exit(0);
+              });
+            });
+            request.on("socket", () => { out["client: 'socket'"] = store(); });
+          });
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      "server: request.socket 'close'": "undefined",
+      "server: upgraded socket 'data'": "undefined",
+      "server: upgraded socket 'close'": "undefined",
+      "util.inspect(agent) mentions ownerFrame": false,
+      "own symbols of an Agent": [],
+      "client: 'socket'": "the store createConnection answered in",
+      "client: 'response'": "the store createConnection answered in",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("AsyncLocalStorage.bind() names the argument when it is not a function", () => {
+  // @ts-expect-error
+  expect(() => AsyncLocalStorage.bind(1)).toThrow(
+    'The "fn" argument must be of type function. Received type number (1)',
+  );
 });

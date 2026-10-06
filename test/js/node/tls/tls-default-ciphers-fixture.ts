@@ -20,6 +20,7 @@ const serverOptions = {
 /** The suite of each handshake of the client under test, or the error that ended one. */
 let reports: string[] = [];
 let reported = () => {};
+let connections = 0;
 function report(outcome: string) {
   reports.push(outcome);
   reported();
@@ -35,6 +36,7 @@ function tlsServer(onSecure: (socket: tls.TLSSocket) => void) {
     onSecure(socket);
   });
   server.on("tlsClientError", error => report((error as NodeJS.ErrnoException).code!));
+  server.on("connection", () => connections++);
   return listen(server);
 }
 
@@ -137,5 +139,12 @@ for (const list of [undefined, AES256, AES128, "TLS_AES_128_GCM_SHA256"]) {
 }
 // The list is the thread's, as in Node.js.
 results.worker = await outcome(1, () => new Worker(`new WebSocket(${JSON.stringify(wss)})`, { eval: true }));
+// No request would take a socket of the default context any more. The HTTP thread dials in the order of the calls.
+connections = 0;
+await outcome(1, () => {
+  fetch.preconnect(`https://127.0.0.1:${origin}/`);
+  return fetch(`https://127.0.0.1:${origin}/`, { keepalive: false });
+});
+results["connections of fetch.preconnect() and fetch()"] = String(connections);
 console.log(JSON.stringify(results));
 process.exit(0);

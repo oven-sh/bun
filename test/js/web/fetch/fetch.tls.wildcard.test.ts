@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "node:crypto";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import tls from "node:tls";
 
 // This test verifies that wildcard certificate hostname matching follows RFC 6125 Section 6.4.3:
@@ -739,10 +741,10 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
   // native matcher used ares_inet_pton, which also reads "127.1" (as
   // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". A
   // resolver reads "127.1" as 127.0.0.1, so such a name has two readings.
-  // net.isIP also takes an IPv6 address with a zone, which canonicalizeIP()
-  // does not read. It does not read a malformed iPAddress SAN either (5 bytes
-  // here, printed as "<invalid>"), and undefined must not match undefined.
-  describe.concurrent("IP shorthand and zone ids are not an IP address", () => {
+  // canonicalizeIP() does not read a malformed iPAddress SAN (5 bytes here,
+  // printed as "<invalid>"), and no host matches it. This certificate has no
+  // IPv6 SAN.
+  describe.concurrent("IP shorthand is not an IP address", () => {
     const ipCert = makeCert("x", [
       ["ip", "127.0.0.1"],
       ["ip", "127.1.0.0"],
@@ -768,6 +770,194 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         csi: match,
         fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
       });
+    });
+  });
+
+  // The zone id of an IPv6 address ("fe80::1%eth0") names the interface of the
+  // client that reaches a link-local peer. It is not part of the address, so a
+  // certificate names the address alone, and both matchers compare the host
+  // without its zone. net.isIP takes one or more of letters, digits, "-", "."
+  // and ":" after the "%". A host with any other zone is not an IP address, and
+  // an IPv4 address takes no zone.
+  describe.concurrent("an IPv6 host with a zone id matches the IP SAN of its address", () => {
+    // makeCert takes the octets of an iPAddress SAN in dotted decimal.
+    const v6 = (...groups: number[]) => groups.flatMap(group => [group >> 8, group & 0xff]).join(".");
+    const zoneCert = makeCert("x", [
+      ["ip", v6(0, 0, 0, 0, 0, 0, 0, 1)],
+      ["ip", v6(0xfe80, 0, 0, 0, 0, 0, 0, 1)],
+      ["ip", v6(0, 0, 0, 0, 0, 0xffff, 0x0102, 0x0304)],
+      ["ip", v6(0, 0, 0, 0, 0, 0, 0x0102, 0x0300)],
+      ["ip", "5.6.7.8"],
+    ]);
+    const sans = "::1, fe80::1, ::ffff:1.2.3.4, ::1.2.3.0, 5.6.7.8";
+
+    async function connectError(material: { cert: string; key: string }, serverName: string) {
+      await using server = Bun.serve({ port: 0, tls: material, fetch: () => new Response("ok") });
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: material.cert, serverName },
+        socket: {
+          handshake(s) {
+            const error = s.getAuthorizationError();
+            resolve({ code: error?.code, message: error?.message });
+          },
+          data() {},
+          error(_s, err) {
+            reject(err);
+          },
+          connectError(_s, err) {
+            reject(err);
+          },
+          close() {
+            reject(new Error("closed before the handshake callback"));
+          },
+        },
+      });
+      try {
+        return await promise;
+      } finally {
+        socket.end();
+      }
+    }
+
+    it.each([
+      ["::1%lo", true],
+      ["fe80::1%eth0", true],
+      ["FE80:0:0:0:0:0:0:1%eth0", true],
+      // Windows names a zone by the index of the interface.
+      ["fe80::1%12", true],
+      ["fe80::1%wlan-0.1:2", true],
+      ["fe80::1%eth0.", true],
+      ["::ffff:1.2.3.4%lo", true],
+      ["::1.2.3.0%lo", true],
+      // Longer than the 45 bytes of the longest address.
+      [`fe80::1%${Buffer.alloc(64, "z").toString()}`, true],
+      ["fe80::2%eth0", false],
+      // "::ffff:5.6.7.8" is not "5.6.7.8".
+      ["::ffff:5.6.7.8%lo", false],
+      ["5.6.7.8%lo", false],
+      ["fe80::1%", false],
+      ["fe80::1%eth0%eth1", false],
+      ["fe80::1%a/b", false],
+      ["fe80::1%eth0/64", false],
+      ["fe80::1%br_lan", false],
+      ["fe80::1% eth0", false],
+      // ares_inet_pton reads "::1.2.3" as ::1.2.3.0.
+      ["::1.2.3%lo", false],
+    ])("%j", async (host, match) => {
+      expect({ csi: csi(zoneCert.x509, host), fetch: await fetchOk(zoneCert, host) }).toEqual({
+        csi: match,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+
+    // A zoned host is an IP address and nothing else. It matches no DNS SAN and
+    // no CN, also when the certificate has the host as typed there. Bun 1.4.2
+    // accepts those certificates through fetch and Bun.connect. As in Node.js,
+    // the error names the host as typed, with its zone.
+    describe("a zoned host that is not an IP SAN of the certificate", () => {
+      const host = "fe80::1%eth0";
+      it.each([
+        ["another address", zoneCert, "fe80::2%eth0", sans],
+        [
+          "the host and its address as DNS SANs",
+          makeCert("x", [
+            ["dns", host],
+            ["dns", "fe80::1"],
+          ]),
+          host,
+          "",
+        ],
+        ["the host as the CN", makeCert(host, []), host, ""],
+        ["the address as the CN", makeCert("fe80::1", []), host, ""],
+        [
+          "the host as the CN, beside another address",
+          makeCert(host, [["ip", v6(0xfe80, 0, 0, 0, 0, 0, 0, 2)]]),
+          host,
+          "fe80::2",
+        ],
+      ])("%s", async (_label, material, host, list) => {
+        const reason = `IP: ${host} is not in the cert's list: ${list}`;
+        const error = tls.checkServerIdentity(host, material.x509.toLegacyObject()) as any;
+        expect({
+          csi: { code: error?.code, reason: error?.reason, host: error?.host },
+          fetch: await fetchOk(material, host),
+          connect: await connectError(material, host),
+        }).toEqual({
+          csi: { code: "ERR_TLS_CERT_ALTNAME_INVALID", reason, host },
+          fetch: { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+          connect: {
+            code: "ERR_TLS_CERT_ALTNAME_INVALID",
+            message: `Hostname/IP does not match certificate's altnames: ${reason}`,
+          },
+        });
+      });
+    });
+
+    // tls.checkServerIdentity takes any object as the certificate. A real
+    // certificate prints an IP SAN from its octets, in full. In another text,
+    // canonicalizeIP() read "127.1" as 127.1.0.0, as ares_inet_pton does. Every
+    // expected value was taken from Node.js v26.3.0, which reads the text as a
+    // C string, up to a NUL.
+    it.each([
+      ["::1.2.3.0%lo", "IP Address:::1.2.3", false],
+      ["::1.2.3.0", "IP Address:::1.2.3", false],
+      ["127.1.0.0", "IP Address:127.1", false],
+      ["10.0.0.0", "IP Address:10", false],
+      ["127.0.0.1", "IP Address:0x7f000001", false],
+      ["1.2.3.4", "IP Address:01.2.3.4", false],
+      ["1.2.3.4", "IP Address:1.2.3.4/32", false],
+      ["127.1.0.0", "IP Address:127.1\0", false],
+      ["::1", "IP Address:::1\0junk", true],
+      ["fe80::1", "IP Address:fe80::1%eth0", true],
+      ["fe80::1%eth0", "IP Address:fe80::1%eth1", true],
+      ["::1%x.example.com", "IP Address:::1", true],
+    ])("tls.checkServerIdentity(%j) with the IP SAN text %j", (host, subjectaltname, match) => {
+      const cert = { subjectaltname, subject: {} } as tls.PeerCertificate;
+      expect(tls.checkServerIdentity(host, cert) === undefined).toBe(match);
+    });
+
+    // RFC 6066 takes no IP address as the server name in SNI. fetch asked
+    // ares_inet_pton, which does not read a zoned host as an address and reads
+    // "127.1" as one. A host is sent as SNI when the matcher takes it as a DNS
+    // name, as in Node.js.
+    it("fetch sends SNI for a DNS name only", async () => {
+      const names: string[] = [];
+      const server = tls.createServer(
+        {
+          key: zoneCert.key,
+          cert: zoneCert.cert,
+          SNICallback(name, done) {
+            names.push(name);
+            done(null);
+          },
+        },
+        socket => {
+          socket.on("error", () => {});
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        },
+      );
+      server.on("tlsClientError", () => {});
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+        const results: string[] = [];
+        for (const serverName of ["fe80::1%eth0", "5.6.7.8", "::1", "name.test", "127.1", "fe80::1%br_lan"]) {
+          // @ts-expect-error Bun extension
+          const response = fetch(url, { tls: { ca: zoneCert.cert, serverName }, keepalive: false });
+          results.push(await response.then(r => r.text()).catch(e => e.code));
+        }
+        const rejected = "ERR_TLS_CERT_ALTNAME_INVALID";
+        expect({ results, names }).toEqual({
+          results: ["ok", "ok", "ok", rejected, rejected, rejected],
+          names: ["name.test", "127.1", "fe80::1%br_lan"],
+        });
+      } finally {
+        server.close();
+      }
     });
   });
 

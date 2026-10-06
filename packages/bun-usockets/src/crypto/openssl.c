@@ -2176,6 +2176,8 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   if (code != LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN || ssl_handle_shutdown(s)) {
     return us_internal_socket_close_raw(s, code, reason);
   }
+  /* Only a read delivers the peer's reply, and the owner that paused let go with this close. */
+  us_socket_resume(s);
   return s;
 }
 #define ssl_close us_internal_ssl_close

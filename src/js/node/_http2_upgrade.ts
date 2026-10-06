@@ -103,11 +103,14 @@ function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, c
 // Cleans up the native TLS handle.
 // Mirrors net.ts Socket.prototype._destroy.
 function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (err?: Error | null) => void) {
-  const h = this._ctx.nativeHandle;
+  const ctx = this._ctx;
+  const h = ctx.nativeHandle;
   if (h) {
     h.close();
-    this._ctx.nativeHandle = null;
+    ctx.nativeHandle = null;
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
+  ctx.rawSocket.destroy();
   // Must invoke pending write callback with error per Writable stream contract
   const writeCb = this._writeCallback;
   if (writeCb) {

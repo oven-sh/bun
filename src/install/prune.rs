@@ -106,7 +106,7 @@ impl Plan {
     fn spare_root_aliases(&mut self, quiet: bool) {
         let id = |st: sys::Stat| (st.st_dev as u64, st.st_ino as u64);
         let mut root: Option<Option<(u64, u64)>> = None;
-        let mut spared = handle_oom(DynamicBitSet::init_empty(self.folders.len()));
+        let mut spared: Vec<usize> = Vec::new();
         for (idx, folder) in self.folders.iter_mut().enumerate() {
             let (FolderKind::NodeModules, Some(dir)) = (&folder.kind, &folder.dir) else {
                 continue;
@@ -122,7 +122,7 @@ impl Plan {
             if root.is_none() || sys::fstat(dir.fd()).ok().map(id) != root {
                 continue;
             }
-            spared.set(idx);
+            spared.push(idx);
             folder.touched = false;
             if !quiet {
                 bun_core::warn!(
@@ -131,13 +131,16 @@ impl Plan {
                 );
             }
         }
+        if spared.is_empty() {
+            return;
+        }
         let folders = &self.folders;
         self.removals.retain(|removal| {
             let folder = match folders[removal.folder].kind {
                 FolderKind::Scope { parent } => parent,
                 _ => removal.folder,
             };
-            !spared.is_set(folder)
+            !spared.contains(&folder)
         });
     }
 

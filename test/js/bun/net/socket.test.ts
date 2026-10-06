@@ -1772,10 +1772,12 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
       missing: missing(UNANSWERING),
     }).toEqual({
-      before: { fdIsOpen: true, wrote: batches ? 16 * 1024 : undefined },
+      // fstat() does not take a Windows socket handle.
+      before: { fdIsOpen: !isWindows, wrote: batches ? 16 * 1024 : undefined },
       after: { fdIsOpen: false, wrote: batches ? 64 * 1024 : undefined },
       timeouts: 0,
-      cutShort: [true, true],
+      // Loopback buffers outside Linux are small enough for the drips to read everything in time.
+      cutShort: [true, isLinux ? true : expect.any(Boolean)],
       missing: 0,
     });
   } finally {
@@ -6124,7 +6126,12 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
       failureDetail: exitCode === 0 ? "" : stderr,
     }).toEqual({
       reset: true,
-      result: { writes: [-1, -1], received: "hello and bye", closed: true },
+      // Windows drops what the client has yet to read when the reset arrives.
+      result: {
+        writes: [-1, -1],
+        received: isWindows ? expect.stringMatching(/^hello( and bye)?$/) : "hello and bye",
+        closed: true,
+      },
       failureDetail: "",
     });
     expect(exitCode).toBe(0);

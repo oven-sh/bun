@@ -1651,7 +1651,8 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
-  it("reads a response that the server sent before it reset the upload", async () => {
+  // Windows drops what the client has yet to read when the reset arrives.
+  it.skipIf(isWindows)("reads a response that the server sent before it reset the upload", async () => {
     const server = tls.createServer(validTls, socket => {
       socket.on("error", () => {});
       socket.once("data", () => {

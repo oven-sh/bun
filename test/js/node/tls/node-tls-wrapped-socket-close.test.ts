@@ -545,7 +545,14 @@ describe("a TLS socket made over a socket that has sent its FIN", () => {
           for (const event of ["secureConnect", "end", "error"]) peer.on(event, err => log.push("peer " + event + (err ? " " + err.code : "")));
         });
       `);
-      assert.deepStrictEqual(log.sort(), ["peer end", "peer error ECONNRESET", "raw close", "tls close"]);
+      // Only Linux is known to hand the peer the FIN ahead of the reset behind it.
+      const peerEnd = process.platform === "linux" ? ["peer end"] : [];
+      assert.deepStrictEqual(log.filter(event => event !== "peer end" || peerEnd.length > 0).sort(), [
+        ...peerEnd,
+        "peer error ECONNRESET",
+        "raw close",
+        "tls close",
+      ]);
     });
   }
 
@@ -1010,9 +1017,10 @@ test("a secureContext that is not one is refused by the constructor", () => {
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 120_000 }, async () => {
       await using proc = Bun.spawn({
-        cmd: [node!, import.meta.filename],
+        // A test that hangs in Node.js fails by name instead of running this one out of time.
+        cmd: [node!, "--test-timeout=15000", "--test-force-exit", import.meta.filename],
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",

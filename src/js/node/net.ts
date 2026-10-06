@@ -573,6 +573,9 @@ function onClientHandshake(self, socket, success, verifyError) {
   if (isProtocolFailure) {
     // Surface the OpenSSL reason instead of letting the close path report a
     // generic disconnect.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488
+    self._hadError = true;
+    self._closeAfterHandlingError = true;
     self.destroy(tlsHandshakeError(verifyError));
     return;
   }

@@ -518,6 +518,79 @@ test("a transport is still intact inside the 'error' of a handshake that failed 
   assert.deepStrictEqual(events, ["tls error, raw.destroyed=false", "raw close", "tls close hadError=true"]);
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488
+describe("a client handshake that fails with a protocol error leaves the socket inspectable inside 'error'", () => {
+  function observe(tlsSocket: tls.TLSSocket, raw?: net.Socket) {
+    const events: unknown[] = [];
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    tlsSocket.on("secureConnect", () => events.push("secureConnect"));
+    tlsSocket.on("error", (error: NodeJS.ErrnoException) => {
+      events.push({
+        error: error.code,
+        destroyed: tlsSocket.destroyed,
+        _hadError: (tlsSocket as unknown as { _hadError: boolean })._hadError,
+        remoteAddress: tlsSocket.remoteAddress,
+        remotePort: tlsSocket.remotePort,
+        rawDestroyed: raw?.destroyed,
+      });
+    });
+    tlsSocket.on("close", hadError => {
+      events.push({ close: hadError });
+      resolve(events);
+    });
+    return promise;
+  }
+
+  const failure = (error: string, remotePort: number, rawDestroyed?: boolean) => [
+    { error, destroyed: true, _hadError: true, remoteAddress: "127.0.0.1", remotePort, rawDestroyed },
+    { close: true },
+  ];
+
+  const plaintextPeer = () =>
+    net.createServer(peer => {
+      peer.on("error", () => {});
+      peer.on("data", () => peer.end("HTTP/1.1 400 Bad Request\r\n\r\n"));
+    });
+
+  test("tls.connect({ port }) to a peer that does not speak TLS", async () => {
+    const server = plaintextPeer();
+    const port = await listen(server);
+    try {
+      const events = await observe(tls.connect({ port, host: "127.0.0.1" }));
+      assert.deepStrictEqual(events, failure("ERR_SSL_WRONG_VERSION_NUMBER", port));
+    } finally {
+      server.close();
+    }
+  });
+
+  for (const state of ["connected", "connecting"]) {
+    test(`tls.connect({ socket }) over a ${state} socket to a peer that does not speak TLS`, async () => {
+      const server = plaintextPeer();
+      const port = await listen(server);
+      const raw = net.connect(port, "127.0.0.1");
+      try {
+        if (state === "connected") await once(raw, "connect");
+        const events = await observe(tls.connect({ socket: raw }), raw);
+        assert.deepStrictEqual(events, failure("ERR_SSL_WRONG_VERSION_NUMBER", port, false));
+      } finally {
+        raw.destroy();
+        server.close();
+      }
+    });
+  }
+
+  test("a fatal alert from a TLS peer", async () => {
+    const server = tls.createServer({ key, cert, minVersion: "TLSv1.3" }).on("tlsClientError", () => {});
+    const port = await listen(server);
+    try {
+      const events = await observe(tls.connect({ port, host: "127.0.0.1", maxVersion: "TLSv1.2" }));
+      assert.deepStrictEqual(events, failure("ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", port));
+    } finally {
+      server.close();
+    }
+  });
+});
+
 test("a secureContext that is not one is refused by the constructor", () => {
   const invalid = { name: "TypeError", code: "ERR_TLS_INVALID_CONTEXT", message: "context must be a SecureContext" };
   for (const secureContext of [{ context: {} }, {}, tls.createSecureContext().context, "context"]) {

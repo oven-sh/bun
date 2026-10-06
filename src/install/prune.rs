@@ -1713,7 +1713,8 @@ fn entry_kind_of(dir: &Dir, alias: &[u8]) -> EntryKind {
 }
 
 fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
-    if lstat_kind(dir, name) != EntryKind::Directory {
+    // POSIX refuses a link here. On Windows `O::NOFOLLOW` opens the link itself, so ask what the entry is first.
+    if cfg!(windows) && lstat_kind(dir, name) != EntryKind::Directory {
         return None;
     }
     dir.open_at_with(name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)

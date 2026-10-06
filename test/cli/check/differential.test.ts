@@ -819,6 +819,53 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// In the true branch of `[a, p] extends [A[], B[]] ? .. : ..`, `[a, p]` is also `[A[], B[]]`. A conditional type there that
+// checks `[a, p]` again is deferred all the same, so nothing is inferred for its `infer` type parameters: they are
+// `unknown`, not what `A` and `B` would give.
+const narrowedCheckTypes = [
+  ["[a, p]", "[readonly A[], readonly B[]]", "[I, J]"],
+  ["[a]", "[readonly A[]]", "[I]"],
+  ["a", "readonly A[]", "I"],
+  ["[a, p, a]", "[readonly A[], readonly B[], unknown]", "[I, J, unknown]"],
+  ["{ k: a; l: p }", "{ k: readonly A[]; l: readonly B[] }", "{ k: I; l: J }"],
+];
+const narrowedTo = [
+  ["any", "any"],
+  ["string", "number"],
+  ["string", "string"],
+  ["{ q: 1 }", "never"],
+];
+const inferredFromThem = [
+  ["readonly (infer x)[]", "readonly (infer y)[]"],
+  ["readonly [infer x, ...any[]]", "readonly [infer y, ...any[]]"],
+  ["infer x", "infer y"],
+  ["readonly (infer x extends string)[]", "readonly (infer y)[]"],
+];
+const assignedTo = [
+  "{ x: string }",
+  "{ x: string | number }",
+  "{ x: unknown }",
+  "{ x: any[] }",
+  "{ x: { q: 1 } }",
+  "never",
+];
+
+differential(
+  "a conditional type whose check type is narrowed by the conditional type around it",
+  async () => {
+    const cases = [...product(narrowedCheckTypes, narrowedTo, inferredFromThem, assignedTo)].map(
+      ([[check, outer, inner], [A, B], [I, J], target], index) => {
+        const result = inner.includes("J") ? "{ x: x; y: y }" : "{ x: x }";
+        const inside = `${check} extends ${inner.replace("I", I).replace("J", J)} ? ${result} : never`;
+        const type = `${check} extends ${outer.replace("A", A).replace("B", B)} ? (${inside}) : never`;
+        return `type C${index}<a, p> = ${type}; function f${index}<a, p>(g: C${index}<a, p>) { const v: ${target} = g; }`;
+      },
+    );
+    expect(await casesThatDiffer({}, [], cases, 1)).toEqual([]);
+  },
+  timeout,
+);
+
 // `interface D extends M<D>`, where the members of `M<D>` depend on those of `D`, is an error (TS2310). In a declaration
 // file that `skipLibCheck` hides, only what follows from it shows: src/js/builtins.d.ts declares `promise.$then` like that.
 // `M<D>` has its members from what `D` declares itself, and from the base types of `D` that are resolved before it where

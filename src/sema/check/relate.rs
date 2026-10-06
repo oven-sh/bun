@@ -1878,7 +1878,10 @@ impl<'p, 's> Checker<'p, 's> {
         if params.is_empty() {
             return self.cond_true(t);
         }
-        let check = self.cond_check(t);
+        // `instantiateType(getActualTypeVariable(root.checkType), mapper)`
+        let check = self.type_from_node(file, nodes[0]);
+        let check = self.actual_type_variable(check);
+        let check = self.instantiate(check, mapper);
         // `isDeferredType(checkType, checkTuples)`
         let hir = self.hir(file);
         let simple_tuple_len = |node: TypeNodeId| match hir[node].kind {

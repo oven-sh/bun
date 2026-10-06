@@ -247,6 +247,36 @@ describe("https.createServer forwards every TLS server option", () => {
     expect(() => https.createServer({ ...validCert, [name]: value })).toThrow(expect.objectContaining({ code }));
     expect(() => https.createServer({ [name]: value })).toThrow(expect.objectContaining({ code }));
   });
+
+  test.each([
+    // BoringSSL has no DHE suites to apply it to.
+    ["dhparam", "auto"],
+    // tls.Server#setSecureContext() drops these when they are falsy.
+    ["clientCertEngine", 0],
+    ["clientCertEngine", ""],
+    ["ciphers", 0],
+    ["sessionTimeout", false],
+    ["ticketKeys", ""],
+    ["crl", ""],
+    ["crl", 0],
+    ["passphrase", 0],
+  ])("listens with %s: %p like Node", async (name, value) => {
+    await using server = https.createServer({ ...validCert, [name]: value });
+    expect(await handshake(await listen(server), {})).toStartWith("TLS_");
+    if (!process.versions.bun) return;
+    await using viaHttp = http.createServer({ ...validCert, [name]: value });
+    expect(await handshake(await listen(viaHttp), {})).toStartWith("TLS_");
+  });
+
+  // OpenSSL has X448, so Node listens. BoringSSL cannot apply the list as written.
+  test.skipIf(!process.versions.bun)(
+    "throws on an ecdhCurve that names a group BoringSSL lacks, like tls.createServer",
+    () => {
+      const error = expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" });
+      expect(() => tls.createServer({ ...validCert, ecdhCurve: "X448:prime256v1" })).toThrow(error);
+      expect(() => https.createServer({ ...validCert, ecdhCurve: "X448:prime256v1" })).toThrow(error);
+    },
+  );
 });
 
 describe("server.blockList", () => {

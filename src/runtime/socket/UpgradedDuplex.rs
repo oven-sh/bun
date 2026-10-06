@@ -62,9 +62,6 @@ pub(crate) struct UpgradedDuplex {
     pub pending_close: Cell<bool>,
     /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
-    /// The transport delivered EOF (its 'end' event fired). Teardown payloads
-    /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
-    pub transport_eof: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -220,12 +217,49 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
 
         (self.handlers.on_close)(self.handlers.ctx);
+        // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
+        self.call_origin("resume");
         // closes the underlying duplex
         self.call_write_or_end(None, false);
 
         // Early teardown (struct itself is dropped later by parent).
         self.teardown();
         js_wrapper.ensure_still_alive();
+    }
+
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
+    #[uws_callback(export = "UpgradedDuplex__pause_stream")]
+    pub(crate) fn pause_stream(&self) -> bool {
+        // Like a connecting fd: `on_open` forgets the owner's pause, so nothing would resume this one.
+        self.wrapper_ref().is_some() && self.call_origin("pause")
+    }
+
+    #[uws_callback(export = "UpgradedDuplex__resume_stream")]
+    pub(crate) fn resume_stream(&self) -> bool {
+        self.call_origin("resume")
+    }
+
+    /// `origin[name]()`. A throw goes to `on_error`. False when the call did not complete.
+    fn call_origin(&self, name: &str) -> bool {
+        let duplex = self.origin.get();
+        if duplex.is_empty() {
+            return false;
+        }
+        let Some(global) = self.global else {
+            return false;
+        };
+        let result = match duplex.get(&global, name) {
+            Ok(Some(method)) if method.is_callable() => method.call(&global, duplex, &[]),
+            Ok(_) => return false,
+            Err(err) => Err(err),
+        };
+        match result {
+            Ok(_) => true,
+            Err(err) => {
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                false
+            }
+        }
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
@@ -250,7 +284,7 @@ impl UpgradedDuplex {
             // throws writeAfterFIN (EPIPE). The trailing end() is not a write
             // and still goes through the writableEnded probe below, so a
             // half-open transport sees our FIN.
-            if data.is_some() && self.transport_eof.get() {
+            if data.is_some() && Self::transport_got_eof(duplex, &global) {
                 return;
             }
             // Node ends no destroyed stream.
@@ -290,6 +324,23 @@ impl UpgradedDuplex {
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
                 (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+            }
+        }
+    }
+
+    /// Not the 'end' event, which a paused transport holds back. No public property tells.
+    fn transport_got_eof(duplex: JSValue, global: &JSGlobalObject) -> bool {
+        let ended = duplex
+            .get(global, "_readableState")
+            .and_then(|state| match state {
+                Some(state) if state.is_object() => state.get(global, "ended"),
+                _ => Ok(None),
+            });
+        match ended {
+            Ok(ended) => ended.is_some_and(|ended| ended.to_boolean()),
+            Err(err) => {
+                let _ = global.take_exception(err);
+                false
             }
         }
     }
@@ -417,7 +468,6 @@ impl UpgradedDuplex {
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
             pending_shutdown: Cell::new(false),
-            transport_eof: Cell::new(false),
         }
     }
 
@@ -697,7 +747,6 @@ impl UpgradedDuplex {
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
         self.pending_shutdown.set(false);
-        self.transport_eof.set(false);
     }
 }
 
@@ -756,7 +805,6 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
-        this.transport_eof.set(true);
         // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
         (this.handlers.on_end)(this.handlers.ctx);
     }

@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -246,6 +246,75 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
       body.enqueue(Buffer.alloc(1024, "x"));
       expect(await response.catch(error => error.code)).toBe("ECONNRESET");
       serverSock.destroy();
+    });
+
+    // The failing send() of the outer socket runs inside the tunnel's own TLS pass.
+    describe("fetch through a TLS proxy", () => {
+      let proxy: tls.Server;
+      let beforeEstablished: () => void = () => {};
+      const sockets = new Set<net.Socket>();
+      beforeAll(async () => {
+        proxy = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true }, client => {
+          client.once("data", head => {
+            const [host, port] = head.toString().split(" ")[1].split(":");
+            const upstream = net.connect({ host, port: Number(port), allowHalfOpen: true }, () => {
+              beforeEstablished();
+              client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+              client.pipe(upstream, { end: false });
+              upstream.pipe(client, { end: false });
+            });
+            for (const socket of [client, upstream]) sockets.add(socket.on("error", () => {}));
+          });
+        });
+        await once(proxy.listen(0, "127.0.0.1"), "listening");
+      });
+      afterEach(() => {
+        beforeEstablished = () => {};
+        for (const socket of sockets) socket.destroy();
+        sockets.clear();
+      });
+      afterAll(() => proxy.close());
+      const throughProxy = () => ({
+        proxy: `https://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+        tls: { rejectUnauthorized: false },
+      });
+
+      test.each(["send", "ssl_write"] as const)("rejects when %s fails for the tunnel's ClientHello", async syscall => {
+        // The one call that still goes through is for the proxy's own answer.
+        beforeEstablished = () => fault.set({ syscall, action: "errno", errno: "EPIPE", after: 1, repeat: -1 });
+        const response = fetch(`https://127.0.0.1:${silentPort}/`, throughProxy());
+        expect(await response.catch(error => error.code)).toBe("ECONNRESET");
+      });
+
+      test.each(["send", "ssl_write"] as const)(
+        "rejects when %s fails for a chunk of its request body",
+        async syscall => {
+          const firstChunk = Promise.withResolvers<void>();
+          await using origin = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            tls: { key: certs.key, cert: certs.cert },
+            async fetch(req) {
+              await req.body!.getReader().read();
+              firstChunk.resolve();
+              await once(req.signal, "abort");
+              return new Response();
+            },
+          });
+          let body!: ReadableStreamDefaultController<Uint8Array>;
+          const response = fetch(origin.url, {
+            method: "POST",
+            body: new ReadableStream({ start: controller => void (body = controller) }),
+            ...throughProxy(),
+          });
+          body.enqueue(Buffer.from("first"));
+          await firstChunk.promise;
+          fault.set({ syscall, action: "errno", errno: "EPIPE", repeat: -1 });
+          body.enqueue(Buffer.alloc(1024, "x"));
+          expect(await response.catch(error => error.code)).toBe("ECONNRESET");
+          fault.clear();
+        },
+      );
     });
   });
 

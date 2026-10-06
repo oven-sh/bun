@@ -276,3 +276,50 @@ test("explicit ca option replaces the default trust store instead of appending t
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/44365
+test("NODE_EXTRA_CA_CERTS trusts a self-issued certificate whose keyUsage lacks keyCertSign", async () => {
+  const fixtures = join(import.meta.dir, "fixtures", "pinned-leaf");
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    const serve = name =>
+      Bun.serve({
+        port: 0,
+        tls: { key: Bun.file(name + "-key.pem"), cert: Bun.file(name + "-cert.pem") },
+        http3: true,
+        fetch: () => new Response("ok"),
+      });
+    const out = {};
+    for (const name of ["dev", "other-key"]) {
+      const server = serve(name);
+      const url = "https://localhost:" + server.port + "/";
+      const outcome = promise => promise.then(res => res.text(), error => error.code);
+      const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: "localhost", rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      out[name] = {
+        fetch: await outcome(fetch(url)),
+        http3: await outcome(fetch(url, { protocol: "http3" })),
+        tls: socket.authorized,
+      };
+      socket.destroy();
+      server.stop(true);
+    }
+    console.log(JSON.stringify(out));
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixtures, "dev-cert.pem") },
+    cwd: fixtures,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "dev": { fetch: "ok", http3: "ok", tls: true },
+    "other-key": { fetch: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", http3: "HTTP3HandshakeFailed", tls: false },
+  });
+  expect(exitCode).toBe(0);
+});

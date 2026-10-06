@@ -413,7 +413,7 @@ impl Response {
         self.init.get().s3_redirect.is_some()
     }
 
-    /// Signs the `Location` of a `new Response(s3file)` for HEAD, while it is still the URL that Bun wrote.
+    /// Signs the `Location` of a `new Response(s3file)` for HEAD in a copy of the headers, while it is still the URL that Bun wrote.
     #[cold]
     #[inline(never)]
     pub(crate) fn sign_s3_redirect_for_head(&self, global: &JSGlobalObject) -> Result<(), JSValue> {
@@ -438,7 +438,11 @@ impl Response {
         };
         let result = super::blob::store::presign_redirect(store.data.as_s3(), Method::HEAD)
             .map_err(|err| crate::webcore::s3::client::get_js_sign_error(err.into(), global))?;
-        let Some(headers) = self.get_init_headers_mut() else {
+        // A `Headers` object that JS got from this Response shares the map, and it keeps the GET URL.
+        let copy = self
+            .clone_init_headers(global)
+            .map_err(|err| global.take_exception(err))?;
+        let Some(mut headers) = copy else {
             return Ok(());
         };
         headers
@@ -447,7 +451,9 @@ impl Response {
                 &BunString::ascii(&result.url),
                 global,
             )
-            .map_err(|err| global.take_exception(err))
+            .map_err(|err| global.take_exception(err))?;
+        self.set_init_headers(Some(headers));
+        Ok(())
     }
 
     #[inline]

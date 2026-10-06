@@ -2312,6 +2312,22 @@ describe.concurrent("new Response(S3File) from a Bun.serve handler", () => {
     });
   });
 
+  it("the Headers object of the handler keeps the GET URL after a HEAD request", async () => {
+    await using origin = await startOrigin();
+    let headers: Headers | undefined;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const response = origin.response();
+        headers = response.headers;
+        return response;
+      },
+    });
+    expect(await follow(server.url, "HEAD")).toEqual({ status: 200, body: "" });
+    expect(await follow(headers!.get("location")!, "GET")).toEqual({ status: 200, body });
+    expect(origin.answered()).toEqual(["HEAD 200", "GET 200"]);
+  });
+
   it("the Response that the handler sees is a 302 with a GET URL", async () => {
     await using origin = await startOrigin();
     const response = origin.response();

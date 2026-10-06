@@ -4001,9 +4001,6 @@ where
             response,
         };
         resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
-        // The send took the headers, so the HEAD URL cannot reach a later GET of this Response.
-        // SAFETY: caller contract: `response` is live.
-        debug_assert!(unsafe { (*response).get_init_headers().is_none() });
     }
 
     /// # Safety

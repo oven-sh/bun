@@ -27,10 +27,7 @@ pub struct MapEntry {
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
-    /// Owns the arena that backs decoded string bytes inside `root`.
-    /// `deepClone` does *not* dupe escape-decoded `E.String.data` slices.
-    /// The parser takes a `&Arena`, so the arena must outlive the
-    /// cached AST — hold it here so it drops with the entry.
+    /// The arena of the nodes of `root` and of its escape-decoded strings.
     ///
     /// Public so editors that splice new `Expr` nodes into `root`
     /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
@@ -65,7 +62,7 @@ impl MapEntry {
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        self.root = parsed.root;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -79,7 +76,7 @@ fn parse_package_json(
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
-    Ok(json::parse_package_json_utf8_with_opts(
+    Ok(json::parse_package_json_utf8_with_opts_into_arena(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
             guess_indentation,
@@ -194,7 +191,7 @@ impl WorkspacePackageJSONCache {
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root: parsed.root,
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,

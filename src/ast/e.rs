@@ -1342,15 +1342,6 @@ bun_core::oom_from_alloc!(SetError);
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // Sort helpers stay in the gated impl below.
 impl Object {
-    pub const EMPTY: Object = Object {
-        properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: crate::Loc::EMPTY,
-        is_single_line: false,
-        is_parenthesized: false,
-        was_originally_macro: false,
-        close_brace_loc: crate::Loc::EMPTY,
-    };
-
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
         self.as_property(key).map(|q| q.expr)
     }

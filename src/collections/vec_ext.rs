@@ -151,10 +151,6 @@ pub trait VecExt<T>: Sized {
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
     where
         F: FnMut(&T) -> T;
-    fn try_deep_clone_with<F, E>(&self, clone_one: F) -> Result<Self, E>
-    where
-        F: FnMut(&T) -> Result<T, E>,
-        E: From<AllocError>;
 }
 
 // Generic over `A` so the impl serves both `Vec<T>` (Global) and
@@ -443,17 +439,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
             v.push(clone_one(item));
         }
         v
-    }
-    fn try_deep_clone_with<F, E>(&self, mut clone_one: F) -> Result<Self, E>
-    where
-        F: FnMut(&T) -> Result<T, E>,
-        E: From<AllocError>,
-    {
-        let mut v = Vec::with_capacity_in(self.len(), A::default());
-        for item in self.iter() {
-            v.push(clone_one(item)?);
-        }
-        Ok(v)
     }
 }
 

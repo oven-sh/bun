@@ -233,7 +233,7 @@ pub fn set_active_spill_heap(heap: *mut mimalloc::Heap) {
 /// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc
 /// instead of the active per-parse state. Use when constructing
 /// `AstVec`/`StoreRef` data that must outlive the current parse arena
-/// (e.g. `Expr::deep_clone` for `WorkspacePackageJSONCache`). Without this,
+/// (e.g. the package.json roots of `WorkspacePackageJSONCache`). Without this,
 /// the next `ASTMemoryAllocator::reset()` frees buffers the cache still holds.
 ///
 /// Restores the prior state on drop, so it nests correctly inside an
@@ -517,6 +517,21 @@ impl AstAlloc {
         let mut v = Vec::with_capacity_in(items.len(), AstAlloc);
         v.extend_from_slice(items);
         v
+    }
+
+    /// An empty `AstVec` whose first buffer is a block of `arena`. A grow moves it to `AstAlloc`.
+    #[inline]
+    pub fn vec_with_capacity_in_arena<T>(cap: usize, arena: &MimallocArena) -> AstVec<T> {
+        if cap == 0 || core::mem::size_of::<T>() == 0 {
+            return Vec::new_in(AstAlloc);
+        }
+        let layout = Layout::array::<T>(cap).unwrap_or_else(|_| crate::out_of_memory());
+        let ptr = arena.alloc_layout(layout).cast::<T>();
+        // SAFETY: `ptr` is a live, unaliased `mi_heap_malloc` block that fits
+        // `cap` elements of `T`. `AstAlloc` never frees (`deallocate` is a
+        // no-op), and its `grow` only needs a mimalloc block head for blocks
+        // above `BUMP_MAX`, which every `MimallocArena` allocation is.
+        unsafe { Vec::from_raw_parts_in(ptr.as_ptr(), 0, cap, AstAlloc) }
     }
 
     /// Move `items` element-wise into a fresh AST-heap allocation. Replaces

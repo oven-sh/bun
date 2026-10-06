@@ -4080,3 +4080,120 @@ describe("a tls.Server nothing refers to any more is collected", () => {
     expect(ref.deref()).toBeUndefined();
   });
 });
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488
+describe("a server-side handshake failure reported under a JS call emits 'close'", () => {
+  // `wrap` writes a plain banner, so `peer` runs once the wrap is in place.
+  async function failHandshake(
+    wrap: (conn: net.Socket) => TLSSocket,
+    peer: (client: net.Socket) => void,
+  ): Promise<string[]> {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<string[]>();
+    let conn: net.Socket | undefined;
+    const rawServer = net.createServer(socket => {
+      conn = socket;
+      conn.on("error", () => {});
+      const wrapped = wrap(conn);
+      wrapped.on("error", () => events.push("error"));
+      wrapped.on("close", hadError => {
+        events.push(`close:${hadError}`);
+        closed.resolve(events);
+      });
+    });
+    let client: net.Socket | undefined;
+    try {
+      await once(rawServer.listen(0, "127.0.0.1"), "listening");
+      client = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+      client.on("error", () => {});
+      client.once("data", () => peer(client!));
+      return await closed.promise;
+    } finally {
+      client?.destroy();
+      conn?.destroy();
+      rawServer.close();
+    }
+  }
+
+  const serverOptions = (extra: tls.TlsOptions = {}) => ({ isServer: true, ...COMMON_CERT, ...extra });
+
+  const sendPlaintext = (client: net.Socket) => {
+    client.write("this is not a ClientHello\r\n");
+  };
+
+  const rejectingSNI: tls.TlsOptions = {
+    SNICallback: (_servername, cb) => {
+      setImmediate(cb, new Error("unknown servername"));
+    },
+  };
+
+  it("over a connection with unflushed writes", async () => {
+    const events = await failHandshake(conn => {
+      conn.cork();
+      conn.write("220 banner\r\n");
+      const wrapped = new TLSSocket(conn, serverOptions());
+      conn.uncork();
+      return wrapped;
+    }, sendPlaintext);
+    expect(events).toEqual(["error", "close:true"]);
+  });
+
+  it("over a generic Duplex", async () => {
+    const events = await failHandshake(conn => {
+      conn.write("220 banner\r\n");
+      const transport = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          conn.write(chunk, encoding, callback);
+        },
+        final(callback) {
+          conn.end(callback);
+        },
+      });
+      conn.on("data", chunk => transport.push(chunk));
+      conn.on("end", () => transport.push(null));
+      return new TLSSocket(transport, serverOptions());
+    }, sendPlaintext);
+    expect(events).toEqual(["error", "close:true"]);
+  });
+
+  it("when an asynchronous SNICallback rejects a wrap that adopted the fd", async () => {
+    const events = await failHandshake(
+      conn => {
+        conn.write("220 banner\r\n");
+        return new TLSSocket(conn, serverOptions(rejectingSNI));
+      },
+      client => {
+        connect({ socket: client, servername: "rejected.example.com", rejectUnauthorized: false }).on(
+          "error",
+          () => {},
+        );
+      },
+    );
+    expect(events).toEqual(["error", "close:true"]);
+  });
+
+  it("when an asynchronous SNICallback of a tls.Server rejects", async () => {
+    const server = createServer({ ...COMMON_CERT, ...rejectingSNI });
+    const closed = Promise.withResolvers<{ message: string; hadError: boolean }>();
+    server.on("tlsClientError", (err, socket) => {
+      socket.on("close", hadError => closed.resolve({ message: err.message, hadError }));
+    });
+    server.on("secureConnection", () => closed.reject(new Error("secureConnection must not fire")));
+    let client: TLSSocket | undefined;
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      client = connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        servername: "rejected.example.com",
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      expect(await closed.promise).toEqual({ message: "unknown servername", hadError: true });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});

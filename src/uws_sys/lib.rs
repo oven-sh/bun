@@ -63,7 +63,7 @@ impl Default for us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// Borrow the BoringSSL verify-error `code` as a `CStr`, or `None` if null.
     ///
-    /// uSockets populates `code`/`reason` from BoringSSL's static error-string
+    /// uSockets populates `code` from BoringSSL's static error-string
     /// table (`X509_verify_cert_error_string` and friends), so the pointee is
     /// `'static` in practice; the borrow is conservatively tied to `&self` so
     /// the accessor is sound even if a future caller heap-allocates the struct.
@@ -79,14 +79,13 @@ impl us_bun_verify_error_t {
     }
 
     /// Borrow the BoringSSL verify-error `reason` as a `CStr`, or `None` if null.
-    /// See [`Self::code`] for the safety argument.
+    /// An `EPROTO` reason is a stack buffer of the reporter: copy it before the handshake callback returns.
     #[inline]
     pub fn reason(&self) -> Option<&core::ffi::CStr> {
         if self.reason.is_null() {
             return None;
         }
-        // SAFETY: same invariant as `code()` — non-null `reason` is a valid
-        // NUL-terminated C string from BoringSSL's static error table.
+        // SAFETY: a non-null `reason` is a valid NUL-terminated C string for the duration of the report.
         Some(unsafe { core::ffi::CStr::from_ptr(self.reason) })
     }
 

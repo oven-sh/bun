@@ -264,6 +264,8 @@ impl SSLConfigFromJs for SSLConfig {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
+        } else {
+            apply_default_ciphers(vm, &mut result);
         }
 
         result.client_renegotiation_limit = generated.client_renegotiation_limit;
@@ -283,7 +285,22 @@ impl SSLConfigFromJs for SSLConfig {
 pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
+    apply_default_ciphers(vm, &mut cfg);
     cfg
+}
+
+/// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
+fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    let Some(ciphers) = vm.tls_default_ciphers() else {
+        return;
+    };
+    cfg.ssl_ciphers = dupe_z(ciphers);
+    // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
+    if ciphers.is_empty() {
+        cfg.ssl_min_version = cfg
+            .ssl_min_version
+            .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
+    }
 }
 
 /// Whether a new TLS socket must enforce `rejectUnauthorized`: close the

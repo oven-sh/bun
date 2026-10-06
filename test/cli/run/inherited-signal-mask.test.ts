@@ -1,11 +1,11 @@
 // A blocked signal is never delivered, and the set of blocked signals survives
 // execve. So a launcher that has a signal blocked (JVM and Go wrappers, some
 // supervisors, `env --block-signal`) starts bun with it blocked: like node, bun
-// clears the mask at startup (src/bun_bin/lib.rs), and, like libuv, it execs
-// every child with an empty mask whatever its own looks like (posix_spawn_bun
-// in src/jsc/bindings/bun-spawn.cpp). The last test covers the one place bun
-// used to block a signal itself: forwarding one to a `bun run` script
-// (src/jsc/bindings/c-bindings.cpp).
+// clears the mask at startup (src/runtime/bin_entry/mod.rs), and, like libuv,
+// it execs every child with an empty mask whatever its own looks like
+// (posix_spawn_bun in src/jsc/bindings/bun-spawn.cpp). The last test covers the
+// one place bun used to block a signal itself: forwarding one to a `bun run`
+// script (src/jsc/bindings/c-bindings.cpp).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
 import { readFileSync } from "node:fs";

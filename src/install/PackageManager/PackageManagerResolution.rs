@@ -3,19 +3,21 @@ use core::mem::ManuallyDrop;
 
 use bun_collections::index_sort;
 use bun_core::Output;
-use bun_core::strings;
+use bun_core::{ZStr, strings};
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
-use crate::lockfile::{DependencyIDSlice, DependencySlice};
+use crate::lockfile::{CatalogMap, DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
+use crate::{
+    DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution, invalid_package_id,
+};
 
-use super::PackageManager;
 use super::options::LogLevel;
+use super::{PackageManager, WorkspacePackageJSONCache};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free-function re-export surface. Thin shims over the
@@ -294,7 +296,11 @@ impl PackageManager {
         }
     }
 
-    pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
+    pub(crate) fn verify_resolutions(
+        &mut self,
+        log_level: LogLevel,
+        root_package_json_path: &ZStr,
+    ) {
         let lockfile = &self.lockfile;
         let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
@@ -304,6 +310,7 @@ impl PackageManager {
         let end: PackageID = lockfile.packages.len() as PackageID;
 
         let mut any_failed = false;
+        let mut root_package_json: Option<RootPackageJson> = None;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         debug_assert_eq!(resolutions_lists.len(), dependency_lists.len());
@@ -339,7 +346,31 @@ impl PackageManager {
                     if !any_failed {
                         Output::flush();
                     }
-                    if failed_dep.version.tag == dependency::Tag::Catalog {
+                    // A row whose entry exists failed on the entry's version, not on the catalog.
+                    let root = if failed_dep.version.tag == dependency::Tag::Catalog
+                        && lockfile
+                            .catalogs
+                            .get_ref(string_buf, *failed_dep.version.catalog(), failed_dep.name)
+                            .is_none()
+                    {
+                        Some(match root_package_json {
+                            Some(root) => root,
+                            None => {
+                                let log = self.log_mut();
+                                *root_package_json.insert(RootPackageJson::read(
+                                    &mut self.workspace_package_json_cache,
+                                    log,
+                                    root_package_json_path,
+                                ))
+                            }
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(root) = root.filter(|root| root.has_workspaces) {
+                        // `bun add --catalog` refuses the name of the root and of a workspace.
+                        let can_add = Some(failed_dep.name_hash) != root.name_hash
+                            && !lockfile.workspace_paths.contains(&failed_dep.name_hash);
                         let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
                         let literal = failed_dep.version.literal.fmt(string_buf);
                         let catalog_name = failed_dep.version.catalog().slice(string_buf);
@@ -361,17 +392,21 @@ impl PackageManager {
                                 "<b>{}@{}<r> is not in the catalog",
                                 (name, literal),
                             );
-                            bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                            if can_add {
+                                bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                            }
                         } else {
                             Output::err_generic(
                                 "<b>{}@{}<r> is not in catalog \"{}\"",
                                 (name, literal, bstr::BStr::new(catalog_name)),
                             );
-                            bun_core::pretty_errorln!(
-                                "  bun add --catalog={} {}",
-                                bstr::BStr::new(catalog_name),
-                                name
-                            );
+                            if can_add {
+                                bun_core::pretty_errorln!(
+                                    "  bun add --catalog={} {}",
+                                    bstr::BStr::new(catalog_name),
+                                    name
+                                );
+                            }
                         }
                     } else if failed_dep.name.is_empty()
                         || strings::eql_long(
@@ -400,7 +435,46 @@ impl PackageManager {
         }
 
         if any_failed {
+            if root_package_json.is_some_and(|root| !root.has_workspaces) {
+                bun_core::note!(
+                    "catalogs require a \"workspaces\" field in the root package.json, and bun used {} as the root, which has none",
+                    bun_core::fmt::quote(root_package_json_path.as_bytes()),
+                );
+            }
             self.crash();
+        }
+    }
+}
+
+/// What `bun add --catalog` reads from the root package.json before it accepts a name.
+#[derive(Clone, Copy)]
+struct RootPackageJson {
+    has_workspaces: bool,
+    name_hash: Option<PackageNameHash>,
+}
+
+impl RootPackageJson {
+    #[cold]
+    #[inline(never)]
+    fn read(
+        cache: &mut WorkspacePackageJSONCache,
+        log: &mut bun_ast::Log,
+        root_package_json_path: &ZStr,
+    ) -> Self {
+        match cache.get_with_path(log, root_package_json_path.as_bytes(), Default::default()) {
+            GetJsonResult::Entry(entry) => Self {
+                has_workspaces: CatalogMap::workspaces_field(&entry.root).is_some(),
+                name_hash: entry
+                    .root
+                    .get(b"name")
+                    .as_ref()
+                    .and_then(|name| name.as_utf8_string_literal())
+                    .map(semver::string::Builder::string_hash),
+            },
+            GetJsonResult::ReadErr(_) | GetJsonResult::ParseErr(_) => Self {
+                has_workspaces: true,
+                name_hash: None,
+            },
         }
     }
 }

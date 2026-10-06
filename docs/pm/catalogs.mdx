@@ -57,7 +57,7 @@ In your root-level `package.json`, add a `catalog` or `catalogs` field within th
 }
 ```
 
-`catalog` and `catalogs` also work at the top level of `package.json`.
+Bun reads `catalog` and `catalogs` from the `workspaces` object when that object has either key. Otherwise Bun reads them from the top level of the root `package.json`, which still needs a `workspaces` field.
 
 ### 2. Reference Catalog Versions in Workspace Packages
 
@@ -297,6 +297,7 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 - `catalog:default` is the same as `catalog:`. You can define the default catalog as either `catalog` or `catalogs.default`, but a package listed in both is an error
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
 - `catalog:` only works in the root and workspace `package.json` files. Inside a published package it fails to resolve. Publish with `bun publish` or `bun pm pack`, which replace it with the real range (see [Publishing](#publishing))
+- Bun reads catalogs only from a root `package.json` that has a `workspaces` field. Without that field, a `catalog:` entry in `dependencies` or `devDependencies` fails to resolve, and `bun install` names the `package.json` it used as the root
 
 ## Publishing
 

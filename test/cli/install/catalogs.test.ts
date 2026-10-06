@@ -1634,3 +1634,249 @@ describe("peer dependencies", () => {
     });
   });
 });
+
+// `bun install` advises `bun add --catalog <name>` only where that command accepts the name and the entry is missing.
+describe("bun add --catalog advice for a failed catalog: dependency", () => {
+  const note =
+    'note: catalogs require a "workspaces" field in the root package.json, and bun used "<dir>/package.json" as the root, which has none';
+  const advice = "error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps";
+
+  function project(files: Record<string, object>) {
+    return writeRegistryProject(
+      {
+        ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+        "vendor/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "vendor/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      },
+      catalogRegistry.url.href,
+    );
+  }
+
+  function soloRoot(packageJson: object) {
+    return project({ "package.json": { name: "solo", ...packageJson } });
+  }
+
+  async function run(cwd: string, args: string[], env = bunEnv) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  const commands = ["install", "install --frozen-lockfile", "update", "add ./vendor/x", "remove y"];
+
+  describe("a root package.json without workspaces", () => {
+    test.concurrent.each(commands)("bun %s names the package.json it used as the root", async command => {
+      using dir = soloRoot({ dependencies: { "no-deps": "catalog:", y: "file:./vendor/y" } });
+      const packageJson = await file(join(String(dir), "package.json")).text();
+
+      const { err, exitCode } = await run(String(dir), command.split(" "));
+      expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
+      expect(await file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each([
+      ["catalog", { catalog: { "no-deps": "1.0.0" } }, "catalog:", "no-deps@catalog: failed to resolve"],
+      [
+        "catalogs.tools",
+        { catalogs: { tools: { "no-deps": "1.0.0" } } },
+        "catalog:tools",
+        "no-deps@catalog:tools failed to resolve",
+      ],
+    ] as const)("an entry in a top-level %s is not reported as missing", async (_, catalogs, spec, row) => {
+      using dir = soloRoot({ ...catalogs, dependencies: { "no-deps": spec } });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe(`error: ${row}\n${note}`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("every failed row is listed above one note", async () => {
+      using dir = soloRoot({
+        dependencies: { "no-deps": "catalog:", "a-dep": "catalog:tools" },
+        devDependencies: { leaf: "catalog:" },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe(
+        [
+          "error: leaf@catalog: failed to resolve",
+          "error: a-dep@catalog:tools failed to resolve",
+          "error: no-deps@catalog: failed to resolve",
+          note,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent(
+      'a root that drops "workspaces" after an install gets the note, bun.lock still lists the catalog',
+      async () => {
+        const packageJson = { catalog: { "no-deps": "1.0.0" }, dependencies: { "no-deps": "catalog:" } };
+        using dir = soloRoot({ workspaces: [], ...packageJson });
+        await runBunInstall(bunEnv, String(dir));
+        const lockfile = await file(join(String(dir), "bun.lock")).text();
+        expect(lockfile).toContain('"catalog": {\n    "no-deps": "1.0.0",\n  },');
+        await write(join(String(dir), "package.json"), JSON.stringify({ name: "solo", ...packageJson }));
+
+        for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+          const { err, exitCode } = await run(String(dir), args);
+          expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
+          expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
+          expect(exitCode).toBe(1);
+        }
+      },
+    );
+
+    // https://github.com/oven-sh/bun/issues/20015: `bun link <pkg>` does not walk up to the workspace root.
+    test.concurrent("bun link in a workspace member names the member's package.json", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } } },
+        "packages/app/package.json": { name: "app", dependencies: { "no-deps": "catalog:" } },
+        "linked/package.json": { name: "linked-pkg", version: "1.0.0" },
+      });
+      const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "global-install-dir") };
+      expect(await run(join(String(dir), "linked"), ["link"], env)).toEqual({ err: "", exitCode: 0 });
+
+      const { err, exitCode } = await run(join(String(dir), "packages", "app"), ["link", "linked-pkg"], env);
+      expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a failed file: dependency gets no catalogs note", async () => {
+      using dir = soloRoot({ dependencies: { z: "file:./missing" } });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      const lines = err.split("\n");
+      expect(lines.filter(line => line.startsWith("note:"))).toEqual([]);
+      expect(lines.at(-1)).toBe("error: z@file:./missing failed to resolve");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a catalog: dependency of a file: package gets no catalogs note", async () => {
+      using dir = project({
+        "package.json": { name: "solo", dependencies: { inner: "file:./inner" } },
+        "inner/package.json": { name: "inner", version: "1.0.0", dependencies: { "no-deps": "catalog:" } },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe("error: no-deps@catalog: failed to resolve");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("--silent prints nothing", async () => {
+      using dir = soloRoot({ dependencies: { "no-deps": "catalog:" } });
+
+      const { err, exitCode } = await run(String(dir), ["install", "--silent"]);
+      expect(err).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("a root package.json with workspaces", () => {
+    test.concurrent.each([
+      ["[]", [], { catalog: { "no-deps": "^2.0.0" } }],
+      ["{}", {}, { workspaces: { catalog: { "no-deps": "^2.0.0" } } }],
+    ] as const)(
+      'an empty "workspaces": %s gets the advice, and the advice repairs the install',
+      async (_, workspaces, written) => {
+        using dir = soloRoot({ workspaces, dependencies: { "no-deps": "catalog:" } });
+
+        expect(await run(String(dir), ["install"])).toEqual({ err: advice, exitCode: 1 });
+
+        const added = await run(String(dir), ["add", "--catalog", "no-deps"]);
+        expect(await file(join(String(dir), "package.json")).json()).toEqual({
+          name: "solo",
+          workspaces,
+          ...written,
+          dependencies: { "no-deps": "catalog:" },
+        });
+        expect(added.exitCode).toBe(0);
+
+        await runBunInstall(bunEnv, String(dir), { savesLockfile: false });
+        expect((await file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
+      },
+    );
+
+    test.concurrent.each([
+      ["[]", []],
+      ["{}", {}],
+    ] as const)('a top-level catalog is read once the root has an empty "workspaces": %s', async (_, workspaces) => {
+      using dir = soloRoot({ workspaces, catalog: { "no-deps": "1.0.0" }, dependencies: { "no-deps": "catalog:" } });
+
+      await runBunInstall(bunEnv, String(dir));
+      expect((await file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.0");
+    });
+
+    test.concurrent.each([
+      [
+        "catalogs",
+        "catalog",
+        { workspaces: { catalog: { "a-dep": "1.0.1" } }, catalogs: { tools: { "no-deps": "2.0.0" } } },
+        "catalog:tools",
+        'error: no-deps@catalog:tools: there is no catalog named "tools" in the root package.json',
+      ],
+      [
+        "catalog",
+        "catalogs",
+        { workspaces: { catalogs: { tools: { "a-dep": "1.0.1" } } }, catalog: { "no-deps": "2.0.0" } },
+        "catalog:",
+        advice,
+      ],
+    ] as const)("a top-level %s is ignored when workspaces has a %s", async (_, __, root, spec, err) => {
+      using dir = soloRoot({ ...root, dependencies: { "no-deps": spec } });
+
+      expect(await run(String(dir), ["install"])).toEqual({ err, exitCode: 1 });
+    });
+
+    test.concurrent.each(commands)("bun %s in a workspace member keeps the advice", async command => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/api/package.json": {
+          name: "api",
+          dependencies: { "no-deps": "catalog:", y: "file:../../vendor/y" },
+        },
+      });
+
+      const args = command.replace("./vendor", "../../vendor").split(" ");
+      expect(await run(join(String(dir), "packages", "api"), args)).toEqual({ err: advice, exitCode: 1 });
+    });
+
+    // https://github.com/oven-sh/bun/issues/39784
+    test.concurrent("an entry whose version does not resolve is not reported as missing", async () => {
+      using dir = soloRoot({
+        workspaces: [],
+        catalog: { "no-deps": "9.9.9" },
+        dependencies: { "no-deps": "catalog:" },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err.split("\n").filter(line => line.startsWith("error:") || line.startsWith("  "))).toEqual([
+        'error: No version matching "9.9.9" found for specifier "no-deps" (but package exists)',
+        "error: no-deps@catalog: failed to resolve",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a row named after the root or a workspace gets no bun add --catalog line", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalogs: { tools: {} } } },
+        "packages/app/package.json": {
+          name: "app",
+          dependencies: { lib: "catalog:", mono: "catalog:tools", "no-deps": "catalog:tools" },
+        },
+        "packages/lib/package.json": { name: "lib" },
+      });
+
+      expect(await run(String(dir), ["install"])).toEqual({
+        err: [
+          "error: lib@catalog: is not in the catalog",
+          'error: mono@catalog:tools is not in catalog "tools"',
+          'error: no-deps@catalog:tools is not in catalog "tools"',
+          "  bun add --catalog=tools no-deps",
+        ].join("\n"),
+        exitCode: 1,
+      });
+    });
+  });
+});

@@ -232,14 +232,14 @@ fn has_catalogs(expr: &Expr) -> bool {
 }
 
 fn root_defines_catalogs(root: &Expr) -> bool {
-    let Some(workspaces) = root.get(b"workspaces") else {
+    let Some(workspaces) = CatalogMap::workspaces_field(root) else {
         return false;
     };
     has_catalogs(&workspaces) || has_catalogs(root)
 }
 
 fn catalogs_container(root: &Expr) -> Option<Expr> {
-    let workspaces = root.get(b"workspaces")?;
+    let workspaces = CatalogMap::workspaces_field(root)?;
     let workspaces_is_object = matches!(workspaces.data, ExprData::EObject(_));
     Some(if workspaces_is_object && has_catalogs(&workspaces) {
         workspaces
@@ -423,7 +423,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
             }
         }
         let root = fetch_entry_root(manager, &root_target());
-        if root.get(b"workspaces").is_none() {
+        if CatalogMap::workspaces_field(&root).is_none() {
             Output::err_generic(
                 "--catalog requires a \"workspaces\" field in the root package.json",
                 (),

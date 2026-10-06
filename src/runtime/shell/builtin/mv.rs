@@ -6,7 +6,9 @@ use bun_ptr::BackRef;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_openat};
+use crate::shell::interpreter::{
+    Interpreter, NodeId, ShellTask, closefd, shell_openat, shell_statat,
+};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
@@ -486,7 +488,7 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
+                Self::move_across_devices(src_dir, src, dst_dir, dst, None).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
                     } else {
@@ -499,16 +501,38 @@ impl ShellMvBatchedTask {
     }
 
     /// EXDEV fallback: copy `src` to `dst`, then (only on success) remove `src`.
+    ///
+    /// `output` is `None` for the operand of `mv`. Below the operand it is the
+    /// `(st_dev, st_ino)` of the directory the copy is made in, from
+    /// [`Self::output_directory`]. The walk must not enter that directory: it
+    /// would copy its own output, one level deeper each round. The compare
+    /// knows the directory only by the numbers the destination side reports.
+    /// An overlayfs view of it has other numbers, and there the copy runs until
+    /// the disk, the open files or the stack check stop it.
     fn move_across_devices(
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
+        output: Option<(u64, u64)>,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
+
+        if let Some((dev, ino)) = output {
+            // Only a directory can be `output`: stacked overlays give a file the same numbers.
+            // `st_ino == 0`: the file system has no inode numbers to compare.
+            if S::ISDIR(mode)
+                && st.st_ino != 0
+                && st.st_dev as u64 == dev
+                && st.st_ino as u64 == ino
+            {
+                // The errno of `rename(2)` for a directory moved into itself on one mount.
+                return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+            }
+        }
 
         // Bind mounts can alias one inode through two vfsmounts (renameat()
         // still returns EXDEV); treat same-inode as the POSIX rename() no-op.
@@ -534,6 +558,10 @@ impl ShellMvBatchedTask {
         let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
 
         if S::ISDIR(mode) {
+            // One frame of this function per level of the tree: stop before the stack ends.
+            if !bun_core::StackCheck::init().is_safe_to_recurse() {
+                return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
+            }
             let sd = Dir::from_fd(shell_openat(
                 src_dir,
                 src,
@@ -546,6 +574,10 @@ impl ShellMvBatchedTask {
             }
             let st = sst;
             let mode = st.st_mode as bun_core::Mode;
+            let output = match output {
+                Some(id) => id,
+                None => Self::output_directory(dst_dir, dst, &st)?,
+            };
             // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
             if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
                 if e.get_errno() != E::EEXIST {
@@ -572,7 +604,7 @@ impl ShellMvBatchedTask {
                 nbuf[..name.len()].copy_from_slice(name);
                 nbuf[name.len()] = 0;
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -620,6 +652,65 @@ impl ShellMvBatchedTask {
         }
         drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
+    }
+
+    /// The `(st_dev, st_ino)` of the directory that `dst` is made in, for a
+    /// directory `src`. `EINVAL` when that directory is `src` or is below
+    /// `src`, the errno of `rename(2)` for this on one mount. Nothing is made
+    /// before this check.
+    fn output_directory(
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+        src: &bun_sys::Stat,
+    ) -> Result<(u64, u64), bun_sys::Error> {
+        use bun_sys::{E, Tag};
+
+        // `st_ino == 0`: the file system has no inode numbers to compare.
+        let is_src = |dir: &bun_sys::Stat| {
+            src.st_ino != 0 && dir.st_dev == src.st_dev && dir.st_ino == src.st_ino
+        };
+
+        let mut path = bun_paths::path_buffer_pool::get();
+        let mut len = 0;
+        let made_in = match bun_paths::dirname(dst.as_bytes()) {
+            None => bun_sys::fstat(dst_dir)?,
+            Some(dir) => {
+                if dir.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
+                }
+                path[..dir.len()].copy_from_slice(dir);
+                len = dir.len();
+                path[len] = 0;
+                shell_statat(dst_dir, ZStr::from_buf(&path[..], len))?
+            }
+        };
+        if is_src(&made_in) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+        }
+
+        // Its parents, one `..` more each round. `..` of the root is the root.
+        let mut below = (made_in.st_dev, made_in.st_ino);
+        loop {
+            let up: &[u8] = if len == 0 { b".." } else { b"/.." };
+            if len + up.len() >= bun_paths::MAX_PATH_BYTES {
+                break;
+            }
+            path[len..len + up.len()].copy_from_slice(up);
+            len += up.len();
+            path[len] = 0;
+            // A parent that cannot be read ends the check. The walk of `src` still has its compare.
+            let Ok(parent) = shell_statat(dst_dir, ZStr::from_buf(&path[..], len)) else {
+                break;
+            };
+            if (parent.st_dev, parent.st_ino) == below {
+                break;
+            }
+            if is_src(&parent) {
+                return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+            }
+            below = (parent.st_dev, parent.st_ino);
+        }
+        Ok((made_in.st_dev as u64, made_in.st_ino as u64))
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the

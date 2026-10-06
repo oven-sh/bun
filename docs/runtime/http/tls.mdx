@@ -100,4 +100,4 @@ Bun.serve({
 });
 ```
 
-If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host.
+If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host. Names are compared case-insensitively, and a `*` stands for exactly one label on every transport: `*.my-server1.com` matches `a.my-server1.com` but not `a.b.my-server1.com`.

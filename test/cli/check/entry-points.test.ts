@@ -308,14 +308,18 @@ test("a byte order mark is not a column, wherever the text comes from", async ()
     "index.ts": "\uFEFF" + text,
     "build.ts": `
       const text = ${JSON.stringify(text)};
-      const inMemory = value => ({ entrypoints: ["/virtual/index.ts"], files: { "/virtual/index.ts": value } });
+      const path = require("node:path").join(import.meta.dir, "memory.ts");
+      const inMemory = value => ({ entrypoints: [path], files: { [path]: value } });
       for (const options of [
         { entrypoints: ["index.ts"] },
         inMemory("\\uFEFF" + text),
         inMemory(new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(text)])),
       ]) {
         const { logs } = await Bun.build({ check: true, throw: false, ...options });
-        console.log(JSON.stringify(logs.map(log => [log.position.line, log.position.column, log.position.lineText])));
+        const places = logs.map(({ position, message }) =>
+          position ? [position.line, position.column, position.lineText] : message,
+        );
+        console.log(JSON.stringify(places));
       }
     `,
   });

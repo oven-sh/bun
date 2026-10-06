@@ -2886,6 +2886,57 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });
 
+// The npm lockfile migration reads each workspace package.json through the cache of the package manager.
+test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
+  const files: Record<string, string> = {};
+  for (const workspaces of [1, 5, 50]) {
+    const packages: Record<string, object> = { "": { name: "root", workspaces: ["packages/*"] } };
+    for (let i = 0; i < workspaces; i++) {
+      files[`${workspaces}/packages/p${i}/package.json`] = JSON.stringify({ name: `p${i}`, version: "1.0.0" });
+      packages[`node_modules/p${i}`] = { resolved: `packages/p${i}`, link: true };
+      packages[`packages/p${i}`] = { name: `p${i}`, version: "1.0.0" };
+    }
+    files[`${workspaces}/package.json`] = JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] });
+    files[`${workspaces}/package-lock.json`] = JSON.stringify({ name: "root", lockfileVersion: 3, packages });
+  }
+  using dir = tempDir("workspace-package-json-heap-count", files);
+
+  const count = `
+    const { heapStats } = require("bun:jsc");
+    const { parseLockfile } = require("bun:internal-for-testing").install_test_helpers;
+    const [root] = process.argv.slice(1);
+    const result = {};
+    // The call for 1 workspace also creates the heaps of the package manager itself.
+    for (const workspaces of [1, 5, 50]) {
+      const before = heapStats().mimalloc.heaps;
+      const lockfile = parseLockfile(root + "/" + workspaces);
+      const after = heapStats().mimalloc.heaps;
+      result[workspaces] = {
+        packages: lockfile.packages.length,
+        created: after.total - before.total,
+        live: after.current - before.current,
+      };
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", count, String(dir)],
+    env: baseEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1) || "null");
+  expect({
+    stderr: stderr.includes("error"),
+    packages: [result?.[5].packages, result?.[50].packages],
+    liveGrowth: result?.[50].live - result?.[5].live,
+  }).toEqual({ stderr: false, packages: [6, 51], liveGrowth: 0 });
+  // `process_workspace_name` still creates one scratch heap for each workspace and destroys it at once.
+  expect(result[50].created - result[5].created).toBeLessThanOrEqual(45);
+  expect(exitCode).toBe(0);
+});
+
 // With a mimalloc heap for each cached package.json, each size class of escaped string costs one 64 KiB page
 // for each workspace. In a shared heap the two repos, which hold the same bytes, cost the same.
 test.concurrent("install does not keep a mimalloc heap for each workspace package.json", async () => {

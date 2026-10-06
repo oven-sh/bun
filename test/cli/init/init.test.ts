@@ -521,31 +521,36 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       const decoder = new TextDecoder();
       let output = "";
       const picker = Promise.withResolvers<void>();
-      const refused = Promise.withResolvers<void>();
-      await using terminal = new Bun.Terminal({
-        cols: 80,
-        rows: 24,
-        data(_, chunk: Uint8Array) {
-          output += decoder.decode(chunk, { stream: true });
-          if (output.includes("Select a project template")) picker.resolve();
-          // The last line of every refusal.
-          if (/'bun init' again\r?\n/.test(output)) refused.resolve();
+      // The spawn creates the terminal, so Bun delivers all of the child's output before
+      // `exited` resolves. A terminal that outlives the child can deliver the last lines later.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init"],
+        cwd,
+        env: initEnv,
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("Select a project template")) picker.resolve();
+          },
         },
       });
-      await using proc = Bun.spawn({ cmd: [bunExe(), "init"], cwd, env: initEnv, terminal });
-      if (onPicker) {
-        // Fail with the child's output if it exits before the picker.
-        const exitedEarly = proc.exited.then(code => {
-          throw new Error(`bun init exited before the template picker (code ${code}):\n${output}`);
-        });
-        exitedEarly.catch(() => {});
-        await Promise.race([picker.promise, exitedEarly]);
-        onPicker(terminal);
+      try {
+        if (onPicker) {
+          // Fail with the child's output if it exits before the picker.
+          const exitedEarly = proc.exited.then(code => {
+            throw new Error(`bun init exited before the template picker (code ${code}):\n${output}`);
+          });
+          exitedEarly.catch(() => {});
+          await Promise.race([picker.promise, exitedEarly]);
+          onPicker(proc.terminal!);
+        }
+        const exitCode = await proc.exited;
+        return { output: normalizeBunSnapshot(Bun.stripANSI(output), cwd), exitCode };
+      } finally {
+        proc.terminal!.close();
       }
-      const exitCode = await proc.exited;
-      // The pty can deliver the child's last lines after its exit is reported.
-      if (exitCode === 1) await refused.promise;
-      return { output: normalizeBunSnapshot(Bun.stripANSI(output), cwd), exitCode };
     }
 
     test("bun init errors on an invalid package.json before the template picker", async () => {
@@ -564,17 +569,25 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     test.each([
-      { name: "created", before: undefined },
-      { name: "given content", before: "" },
-    ])("bun init keeps a package.json that is $name while the template picker is open", async ({ before }) => {
+      { name: "created", before: undefined, rename: false },
+      { name: "given content", before: "", rename: false },
+      // An editor that saves by rename leaves the old, empty file open in `bun init`.
+      { name: "replaced by a rename", before: "", rename: true },
+    ])("bun init keeps a package.json that is $name while the template picker is open", async ({ before, rename }) => {
       const saved = '{ "name": "saved-during-the-picker" }\n';
       await using temp = tempDir(
         "bun-init-tty-package-json-changed",
         before === undefined ? {} : { "package.json": before },
       );
+      const packageJson = path.join(temp, "package.json");
 
       const { output, exitCode } = await initOnTTY(temp, terminal => {
-        fs.writeFileSync(path.join(temp, "package.json"), saved);
+        if (rename) {
+          fs.writeFileSync(packageJson + ".tmp", saved);
+          fs.renameSync(packageJson + ".tmp", packageJson);
+        } else {
+          fs.writeFileSync(packageJson, saved);
+        }
         // "1" picks the first entry (Blank) and submits it.
         terminal.write("1");
       });
@@ -582,7 +595,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect(output).toEndWith(
         'error: "<dir>/package.json" appeared or changed while bun init was running\n' + "note: run 'bun init' again",
       );
-      expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(saved);
+      expect(await Bun.file(packageJson).text()).toBe(saved);
       expect(readdirSync(temp)).toEqual(["package.json"]);
       expect(exitCode).toBe(1);
     });

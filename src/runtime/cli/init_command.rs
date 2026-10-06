@@ -1959,7 +1959,7 @@ enum UnusablePackageJson<'a> {
     /// With the bytes of the file, for the code frame.
     Parse(bun_parsers::Error, &'a [u8]),
     RootNotObject,
-    /// Absent or empty at the probe, but not an empty regular file at the write.
+    /// Absent or empty at the probe. At the write it has content, or it was replaced.
     Changed,
     Create(bun_sys::Error),
 }
@@ -2025,9 +2025,11 @@ fn exit_unusable_package_json(cause: UnusablePackageJson<'_>) -> ! {
 
 fn exit_unless_empty_regular_file(file: &bun_sys::File) {
     match file.stat() {
+        // No link left: the path was replaced, as an editor that saves by rename does.
         Ok(stat)
             if bun_core::kind_from_mode(stat.st_mode as _) == bun_sys::FileKind::File
-                && stat.st_size == 0 => {}
+                && stat.st_size == 0
+                && stat.st_nlink != 0 => {}
         Ok(_) => exit_unusable_package_json(UnusablePackageJson::Changed),
         Err(err) => exit_unusable_package_json(UnusablePackageJson::Stat(err)),
     }

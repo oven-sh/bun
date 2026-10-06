@@ -647,6 +647,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let transform_options =
+            std::sync::Arc::new(bun_options_types::schema::api::TransformOptions::default());
 
         match framework.init_transpiler(
             arena,
@@ -655,6 +657,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             bake::Graph::Server,
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
+            &transform_options,
         ) {
             Ok(view) => bundler_framework_views.push(view),
             Err(err) => return Err(global.throw_error(err, generic_action)),
@@ -666,6 +669,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             bake::Graph::Client,
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
+            &transform_options,
         ) {
             Ok(view) => bundler_framework_views.push(view),
             Err(err) => return Err(global.throw_error(err, generic_action)),
@@ -678,6 +682,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 bake::Graph::Ssr,
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
+                &transform_options,
             ) {
                 Ok(view) => bundler_framework_views.push(view),
                 Err(err) => return Err(global.throw_error(err, generic_action)),

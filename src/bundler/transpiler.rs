@@ -60,6 +60,9 @@ pub struct Transpiler<'a> {
     pub env: *mut dot_env::Loader,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
+
+    /// Holds what `load_defines` allocates for `options.define` after a `reset_transform_options`.
+    define_arena: Option<Arena>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -116,6 +119,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
+        self.define_arena = None;
     }
 
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
@@ -271,6 +275,7 @@ impl<'a> Transpiler<'a> {
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
             macro_context: None,
+            define_arena: None,
         }
     }
 
@@ -532,7 +537,8 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        let define_arena = self.define_arena.as_ref().unwrap_or(self.arena);
+        self.options.load_defines(define_arena, Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -610,21 +616,7 @@ impl<'a> Transpiler<'a> {
         );
 
         if auto_jsx {
-            // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir;
-            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
-                }
-            }
+            self.apply_root_tsconfig();
         }
     }
 
@@ -632,6 +624,42 @@ impl<'a> Transpiler<'a> {
     #[inline]
     pub fn configure_linker(&mut self) {
         self.configure_linker_with_auto_jsx(true);
+    }
+
+    /// Root `tsconfig.json`: JSX pragma (unless the options set one), decorators, class fields.
+    fn apply_root_tsconfig(&mut self) {
+        // Most of the time, this will already be cached
+        let top_level_dir = self.fs().top_level_dir;
+        if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+            if let Some(tsconfig) = root_dir.tsconfig_json() {
+                // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                if self.options.transform_options.jsx.is_none() {
+                    self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                }
+                self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                self.options.experimental_decorators = tsconfig.experimental_decorators;
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    self.options.use_define_for_class_fields = v;
+                }
+            }
+        }
+    }
+
+    /// Rebuilds `options` and the resolver's copy from `opts`. Call `configure_defines` after.
+    pub fn reset_transform_options(&mut self, opts: api::TransformOptions) -> crate::Result<()> {
+        // It copied the old options and env loader; the next parse makes a new one.
+        if let Some(ctx) = self.macro_context.take() {
+            ctx.deinit();
+        }
+        // `from_api` leaves this at its default; the VM path applies it.
+        let preserve_symlinks = opts.preserve_symlinks.unwrap_or(false);
+        self.options = options::BundleOptions::from_api(self.fs_mut(), self.log, opts)?;
+        // The table it replaced is gone. This frees what `load_defines` allocated for it.
+        self.define_arena = Some(Arena::new());
+        self.options.preserve_symlinks = preserve_symlinks;
+        self.sync_resolver_opts();
+        self.apply_root_tsconfig();
+        Ok(())
     }
 
     /// Load `.env` files into the env loader according to
@@ -1234,6 +1262,7 @@ impl<'a> Transpiler<'a> {
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
+            core::ptr::addr_of_mut!((*p).define_arena).write(None);
         }
         Ok(())
     }

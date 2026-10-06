@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -475,8 +475,8 @@ test("a macro in a module transpiled off the main thread sees --define", async (
 });
 
 // `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the
-// options of the build that creates it and lives on after that build, so this runs in its own
-// process: an earlier build in the same process would otherwise decide what the macro sees.
+// options of the build that creates it. Its own process, so that no other test's macros share
+// those VMs.
 test("Bun.build() passes define and loader to the macro VM", async () => {
   using dir = tempDir("macro-build-api-options", {
     "entry.ts": `import { mode, banner } from "./macro.ts" with { type: "macro" };\nconsole.log(mode(), banner());\n`,
@@ -507,6 +507,259 @@ test("Bun.build() passes define and loader to the macro VM", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
     lastLine: `console.log("prod", "hello from a text loader");`,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The macro VM of a worker thread lives on after the build that created it. A later build whose
+// parse lands on that thread has other options, so the VM moves to them: the macro module and what
+// it imports are evaluated again with the new `define`. A pool of two threads and four files that
+// use the macro make sure that every build after the first meets a VM an earlier build created.
+test.concurrent("sequential Bun.build() calls with different defines each reach the macro", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-sequential-defines", {
+    "config.ts": `declare const BUILD_TAG: string;\nexport const tag = BUILD_TAG;\n`,
+    "macro.ts": `import { tag } from "./config.ts";\nexport function tagAtBuildTime() {\n  return tag;\n}\n`,
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { tagAtBuildTime } from "./macro.ts" with { type: "macro" };\nexport const tag${i} = tagAtBuildTime();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { tag${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `tag${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      const stale: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        const tag = "tag-" + i;
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          target: "bun",
+          define: { BUILD_TAG: JSON.stringify(tag) },
+        });
+        if (!result.success) throw new AggregateError(result.logs, "build " + tag + " failed");
+        const out = await result.outputs[0].text();
+        const seen = [...out.matchAll(/"tag-\\d+"/g)].map(m => m[0]);
+        if (seen.length === 0 || seen.some(s => s !== JSON.stringify(tag))) {
+          stale.push(tag + " => " + seen.join(","));
+        }
+      }
+      console.log(JSON.stringify(stale));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// The macro file is an input of the build too. A build that follows an edit of it evaluates the
+// file as it is then, not the module a worker thread's VM kept from the build before.
+test.concurrent("sequential Bun.build() calls each evaluate the macro file as it is at that build", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-macro-file-edited", {
+    "macro.ts": `export function revision() {\n  return "none";\n}\n`,
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { revision } from "./macro.ts" with { type: "macro" };\nexport const revision${i} = revision();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { revision${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `revision${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      import { writeFileSync } from "node:fs";
+      const stale: string[] = [];
+      for (const revision of ["first", "second", "the-third", "fourth"]) {
+        writeFileSync("./macro.ts", "export function revision() {\\n  return " + JSON.stringify(revision) + ";\\n}\\n");
+        const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun" });
+        if (!result.success) throw new AggregateError(result.logs, "build " + revision + " failed");
+        const seen = [...(await result.outputs[0].text()).matchAll(/"[a-z-]+"/g)].map(m => m[0]);
+        if (seen.length === 0 || seen.some(s => s !== JSON.stringify(revision))) {
+          stale.push(revision + " => " + seen.join(","));
+        }
+      }
+      console.log(JSON.stringify(stale));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// Each move loads the build's `define` again. Kept, a string value is one copy per build and per
+// pool thread for as long as the VM lives: here 1 MiB a copy, 32 builds, two threads, 64 MB.
+test.concurrent("a macro VM that moves to another build frees the previous build's string define values", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-define-memory", {
+    "macro.ts": `export function one() {\n  return 1;\n}\n`,
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { one } from "./macro.ts" with { type: "macro" };\nexport const v${i} = one();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { v${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `v${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      const define = { BIG_DEFINE: JSON.stringify(Buffer.alloc(1024 * 1024, "d").toString()) };
+      async function build(times: number) {
+        for (let i = 0; i < times; i++) {
+          const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", define });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await build(8);
+      const after = await build(32);
+      console.log(Math.round((after - before) / 1024 / 1024));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: {
+      ...bunEnv,
+      UV_THREADPOOL_SIZE: "2",
+      // What each build frees would sit in ASAN's quarantine and count as growth.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const limitMB = isASAN || isDebug ? 32 : 16;
+  const lastLine = stdout.trim().split("\n").pop()!;
+  // The growth in MiB, or what the child printed in its place.
+  const grew = Number(lastLine || NaN) < limitMB ? "below the limit" : lastLine;
+  expect({ grew, stderr, exitCode }).toEqual({ grew: "below the limit", stderr: "", exitCode: 0 });
+});
+
+// A module the program imports later is transpiled on the same worker pool. Its macro runs with the
+// program's options, not with the `define` of a `Bun.build()` that ran before it. Eight imports on
+// a pool of two threads: some of them land on the thread whose VM ran the build's macro.
+test.concurrent("a runtime import after Bun.build() does not see the build's define", async () => {
+  const libs = [0, 1, 2, 3, 4, 5, 6, 7];
+  using dir = tempDir("macro-build-api-then-runtime-import", {
+    "macro.ts": `declare const MY_DEF: string;\nexport function d() {\n  return typeof MY_DEF !== "undefined" ? MY_DEF : "undef";\n}\n`,
+    "entry.ts": `import { d } from "./macro.ts" with { type: "macro" };\nconsole.log(d());\n`,
+    ...Object.fromEntries(
+      libs.map(i => [`lib${i}.ts`, `import { d } from "./macro.ts" with { type: "macro" };\nexport const v = d();\n`]),
+    ),
+    "main.ts": `
+      const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", define: { MY_DEF: '"from-build"' } });
+      if (!result.success) throw new AggregateError(result.logs, "build failed");
+      const built = (await result.outputs[0].text()).trim().split("\\n").pop();
+      const runtime = [];
+      for (let i = 0; i < ${libs.length}; i++) runtime.push((await import("./lib" + i + ".ts")).v);
+      console.log(JSON.stringify({ built, runtime }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "main.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify({ built: `console.log("from-build");`, runtime: libs.map(() => "undef") }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// A `Bun.build()` from a Worker creates macro VMs that read the Worker's env. The Worker frees its
+// env when it exits. The main thread's build that follows moves those VMs to its own env, which the
+// macro reads through `process.env`.
+test.concurrent("a Bun.build() after a Worker's build with macros reads the main thread's env", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-after-worker", {
+    "macro.ts": [
+      `declare const BUILD_TAG: string;`,
+      `export function tag() {`,
+      `  return BUILD_TAG + ":" + process.env.MACRO_ENV;`,
+      `}`,
+      ``,
+    ].join("\n"),
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { tag } from "./macro.ts" with { type: "macro" };\nexport const tag${i} = tag();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { tag${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `tag${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      export async function build(tagValue: string) {
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          target: "bun",
+          define: { BUILD_TAG: JSON.stringify(tagValue) },
+        });
+        if (!result.success) throw new AggregateError(result.logs, "build " + tagValue + " failed");
+        return [...(await result.outputs[0].text()).matchAll(/"[a-z]+:[a-z]+"/g)].map(m => m[0]);
+      }
+    `,
+    "worker.ts": `
+      import { parentPort } from "node:worker_threads";
+      import { build } from "./build.ts";
+      parentPort.postMessage(await build("worker"));
+    `,
+    "main.ts": `
+      import { Worker } from "node:worker_threads";
+      import { build } from "./build.ts";
+      const worker = new Worker("./worker.ts");
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      const fromWorker = await promise;
+      await worker.terminate();
+      const fromMain = await build("main");
+      console.log(JSON.stringify({ fromWorker, fromMain }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "main.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", MACRO_ENV: "env" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify({
+      fromWorker: libs.map(() => `"worker:env"`),
+      fromMain: libs.map(() => `"main:env"`),
+    }),
     stderr: "",
   });
   expect(exitCode).toBe(0);

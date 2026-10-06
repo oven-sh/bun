@@ -1092,6 +1092,7 @@ impl Framework {
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
+        transform_options: &std::sync::Arc<bun_schema::api::TransformOptions>,
     ) -> crate::Result<()> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
@@ -1104,11 +1105,11 @@ impl Framework {
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // `TransformOptions::default()`: every `Option` is `None`, every
-            // slice empty, every scalar zero/false.
-            bun_schema::api::TransformOptions::default(),
+            (**transform_options).clone(),
             None,
         )?);
+        // A macro VM tells builds apart by this `Arc`: the graphs of one app are one build.
+        out.options.transform_options = std::sync::Arc::clone(transform_options);
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,

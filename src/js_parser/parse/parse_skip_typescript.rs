@@ -71,19 +71,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBracket => {
                 self.lexer.next()?;
 
-                // "[, , a]"
-                while self.lexer.token == T::TComma {
-                    self.lexer.next()?;
-                }
-                // "[a, b]"
                 while self.lexer.token != T::TCloseBracket {
-                    // "[...a]"
-                    if self.lexer.token == T::TDotDotDot {
-                        self.lexer.next()?;
+                    // "[, a, , b]"
+                    if self.lexer.token != T::TComma {
+                        // "[...a]"
+                        if self.lexer.token == T::TDotDotDot {
+                            self.lexer.next()?;
+                        }
+
+                        self.skip_type_script_binding()?;
                     }
 
-                    self.skip_type_script_binding()?;
-
+                    // "[a, b]"
                     if self.lexer.token != T::TComma {
                         break;
                     }

@@ -2060,11 +2060,12 @@ function parseOptions(
     }
   }
 
-  const tlsOption = options.tls || options.ssl;
+  const { tls: optionsTls, ssl: optionsSsl } = options;
+  const tlsOption = optionsTls || optionsSsl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
     tls = undefined;
-  } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
+  } else if (!tlsOption && (optionsTls === false || optionsSsl === false)) {
     sslMode = SSLMode.disable;
     tls = undefined;
   } else if ($inheritsBlob(tlsOption)) {
@@ -2168,9 +2169,8 @@ function parseOptions(
   }
 
   // `tls` is read before its alias; a mode the alias names still counts.
-  const alias = options.ssl;
-  if (options.tls && typeof alias === "string") {
-    const aliasMode = normalizeSSLMode(alias);
+  if (optionsTls && typeof optionsSsl === "string") {
+    const aliasMode = normalizeSSLMode(optionsSsl);
     if (aliasMode > sslMode) sslMode = aliasMode;
   }
 

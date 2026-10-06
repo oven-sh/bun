@@ -4928,33 +4928,35 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("accepted and injected connection
     }
   });
 
-  // Bun only: Node's setSecureContext() takes options. Accepted sockets take their verify mode from the context.
-  it("the listener keeps asking for a client certificate after setSecureContext(aSecureContext)", async () => {
-    const material = { ...COMMON_CERT, ca: COMMON_CERT.cert };
-    const server: Server = createServer({ ...material, requestCert: true, rejectUnauthorized: false });
-    try {
-      server.setSecureContext(tls.createSecureContext(COMMON_CERT) as any);
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const secure = once(server, "secureConnection");
-      const client = connect({
-        ...COMMON_CERT,
-        port: (server.address() as AddressInfo).port,
-        host: "127.0.0.1",
-        rejectUnauthorized: false,
-        minVersion: version,
-        maxVersion: version,
-      });
-      client.on("error", () => {});
-      const [socket] = await secure;
-      expect(socket.getPeerCertificate().fingerprint256).toBe(
-        new crypto.X509Certificate(COMMON_CERT.cert).fingerprint256,
-      );
-      client.destroy();
-    } finally {
-      server.close();
-    }
-  });
+  // Node reads a SecureContext instance as options that name no key and no certificate.
+  it.each(["before listen()", "while listening"])(
+    "the listener stops serving what setSecureContext(aSecureContext) replaced, %s",
+    async when => {
+      const server: Server = createServer(COMMON_CERT, socket => socket.on("error", () => {}).end());
+      server.on("tlsClientError", () => {});
+      const replace = () => server.setSecureContext(tls.createSecureContext({ key: rawKey, cert }) as any);
+      try {
+        if (when === "before listen()") replace();
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        if (when === "while listening") replace();
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const client = connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+          minVersion: version,
+          maxVersion: version,
+        });
+        client.on("secureConnect", () => resolve(`served ${client.getPeerCertificate().fingerprint256}`));
+        client.on("error", () => resolve("no handshake"));
+        expect(await promise).toBe("no handshake");
+        client.destroy();
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   // A resumed handshake skips client authentication.
   it("a server that requires a client certificate shares none with one that does not", async () => {

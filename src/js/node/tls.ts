@@ -1293,11 +1293,11 @@ function Server(options, secureConnectionListener): void {
     }
     const isContext = serverTLSOptions instanceof InternalSecureContext;
     // Reads the staged fields over the server's own. Throws on material BoringSSL rejects, so it runs before the fields change.
-    const sharedCreds = isContext ? serverTLSOptions : buildSharedCreds({ __proto__: this, ...next }, serverTLSOptions);
-    // Accepted sockets take their verify mode from the context, so a listener only gets one built from this server's policy.
-    if (!isContext) listenerContext = sharedCreds.context;
+    const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
+    // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
+    listenerContext = own.context;
     const handle = this._handle;
-    if (handle && options && !isContext) {
+    if (handle && options) {
       setListenerSecureContext(handle, listenerContext);
     }
     if (options) {
@@ -1317,7 +1317,7 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
     }
-    this._sharedCreds = sharedCreds;
+    this._sharedCreds = isContext ? serverTLSOptions : own;
   };
 
   this[buntls] = function (port, host, isClient) {

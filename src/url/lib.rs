@@ -540,44 +540,21 @@ impl<'a> URL<'a> {
         Cow::Owned(out)
     }
 
-    /// `href` for an error message: no userinfo (also when it sits in what `parse` took as the scheme), `?query` or `#fragment`.
-    pub fn redacted_href(&self) -> std::borrow::Cow<'a, [u8]> {
-        use std::borrow::Cow;
-        fn after_last_at(s: &[u8]) -> &[u8] {
-            strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
-        }
-
-        let href = self.href;
-        let has_scheme = !self.protocol.is_empty()
-            && href
-                .strip_prefix(self.protocol)
-                .is_some_and(|rest| rest.starts_with(b"://"));
-        let authority_start = if has_scheme {
-            self.protocol.len() + b"://".len()
-        } else if href.starts_with(b"//") {
-            2
-        } else {
-            0
-        };
-        // Only a `/` ends the authority here, so a `?` or `#` inside a password is cut with it.
-        let authority_end = authority_start
-            + strings::index_of_char_usize(&href[authority_start..], b'/')
-                .unwrap_or(href.len() - authority_start);
-        let scheme = after_last_at(&href[..authority_start]);
-        let host = after_last_at(&href[authority_start..authority_end]);
-        let rest = &href[authority_end - host.len()..];
-        let rest = &rest[..strings::index_of_any(rest, b"?#").unwrap_or(rest.len())];
-        if scheme.len() == authority_start && host.len() == authority_end - authority_start {
-            return Cow::Borrowed(&href[..authority_start + rest.len()]);
-        }
-        let mut out = Vec::with_capacity(scheme.len() + rest.len());
-        out.extend_from_slice(scheme);
-        out.extend_from_slice(rest);
-        Cow::Owned(out)
-    }
-
     pub fn has_http_like_protocol(&self) -> bool {
         self.is_http() || self.is_https()
+    }
+
+    /// RFC 3986 §3.1: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`.
+    fn is_scheme(bytes: &[u8]) -> bool {
+        bytes.first().is_some_and(u8::is_ascii_alphabetic)
+            && bytes.iter().all(
+                |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.'),
+            )
+    }
+
+    /// `protocol` when it is a scheme: `parse` also keeps there what precedes a `://` and is not one.
+    pub fn scheme(&self) -> Option<&'a [u8]> {
+        Self::is_scheme(self.protocol).then_some(self.protocol)
     }
 
     pub fn get_port(&self) -> Option<u16> {
@@ -883,12 +860,9 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        // RFC 3986 §3.1: only behind `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` is there an authority.
-                        let is_scheme = self.protocol.first().is_some_and(u8::is_ascii_alphabetic)
-                            && self.protocol.iter().all(|byte| {
-                                matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
-                            });
-                        return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
+                        // Only behind a scheme is there an authority.
+                        return Self::is_scheme(self.protocol)
+                            .then(|| u32::try_from(i + 3).expect("int cast"));
                     }
                 }
                 _ => {}
@@ -1928,6 +1902,7 @@ mod tests {
     fn no_host_is_read_behind_a_second_scheme() {
         let url = URL::parse(b"http:first.example://second.example/");
         assert_eq!(url.protocol, b"http:first.example");
+        assert_eq!(url.scheme(), None);
         assert_eq!(url.hostname, b"http");
 
         let url = URL::parse(b"blob:http://second.example/id");
@@ -1940,50 +1915,11 @@ mod tests {
 
         let url = URL::parse(b"localhost:3000/api");
         assert_eq!(url.protocol, b"");
+        assert_eq!(url.scheme(), None);
         assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
-    }
 
-    #[test]
-    fn redacted_href_cuts_userinfo_query_and_fragment() {
-        let cut: [(&[u8], &[u8]); 10] = [
-            (b"htps://user:PW@host/", b"htps://host/"),
-            (b"htps://:PW@host/pkg", b"htps://host/pkg"),
-            // Forms where `parse` finds no userinfo.
-            (b"user:PW@host/", b"host/"),
-            (b"//user:PW@host/", b"//host/"),
-            (b"user:PW@htps://host/", b"htps://host/"),
-            (b"a:PW@htps://b:PW@host/", b"htps://host/"),
-            (b"htps://host/?token=PW", b"htps://host/"),
-            (b"htps://host/#PW", b"htps://host/"),
-            (b"htps://user:P?W@host/", b"htps://host/"),
-            (b"htps://user:P#W@host/", b"htps://host/"),
-        ];
-        for (href, expected) in cut {
-            assert_eq!(&*URL::parse(href).redacted_href(), expected);
-        }
-
-        let unchanged: [&[u8]; 14] = [
-            // An `@` in the path is not userinfo.
-            b"htps://pkgs.dev.azure.com/org/_packaging/feed@Local/npm/registry/",
-            b"https://registry.npmjs.org/",
-            b"http://localhost:4873/@scope%2fpkg",
-            b"localhost:4873/npm/",
-            b"https:/left",
-            b"asdfghjklqwertyuiop",
-            b"                ",
-            b"::::::::::::::::",
-            b"https://ex ample.org/",
-            b"https://example.com:demo",
-            b"http://[www.example.com]/",
-            b"c:a",
-            b"c:",
-            b"c:/notapackage",
-        ];
-        for href in unchanged {
-            let redacted = URL::parse(href).redacted_href();
-            assert_eq!(&*redacted, href);
-            assert!(matches!(redacted, std::borrow::Cow::Borrowed(_)));
-        }
+        let url = URL::parse(b"git+ssh://second.example/");
+        assert_eq!(url.scheme(), Some(&b"git+ssh"[..]));
     }
 
     #[test]

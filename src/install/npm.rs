@@ -35,8 +35,6 @@ pub enum WhoamiError {
     NeedAuth,
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
-    #[error("{0}")]
-    UnsupportedProtocol(registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(WhoamiError);
 
@@ -171,10 +169,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
         }
+        Err(bun_http::Error::UnsupportedProtocol) => {
+            registry.report_unsupported_protocol();
+            Global::crash();
+        }
         Err(e) => {
-            if let Some(refused) = unsupported_protocol(&req, e) {
-                return Err(WhoamiError::UnsupportedProtocol(refused));
-            }
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
         }
@@ -218,15 +217,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
     Ok(username.to_vec())
-}
-
-/// The message for `err` when `AsyncHTTP::send_sync` refused the scheme of `req`'s URL.
-pub fn unsupported_protocol(
-    req: &AsyncHTTP,
-    err: bun_http::Error,
-) -> Option<registry::UnsupportedProtocol> {
-    (err == bun_http::Error::UnsupportedProtocol)
-        .then(|| registry::UnsupportedProtocol::new(req.url.href))
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
@@ -331,55 +321,77 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
-    /// `href` as an error message may print it.
-    pub fn redacted_url(href: &[u8]) -> Box<[u8]> {
-        let mut out = Vec::new();
-        write!(
-            &mut out,
-            "{}",
-            bun_fmt::redacted_npm_url(&URL::parse(href).redacted_href())
-        )
-        .expect("infallible: in-memory write");
-        out.into_boxed_slice()
+    /// What an error says about a URL that is not http(s): no text of it but its scheme.
+    pub enum NotHttp<'a> {
+        OtherScheme(&'a [u8]),
+        /// No `<scheme>://` in front.
+        NoSchemePrefix,
+        /// `http://` or `https://` and no host behind it.
+        NoHost,
     }
 
-    /// A registry URL for output: `href_without_auth` needs `scheme://`, so only http(s) takes it.
-    pub fn display_url(href: &[u8]) -> Box<[u8]> {
-        let url = URL::parse(href);
-        if url.has_http_like_protocol() {
-            url.href_without_auth()
-        } else {
-            redacted_url(href)
-        }
-    }
-
-    /// What `bun install` prints for a request URL that is not http or https.
-    #[derive(Debug)]
-    pub struct UnsupportedProtocol {
-        redacted_url: Box<[u8]>,
-    }
-
-    impl UnsupportedProtocol {
-        pub fn new(request_url: &[u8]) -> Self {
-            Self {
-                redacted_url: redacted_url(request_url),
+    impl<'a> NotHttp<'a> {
+        pub fn of(href: &'a [u8]) -> NotHttp<'a> {
+            let url = URL::parse(href);
+            match url.scheme() {
+                Some(_) if url.has_http_like_protocol() && url.host.is_empty() => NotHttp::NoHost,
+                Some(scheme) => NotHttp::OtherScheme(scheme),
+                None => NotHttp::NoSchemePrefix,
             }
         }
     }
 
-    impl core::fmt::Display for UnsupportedProtocol {
+    impl core::fmt::Display for NotHttp<'_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            write!(
-                f,
-                "Registry URL must be http:// or https://\nReceived: {}",
-                bun_fmt::quote(&self.redacted_url),
-            )
+            match self {
+                NotHttp::OtherScheme(scheme) => {
+                    write!(f, "starts with \"{}://\"", bstr::BStr::new(scheme))
+                }
+                NotHttp::NoSchemePrefix => {
+                    f.write_str("does not start with \"http://\" or \"https://\"")
+                }
+                NotHttp::NoHost => f.write_str("has no host"),
+            }
         }
+    }
+
+    /// Reports that `href`, the URL for `what`, is not http(s). `kind` is the kind of URL: "Registry" or "Tarball".
+    pub fn report_unsupported_protocol(kind: &str, what: core::fmt::Arguments<'_>, href: &[u8]) {
+        Output::err_generic("{} URL must be http:// or https://", (kind,));
+        bun_core::note!("the URL for {} {}", what, NotHttp::of(href));
     }
 
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
+        }
+
+        /// Reports that `AsyncHTTP::send_sync` refused a request to this registry.
+        pub fn report_unsupported_protocol(&self) {
+            if self.name.is_empty() {
+                return report_unsupported_protocol(
+                    "Registry",
+                    format_args!("the default registry"),
+                    self.url.href(),
+                );
+            }
+            report_unsupported_protocol(
+                "Registry",
+                format_args!("the \"@{}\" registry", bstr::BStr::new(&self.name)),
+                self.url.href(),
+            );
+        }
+
+        /// The URL without credentials, for a message. `Err` when `AsyncHTTP::send_sync` refuses the requests to
+        /// this registry: a password in such a URL can sit where no parser finds it, so no text of it is printed.
+        pub fn printable_href(&self) -> Result<Box<[u8]>, NotHttp<'_>> {
+            let href = self.url.href();
+            // Every request URL is this prefix and a path.
+            if URL::parse(strings::without_trailing_slash(href)).has_http_like_protocol() {
+                Ok(self.url.url().href_without_auth())
+            } else {
+                Err(NotHttp::of(href))
+            }
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.

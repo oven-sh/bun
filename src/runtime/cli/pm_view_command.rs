@@ -134,11 +134,11 @@ pub(crate) fn view(
 
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
+        Err(http::Error::UnsupportedProtocol) => {
+            scope.report_unsupported_protocol();
+            Global::crash();
+        }
         Err(err) => {
-            if let Some(refused) = npm::unsupported_protocol(&req, err) {
-                Output::err_generic("{}", (refused,));
-                Global::exit(1);
-            }
             Output::err(err, "view request failed to send", ());
             Global::crash();
         }

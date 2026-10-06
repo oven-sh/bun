@@ -338,9 +338,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                                 (bun_fmt::redacted_npm_url(pm.options.scope.url.href()),),
                             );
                         }
-                        Npm::WhoamiError::UnsupportedProtocol(err) => {
-                            Output::err_generic("{}", (err,));
-                        }
                     }
                     Global::crash();
                 }

@@ -591,6 +591,156 @@ describe("a client handshake that fails with a protocol error leaves the socket 
   });
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+describe("an error of the wrapped socket is reported on the TLS socket", () => {
+  const failure = () => Object.assign(new Error("transport failed"), { code: "TRANSPORT_FAILED" });
+
+  // The events of the TLS socket, and the 'error' of the wrapped socket when `rawListener` asks for one.
+  function observe(tlsSocket: tls.TLSSocket, raw: net.Socket, rawListener: boolean) {
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    tlsSocket.on("_tlsError", (err: NodeJS.ErrnoException) => events.push(`tls _tlsError ${err.code}`));
+    tlsSocket.on("error", (err: NodeJS.ErrnoException) => events.push(`tls error ${err.code}`));
+    if (rawListener) raw.on("error", (err: NodeJS.ErrnoException) => events.push(`raw error ${err.code}`));
+    tlsSocket.on("close", hadError => {
+      events.push(`tls close hadError=${hadError}`);
+      resolve(events);
+    });
+    return promise;
+  }
+
+  for (const rawListener of [false, true]) {
+    const listeners = rawListener ? "both sockets" : "the TLS socket alone";
+    const rawError = rawListener ? ["raw error TRANSPORT_FAILED"] : [];
+
+    for (const state of ["connected", "connecting"]) {
+      test(`tls.connect({ socket }) over a ${state} socket, after the handshake, listeners on ${listeners}`, async () => {
+        const server = tls.createServer({ key, cert }, peer => peer.on("error", () => {}).resume());
+        const raw = net.connect(await listen(server), "127.0.0.1");
+        try {
+          if (state === "connected") await once(raw, "connect");
+          const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+          const events = observe(tlsSocket, raw, rawListener);
+          tlsSocket.on("secureConnect", () => raw.destroy(failure()));
+          assert.deepStrictEqual(await events, [
+            "tls _tlsError TRANSPORT_FAILED",
+            "tls error TRANSPORT_FAILED",
+            ...rawError,
+            "tls close hadError=false",
+          ]);
+        } finally {
+          raw.destroy();
+          server.close();
+        }
+      });
+    }
+
+    test(`tls.connect({ socket }), before the handshake completes, listeners on ${listeners}`, async () => {
+      const server = net.createServer(peer => peer.on("error", () => {}).resume());
+      const raw = net.connect(await listen(server), "127.0.0.1");
+      try {
+        await once(raw, "connect");
+        const events = observe(tls.connect({ socket: raw, rejectUnauthorized: false }), raw, rawListener);
+        setImmediate(() => raw.destroy(failure()));
+        assert.deepStrictEqual(await events, [
+          "tls _tlsError TRANSPORT_FAILED",
+          "tls error TRANSPORT_FAILED",
+          ...rawError,
+          "tls close hadError=false",
+        ]);
+      } finally {
+        raw.destroy();
+        server.close();
+      }
+    });
+
+    // A server-side wrap has not released control, so '_tlsError' is not re-emitted as 'error'.
+    for (const when of ["before the handshake completes", "after the handshake"]) {
+      test(`new TLSSocket(socket, { isServer }), ${when}, listeners on ${listeners}`, async () => {
+        const accepted = Promise.withResolvers<string[]>();
+        const server = net.createServer(raw => {
+          const tlsSocket = new tls.TLSSocket(raw, { isServer: true, key, cert });
+          accepted.resolve(observe(tlsSocket, raw, rawListener));
+          if (when === "after the handshake") tlsSocket.on("secure", () => raw.destroy(failure()));
+          else setImmediate(() => raw.destroy(failure()));
+        });
+        const port = await listen(server);
+        const peer =
+          when === "after the handshake"
+            ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        peer.on("error", () => {});
+        try {
+          assert.deepStrictEqual(await accepted.promise, [
+            "tls _tlsError TRANSPORT_FAILED",
+            ...rawError,
+            "tls close hadError=false",
+          ]);
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+
+  test("a socket injected into a tls.Server, before the handshake completes: 'tlsClientError'", async () => {
+    const reported = Promise.withResolvers<string | undefined>();
+    const tlsServer = tls.createServer({ key, cert });
+    tlsServer.on("tlsClientError", (err: NodeJS.ErrnoException) => reported.resolve(err.code));
+    const server = net.createServer(raw => {
+      tlsServer.emit("connection", raw);
+      setImmediate(() => raw.destroy(failure()));
+    });
+    const peer = net.connect(await listen(server), "127.0.0.1");
+    peer.on("error", () => {});
+    try {
+      assert.strictEqual(await reported.promise, "TRANSPORT_FAILED");
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  // Bun only: node re-emits it on the destroyed TLS socket.
+  test("not once the TLS socket has closed", { skip: typeof Bun === "undefined" }, async () => {
+    const server = net.createServer(peer => peer.on("error", () => {}).resume());
+    const port = await listen(server);
+    const raw = net.connect(port, "127.0.0.1");
+    try {
+      const events = observe(tls.connect({ socket: raw, rejectUnauthorized: false }), raw, true);
+      raw.destroy();
+      const log = await events;
+      await once(raw.connect(port, "127.0.0.1"), "connect");
+      raw.destroy(failure());
+      await new Promise(resolve => raw.once("close", resolve));
+      assert.deepStrictEqual(log, ["tls close hadError=false", "raw error TRANSPORT_FAILED"]);
+    } finally {
+      raw.destroy();
+      server.close();
+    }
+  });
+
+  test("the AbortSignal of the wrapped socket", async () => {
+    const server = tls.createServer({ key, cert }, peer => peer.on("error", () => {}).resume());
+    const controller = new AbortController();
+    const raw = net.connect({ port: await listen(server), host: "127.0.0.1", signal: controller.signal });
+    try {
+      const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+      const events = observe(tlsSocket, raw, false);
+      tlsSocket.on("secureConnect", () => controller.abort());
+      assert.deepStrictEqual(await events, [
+        "tls _tlsError ABORT_ERR",
+        "tls error ABORT_ERR",
+        "tls close hadError=false",
+      ]);
+    } finally {
+      raw.destroy();
+      server.close();
+    }
+  });
+});
+
 test("a secureContext that is not one is refused by the constructor", () => {
   const invalid = { name: "TypeError", code: "ERR_TLS_INVALID_CONTEXT", message: "context must be a SecureContext" };
   for (const secureContext of [{ context: {} }, {}, tls.createSecureContext().context, "context"]) {

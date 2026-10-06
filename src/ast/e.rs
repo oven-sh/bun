@@ -2469,7 +2469,7 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    pub fn import_record_loader(&self) -> Option<crate::Loader> {
+    pub fn import_record_loader(&self, bump: &Bump) -> Option<crate::Loader> {
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
@@ -2478,6 +2478,8 @@ impl Import {
             return None;
         };
         let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        // A `+` of string literals folds to a rope.
+        let str_ = str_.flattened(bump);
 
         if !str_.is_utf16 {
             if let Some(loader) = crate::Loader::from_string(&str_.data) {

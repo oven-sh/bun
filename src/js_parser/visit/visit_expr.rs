@@ -1857,7 +1857,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                 import_options: e_.options,
                 loc: e_.expr.loc,
-                import_loader: e_.import_record_loader(),
+                import_loader: e_.import_record_loader(p.arena),
                 ..Default::default()
             };
 
@@ -1869,6 +1869,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    /// A macro takes its arguments as values, so each must be known now. While they are
+    /// visited, `macro_.consts` stands in for `const_values` and the inliner reads it in
+    /// every mode: an argument may name any `const` above the call that has a known value.
+    /// Code outside the arguments keeps the narrower rules of `const_values`.
+    #[cold]
+    #[inline(never)]
+    fn visit_macro_arguments(p: &mut Self, args: &mut [Expr]) {
+        let old_inlining = p.options.features.inlining;
+        core::mem::swap(&mut p.const_values, &mut p.macro_.consts);
+        p.macro_.in_args = true;
+        p.options.features.inlining = true;
+
+        for arg in args {
+            p.visit_expr(arg);
+        }
+
+        p.options.features.inlining = old_inlining;
+        p.macro_.in_args = false;
+        core::mem::swap(&mut p.const_values, &mut p.macro_.consts);
+    }
+
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
@@ -2095,21 +2116,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.should_fold_typescript_constant_expressions;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
-            // We want to forcefully fold constants inside of
-            // certain calls even when minification is disabled, so
-            // that if we have an import based on a string template,
-            // it does not cause a bundle error. This is relevant for
-            // macros, as they require constant known values, but also
-            // for `require` and `require.resolve`, as they go through
-            // the module resolver.
-            if is_macro_ref
-                || matches!(e_.target.data, Data::ERequireCallTarget)
-                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
-            {
-                p.options.ignore_dce_annotations = true;
-                p.should_fold_typescript_constant_expressions = true;
-            }
-
             // When a value is targeted by `--drop`, it will be removed.
             // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
             let mut method_call_should_be_replaced_with_undefined =
@@ -2131,8 +2137,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            for arg in e_.args.slice_mut() {
-                p.visit_expr(arg);
+            'args: {
+                // We want to forcefully fold constants inside of
+                // certain calls even when minification is disabled, so
+                // that if we have an import based on a string template,
+                // it does not cause a bundle error. This is relevant for
+                // macros, as they require constant known values, but also
+                // for `require` and `require.resolve`, as they go through
+                // the module resolver.
+                if is_macro_ref
+                    || matches!(e_.target.data, Data::ERequireCallTarget)
+                    || matches!(e_.target.data, Data::ERequireResolveCallTarget)
+                {
+                    p.options.ignore_dce_annotations = true;
+                    p.should_fold_typescript_constant_expressions = true;
+
+                    // Only a call that runs the macro needs its arguments as values.
+                    if is_macro_ref
+                        && !p.options.features.is_macro_runtime
+                        && !p.is_control_flow_dead
+                        && !p.macro_.in_args
+                    {
+                        Self::visit_macro_arguments(p, e_.args.slice_mut());
+                        break 'args;
+                    }
+                }
+
+                for arg in e_.args.slice_mut() {
+                    p.visit_expr(arg);
+                }
             }
 
             // Restore saved state.
@@ -2532,7 +2565,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Check if the feature flag is enabled
         // Use the underlying string data directly without allocation.
         // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
-        let flag_string = arg.data.e_string().expect("infallible: variant checked");
+        let mut flag_string = arg.data.e_string().expect("infallible: variant checked");
         if flag_string.is_utf16 {
             p.log().add_error(
                 Some(p.source),
@@ -2553,6 +2586,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
+        // A `+` of string literals folds to a rope.
+        flag_string.resolve_rope_if_needed(p.arena);
         let is_enabled: bool = p
             .options
             .features

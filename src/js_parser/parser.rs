@@ -709,6 +709,8 @@ pub struct VisitDeclOpts {
     pub(crate) was_anonymous_named_expr: bool,
     pub(crate) could_be_const_value: bool,
     pub(crate) could_be_macro: bool,
+    /// A `const` in a file that imports a macro: its value goes to `MacroState::consts`.
+    pub(crate) macro_const: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1579,12 +1581,21 @@ pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
     pub(crate) refs: MacroRefs<'a>,
+    /// What a macro call's arguments may name: every `const` with a known value that stands
+    /// above the call, at any statement position and in any mode. `P::const_values` holds
+    /// only what is safe to inline everywhere, and only the inliner reads it.
+    /// `visit_macro_arguments` swaps the two for the argument visit.
+    pub(crate) consts: bun_ast::ast_result::ConstValuesMap,
+    /// `consts` and `P::const_values` are swapped.
+    pub(crate) in_args: bool,
 }
 
 impl<'a> MacroState<'a> {
     pub(crate) fn init() -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
+            consts: Default::default(),
+            in_args: false,
         }
     }
 }

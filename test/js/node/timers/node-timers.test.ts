@@ -33,7 +33,7 @@ it("node.js util.promisify(setTimeout) works", async () => {
 });
 
 it("node.js util.promisify(setInterval) works", async () => {
-  const setInterval = promisify(globalThis.setInterval);
+  const setInterval = promisify(globalThis.setInterval) as unknown as typeof promises.setInterval;
   var runCount = 0;
   const start = performance.now();
   for await (const run of setInterval(1)) {
@@ -118,7 +118,7 @@ it("timers.promises === timers/promises", async () => {
   expect(ns.default).toBe(promises);
 });
 
-type TimerWithDestroyed = Timer & { _destroyed: boolean };
+type TimerWithDestroyed = NodeJS.Timeout & NodeJS.Immediate & { _destroyed: boolean };
 
 describe("_destroyed", () => {
   it("is false by default", () => {
@@ -227,8 +227,8 @@ describe("clear", () => {
   it("interval/timeout do not affect immediates", async () => {
     const mockedCb = mock();
     const immediate = setImmediate(mockedCb);
-    clearTimeout(immediate);
-    clearInterval(immediate);
+    clearTimeout(immediate as any);
+    clearInterval(immediate as any);
 
     await Bun.sleep(1);
     expect(mockedCb).toHaveBeenCalledTimes(1);

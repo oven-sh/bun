@@ -7,7 +7,8 @@ import { bunEnv, bunExe, isDebug } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
-import { Server, WebSocket, WebSocketServer } from "ws";
+// @ts-expect-error @types/ws: no ESM `Server`
+import { type ClientOptions, Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -169,7 +170,7 @@ describe("WebSocket", () => {
         });
         ws.on("message", (data, isBinary) => {
           if (typeof data === "string") {
-            expect(data).toBe(message);
+            expect<unknown>(data).toBe(message);
             expect(isBinary).toBeFalse();
           } else {
             expect(data).toEqual(Buffer.from(bytes));
@@ -312,7 +313,7 @@ describe("WebSocketServer", () => {
       }
     });
 
-    new WebSocket("ws://localhost:" + wss.address().port);
+    new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     await promise;
   });
 
@@ -331,7 +332,7 @@ describe("WebSocketServer", () => {
       }
     });
 
-    new WebSocket("ws://localhost:" + wss.address().port);
+    new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     await promise;
   });
 
@@ -538,7 +539,7 @@ it("isBinary", async () => {
     ws.on("error", reject);
   });
 
-  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
   ws.on("open", function open() {
     ws.send("hello");
     ws.send(Buffer.from([1, 2, 3]));
@@ -557,7 +558,7 @@ it("onmessage", done => {
     };
   });
 
-  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
   ws.onopen = () => {
     ws.send("hello");
   };
@@ -583,7 +584,6 @@ it("close event", async () => {
     },
     function onclose(ws) {
       const { promise, resolve, reject } = Promise.withResolvers();
-      // @ts-expect-error
       ws.onclose = () => resolve();
       return promise;
     },
@@ -597,7 +597,7 @@ it("close event", async () => {
   });
   await Promise.all(
     via.map(async version => {
-      const ws = new WebSocket("ws://localhost:" + wss.address().port);
+      const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
       ws.onopen = () => {
         ws.send("hello");
       };
@@ -622,7 +622,7 @@ it("WebSocket finishRequest mocked", async () => {
     fetch(req, server) {
       expect(req.headers.get("X-Custom-Header")).toBe("CustomValue");
       expect(req.headers.get("Another-Header")).toBe("AnotherValue");
-      return server.upgrade(req);
+      return server.upgrade(req) as any;
     },
   });
 
@@ -638,7 +638,7 @@ it("WebSocket finishRequest mocked", async () => {
       });
       req.end();
     },
-  });
+  } as ClientOptions);
 
   ws.once("open", () => {
     ws.send("Hello");
@@ -676,7 +676,7 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 
 async function listen(): Promise<URL> {
   const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<URL>();
   const server = spawn({
     cmd: [bunExe(), pathname],
     cwd: import.meta.dir,
@@ -734,9 +734,9 @@ it("WebSocketServer should handle backpressure", async () => {
   });
 
   try {
-    const ws = new WebSocket("ws://localhost:" + wss.address().port);
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.onmessage = event => {
-      received += event.data.byteLength;
+      received += (event.data as Buffer).byteLength;
     };
     ws.onclose = resolve;
     ws.onerror = reject;
@@ -834,7 +834,7 @@ it("Server should be able to send empty pings", async () => {
   // WebSocket frame creation function with masking
   function createWebSocketFrame(message: string) {
     const messageBuffer = Buffer.from(message);
-    const frame = [];
+    const frame: number[] = [];
 
     // Add FIN bit and opcode for text frame
     frame.push(0x81);
@@ -920,6 +920,7 @@ it("Server should be able to send empty pings", async () => {
             }
             break;
           }
+          // @ts-expect-error falls through
           case 1: {
             if (data.at(0) === 137) {
               try {

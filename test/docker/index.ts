@@ -472,7 +472,7 @@ class DockerComposeHelper {
         const socket = await Bun.connect({
           hostname: host,
           port,
-        });
+        } as any);
         socket.end();
         return;
       } catch {

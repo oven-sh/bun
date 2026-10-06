@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const util = require("util");
 
 if (!crypto.generateKeyPair) {
-  test.skip("missing crypto.generateKeyPair");
+  (test.skip as any)("missing crypto.generateKeyPair");
 }
 
 test("09469", async () => {

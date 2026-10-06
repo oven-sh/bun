@@ -27,4 +27,4 @@ export default {
       },
     });
   },
-} satisfies Serve;
+} satisfies Serve.Options<undefined>;

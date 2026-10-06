@@ -2,6 +2,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -612,7 +613,7 @@ test("never-settling handler promises are abandoned and release their parked sta
   const N = 60;
 
   const abandonAll = async (count: number) => {
-    const bodies = [];
+    const bodies: Promise<string>[] = [];
     for (let i = 0; i < count; i++) {
       bodies.push(
         new HTMLRewriter()
@@ -631,7 +632,7 @@ test("never-settling handler promises are abandoned and release their parked sta
     }
     // The handler promises are unreachable now; collect until every body has
     // been abandoned, rather than guessing a GC count.
-    const settled: string[] = [];
+    const settled: (string | undefined)[] = [];
     for (let i = 0; i < 100 && settled.length < count; i++) {
       Bun.gc(true);
       await new Promise(r => setTimeout(r, 1));
@@ -683,7 +684,7 @@ test("never-settling handler promises on a file-backed input are abandoned", asy
   const file = `${dir}/in.html`;
   const N = 20;
 
-  const bodies = [];
+  const bodies: Promise<string>[] = [];
   for (let i = 0; i < N; i++) {
     bodies.push(
       new HTMLRewriter()
@@ -700,7 +701,7 @@ test("never-settling handler promises on a file-backed input are abandoned", asy
         ),
     );
   }
-  const settled: string[] = [];
+  const settled: (string | undefined)[] = [];
   for (let i = 0; i < 100 && settled.length < N; i++) {
     Bun.gc(true);
     await new Promise(r => setTimeout(r, 1));
@@ -750,7 +751,7 @@ test("never-settling handler promises with a realized body release their parked 
   const N = 30;
 
   const abandonAll = async (count: number) => {
-    const reads = [];
+    const reads: Promise<string>[] = [];
     for (let i = 0; i < count; i++) {
       reads.push(
         new HTMLRewriter()
@@ -768,7 +769,7 @@ test("never-settling handler promises with a realized body release their parked 
           ),
       );
     }
-    const settled: string[] = [];
+    const settled: (string | undefined)[] = [];
     for (let i = 0; i < 100 && settled.length < count; i++) {
       Bun.gc(true);
       await new Promise(r => setTimeout(r, 1));

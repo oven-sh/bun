@@ -87,8 +87,8 @@ describe.concurrent("Server", () => {
 
       const { promise, resolve } = Promise.withResolvers();
       Bun.connect({
-        hostname: server.hostname,
-        port: server.port,
+        hostname: server.hostname!,
+        port: server.port!,
 
         socket: {
           async open(socket) {
@@ -2015,7 +2015,7 @@ test.concurrent("should be able to async upgrade using custom protocol", async (
   const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
   using server = Bun.serve<unknown>({
     port: 0,
-    async fetch(req: Request, server: Server) {
+    async fetch(req: Request, server: Server<undefined>) {
       await Bun.sleep(1);
 
       if (server.upgrade(req)) return;
@@ -2119,8 +2119,8 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
     return;
   }
   await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     data: {
       state: 0,
       pending: null,
@@ -2404,7 +2404,10 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("Hello World");
     }
 
-    function doHead(server: Server, path: string): Promise<{ statusLine: string; headers: string; body: string }> {
+    function doHead(
+      server: Server<undefined>,
+      path: string,
+    ): Promise<{ statusLine: string; headers: string; body: string }> {
       const { promise, resolve, reject } = Promise.withResolvers<{
         statusLine: string;
         headers: string;
@@ -2657,7 +2660,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // main route for upgrade
       routes: {
-        "/": (req: Request, server: Server) => {
+        "/": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2669,7 +2672,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // Generic route for upgrade
       routes: {
-        "/*": (req: Request, server: Server) => {
+        "/*": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2683,7 +2686,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/ws": {
-          GET: (req: Request, server: Server) => {
+          GET: (req: Request, server: Server<undefined>) => {
             if (server.upgrade(req)) return;
             return new Response("Forbidden", { status: 403 });
           },
@@ -2701,12 +2704,12 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
       },
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2718,7 +2721,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
@@ -2729,7 +2732,7 @@ describe.concurrent("websocket and routes test", () => {
     },
     // fetch only
     {
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2751,7 +2754,7 @@ describe.concurrent("websocket and routes test", () => {
             ws.send(`recv: ${message}`);
           },
         },
-      });
+      } as Bun.Serve.Options<undefined>);
 
       {
         const { promise, resolve, reject } = Promise.withResolvers();

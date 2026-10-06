@@ -33,15 +33,22 @@ expect.extend({
   toBeWorkspaceLink,
   toBeValidBin,
   toHaveBins,
-  toHaveWorkspaceLink: function (package_dir: string, [link, real]: [string, string]) {
+  toHaveWorkspaceLink: function (package_dir: any, [link, real]: [string, string]) {
     const target = readlinkSync(join(package_dir, "node_modules", link));
     return toBeWorkspaceLink(target, isWindows ? join(package_dir, real) : join("..", real));
   },
-  toHaveWorkspaceLink2: function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
+  toHaveWorkspaceLink2: function (package_dir: any, [link, realPosix, realWin]: [string, string, string]) {
     const target = readlinkSync(join(package_dir, "node_modules", link));
     return toBeWorkspaceLink(target, isWindows ? join(package_dir, realWin) : join("..", realPosix));
   },
 });
+
+declare module "bun:test" {
+  interface Matchers<T> {
+    toHaveWorkspaceLink(expected: [link: string, real: string]): void;
+    toHaveWorkspaceLink2(expected: [link: string, realPosix: string, realWin: string]): void;
+  }
+}
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -927,8 +934,8 @@ describe.concurrent("bun-install", () => {
 
     type Received = { url: string; authorization: string | null };
 
-    function recording(received: Received[], handler: (req: Request, server: { port: number }) => Response) {
-      return (req: Request, server: { port: number }) => {
+    function recording(received: Received[], handler: (req: Request, server: { port?: number }) => Response) {
+      return (req: Request, server: { port?: number }) => {
         received.push({ url: req.url, authorization: req.headers.get("authorization") });
         return handler(req, server);
       };
@@ -7506,7 +7513,7 @@ describe.concurrent("bun-install", () => {
       }
 
       const lockfile = await install();
-      const packages = Bun.JSONC.parse(lockfile).packages as Record<string, [string, ...unknown[]]>;
+      const packages = (Bun.JSONC.parse(lockfile) as any).packages as Record<string, [string, ...unknown[]]>;
       expect(Object.fromEntries(Object.entries(packages).map(([name, [resolution]]) => [name, resolution]))).toEqual(
         expected,
       );
@@ -8454,7 +8461,7 @@ describe.concurrent("bun-install", () => {
         JSON.stringify({
           name: "package3",
           version: "0.0.1",
-          workspaces: [join(base, "packages/**/*")],
+          workspaces: [join(base as any, "packages/**/*")],
         }),
       "packages": {
         "frontend": {
@@ -9757,11 +9764,13 @@ describe.concurrent("bun-install", () => {
       const regURL = "asdfghjklqwertyuiop";
 
       await writeFile(
+        // @ts-expect-error no ctx here
         join(ctx.package_dir, "bunfig.toml"),
         Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
       );
 
       await writeFile(
+        // @ts-expect-error no ctx here
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
@@ -9774,6 +9783,7 @@ describe.concurrent("bun-install", () => {
 
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
+        // @ts-expect-error no ctx here
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "pipe",

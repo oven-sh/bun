@@ -1,3 +1,4 @@
+// @ts-expect-error "bun" has no `ShellError` export (it is `$.ShellError`)
 import { ShellError, ShellExpression } from "bun";
 // import { tempDirWithFiles } from "harness";
 import * as fs from "node:fs";
@@ -20,7 +21,7 @@ export function createTestBuilder(path: string) {
     _timeout: number | undefined = undefined;
 
     tempdir: string | undefined = undefined;
-    _env: { [key: string]: string } | undefined = undefined;
+    _env: { [key: string]: string | undefined } | undefined = undefined;
     _cwd: string | undefined = undefined;
 
     _miniCwd: string | undefined = undefined;
@@ -106,7 +107,7 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    env(env: { [key: string]: string }): this {
+    env(env: { [key: string]: string | undefined }): this {
       this._env = env;
       return this;
     }
@@ -339,7 +340,7 @@ export function createTestBuilder(path: string) {
     }
 
     joinTemplate(): string {
-      let buf = [];
+      let buf: string[] = [];
       for (let i = 0; i < this._scriptStr.length; i++) {
         buf.push(this._scriptStr[i]);
         if (this._expresssions[i] !== undefined) {
@@ -356,8 +357,8 @@ export function createTestBuilder(path: string) {
         buf.push(Bun.$.escape(expr));
       } else if (typeof expr === "number") {
         buf.push(expr.toString());
-      } else if (typeof expr?.raw === "string") {
-        buf.push(Bun.$.escape(expr.raw));
+      } else if (typeof (expr as { raw: string })?.raw === "string") {
+        buf.push(Bun.$.escape((expr as { raw: string }).raw));
       } else if (Array.isArray(expr)) {
         expr.forEach(e => this.processShellExpr(buf, e));
       } else {

@@ -571,9 +571,6 @@ declare module "bun" {
     cancel?: UnderlyingSourceCancelCallback;
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
-    /**
-     * Mode "bytes" is not supported.
-     */
     type?: undefined;
   }
 
@@ -1123,7 +1120,11 @@ declare module "bun" {
      * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify<T>(
+      input: T,
+      replacer?: undefined | null,
+      space?: string | number,
+    ): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined;
   }
 
   /**
@@ -1496,7 +1497,7 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The YAML string to parse
+     * @param input The YAML document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1511,7 +1512,9 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -10061,9 +10064,9 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 

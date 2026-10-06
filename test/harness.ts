@@ -773,7 +773,7 @@ if (expect.extend)
         }
       }
     },
-    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+    toSpawn(actual: any, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
         throw new TypeError(
           `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
@@ -810,7 +810,7 @@ if (expect.extend)
         message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
-    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    toThrowWithCode(fn: any, cls: CallableFunction, code: string) {
       try {
         fn();
         return {
@@ -822,7 +822,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -847,7 +847,7 @@ if (expect.extend)
         };
       }
     },
-    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    async toThrowWithCodeAsync(fn: any, cls: CallableFunction, code: string) {
       try {
         await fn();
         return {
@@ -859,7 +859,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -1049,7 +1049,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
@@ -1064,7 +1064,7 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
   return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1076,7 +1076,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1345,7 +1345,7 @@ function failTestsOnBlockingWriteCall() {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
-        const actual = prop.get.call(this);
+        const actual = prop.get!.call(this);
         if (actual?.write && !actual.__proto__[didAttachSymbol]) {
           actual.__proto__[didAttachSymbol] = true;
           attachWriteMeasurement(actual);
@@ -1677,6 +1677,11 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
+  // Exported from this file. The tests that use them pass them to `expect.extend()`.
+  toMatchNodeModulesAt(root: string): Promise<void>;
+  toHaveBins(expectedBins: string[]): void;
+  toBeValidBin(expectedLinkPath: string): void;
+  toBeWorkspaceLink(expectedLinkPath: string): void;
 }
 
 declare module "bun:test" {
@@ -2032,11 +2037,11 @@ export class VerdaccioRegistry {
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       return data.token;
     }
 
-    throw new Error("Failed to create user:", response.statusText);
+    throw new Error("Failed to create user:", response.statusText as any);
   }
 
   async authBunfig(user: string) {

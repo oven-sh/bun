@@ -2,7 +2,7 @@ import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, osSlashes, tempDir } from "harness";
 import path from "path";
-import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
+import { type BundlerTestInput, dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -2185,7 +2185,7 @@ describe.concurrent("bundler", () => {
     jsx: {
       factory: "h",
       automaticRuntime: false,
-    },
+    } as BundlerTestInput["jsx"],
     external: ["preact"],
     run: true,
   });

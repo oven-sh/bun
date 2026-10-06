@@ -7,6 +7,11 @@ import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
+// bun-types does not declare it.
+declare module "bun:jsc" {
+  function generateHeapSnapshotForDebugging(): unknown;
+}
+
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
 

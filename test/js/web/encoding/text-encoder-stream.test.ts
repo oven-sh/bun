@@ -153,6 +153,7 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   reader.read();
   (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
 
+  // @ts-expect-error
   const writePromise = writer.write({
     toString() {
       reader.cancel();

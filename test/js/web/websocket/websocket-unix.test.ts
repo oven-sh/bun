@@ -154,7 +154,6 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     });
 
     const ws = new WebSocket(`wss+unix://${unix}`, {
-      // @ts-expect-error bun extension
       tls: { rejectUnauthorized: false },
     });
     const { promise, resolve, reject } = Promise.withResolvers<string>();
@@ -184,7 +183,6 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     try {
       for (const host of ["127.1", "10", "0x7f000001", "127.0.0.1", "localhost"]) {
         const ws = new WebSocket(`wss+unix://${host}${unix}`, {
-          // @ts-expect-error bun extension
           tls: { rejectUnauthorized: false },
         });
         const { promise, resolve } = Promise.withResolvers<void>();

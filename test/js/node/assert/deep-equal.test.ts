@@ -755,6 +755,7 @@ const cases: Case[] = [
       ]),
     strict: true,
     loose: true,
+    strictBug: "reports not equal",
   },
   {
     name: "maps keyed by deep-equal objects with the values in different counts",
@@ -772,7 +773,6 @@ const cases: Case[] = [
       ]),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {

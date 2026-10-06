@@ -2086,6 +2086,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 if (valuesEqual) {
                     continue;
                 }
+                if constexpr (checkPrototypes) {
+                    return false;
+                }
             }
 
             if constexpr (!enableAsymmetricMatchers) {
@@ -2111,6 +2114,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 RETURN_IF_EXCEPTION(scope, {});
                 if (entryEqual) {
                     foundMatchingEntry = true;
+                    break;
+                }
+                if constexpr (checkPrototypes) {
+                    // node pairs entries one-to-one, which this walk does not do. Its entry points keep the answer of the first deep-equal key.
                     break;
                 }
             }

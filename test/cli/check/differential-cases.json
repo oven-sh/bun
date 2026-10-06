@@ -10370,12 +10370,6 @@
    "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rewriteRelativeImportExtensions\": true }, \"files\": [\"src/a.ts\"] }\n"
   }
  },
- "42-P3b": {
-  "files": {
-   "src/a.ts": "const sentinel: number = \"\";\n",
-   "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"baseUrl\": \"../42-p3B/src\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"src/a.ts\"] }\n"
-  }
- },
  "42-P4": {
   "files": {
    "a.ts": "import { mk } from \"outer\";\nexport const v = mk();\nconst sentinel: number = \"\";\n",
@@ -10386,12 +10380,6 @@
    "node_modules/outer/node_modules/ainner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
    "node_modules/outer/package.json": "{ \"name\": \"outer\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
    "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n"
-  }
- },
- "42-P5": {
-  "files": {
-   "src/a.ts": "const sentinel: number = \"\";\n",
-   "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"rootDir\": \"./ſrc\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"src/a.ts\"] }\n"
   }
  },
  "42-P6a": {

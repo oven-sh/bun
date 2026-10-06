@@ -1130,9 +1130,13 @@ function Server(options, secureConnectionListener): void {
   if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  const contexts = new Map<string, InstanceType<typeof InternalSecureContext>>();
 
   this.addContext = function (hostname, context) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    if (!hostname) {
+      throw $ERR_TLS_REQUIRED_SERVER_NAME();
+    }
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -1144,10 +1148,10 @@ function Server(options, secureConnectionListener): void {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+    // listen() replays the map in order: a re-added name moves to the end.
+    contexts.$delete(hostname);
+    contexts.$set(hostname, context);
   };
 
   this.setSecureContext = function (options) {

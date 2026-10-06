@@ -1,5 +1,3 @@
-// debug-only export
-import { sslCtxLiveCount } from "bun:internal-for-testing";
 import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
@@ -1740,34 +1738,43 @@ describe("setSecureContext() on a listening server", () => {
     }
   });
 
+  // In a process of its own: a count taken here would include what earlier tests left for the GC.
   it("frees the context it replaces", async () => {
-    const server: Server = createServer({ ...agent1 });
-    try {
-      await listen(server);
-      Bun.gc(true);
+    const script = `
+      const { sslCtxLiveCount } = require("bun:internal-for-testing");
+      const tls = require("node:tls"), { once } = require("node:events");
+      const [agent1, agent3] = ${JSON.stringify([agent1, agent3])};
+      const server = tls.createServer(agent1);
+      // The shared context of a Server is interned and dies on GC. This one keeps agent3's
+      // referenced, so no call below leaves a context to the GC and every count is exact.
+      const holder = tls.createServer(agent3);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
       const listening = sslCtxLiveCount();
 
-      for (let i = 0; i < 20; i++) server.setSecureContext(i % 2 ? { ...agent1 } : { ...agent3 });
-      expect(() =>
-        server.setSecureContext({
-          key: agent3.key,
-          cert: "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----",
-        }),
-      ).toThrow();
+      for (let i = 0; i < 20; i++) server.setSecureContext(i % 2 ? agent1 : agent3);
+      let threw = false;
+      try {
+        server.setSecureContext({ key: agent3.key, cert: "-----BEGIN CERTIFICATE-----\\nnope\\n-----END CERTIFICATE-----" });
+      } catch {
+        threw = true;
+      }
       // A leak adds one live SSL_CTX per call.
-      expect(sslCtxLiveCount() - listening).toBeLessThanOrEqual(0);
+      const swapped = sslCtxLiveCount() - listening;
 
       server.close();
       await once(server, "close");
-      // The listener lets go of the last one. Finalizers run on GC, so wait for the condition.
-      for (let i = 0; i < 50 && sslCtxLiveCount() >= listening; i++) {
-        Bun.gc(true);
-        await new Promise<void>(resolve => setImmediate(resolve));
-      }
-      expect(sslCtxLiveCount()).toBeLessThan(listening);
-    } finally {
-      server.close();
-    }
+      // The listener lets go of the last one.
+      console.log(JSON.stringify({ threw, swapped, closed: sslCtxLiveCount() - listening }));
+      holder.close();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: JSON.parse(stdout || "null") }).toEqual({
+      stderr: "",
+      result: { threw: true, swapped: 0, closed: -1 },
+    });
+    expect(exitCode).toBe(0);
   });
 
   it("a rejected call changes neither the listener nor the context injected sockets get", async () => {

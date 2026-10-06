@@ -168,6 +168,16 @@ impl Default for DirInfo {
     }
 }
 
+/// What `Resolver::real_path_of` found for an entry of a directory.
+pub enum RealPath {
+    /// No symlink is on the path.
+    Same,
+    /// The real path: the entry is a symlink, or the resolver cached the joined path on it.
+    Whole(&'static [u8]),
+    /// Only a parent directory is a symlink: the real path is this directory plus the entry's base.
+    Dir(&'static [u8]),
+}
+
 /// Dereference an arena-interned `NonNull<T>` to `&'static T`.
 ///
 /// Single deref site for the three `Option<NonNull<_>>` read accessors on

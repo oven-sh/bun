@@ -2994,7 +2994,8 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
                                         const char *sni, int is_client, int request_cert,
                                         int reject_unauthorized, int old_ext_size,
                                         int ext_size) {
-  if (us_socket_is_closed(s)) return NULL;
+  /* us_socket_adopt() hands either of these back as it is. */
+  if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) return NULL;
 
   struct us_socket_t *new_s = us_socket_adopt(s, group, kind, old_ext_size, ext_size);
   if (!new_s) return NULL;

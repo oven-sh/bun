@@ -1717,6 +1717,8 @@ const tlsExports = {
       validateCiphers(value, "value");
       // filter out TLS_ ciphers
       value = stripTls13CipherNames(value).cipherList;
+      // Throws ERR_SSL_NO_CIPHER_MATCH for a list such as "!aNULL": every default context is built from what is stored.
+      newNativeSecureContext({ ciphers: value });
     }
     setTLSDefaultCiphers(value);
   },

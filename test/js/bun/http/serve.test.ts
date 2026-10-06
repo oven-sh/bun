@@ -3314,6 +3314,37 @@ it.concurrent("we should always send date", async () => {
   }
 });
 
+it.concurrent.each([
+  ["never answers the close_notify", 1],
+  ["stopped reading the response", 64 * 1024 * 1024],
+])(
+  "idle timeout closes a tls connection whose client %s",
+  async (_name, size) => {
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      idleTimeout: 1,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        if (size > 1) return new Response(Buffer.alloc(size, "x"));
+        await aborted.promise;
+        return new Response();
+      },
+    });
+    const client = nodeTls.connect({ port: server.port, host: "127.0.0.1", ca: tls.cert, allowHalfOpen: true });
+    client.on("error", aborted.reject);
+    try {
+      await once(client, "secureConnect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await aborted.promise;
+    } finally {
+      client.destroy();
+    }
+  },
+  15_000,
+);
+
 it.concurrent(
   "should allow use of custom timeout",
   async () => {

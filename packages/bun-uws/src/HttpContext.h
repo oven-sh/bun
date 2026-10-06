@@ -1137,7 +1137,9 @@ private:
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
-        return asyncSocket->close();
+        asyncSocket->close();
+        /* On TLS that close waits for unsent ciphertext, then for the peer's close_notify. */
+        return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every

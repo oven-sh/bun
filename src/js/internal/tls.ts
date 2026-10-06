@@ -2,6 +2,10 @@ const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/ty
 const { validateString, validateBuffer } = require("internal/validators");
 
 const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeIncludes = String.prototype.includes;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeMap = Array.prototype.map;
 
@@ -340,6 +344,22 @@ function normalizePemKeyOption(key, ctxPassphrase) {
   });
 }
 
+function tlsCipherFilter(a: string) {
+  return !StringPrototypeStartsWith.$call(a, "TLS_");
+}
+
+// Node's processCiphers splits into cipherList (<=1.2) and cipherSuites (1.3);
+// when only 1.3 suites were given it forces minVersion = TLSv1.3 so the empty
+// 1.2 list does not leave the handshake with nothing to offer:
+// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L117
+function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only: boolean } {
+  if (!StringPrototypeIncludes.$call(ciphers, "TLS_")) return { cipherList: ciphers, tls13Only: false };
+  const parts = StringPrototypeSplit.$call(ciphers, ":");
+  const kept = ArrayPrototypeFilter.$call(parts, tlsCipherFilter);
+  const cipherList = ArrayPrototypeJoin.$call(kept, ":");
+  return { cipherList, tls13Only: cipherList === "" && kept.length !== parts.length };
+}
+
 // The native `ca` replaces the default store, so the CAs of an archive can only extend a `ca` the caller gave.
 function unsealPfxForNative(tls) {
   if (tls.pfx == null) return tls;
@@ -371,6 +391,11 @@ const nodeClientTlsKeys = [
 // `options` of tls.connect(), as a null-prototype copy, to the `tls` option of fetch() and WebSocket.
 function nodeClientTlsToNative(options) {
   validateSecureContextOptions(options);
+  if (options.ciphers) {
+    const { cipherList, tls13Only } = stripTls13CipherNames(options.ciphers);
+    options.ciphers = cipherList;
+    if (tls13Only) options.minVersion = "TLSv1.3";
+  }
   let tls;
   for (let i = 0; i < nodeClientTlsKeys.length; i++) {
     const name = nodeClientTlsKeys[i];
@@ -428,6 +453,7 @@ export {
   normalizePemKeyOption,
   processPfxOptions,
   secureProtocolToVersionRange,
+  stripTls13CipherNames,
   throwOnInvalidTLSArray,
   tlsHandshakeError,
   tlsStringToProtocolVersion,

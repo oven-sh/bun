@@ -192,6 +192,12 @@ describe("Set and Map entries without an identical counterpart", () => {
     ["Map: one key differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 2 }, "y"]), false],
     ["Map: a key both sides hold, different values", map([shared, 1]), map([shared, 2]), false],
     ["Map: a primitive key only one side holds", map(["p", 1], [{ k: 1 }, 1]), map(["q", 1], [{ k: 1 }, 1]), false],
+    [
+      "Map: a primitive key that holds different values, after an equal key",
+      map([{ k: 1 }, 1], [1, { a: 1 }]),
+      map([{ k: 1 }, 1], [1, { a: 2 }]),
+      false,
+    ],
     ["Map: undefined values", map(["a", undefined], ["b", 1]), map(["b", 1], ["a", undefined]), true],
     [
       "Map: an undefined value under a key only one side holds",

@@ -1,6 +1,6 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, chownSync, linkSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
@@ -1756,6 +1756,175 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
     expect(result.stderr).toContain(`Cannot find package 'types-only'`);
     expect(result.exitCode).not.toBe(0);
   });
+});
+
+// A `tsconfig.json` or `jsconfig.json` found by the upward walk applies to every
+// directory below it, and its `paths` beat the node_modules walk. A directory
+// vouches for the configs in it unless other users can write to it. In a
+// directory they can write to, such as `/tmp`, a config is read only when it is
+// a plain file that you own, with one link.
+describe.skipIf(isWindows)("auto-discovered tsconfig in a directory other users can write", () => {
+  const CONFIG = JSON.stringify({ compilerOptions: { paths: { "lib": ["./planted.js"] } } });
+
+  // `shared/` stands in for `/tmp`: the config goes above the project, and the
+  // project is a private subdirectory with its own package.json and node_modules.
+  // `outside/` holds a config for the tests that link to one.
+  function fixture(extra: Record<string, string> = {}) {
+    return tempDir("tsconfig-shared", {
+      "shared/planted.js": `module.exports = "PLANTED";`,
+      "shared/proj/package.json": JSON.stringify({ name: "proj", dependencies: { lib: "1.0.0" } }),
+      "shared/proj/node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+      "shared/proj/node_modules/lib/index.js": `module.exports = "GENUINE";`,
+      "shared/proj/app.js": `console.log(require("lib"));`,
+      "outside/tsconfig.json": CONFIG,
+      ...extra,
+    });
+  }
+  const run = (dir: { toString(): string }) => runWildcardScript(join(String(dir), "shared", "proj"), "app.js");
+  const applied = { stdout: "PLANTED", stderr: "", exitCode: 0 };
+  const ignored = { stdout: "GENUINE", stderr: "", exitCode: 0 };
+
+  test.concurrent("your own config in a world-writable sticky directory applies", async () => {
+    using dir = fixture({ "shared/tsconfig.json": CONFIG });
+    chmodSync(join(String(dir), "shared"), 0o1777);
+    expect(await run(dir)).toEqual(applied);
+  });
+
+  test.concurrent("a symlinked config there is not followed", async () => {
+    using dir = fixture();
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o1777);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  // Another user can hard-link a file they do not own into the directory, so the
+  // owner of a file with a second link does not say who put it there.
+  test.concurrent("a config with a second hard link there is not read", async () => {
+    using dir = fixture();
+    linkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o1777);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  test.concurrent("a config with a second hard link there does not reach the bundle", async () => {
+    using dir = fixture();
+    linkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o1777);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./app.js", "--target", "node"],
+      env: bunEnv,
+      cwd: join(String(dir), "shared", "proj"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("GENUINE");
+    expect(stdout).not.toContain("PLANTED");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a skipped tsconfig.json does not hide your own jsconfig.json", async () => {
+    using dir = fixture({
+      "shared/jsconfig.json": JSON.stringify({ compilerOptions: { paths: { "lib": ["./from-jsconfig.js"] } } }),
+      "shared/from-jsconfig.js": `module.exports = "JSCONFIG";`,
+    });
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o1777);
+    expect(await run(dir)).toEqual({ stdout: "JSCONFIG", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a sticky directory that a group can write counts too", async () => {
+    using dir = fixture();
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o1775);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  // Everything above is about directories other users can write. A directory
+  // that only you can write keeps supplying whatever config is in it.
+  test.concurrent("an ordinary ancestor directory supplies its config", async () => {
+    using dir = fixture({ "shared/tsconfig.json": CONFIG });
+    expect(await run(dir)).toEqual(applied);
+  });
+
+  test.concurrent("an ordinary directory still follows a symlinked config", async () => {
+    using dir = fixture();
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    expect(await run(dir)).toEqual(applied);
+  });
+
+  test.concurrent("a group-writable directory without the sticky bit is ordinary", async () => {
+    using dir = fixture();
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(String(dir), "shared", "tsconfig.json"));
+    chmodSync(join(String(dir), "shared"), 0o775);
+    expect(await run(dir)).toEqual(applied);
+  });
+
+  // `--tsconfig-override` names the file, so it is loaded whatever the directory is.
+  test.concurrent("--tsconfig-override loads a config the walk would skip", async () => {
+    using dir = fixture();
+    const shared = join(String(dir), "shared");
+    symlinkSync(join(String(dir), "outside", "tsconfig.json"), join(shared, "tsconfig.json"));
+    chmodSync(shared, 0o1777);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--tsconfig-override", join(shared, "tsconfig.json"), "app.js"],
+      env: bunEnv,
+      cwd: join(shared, "proj"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // stderr is drained but not asserted: `--tsconfig-override` prints an
+    // unrelated "directory mismatch" note (#34980).
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("PLANTED");
+    expect(exitCode).toBe(0);
+  });
+
+  // Only root can hand a file to another uid, so these do not run unprivileged.
+  const isRoot = process.getuid?.() === 0;
+  const OTHER_UID = 65534;
+  const OTHER_GID = 65534;
+
+  test.concurrent.skipIf(!isRoot)("a tsconfig another user owns there is not read", async () => {
+    using dir = fixture({ "shared/tsconfig.json": CONFIG });
+    const shared = join(String(dir), "shared");
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
+    chmodSync(shared, 0o1777);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  test.concurrent.skipIf(!isRoot)("a jsconfig another user owns there is not read", async () => {
+    using dir = fixture({ "shared/jsconfig.json": CONFIG });
+    const shared = join(String(dir), "shared");
+    chownSync(join(shared, "jsconfig.json"), OTHER_UID, OTHER_GID);
+    chmodSync(shared, 0o1777);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  test.concurrent.skipIf(!isRoot)("a directory another user owns does not supply its config", async () => {
+    using dir = fixture({ "shared/tsconfig.json": CONFIG });
+    const shared = join(String(dir), "shared");
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
+    chownSync(shared, OTHER_UID, OTHER_GID);
+    expect(await run(dir)).toEqual(ignored);
+  });
+
+  // The owner of the working directory counts as you. A container that runs as
+  // root over a bind mount owned by the host user still reads the project's config.
+  test.concurrent.skipIf(!isRoot)(
+    "a directory owned by the owner of the working directory supplies its config",
+    async () => {
+      using dir = fixture({ "shared/tsconfig.json": CONFIG });
+      const shared = join(String(dir), "shared");
+      for (const path of [shared, join(shared, "tsconfig.json"), join(shared, "planted.js"), join(shared, "proj")]) {
+        chownSync(path, OTHER_UID, OTHER_GID);
+      }
+      expect(await run(dir)).toEqual(applied);
+    },
+  );
 });
 
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {

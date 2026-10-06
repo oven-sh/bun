@@ -330,6 +330,8 @@ Bun supports import path re-mapping through TypeScript's [`compilerOptions.paths
 }
 ```
 
+Bun looks for `tsconfig.json` and `jsconfig.json` in the directory of each source file and in its parent directories. On POSIX systems, Bun is stricter in a directory that other users can write to, such as `/tmp`. There it reads a config only when the config is a regular file (not a symlink, and with no other hard link) that is owned by you, by root, or by the owner of the directory you started Bun in. This stops a config that another user put in a shared directory from re-mapping your imports. Pass `--tsconfig-override <path>` to load a file anyway.
+
 Bun also supports [Node.js-style subpath imports](https://nodejs.org/api/packages.html#subpath-imports) in `package.json`, where mapped paths must start with `#`. TypeScript and editors resolve these too, and you can use both mechanisms together.
 
 ```json package.json icon="file-json"

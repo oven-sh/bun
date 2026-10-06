@@ -303,19 +303,29 @@ fn handle_path(
     field: &'static str,
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
-    let name = string.to_owned_slice_z();
-    // `bun_sys::access` routes to `access(2)` on POSIX and
-    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
-    // cross-platform existence probe.
-    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // Error path: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
-        // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
-        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
+    let name = string.to_utf8();
+    let name = name.slice();
+    if bun_core::strings::contains_char(name, 0) {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("TLSOptions.{field} must be a path without null bytes"),
+            )
+            .throw());
     }
-    Ok(zbox_into_raw(&name))
+    // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
+    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+    if name.is_empty()
+        || path.join(&[name]).is_err()
+        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
+    {
+        return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
+    }
+    // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+        return Ok(dupe_z(name));
+    }
+    Ok(dupe_z(path.slice()))
 }
 
 fn handle_file_for_field(

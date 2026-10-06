@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -1666,5 +1666,43 @@ describe.concurrent("fetch-tls", () => {
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("Warning: Ignoring extra certs from");
     }
+  });
+
+  it("resolves a relative tls.caFile against the cwd at fetch() time", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: validTls,
+      fetch: () => new Response("OK", { headers: { Connection: "close" } }),
+    });
+    using dir = tempDir("fetch-tls-cafile-cwd", {
+      "trusts-server/ca.pem": validTls.cert,
+      "trusts-server/cwd/.keep": "",
+      "other-ca/ca.pem": expiredTls.cert,
+      "other-ca/cwd/.keep": "",
+    });
+    const script = `
+      const out = [];
+      for (const cwd of ["trusts-server/cwd", "other-ca/cwd", "trusts-server/cwd"]) {
+        process.chdir(process.env.DIR + "/" + cwd);
+        out.push(
+          await fetch(process.env.SERVER, { keepalive: false, tls: { caFile: "../ca.pem" } }).then(
+            res => res.text(),
+            err => err.code,
+          ),
+        );
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, SERVER: `https://127.0.0.1:${server.port}`, DIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual(["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

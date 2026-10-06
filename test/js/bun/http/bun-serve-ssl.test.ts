@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { once } from "node:events";
 import net from "node:net";
+
+import { tempDir, tls as tlsCert } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -543,3 +545,30 @@ test.each(["Bun.serve", "Bun.listen"] as const)(
     }
   },
 );
+
+test("keyFile/certFile/caFile/dhParamsFile reject a path with a NUL byte instead of loading its prefix", () => {
+  using dir = tempDir("bun-serve-ssl-nul", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
+  const keyFile = join(String(dir), "key.pem");
+  const certFile = join(String(dir), "cert.pem");
+  const nul = "\0-does-not-exist";
+  const thrown = (field: string) =>
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `TLSOptions.${field} must be a path without null bytes`,
+    });
+  for (const [field, options] of [
+    ["keyFile", { keyFile: keyFile + nul, certFile }],
+    ["certFile", { keyFile, certFile: certFile + nul }],
+    ["caFile", { keyFile, certFile, caFile: certFile + nul }],
+    ["dhParamsFile", { keyFile, certFile, dhParamsFile: certFile + nul }],
+  ] as const) {
+    expect(() => Bun.serve({ port: 0, tls: options, fetch: () => new Response("unreachable") })).toThrow(thrown(field));
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: options, socket: { data() {} } })).toThrow(
+      thrown(field),
+    );
+    expect(() => tls.createSecureContext(options as tls.SecureContextOptions)).toThrow(thrown(field));
+  }
+  expect(() => Bun.serve({ port: 0, tls: { keyFile: "", certFile }, fetch: () => new Response() })).toThrow(
+    "Unable to access keyFile path",
+  );
+});

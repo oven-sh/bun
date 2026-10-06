@@ -1278,12 +1278,27 @@ differential(
     // Each takes two processes. Along the diagonals: each place and each value is in it.
     const step = 12;
     const cases = places.flatMap((place, i) => values.filter((_, j) => (i + j) % step === 0).map(place));
+    // The root is a list. TypeScript 7.0.2 takes the first object in it for the configuration, and says nothing about the
+    // list (TS5092) unless there is none.
+    const implicit = (value: boolean) => `{ "compilerOptions": { "noImplicitAny": ${value} } }`;
+    cases.push(
+      `[${implicit(true)}]`,
+      `[${implicit(false)}]`,
+      `[${implicit(true)}, ${implicit(false)}]`,
+      `[${implicit(false)}, ${implicit(true)}]`,
+      `[1, ${implicit(false)}]`,
+      `[[${implicit(false)}]]`,
+      `[{ "compilerOptions": { "noImplicitAny": tru } }]`,
+      `[{ "files": ["nowhere.ts"] }]`,
+      `[{}]`,
+    );
     using dir = tempDir(
       "bun-check-differential",
       Object.fromEntries(
         cases.flatMap((text, i) => [
           [`c${i}/tsconfig.json`, text + "\n"],
-          [`c${i}/a.ts`, `export {};\n`],
+          // What it says about `x` shows which options are in force.
+          [`c${i}/a.ts`, `export function f(x) {\n  return x;\n}\n`],
         ]),
       ),
     );

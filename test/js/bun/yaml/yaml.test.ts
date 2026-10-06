@@ -2088,11 +2088,115 @@ folded: >
           expect(() => YAML.parse("a\x80b")).toThrow();
         });
 
-        test.todo("CRLF in quoted scalars folds as one line break (→ space)", () => {
-          // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
-          // in quoted scalars produces `\n` instead.
-          expect(YAML.parse('"a\r\nb"')).toBe("a b");
-          expect(YAML.parse("'a\r\nb'")).toBe("a b");
+        describe("CRLF in quoted scalars folds as one line break (→ space)", () => {
+          // [28] b-break is CR LF, CR or LF, and the style is not content.
+          // [73] b-l-folded: one break folds to a space, n breaks to n-1 LFs.
+          test("single break", () => {
+            expect(YAML.parse('"a\r\nb"')).toBe("a b");
+            expect(YAML.parse("'a\r\nb'")).toBe("a b");
+          });
+
+          const alternate = (lf: string, even: string, odd: string) => {
+            let breaks = 0;
+            return lf.replace(/\n/g, () => (breaks++ % 2 ? odd : even));
+          };
+          const lineEnds: [string, (lf: string) => string][] = [
+            ["LF", lf => lf],
+            ["CRLF", lf => lf.replaceAll("\n", "\r\n")],
+            ["CR", lf => lf.replaceAll("\n", "\r")],
+            ["CRLF, LF alternating", lf => alternate(lf, "\r\n", "\n")],
+            ["LF, CRLF alternating", lf => alternate(lf, "\n", "\r\n")],
+          ];
+
+          const folded: [lf: string, expected: unknown][] = [
+            ['"a\nb"', "a b"],
+            ["'a\nb'", "a b"],
+            ['"a\n\nb"', "a\nb"],
+            ["'a\n\nb'", "a\nb"],
+            ['"a\n\n\nb"', "a\n\nb"],
+            ["'a\n\n\nb'", "a\n\nb"],
+            ['"a \n b"', "a b"],
+            ["'a \n b'", "a b"],
+            ['"a\t\n\tb"', "a b"],
+            ['"\na\n"', " a "],
+            ["'\n\na\n\n'", "\na\n"],
+            // [112] s-double-escaped: the escaped break is not content.
+            ['"a\\\nb"', "ab"],
+            ['"a\\\n  b"', "ab"],
+            ['"a \\\n b"', "a b"],
+            ['"a\\\n\nb"', "a\nb"],
+            // https://github.com/oven-sh/bun/issues/44597
+            ['value: "first line\n  second line"\n', { value: "first line second line" }],
+            ["value: 'first line\n  second line'\n", { value: "first line second line" }],
+            ['k: "x\n  y"\nn: 1\n', { k: "x y", n: 1 }],
+            ["k: 'x\n\n  y'\nn: 1\n", { k: "x\ny", n: 1 }],
+            ['- "a\n  b"\n- c\n', ["a b", "c"]],
+            ["[\"a\n b\", 'c\n d']\n", ["a b", "c d"]],
+            ['{"a\n b": 1}\n', { "a b": 1 }],
+            ['--- "a\nb"\n--- c\n', ["a b", "c"]],
+          ];
+          const rejected: [lf: string, message: string][] = [
+            ['k:\n  "a\nb"\n', "Unexpected character"],
+            ['"a\n---\nb"\n', "Unexpected document start"],
+            ["'a\n...\nb'\n", "Unexpected document end"],
+          ];
+
+          describe.each(lineEnds)("%s line ends", (_, withLineEnds) => {
+            test.each(folded)("%j", (lf, expected) => {
+              expect(YAML.parse(withLineEnds(lf))).toEqual(expected);
+            });
+
+            test.each(rejected)("%j throws", (lf, message) => {
+              expect(() => YAML.parse(withLineEnds(lf))).toThrow(message);
+            });
+          });
+
+          test("every yaml-test-suite input parses the same with any line end", async () => {
+            // The suite inputs exist only as literals in the generated file.
+            const source = await file(join(import.meta.dir, "yaml-test-suite.test.ts")).text();
+            const inputs = Array.from(
+              source.matchAll(/const input: string =\s*(`(?:\\[^]|[^`\\])*`|"(?:\\.|[^"\\])*");/g),
+              match => new Function(`return ${match[1]}`)() as string,
+            );
+            expect(inputs).toHaveLength(source.match(/^test\("yaml-test-suite\//gm)!.length);
+
+            const show = (text: string) => {
+              try {
+                return Bun.inspect(YAML.parse(text), { depth: 64 });
+              } catch {
+                return "throws";
+              }
+            };
+            const different: string[] = [];
+            for (const input of inputs) {
+              if (input.includes("\r")) continue;
+              const expected = show(input);
+              for (const [name, withLineEnds] of lineEnds.slice(1)) {
+                if (show(withLineEnds(input)) !== expected) different.push(`${name}: ${JSON.stringify(input)}`);
+              }
+            }
+            expect(different).toEqual([]);
+          });
+
+          test("a .yaml module with CRLF line ends loads like its LF twin", async () => {
+            const lf = 'dq: "x\n  y"\nsq: \'x\n  y\'\nesc: "x\\\n  y"\n';
+            using dir = tempDir("yaml-crlf-module", {
+              "lf.yaml": lf,
+              "crlf.yaml": lf.replaceAll("\n", "\r\n"),
+              "index.ts": `
+                import lf from "./lf.yaml";
+                import crlf from "./crlf.yaml";
+                console.log(JSON.stringify(lf));
+                console.log(JSON.stringify(crlf));
+              `,
+            });
+            const line = '{"dq":"x y","sq":"x y","esc":"xy"}\n';
+            expect(await importedAndBundled(String(dir))).toEqual({
+              imported: { stdout: line + line, stderr: "", exitCode: 0 },
+              build: { stderr: "", exitCode: 0 },
+              bundled: { stdout: line + line, stderr: "", exitCode: 0 },
+            });
+          });
         });
 
         test.todo("verbatim/named-handle tags resolve as Core-schema types", () => {

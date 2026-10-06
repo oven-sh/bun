@@ -2230,9 +2230,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn newline(&mut self) {
+        debug_assert!(Enc::wide(self.next()) != 0x0D || Enc::wide(self.peek(1)) != 0x0A);
         self.line_indent = Indent::NONE;
         self.tab_after_indent = false;
-        // Every caller is `newline(); inc(1);` with `pos` at the b-break byte.
+        // Every caller is `newline(); inc(1);` with `pos` at the last unit of the b-break.
         self.line_start_pos = self.pos.add(1);
         self.line.inc(1);
     }
@@ -5276,12 +5277,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
-                    self.newline();
-                    self.inc(1);
+                    // `fold_lines` starts at the break and counts it.
                     match self.fold_lines() {
-                        0 => text.push(Enc::ch(b' ')),
-                        lines => {
-                            for _ in 0..lines {
+                        1 => text.push(Enc::ch(b' ')),
+                        breaks => {
+                            for _ in 1..breaks {
                                 text.push(Enc::ch(b'\n'));
                             }
                         }
@@ -5357,12 +5357,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
-                    self.newline();
-                    self.inc(1);
+                    // `fold_lines` starts at the break and counts it.
                     match self.fold_lines() {
-                        0 => text.push(Enc::ch(b' ')),
-                        lines => {
-                            for _ in 0..lines {
+                        1 => text.push(Enc::ch(b' ')),
+                        breaks => {
+                            for _ in 1..breaks {
                                 text.push(Enc::ch(b'\n'));
                             }
                         }
@@ -5397,15 +5396,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     match Enc::wide(self.next()) {
                         0x0D | 0x0A => {
-                            self.newline();
-                            self.inc(1);
-                            let lines = self.fold_lines();
+                            // The escaped break itself is not content.
+                            let breaks = self.fold_lines();
                             if let Some(block_indent) = self.block_indents.get() {
                                 if self.line_indent.is_less_than_or_equal(block_indent) {
                                     return Err(ParseError::UnexpectedCharacter);
                                 }
                             }
-                            for _ in 0..lines {
+                            for _ in 1..breaks {
                                 text.push(Enc::ch(b'\n'));
                             }
                             self.skip_s_white();

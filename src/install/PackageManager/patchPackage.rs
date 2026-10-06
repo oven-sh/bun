@@ -26,6 +26,8 @@ use crate::{
     initialize_store, invalid_package_id,
 };
 
+use crate::patch_install::PatchStamp;
+
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
@@ -478,7 +480,13 @@ pub fn do_patch_commit(
         let (opts, _envp_guard) =
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
 
-        let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
+        // `Global::crash()` runs no deferred restore, so the patch hash is out
+        // of the copy for the diff only, and back before any exit below.
+        let patch_hash = PatchStamp::take_out(new_folder, pkg.resolution.tag);
+        let spawned = bun_spawn::sync::spawn(&opts);
+        PatchStamp::put_back(new_folder, pkg.resolution.tag, patch_hash);
+
+        let mut spawn_result = match spawned {
             Err(e) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
                 Global::crash();

@@ -313,7 +313,12 @@ unsafe extern "C" fn Bun__runVirtualModule(
         &bun_core::String::from_bytes(namespace),
         &bun_core::String::from_bytes(after_namespace),
     ) {
-        Ok(Some(v)) => v,
+        Ok(Some(v)) => {
+            global
+                .bun_vm()
+                .add_plugin_loaded_file_to_watcher_if_needed(specifier);
+            v
+        }
         Ok(None) | Err(_) => JSValue::ZERO,
     }
 }

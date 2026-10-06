@@ -586,7 +586,7 @@ function createSecureContext(options) {
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
   // The user-facing constructor owns its SSL_CTX exclusively so addCACert
-  // cannot leak across contexts; internal connect/listen paths stay cached.
+  // cannot leak across contexts; a TLSSocket's own and addContext()'s stay cached.
   return new InternalSecureContext(options);
 }
 
@@ -1208,20 +1208,11 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
+      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
-      // PKCS#12-embedded CAs are stashed separately so createSecureContext can
-      // extend (not replace) the default trust set via addCACert. The server
-      // path hands raw {key, cert, ca} to the native listener and has no
-      // addCACert hook, so fold them into `ca` here - an mTLS server should
-      // verify client certificates against the bundle's own CA chain.
+      // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
         ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];

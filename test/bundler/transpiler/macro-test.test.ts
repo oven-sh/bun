@@ -836,6 +836,20 @@ describe("constant arguments", () => {
     expect(await lastLineOf(header + entry, ["--target=bun"])).toMatchObject({ stdout: "ok", exitCode: 0 });
   });
 
+  // An ASCII macro result joins with the string literals around it, so the specifier is
+  // known when the file is built. The reader must take all of the joined string.
+  test.concurrent.each([modes[0], modes[1]])(
+    "$mode resolves a specifier that holds a macro result",
+    async ({ build }) => {
+      const entry = `
+      import { getFoo } from "./m.ts" with { type: "macro" };
+      console.log(require(require.resolve("./sub/" + getFoo() + ".js")));
+    `;
+      const files = { "sub/foo.js": `module.exports = "sub/foo";`, "sub/index.js": `module.exports = "sub/index";` };
+      expect(await lastLineOf(entry, build, files)).toMatchObject({ stdout: "sub/foo", exitCode: 0 });
+    },
+  );
+
   // The join of a non-ASCII piece belongs to the string folds: #42019.
   test.todo("a template or a + with a non-ASCII piece");
 });

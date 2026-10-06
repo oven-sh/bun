@@ -759,10 +759,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
     }
-    // The default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
-    if ssl_config.is_none() && vm.tls_default_ciphers().is_some() {
-        let defaults = crate::socket::tls_true_defaults(vm, false);
-        ssl_config = Some(http::ssl_config::global_registry::intern(defaults));
+    if ssl_config.is_none() {
+        ssl_config = crate::socket::http_client_defaults(vm);
     }
 
     // unix: string | undefined

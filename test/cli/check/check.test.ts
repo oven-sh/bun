@@ -14998,6 +14998,11 @@ describe.concurrent("--check", () => {
       run(root, ["--bun", "check", "--pretty", "false"]),
       // `check` is not a path.
       run(root, ["--strict", "check"]),
+      // `--bun`, not `--build`, which would take `a.ts` for the project.
+      run(root, ["-b", "check", "a.ts"]),
+      run(root, ["check", "a.ts"], { BUN_OPTIONS: "-b" }),
+      run(root, ["-b", "check", "-b"]),
+      run(root, ["check", "--build", "."]),
     ]);
     const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
     expect(results.map(it => [it.stdout, it.exitCode])).toEqual(results.map(() => [error, 1]));

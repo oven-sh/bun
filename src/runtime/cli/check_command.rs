@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
-use bun_core::{Global, Output, ZStr, env_var};
+use bun_core::{Global, Output, UnwrapOrOom, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -105,7 +105,10 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         project: parsed.option(b"--project").map(<[u8]>::to_vec),
         all: parsed.flag(b"--all"),
-        build: parsed.flag(b"--build"),
+        // Before `check`, `-b` is `--bun`.
+        build: (args.iter().map(|arg| arg.as_bytes()))
+            .take_while(|arg| *arg != b"--")
+            .any(|arg| arg == b"-b" || arg == b"--build"),
         timing: parsed.flag(b"--timing"),
         ..Default::default()
     };
@@ -341,7 +344,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         }
     }
     if !running.is_empty() {
-        env.map.put(key, &running).expect("unreachable");
+        env.map.put(key, &running).unwrap_or_oom();
     }
 }
 
@@ -357,7 +360,7 @@ pub(crate) fn with_package_script<R>(
     note_package_script(env, name, dir);
     let result = with(env);
     match before {
-        Some(before) => env.map.put(key, &before).expect("unreachable"),
+        Some(before) => env.map.put(key, &before).unwrap_or_oom(),
         None => env.map.remove(key),
     }
     result

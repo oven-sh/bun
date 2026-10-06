@@ -465,6 +465,25 @@ describe("the wrapped socket goes away before it connected", () => {
   });
 });
 
+// In a process of its own: these shapes used to abort it, or to keep it from exiting. Resolves with what `body` pushed to `log`.
+async function logOfChild(body: string) {
+  const script = `
+    const net = require("node:net"), tls = require("node:tls"), { readFileSync } = require("node:fs");
+    const [key, cert] = ${JSON.stringify([join(fixtures, "agent1-key.pem"), join(fixtures, "agent1-cert.pem")])}.map(f => readFileSync(f));
+    const log = [];
+    process.on("exit", () => console.log(JSON.stringify(log)));
+    // A process that cannot exit must not outlive the test.
+    setTimeout(() => process.exit(3), 10_000).unref();
+    ${body}
+  `;
+  const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+  let stdout = "";
+  child.stdout.on("data", chunk => (stdout += chunk));
+  const [exitCode, signal] = await once(child, "exit");
+  assert.deepStrictEqual({ exitCode, signal }, { exitCode: 0, signal: null });
+  return JSON.parse(stdout);
+}
+
 describe("new TLSSocket(socket, { isServer }) over a socket that is still connecting", () => {
   const lookups: [string, net.LookupFunction | undefined][] = [
     ["an IP address", undefined],
@@ -473,11 +492,8 @@ describe("new TLSSocket(socket, { isServer }) over a socket that is still connec
   for (const [name, lookup] of lookups) {
     test(`handshakes once it connected to ${name}, and lets the process exit`, async () => {
       // The listener plays the TLS client over the connection it accepts.
-      const script = `
-        const net = require("node:net"), tls = require("node:tls"), { readFileSync } = require("node:fs");
-        const [key, cert] = ${JSON.stringify([join(fixtures, "agent1-key.pem"), join(fixtures, "agent1-cert.pem")])}.map(f => readFileSync(f));
+      const log = await logOfChild(`
         const lookup = ${lookup};
-        const log = [];
         const server = net.createServer(accepted => {
           const client = tls.connect({ socket: accepted, rejectUnauthorized: false }, () => client.write("ping"));
           client.once("data", data => { log.push("client data " + data); client.end(); });
@@ -489,21 +505,65 @@ describe("new TLSSocket(socket, { isServer }) over a socket that is still connec
           tlsSocket.on("data", data => tlsSocket.write("echo:" + data + " from " + tlsSocket.remoteAddress));
           tlsSocket.on("close", () => { log.push("tls close"); server.close(); });
         });
-        process.on("exit", () => console.log(JSON.stringify(log)));
-      `;
-      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
-      let stdout = "";
-      child.stdout.on("data", chunk => (stdout += chunk));
-      const [exitCode] = await once(child, "exit");
-      assert.deepStrictEqual(JSON.parse(stdout), [
-        "raw connect",
-        "client data echo:ping from 127.0.0.1",
-        "raw close",
-        "tls close",
-      ]);
-      assert.strictEqual(exitCode, 0);
+      `);
+      assert.deepStrictEqual(log, ["raw connect", "client data echo:ping from 127.0.0.1", "raw close", "tls close"]);
     });
   }
+
+  for (const method of ["end", "destroy"]) {
+    test(`${method}() once it connected closes the connection`, async () => {
+      const log = await logOfChild(`
+        let tlsSocket;
+        const server = net.createServer(peer => {
+          peer.on("end", () => log.push("peer end")).resume();
+          setImmediate(() => tlsSocket.${method}());
+        }).listen(0, "127.0.0.1", () => {
+          tlsSocket = new tls.TLSSocket(net.connect(server.address().port, "127.0.0.1"), { isServer: true, key, cert });
+          tlsSocket.on("close", () => { log.push("tls close"); server.close(); }).resume();
+        });
+      `);
+      assert.deepStrictEqual(log.sort(), ["peer end", "tls close"]);
+    });
+  }
+});
+
+describe("a TLS socket made over a socket that has sent its FIN", () => {
+  for (const when of ["in the same tick", "after 'finish'"]) {
+    test(`new TLSSocket(socket, { isServer }), end() ${when}`, async () => {
+      const log = await logOfChild(`
+        const server = net.createServer(raw => {
+          raw.end();
+          const wrap = () => {
+            const tlsSocket = new tls.TLSSocket(raw, { isServer: true, key, cert });
+            raw.on("close", () => log.push("raw close"));
+            tlsSocket.on("close", () => { log.push("tls close"); server.close(); });
+          };
+          ${when === "in the same tick" ? "wrap()" : `raw.on("finish", wrap)`};
+        }).listen(0, "127.0.0.1", () => {
+          const peer = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+          for (const event of ["secureConnect", "end", "error"]) peer.on(event, err => log.push("peer " + event + (err ? " " + err.code : "")));
+        });
+      `);
+      assert.deepStrictEqual(log.sort(), ["peer end", "peer error ECONNRESET", "raw close", "tls close"]);
+    });
+  }
+
+  test("tls.connect({ socket })", async () => {
+    const log = await logOfChild(`
+      const server = net.createServer({ allowHalfOpen: true }, peer => {
+        peer.on("data", () => log.push("peer data")).on("end", () => peer.end());
+      }).listen(0, "127.0.0.1", () => {
+        const raw = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true }, () => raw.end());
+        raw.on("finish", () => {
+          const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+          raw.on("close", () => log.push("raw close"));
+          tlsSocket.on("secureConnect", () => log.push("tls secureConnect")).on("error", () => log.push("tls error"));
+          tlsSocket.on("close", hadError => { log.push("tls close hadError=" + hadError); server.close(); });
+        });
+      });
+    `);
+    assert.deepStrictEqual(log.sort(), ["raw close", "tls close hadError=true", "tls error"]);
+  });
 });
 
 test("a transport is still intact inside the 'error' of a handshake that failed over it", async () => {

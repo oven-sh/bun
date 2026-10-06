@@ -295,16 +295,8 @@ pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConf
 
 /// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
 fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
-    let Some(ciphers) = vm.tls_default_ciphers() else {
-        return;
-    };
-    cfg.ssl_ciphers = dupe_z(ciphers);
-    cfg.requires_custom_request_ctx = true;
-    // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
-    if ciphers.is_empty() {
-        cfg.ssl_min_version = cfg
-            .ssl_min_version
-            .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
+    if let Some(ciphers) = vm.tls_default_ciphers() {
+        cfg.set_default_ciphers(ciphers);
     }
 }
 

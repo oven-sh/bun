@@ -239,7 +239,9 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         let changes: BunSQLiteModule.Changes;
-        if (stmt && statements === 1) {
+        // A Statement with no parameters ignores bindings; db.run() rejects surplus ones.
+        const surplusBindings = stmt?.paramsCount === 0 && $isArray(values) && values.length > 0;
+        if (stmt && statements === 1 && !surplusBindings) {
           try {
             changes = stmt.run.$call(stmt, values);
           } finally {

@@ -5971,6 +5971,16 @@ INSERT INTO t (id, name) SELECT id + 20, name FROM t WHERE id <= 2`;
     }
   });
 
+  test("surplus bindings on a write with no placeholders still reject", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (v INTEGER)`;
+
+    for (const q of ["INSERT INTO t VALUES (1)", "INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)"]) {
+      await expect(Promise.resolve(sql.unsafe(q, [42]))).rejects.toThrow("SQLite query expected 0 values, received 1");
+    }
+    expect(await sql`SELECT count(*) AS n FROM t`).toEqual([{ n: 0 }]);
+  });
+
   test("single-statement writes report changes whether or not a semicolon or comment follows", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`;

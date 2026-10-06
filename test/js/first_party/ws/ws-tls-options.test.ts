@@ -230,3 +230,49 @@ describe.concurrent("ws with a pfx that bundles a CA", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("ws TLS options that name or pin the server", () => {
+  // CN=agent1, no subjectAltName, signed by ca1.
+  const agent1 = { key: read("agent1-key.pem"), cert: read("agent1-cert.pem") };
+
+  test("servername", async () => {
+    using server = await serve(agent1);
+    expect({
+      none: await dial(server.url, { ca: ca1 }),
+      topLevel: await dial(server.url, { ca: ca1, servername: "agent1" }),
+      agent: await dial(server.url, { agent: new https.Agent({ ca: ca1, servername: "agent1" }) }),
+      agentWins: await dial(server.url, { agent: new https.Agent({ servername: "agent1" }), ca: ca1, servername: "other" }), // prettier-ignore
+      agentWinsWrong: await dial(server.url, { agent: new https.Agent({ servername: "other" }), ca: ca1, servername: "agent1" }), // prettier-ignore
+    }).toEqual({
+      none: "refused",
+      topLevel: anonymous,
+      agent: anonymous,
+      agentWins: anonymous,
+      agentWinsWrong: "refused",
+    });
+  });
+
+  test("checkServerIdentity", async () => {
+    using server = await serve(agent1);
+    const seen: unknown[] = [];
+    function accept(hostname: string, cert: { subject: { CN: string } }) {
+      seen.push(hostname, cert.subject.CN);
+      return undefined;
+    }
+    const refuse = () => new Error("not the pinned certificate");
+    expect(await dial(server.url, { ca: ca1, checkServerIdentity: accept })).toBe(anonymous);
+    expect(seen).toEqual(["localhost", "agent1"]);
+    expect(await dial(server.url, { ca: ca1, servername: "agent1", checkServerIdentity: refuse })).toBe("refused");
+    expect(await dial(server.url, { agent: new https.Agent({ ca: ca1, checkServerIdentity: accept as any }) })).toBe(anonymous); // prettier-ignore
+    // It does not replace the verification of the chain.
+    expect(await dial(server.url, { checkServerIdentity: accept })).toBe("refused");
+  });
+
+  test("crl", async () => {
+    // ca2 signs agent3. ca2-crl.pem revokes agent4 only.
+    using server = await serve({ key: read("agent3-key.pem"), cert: read("agent3-cert.pem") });
+    const trust = { ca: read("ca2-cert.pem"), servername: "agent3" };
+    expect(await dial(server.url, { ...trust, crl: read("ca2-crl.pem") })).toBe(anonymous);
+    expect(await dial(server.url, { ...trust, crl: read("ca2-crl-agent3.pem") })).toBe("refused");
+  });
+});

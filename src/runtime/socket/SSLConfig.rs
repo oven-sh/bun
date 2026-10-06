@@ -293,6 +293,14 @@ pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConf
     cfg
 }
 
+/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
+    vm.tls_default_ciphers()?;
+    Some(bun_http::ssl_config::global_registry::intern(
+        tls_true_defaults(vm, false),
+    ))
+}
+
 /// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
 fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
     if let Some(ciphers) = vm.tls_default_ciphers() {

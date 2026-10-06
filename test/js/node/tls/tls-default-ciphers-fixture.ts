@@ -90,6 +90,7 @@ const url = `https://localhost:${origin}/`;
 const wss = `wss://localhost:${origin}/`;
 const sql = (adapter: "postgres" | "mysql", port: number) =>
   new Bun.SQL({ adapter, hostname: "localhost", port, username: "u", database: "d", tls: true, max: 1 }).connect();
+const s3 = () => new Bun.S3Client({ endpoint: url.slice(0, -1), accessKeyId: "a", secretAccessKey: "b", bucket: "c" });
 
 /** How many handshakes it takes, and how to start it. */
 const clients: Record<string, [number, () => unknown]> = {
@@ -113,6 +114,9 @@ const clients: Record<string, [number, () => unknown]> = {
   ],
   "Bun.SQL postgres, tls: true": [1, () => sql("postgres", postgres)],
   "Bun.SQL mysql, tls: true": [1, () => sql("mysql", mysql)],
+  "S3Client, text()": [1, () => s3().file("x").text()],
+  "S3Client, stream()": [1, () => s3().file("x").stream().getReader().read()],
+  "S3Client, list()": [1, () => s3().list()],
 };
 
 async function outcome(handshakes: number, connect: () => unknown) {

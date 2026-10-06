@@ -1000,11 +1000,26 @@ function hexWrite(buf, string, offset, length) {
   }
   let i;
   for (i = 0; i < length; ++i) {
-    const parsed = parseInt(string.substr(i * 2, 2), 16);
-    if (Number.isNaN(parsed)) return i;
-    buf[offset + i] = parsed;
+    const lo = hexNibble(string.charCodeAt(i * 2));
+    if (lo < 0) return i;
+    const hi = hexNibble(string.charCodeAt(i * 2 + 1));
+    if (hi < 0) return i;
+    buf[offset + i] = (lo << 4) | hi;
   }
   return i;
+}
+
+// Returns the value of one hex digit, or -1 if `charCode` is not one. Node.js
+// reads a pair as two digits and stops at the first pair holding anything else,
+// so `parseInt` cannot decode it: that also accepts a pair whose second
+// character is not a digit (`parseInt("a\0", 16) === 10`) and a sign or space
+// prefix (`parseInt("-0", 16) === -0`). The extra byte is one Node.js never
+// decodes, so a search value read this way is not the value Node.js searches for.
+function hexNibble(charCode) {
+  if (charCode >= 0x30 && charCode <= 0x39) return charCode - 0x30;
+  if (charCode >= 0x61 && charCode <= 0x66) return charCode - 0x57;
+  if (charCode >= 0x41 && charCode <= 0x46) return charCode - 0x37;
+  return -1;
 }
 
 function utf8Write(buf, string, offset, length) {

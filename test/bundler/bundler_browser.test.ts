@@ -91,6 +91,27 @@ describe("bundler", () => {
         console.log(b.indexOf(""), b.lastIndexOf(""), b.includes(""));
         // Empty value with an explicit offset returns the clamped offset (Node parity).
         console.log(b.indexOf("", 3), b.lastIndexOf("", 3));
+        // A value can be empty only after decoding. Node.js reads a hex pair as two
+        // digits and stops at the first pair containing anything else, so "0z" and
+        // "a<NUL>c" decode to no bytes at all and the search reports the offset, like
+        // an empty value. Decoding the pair with parseInt instead wrote a byte Node.js
+        // never decodes, so the search ran against a value that does not exist.
+        const nul = String.fromCharCode(0);
+        const viaHex = "a" + nul + "c";
+        console.log(Buffer.from(viaHex, "hex").length, Buffer.from("0z", "hex").length);
+        console.log(b.indexOf(viaHex, 1, "hex"), b.lastIndexOf(viaHex, 5, "hex"), b.includes(viaHex, 0, "hex"));
+        // A pair whose second digit is missing, and a sign prefix, are the same case.
+        console.log(b.indexOf("0z", 1, "hex"), b.indexOf("zz", 0, "hex"), b.lastIndexOf(viaHex, 5, "hex"));
+        // base64 reaches the same state: Node.js decodes "=" to no bytes, so the offset
+        // is reported here too.
+        console.log(b.indexOf("=", 2, "base64"), b.lastIndexOf("=", 5, "base64"), b.includes("=", 0, "base64"));
+        // An empty value decoded from hex is still bounded by end.
+        console.log(b.indexOf(viaHex, 3, 3, "hex"), b.indexOf(viaHex, 4, 3, "hex"), b.lastIndexOf(viaHex, 4, 3, "hex"));
+        console.log(b.indexOf(viaHex, 0, -1, "hex"), b.lastIndexOf(viaHex, 5, 0, "hex"), b.includes(viaHex, 0, 0, "hex"));
+        // The phantom byte used to report a match Node.js never made: the haystack has
+        // one 0x0a at index 1, and the two empties report index 2.
+        const lf = Buffer.from([0x0a, 0x0a]);
+        console.log(lf.indexOf(viaHex, 1, "hex"), lf.lastIndexOf(viaHex, 5, "hex"), lf.includes(viaHex, 2, "hex"));
         // A Uint8Array value that is not a Buffer is accepted.
         console.log(b.indexOf(new Uint8Array([98])));
         // ...including on the UTF-16 search path, where the value is read two
@@ -166,6 +187,13 @@ describe("bundler", () => {
       stdout: `
         0 6 true
         3 3
+        0 0
+        1 5 true
+        1 0 5
+        2 5 true
+        3 3 3
+        0 0 true
+        1 2 true
         1
         2
         true

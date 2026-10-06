@@ -116,11 +116,14 @@ unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     let filename = unsafe { bun_core::ffi::cstr(filename) };
     // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
-    bun_core::warn!(
-        "ignoring extra certs from {}, load failed: {}",
+    // Node's wording: test-tls-env-bad-extra-ca.js matches on it.
+    bun_core::pretty_errorln!(
+        "Warning: Ignoring extra certs from `{}`, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
         bstr::BStr::new(error_msg.to_bytes()),
     );
+    // stderr is buffered per thread: without this a Worker drops the line and the main thread holds it until exit.
+    bun_core::Output::flush();
 }
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;

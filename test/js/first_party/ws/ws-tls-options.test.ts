@@ -188,6 +188,30 @@ describe.concurrent("ws TLS options", () => {
     });
   });
 
+  test("secureProtocol", async () => {
+    using server = await serveNegotiated();
+    const version = (negotiated: string) => negotiated.split(" ")[0];
+    expect({
+      tls12: version(await dial(server.url, { ca, secureProtocol: "TLSv1_2_method" })),
+      tls12Agent: version(await dial(server.url, { agent: new https.Agent({ ca, secureProtocol: "TLSv1_2_client_method" }) })), // prettier-ignore
+      tls11: await dial(server.url, { ca, secureProtocol: "TLSv1_1_method" }),
+      any: version(await dial(server.url, { ca, secureProtocol: "TLS_method" })),
+    }).toEqual({ tls12: "TLSv1.2", tls12Agent: "TLSv1.2", tls11: "refused", any: "TLSv1.3" });
+    // There is no such method.
+    expect(() => new WebSocket(server.url, { agent: new https.Agent({ secureProtocol: "TLSv1_3_method" }) })).toThrow(
+      expect.objectContaining({ code: "ERR_TLS_INVALID_PROTOCOL_METHOD" }),
+    );
+    expect(
+      () =>
+        new WebSocket(server.url, {
+          agent: new https.Agent({ secureProtocol: "TLSv1_2_method", minVersion: "TLSv1.3" }),
+        }),
+    ).toThrow(
+      // prettier-ignore
+      expect.objectContaining({ code: "ERR_TLS_PROTOCOL_VERSION_CONFLICT" }),
+    );
+  });
+
   test("an option that tls.connect() rejects throws", () => {
     const url = "wss://localhost:1";
     // BoringSSL and OpenSSL word it differently.

@@ -365,8 +365,11 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
 function unsealPfxForNative(tls) {
   if (tls.pfx == null) return tls;
   tls = processPfxOptions(tls);
-  const { ca, _pfxExtraCACerts: pfxCAs } = tls;
-  if (pfxCAs && ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  const { ca, cert, _pfxExtraCACerts: pfxCAs } = tls;
+  if (!pfxCAs) return tls;
+  if (ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
+  if (typeof cert === "string") tls.cert = cert + pfxCAs[0];
   return tls;
 }
 

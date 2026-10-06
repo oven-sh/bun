@@ -2027,6 +2027,17 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { pfx: pfxWithServerCa, passphrase: "sample" })).toBe("refused");
     });
 
+    it("sends the intermediates of the archive with the client certificate", async () => {
+      // agent10 <- ca4 <- ca2. The archive has ca4, and the server knows ca2 alone.
+      using server = await serve({ ca: read("ca2-cert.pem") });
+      const identity = { pfx: read("agent10.pfx"), passphrase: "sample", rejectUnauthorized: false };
+      expect({
+        topLevel: await dial(server.url, identity),
+        agent: await dial(server.url, { agent: new https.Agent(identity) }),
+        withCa: await dial(server.url, { ...identity, ca }),
+      }).toEqual({ topLevel: identified, agent: identified, withCa: identified });
+    });
+
     // `openssl x509 -subject_hash` of the server's certificate.
     const hashedName = "c62891c1.0";
     it.each([

@@ -22,6 +22,7 @@ pub enum Error {
     JSError,
     OutOfMemory,
     Overflow,
+    QueryCancelled,
 
     WrongNumberOfParametersProvided,
     TooManyParameters,

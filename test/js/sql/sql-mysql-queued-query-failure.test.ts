@@ -251,4 +251,203 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
 
     expect({ first, next: await settle(sql, [marker(1)]) }).toEqual({ first: overflow, next: [[{ marker: 1 }]] });
   });
+
+  // A connection has one query on the wire at a time. The queries behind it
+  // wait in the queue, and nothing of them is written. cancel() rejects such a
+  // query and the connection never writes it. cancel() used to do nothing: the
+  // query was written when its turn came, and it resolved with its rows.
+  const cancelled = rejectedWith({ code: "ERR_MYSQL_QUERY_CANCELLED", message: "Query cancelled" });
+
+  // A table that only this connection sees. Its rows show which INSERTs the
+  // server ran. The connection has prepared the statement of `insert(id)`.
+  async function connectWithTable() {
+    const { sql, marker } = await connect();
+    const table = "cancel_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (id INT PRIMARY KEY)`);
+    const insert = (id: number) => sql`INSERT INTO ${sql(table)} (id) VALUES (${id})`;
+    await insert(0);
+    const rows = () => sql.unsafe(`SELECT id FROM ${table} ORDER BY id`);
+    return { sql, marker, table, insert, rows };
+  }
+
+  // The next command of a query in the queue is a COM_QUERY, a
+  // COM_STMT_EXECUTE, or a COM_STMT_PREPARE.
+  test.each<[string, (sql: SQL, table: string) => SQL.Query<any>]>([
+    ["a simple query", (sql, table) => sql.unsafe(`INSERT INTO ${table} (id) VALUES (1)`)],
+    ["a query on a prepared statement", (sql, table) => sql`INSERT INTO ${sql(table)} (id) VALUES (${1})`],
+    ["a query on a statement that is not prepared", (sql, table) => sql`INSERT INTO ${sql(table)} (id) VALUES (${1} + 0)`],
+  ])("cancel() rejects %s that waits in the queue, and the server never runs it", async (_, start) => {
+    const { sql, marker, table, insert, rows } = await connectWithTable();
+    const order: string[] = [];
+    const note = (name: string) => () => void order.push(name);
+
+    // `running` is on the wire, and `query` waits behind it.
+    const running = marker(1).execute();
+    const query = start(sql, table).execute();
+    running.then(note("running"), note("running"));
+    query.then(note("cancelled"), note("cancelled"));
+    expect(query.cancel()).toBe(query);
+
+    const [first, outcome, next, inserted] = await settle(sql, [running, query, insert(2), rows()]);
+    expect({ cancelled: query.cancelled, first, outcome, next, inserted, order }).toEqual({
+      cancelled: true,
+      first: [{ marker: 1 }],
+      outcome: cancelled,
+      next: [],
+      inserted: [{ id: 0 }, { id: 2 }],
+      // The query rejects at once. It does not wait for its turn.
+      order: ["cancelled", "running"],
+    });
+  });
+
+  test("cancel() rejects a query that shares a statement that is being prepared", async () => {
+    const { sql, marker, commands, before } = await connect();
+    const value = (n: number) => sql`SELECT ${n} AS value`;
+    const order: string[] = [];
+    const note = (name: string) => () => void order.push(name);
+
+    // The first query writes the COM_STMT_PREPARE. The second one shares the
+    // statement and writes nothing.
+    const first = value(1).execute();
+    const second = value(2).execute();
+    first.then(note("first"), note("first"));
+    second.then(note("cancelled"), note("cancelled"));
+    second.cancel();
+
+    const [one, two, next, after] = await settle(sql, [first, second, marker(1), commands()]);
+    expect({ one, two, next, after: counts(after), order }).toEqual({
+      one: [{ value: 1 }],
+      two: cancelled,
+      next: [{ marker: 1 }],
+      // One prepare, and an execute for the first query and for the marker.
+      after: { Com_stmt_prepare: before.Com_stmt_prepare + 1, Com_stmt_execute: before.Com_stmt_execute + 2 },
+      order: ["cancelled", "first"],
+    });
+  });
+
+  test("cancel() on the query that wrote the COM_STMT_PREPARE: the server prepares the statement and does not execute it", async () => {
+    const { sql, marker, commands, before } = await connect();
+    const value = (n: number) => sql`SELECT ${n} AS value`;
+    const order: string[] = [];
+    const note = (name: string) => () => void order.push(name);
+
+    const query = value(1).execute();
+    const behind = marker(1).execute();
+    query.then(note("cancelled"), note("cancelled"));
+    behind.then(note("behind"), note("behind"));
+    query.cancel();
+
+    // The second `value` query shares the statement that the first one prepared.
+    const [outcome, next, again, after] = await settle(sql, [query, behind, value(2), commands()]);
+    expect({ outcome, next, again, after: counts(after), order }).toEqual({
+      outcome: cancelled,
+      next: [{ marker: 1 }],
+      again: [{ value: 2 }],
+      // One prepare, and an execute for the marker and for the second query.
+      after: { Com_stmt_prepare: before.Com_stmt_prepare + 1, Com_stmt_execute: before.Com_stmt_execute + 2 },
+      order: ["cancelled", "behind"],
+    });
+  });
+
+  // The connection reads the values of a query when it looks for the statement
+  // of the query, and again when it writes the COM_STMT_EXECUTE. Each read runs
+  // the getters of the values, and a getter can cancel the query that is being
+  // encoded.
+  test.each([
+    ["looks for its statement", { prepared: false, cancelAt: 1, inFront: 0 }],
+    ["writes it in the call that starts it", { prepared: true, cancelAt: 2, inFront: 0 }],
+    ["writes it from the queue", { prepared: true, cancelAt: 2, inFront: 1 }],
+  ])(
+    "a query that a getter of its values cancels when the connection %s is not written",
+    async (_, { prepared, cancelAt, inFront }) => {
+      const { sql, marker, commands } = await connect();
+      if (prepared) await sql.unsafe("SELECT ? AS v", [1]);
+      const before = counts(await commands());
+
+      let reads = 0;
+      const values = Object.defineProperty([], 0, {
+        get() {
+          if (++reads === cancelAt) query.cancel();
+          return 1;
+        },
+      });
+      const query: SQL.Query<any> = sql.unsafe("SELECT ? AS v", values);
+      const front = inFront ? [marker(1)] : [];
+      const outcomes = await settle(sql, [...front, query, marker(2), commands()]);
+      const [outcome, next, after] = outcomes.slice(front.length);
+      expect({ outcome, next, reads, after: counts(after) }).toEqual({
+        outcome: cancelled,
+        next: [{ marker: 2 }],
+        reads: cancelAt,
+        // No prepare, and an execute for each marker only.
+        after: {
+          Com_stmt_prepare: before.Com_stmt_prepare,
+          Com_stmt_execute: before.Com_stmt_execute + front.length + 1,
+        },
+      });
+    },
+  );
+
+  // MySQL can stop a query that it runs only with KILL QUERY on a second connection.
+  test("cancel() does not stop a query that the connection already wrote", async () => {
+    const { sql, marker, insert, rows } = await connectWithTable();
+
+    // The connection is idle and has the statement, so the call that starts
+    // the query writes it.
+    const query = insert(1).execute();
+    query.cancel();
+
+    const [outcome, next, inserted] = await settle(sql, [query, marker(1), rows()]);
+    expect({ cancelled: query.cancelled, outcome, next, inserted }).toEqual({
+      cancelled: true,
+      outcome: [],
+      next: [{ marker: 1 }],
+      inserted: [{ id: 0 }, { id: 1 }],
+    });
+  });
+
+  test("a cancelled query of a transaction does not run, and the transaction commits the other queries", async () => {
+    const { sql, table, rows } = await connectWithTable();
+    const insert = (tx: SQL, id: number) => tx`INSERT INTO ${tx(table)} (id) VALUES (${id})`;
+
+    const outcomes = await sql.begin(async tx => {
+      const first = insert(tx, 1).execute();
+      const second = insert(tx, 2).execute();
+      second.cancel();
+      return [await first, await second.catch(reason => ({ rejected: reason })), await insert(tx, 3)];
+    });
+    expect({ outcomes, inserted: await rows() }).toEqual({
+      outcomes: [[], cancelled, []],
+      inserted: [{ id: 0 }, { id: 1 }, { id: 3 }],
+    });
+    await sql.close();
+  });
+
+  // The cancelled query sends nothing, so no reply comes back for it.
+  test("a script whose last query was cancelled in the queue exits on its own", async () => {
+    await container.ready;
+    const script = `
+      const sql = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1 });
+      const value = n => sql\`SELECT \${n} AS value\`;
+      await value(0);
+      const running = value(1).execute();
+      const last = value(2).execute();
+      last.cancel();
+      console.log(JSON.stringify([await running, await last.catch(error => error.code)]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, MYSQL_URL: url() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is here so that a failure shows it. A sanitizer build can write to it.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify([[{ value: 1 }], "ERR_MYSQL_QUERY_CANCELLED"]) + "\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
